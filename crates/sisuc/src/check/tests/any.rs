@@ -1019,10 +1019,9 @@ fn a_join_should_report_the_member_that_leaves_it_against_the_written_type() {
         let src = format!(
             "{DECLS}fn main() {{\n    let o: Circle? = None\n    let s: any Shape = Circle(r: 1.0)\n    let os: (any Shape)? = None\n    let r{written} = {join}\n}}"
         );
-        // `NotConform` points at where `any Shape` is first written too, and a mismatch at the
-        // written type of `r`, unless a `??` stands between them.
+        // A mismatch points at the written type of `r`, unless a `??` stands between them. A
+        // `??` default gets no label for a conformance (a later group redesigns the `??` rules).
         let secondary: &[_] = match code {
-            Code::NotConform => &[(3 + LINES, 12)],
             Code::Mismatch if !join.starts_with("os ??") => &[(5 + LINES, 12)],
             _ => &[],
         };
@@ -2288,4 +2287,336 @@ fn equal_beside_an_any_value_should_need_the_eq_of_the_any_type() {
         codes_after(row, &src, &expected);
     }
     clean("fn main() {\n    let o: (any Display)? = None\n    print(o == None)\n}");
+}
+
+/// A failing conversion to an `any` type: the program, the error's position and text, and each
+/// secondary label as (line, column, source text under it, label text).
+type LabelRow<'a> = (
+    &'a str,
+    String,
+    (usize, usize, &'a str),
+    Vec<(usize, usize, &'a str, &'a str)>,
+);
+
+/// The interface `Sh` and its enum `En`, three lines. A row's lines continue from line 4.
+const SH: &str =
+    "interface Sh { fn n(self) -> i64 }\nenum En: Sh { A\n    fn n(self) -> i64 { 1 } }\n";
+
+/// The start of `main` with a valid `let _x`, a bool `c` and an `any` value `s`: lines 4 to 7.
+const WITH_CS: &str =
+    "fn main() {\n    let c = true\n    let _x: any Sh = En.A\n    let s: any Sh = En.A\n";
+
+/// The start of `main` with a valid `let _x`: lines 4 and 5.
+const WITH_X: &str = "fn main() {\n    let _x: any Sh = En.A\n";
+
+/// The interfaces and classes of issue 377, then `main` up to line 17.
+const NAMED: &str = "interface Named {\n    fn name(self) -> string\n}\n\nclass Dog: Named {\n    fn name(self) -> string { \"dog\" }\n}\n\nclass Cat: Named {\n    fn name(self) -> string { \"cat\" }\n}\n\nfn show(n: any Named) -> string { n.name() }\n\nfn main() {\n    let c = true\n    let n: any Named = Cat()\n";
+
+/// The rows of `a_conversion_that_fails_should_label_where_its_any_type_comes_from`, from the
+/// rows of one place each: the `any` type is declared, a parameter, a return, a field, a payload,
+/// an assignment, or the member that gives a join its type.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row for each place that an `any` type comes from"
+)]
+fn label_rows() -> Vec<LabelRow<'static>> {
+    let sh = |body: &str| format!("{SH}{body}");
+    let declared = "declared as `any Sh` here";
+    let branch = "this branch gives the type `any Sh`";
+    let element = "this element gives the type `any Sh`";
+    let gave = "this `break` gave the loop the type `any Sh`";
+    vec![
+        (
+            "a let",
+            sh("fn main() {\n    let _x: any Sh = 1\n}"),
+            (5, 22, "1"),
+            vec![(5, 13, "any Sh", declared)],
+        ),
+        (
+            "a second let of the type",
+            sh(&format!("{WITH_X}    let _y: any Sh = 2\n}}")),
+            (6, 22, "2"),
+            vec![(6, 13, "any Sh", declared)],
+        ),
+        (
+            "a let of an optional",
+            sh(&format!("{WITH_X}    let _y: (any Sh)? = 1\n}}")),
+            (6, 25, "1"),
+            vec![(6, 13, "(any Sh)?", "declared as `(any Sh)?` here")],
+        ),
+        (
+            "a parameter",
+            sh(&format!(
+                "fn f(s: any Sh) -> i64 {{ s.n() }}\n{WITH_X}    print(f(1))\n}}"
+            )),
+            (7, 13, "1"),
+            vec![(4, 9, "any Sh", "`f` declares `s` as `any Sh`")],
+        ),
+        (
+            "a return",
+            sh(&format!(
+                "fn f() -> any Sh {{ 1 }}\n{WITH_X}    print(f().n())\n}}"
+            )),
+            (4, 20, "1"),
+            vec![(4, 11, "any Sh", "`f` returns `any Sh`")],
+        ),
+        (
+            "a return statement",
+            sh(&format!(
+                "fn f(c: bool) -> any Sh {{\n    if c {{ return 1 }}\n    En.A\n}}\n{WITH_X}    print(f(true).n())\n}}"
+            )),
+            (5, 19, "1"),
+            vec![(4, 18, "any Sh", "`f` returns `any Sh`")],
+        ),
+        (
+            "a field",
+            sh(&format!(
+                "class P {{ s: any Sh }}\n{WITH_X}    let _p = P(s: 1)\n}}"
+            )),
+            (7, 19, "1"),
+            vec![(4, 14, "any Sh", "`s` is declared as `any Sh`")],
+        ),
+        (
+            "a payload",
+            sh(&format!(
+                "enum Bo {{ B(any Sh) }}\n{WITH_X}    let _b = Bo.B(1)\n}}"
+            )),
+            (7, 19, "1"),
+            vec![(4, 13, "any Sh", "`B` holds `any Sh`")],
+        ),
+        (
+            "an assignment",
+            sh(&format!(
+                "{WITH_X}    let mut y: any Sh = En.A\n    y = 1\n    print(y.n())\n}}"
+            )),
+            (7, 9, "1"),
+            vec![(6, 13, "y", "`y` has the type `any Sh`")],
+        ),
+        (
+            "an `if` join, the `any` value first",
+            sh(&format!("{WITH_CS}    let _a = if c {{ s }} else {{ 1 }}\n}}")),
+            (8, 32, "1"),
+            vec![(8, 21, "s", branch)],
+        ),
+        (
+            "an `if` join, the `any` value last",
+            sh(&format!("{WITH_CS}    let _b = if c {{ 1 }} else {{ s }}\n}}")),
+            (8, 21, "1"),
+            vec![(8, 32, "s", branch)],
+        ),
+        (
+            "a `match` join",
+            sh(&format!(
+                "{WITH_CS}    let _a = match c {{ true => s; false => 1 }}\n}}"
+            )),
+            (8, 44, "1"),
+            vec![(8, 32, "s", branch)],
+        ),
+        (
+            "an array join, the `any` value first",
+            sh("fn main() {\n    let _x: any Sh = En.A\n    let s: any Sh = En.A\n    let _a = [s, 1]\n}"),
+            (7, 18, "1"),
+            vec![(7, 15, "s", element)],
+        ),
+        (
+            "an array join, the `any` value last",
+            sh("fn main() {\n    let _x: any Sh = En.A\n    let s: any Sh = En.A\n    let _a = [1, s]\n}"),
+            (7, 15, "1"),
+            vec![(7, 18, "s", element)],
+        ),
+        (
+            "a loop join",
+            sh(&format!(
+                "{WITH_CS}    let _a = loop {{ if c {{ break s }}; break 1 }}\n}}"
+            )),
+            (8, 45, "1"),
+            vec![(8, 28, "break s", gave)],
+        ),
+        (
+            "a `??` default, which has no label yet",
+            sh("fn main() {\n    let _x: any Sh = En.A\n    let o: (any Sh)? = None\n    let _a = o ?? 1\n}"),
+            (7, 19, "1"),
+            vec![],
+        ),
+        (
+            "an `if` under a written type",
+            sh("fn main() {\n    let c = true\n    let _x: any Sh = En.A\n    let _a: any Sh = if c { En.A } else { 1 }\n}"),
+            (7, 43, "1"),
+            vec![(7, 13, "any Sh", declared)],
+        ),
+        (
+            "an array of the type, the first",
+            sh("fn main() {\n    let _x: [any Sh] = [1]\n}"),
+            (5, 25, "1"),
+            vec![(5, 13, "[any Sh]", "declared as `[any Sh]` here")],
+        ),
+        (
+            "an array of the type, the second",
+            sh("fn main() {\n    let _x: [any Sh] = [En.A]\n    let _y: [any Sh] = [2]\n}"),
+            (6, 25, "2"),
+            vec![(6, 13, "[any Sh]", "declared as `[any Sh]` here")],
+        ),
+        (
+            "a `Some` branch",
+            sh(&format!(
+                "{WITH_CS}    let _a = if c {{ Some(s) }} else {{ 1 }}\n}}"
+            )),
+            (8, 38, "1"),
+            vec![(8, 21, "Some(s)", "this branch gives the type `(any Sh)?`")],
+        ),
+        (
+            "a parameter of a generic function",
+            sh(&format!(
+                "fn f<T>(a: T, s: any Sh) -> T {{ a }}\n{WITH_X}    print(f(1, 2))\n}}"
+            )),
+            (7, 16, "2"),
+            vec![(4, 18, "any Sh", "`f` declares `s` as `any Sh`")],
+        ),
+        (
+            "an optional parameter",
+            sh(&format!(
+                "fn f(s: (any Sh)?) -> i64 {{ 0 }}\n{WITH_X}    print(f(1))\n}}"
+            )),
+            (7, 13, "1"),
+            vec![(4, 9, "(any Sh)?", "`f` declares `s` as `(any Sh)?`")],
+        ),
+        (
+            "an array parameter",
+            sh(&format!(
+                "fn f(s: [any Sh]) -> i64 {{ 0 }}\n{WITH_X}    print(f([1]))\n}}"
+            )),
+            (7, 14, "1"),
+            vec![(4, 9, "[any Sh]", "`f` declares `s` as `[any Sh]`")],
+        ),
+        (
+            "an `else if` branch",
+            sh(&format!(
+                "{WITH_CS}    let _a = if c {{ 1 }} else if c {{ s }} else {{ En.A }}\n}}"
+            )),
+            (8, 21, "1"),
+            vec![(8, 30, "if c { s } else { En.A }", branch)],
+        ),
+        (
+            "a loop that gives a `Some` of an object",
+            sh(&format!(
+                "class D {{}}\n{WITH_CS}    let _a = loop {{ if c {{ break s }}; break Some(D()) }}\n}}"
+            )),
+            (9, 50, "D()"),
+            vec![(9, 28, "break s", gave)],
+        ),
+        (
+            "an array join of a `Some` of an object",
+            sh(&format!(
+                "class D {{}}\n{WITH_CS}    let _a = [s, Some(D())]\n}}"
+            )),
+            (9, 23, "D()"),
+            vec![(9, 15, "s", element)],
+        ),
+        (
+            "an `else if` chain whose seed gives the type",
+            sh(&format!(
+                "class D {{}}\n{WITH_CS}    let _a = if c {{ s }} else if c {{ D() }} else {{ 1 }}\n}}"
+            )),
+            (9, 37, "D()"),
+            vec![(9, 21, "s", branch)],
+        ),
+        (
+            "a loop whose later break gives the type",
+            sh(&format!(
+                "class D {{}}\n{WITH_CS}    let _a = loop {{ if c {{ break D() }}; break s }}\n}}"
+            )),
+            (9, 34, "D()"),
+            vec![(9, 47, "s", gave)],
+        ),
+        (
+            "an array whose wider `any` value comes first",
+            "interface Sh { fn n(self) -> i64 }\ninterface Wi: Sh {}\nenum En: Wi, Sh { A\n    fn n(self) -> i64 { 1 } }\nclass D {}\nfn main() {\n    let w: any Wi = En.A\n    let s: any Sh = En.A\n    let _a = [w, s, D()]\n}".to_string(),
+            (9, 21, "D()"),
+            vec![(9, 18, "s", element)],
+        ),
+        (
+            "a hinted array in a branch, which has no label yet",
+            sh(&format!(
+                "class D {{}}\n{WITH_CS}    let _a = if c {{ [s] }} else {{ [1] }}\n}}"
+            )),
+            (9, 35, "1"),
+            vec![],
+        ),
+        (
+            "a generic payload, which has no label as its twin has none",
+            sh("class Bx<T> { v: T }\nfn main() {\n    let _x: any Sh = En.A\n    let _b: Bx<any Sh> = Bx(v: 1)\n}"),
+            (7, 32, "1"),
+            vec![],
+        ),
+        (
+            "the first let of an array type in issue 645",
+            "interface Sh {}\nclass C {}\nfn main() {\n    let _x: [any Sh] = [1]\n}".to_string(),
+            (4, 25, "1"),
+            vec![(4, 13, "[any Sh]", "declared as `[any Sh]` here")],
+        ),
+        (
+            "the second let of an array type in issue 645",
+            "interface Sh {}\nclass C {}\nclass K: Sh {}\nfn main() {\n    let _x: [any Sh] = [K()]\n    let _y: [any Sh] = [C()]\n}".to_string(),
+            (6, 25, "C()"),
+            vec![(6, 13, "[any Sh]", "declared as `[any Sh]` here")],
+        ),
+        (
+            "an `if` join of an `any` parameter of another function, issue 377",
+            format!("{NAMED}    let _a = if c {{ n }} else {{ 1 }}\n    print(show(n))\n}}"),
+            (18, 32, "1"),
+            vec![(18, 21, "n", "this branch gives the type `any Named`")],
+        ),
+        (
+            "an `if` join of a `Some`, issue 377",
+            format!("{NAMED}    let _b = if c {{ Some(n) }} else {{ 1 }}\n    print(show(n))\n}}"),
+            (18, 38, "1"),
+            vec![(18, 21, "Some(n)", "this branch gives the type `(any Named)?`")],
+        ),
+    ]
+}
+
+/// Every conversion to an `any` type that fails with E0154 labels the place that the `any` type
+/// comes from: the same fact as the E0032 of the same place, or no label when that has none. It
+/// does not label the first place in the file that writes the same `any` type. A red run lists
+/// each red row.
+#[test]
+fn a_conversion_that_fails_should_label_where_its_any_type_comes_from() {
+    let mut red = Vec::new();
+    for (row, src, (line, col, text), secondary) in label_rows() {
+        let (_, ds) = checked(&src);
+        let found: Vec<_> = ds
+            .iter()
+            .map(|d| {
+                let labels: Vec<_> = d
+                    .secondary()
+                    .iter()
+                    .map(|(span, label)| {
+                        let (line, col) = at(&src, *span);
+                        (line, col, &src[span.range()], label.as_str())
+                    })
+                    .collect();
+                (d.code(), at(&src, d.span()), &src[d.span().range()], labels)
+            })
+            .collect();
+        let wanted = vec![(Code::NotConform, (line, col), text, secondary)];
+        if found != wanted {
+            red.push(format!(
+                "row `{row}`:\n  found {found:?}\n  wanted {wanted:?}"
+            ));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+/// The second `let` of one `any` type names its own type, not the first `let`'s.
+#[test]
+fn a_second_let_of_one_any_type_should_label_its_own_type() {
+    let src =
+        format!("{SH}fn main() {{\n    let _x: [any Sh] = [En.A]\n    let _y: [any Sh] = [1]\n}}");
+    diagnostic(&src, Code::NotConform, (6, 25, "1"), &[(6, 13)]);
 }
