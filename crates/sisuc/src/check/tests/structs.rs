@@ -313,10 +313,6 @@ fn chain_write_on_a_struct_should_report_by_its_root() {
         assert!(d.fixes().is_empty(), "row `{row}`: {d:?}");
         assert!(d.help().is_none(), "row `{row}`: {d:?}");
     }
-    // A class `?.` gives the class form: E0062 at the optional object, with its unwrap help.
-    let src = chain("let c: C? = None", "c?.p.n = 1");
-    let class = only("c?.p.n", &src, MayBeNone, (l, 5));
-    assert!(class.help().is_some(), "{class:?}");
     // A root that cannot change.
     let rooted = [
         ("let o", chain("let o: In? = None", "o?.n = 1")),
@@ -788,7 +784,7 @@ fn failed_struct_write_should_keep_its_root_reassigned() {
 /// E0062 of the optional value that `?.` gives, as a write of a scalar element is. Only a `?.`
 /// that takes out a struct value gives the struct form.
 #[test]
-fn class_chain_write_should_report_its_optional_array() {
+fn class_chain_write_should_report_its_optional_value() {
     // `main` declares the one local that the write names.
     let program = |body: &str| {
         let local = if body.starts_with('w') {
@@ -834,6 +830,9 @@ fn class_chain_write_should_report_its_optional_array() {
         red.len(),
         red.join("\n")
     );
+    // The class form has the unwrap help of the optional value.
+    let (_, ds) = checked(&program("c?.s.k = 2"));
+    assert!(matches!(&ds[..], [d] if d.help().is_some()), "{ds:?}");
 }
 
 /// GIVEN a `let`, a plain parameter and a pattern binding of a struct `T`. WHEN `t.n = 2` and
