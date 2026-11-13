@@ -242,9 +242,10 @@ def unmeasured(path: str, number: int, read_line: Callable[[str, int], str]) -> 
     That is an assert, or a line that an assert spans, or a `let ... else {` whose body is
     an invariant panic, as in the region lists. Comments do not count.
 
-    shortcut: a statement ends at a line that ends in `;`, `{` or `}`, or at an assert that
-    closes before line `number`. The walk goes on over a commented-out line, so it can hide a
-    branch below commented-out code. No such line exists in the repository now.
+    shortcut: a statement ends at a line that ends in `;`, `{` or `}`. The walk goes on past
+    an assert that closes before line `number`, because an outer assert can still be open. It
+    goes on over a commented-out line too, so it can hide a branch below commented-out code.
+    No such line exists in the repository now.
     """
     code = code_of(read_line(path, number))
     if ASSERT.search(code) or INVARIANT.search(code):
@@ -262,7 +263,8 @@ def unmeasured(path: str, number: int, read_line: Callable[[str, int], str]) -> 
             rest = text[found.end() :] + "".join(
                 code_of(read_line(path, n)) for n in range(before + 1, number)
             )
-            return not closes(rest)
+            if not closes(rest):
+                return True
     return False
 
 
