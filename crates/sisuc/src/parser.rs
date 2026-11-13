@@ -8546,6 +8546,8 @@ mod tests {
             ),
             // After a sub-pattern in a sub-pattern, the outer one is still a sub-pattern.
             (in_arm("Some(S(x) | R { w }) => 1"), Code::PatternForm, 3, 23),
+            // After a sub-pattern, the arm is the place again: `|` and then the braced name.
+            (in_arm("E.P(x, y) | a { } => 1"), Code::PatternForm, 3, 23),
             // An `if` after a line break starts a statement, not a guard.
             ("    let a { }\n    if true { }".into(), Code::Expected, 2, 11),
             // A token ends a pattern only in its own place. `=>`, `->` and `if` end the pattern
@@ -9066,6 +9068,9 @@ mod tests {
         assert!(fixed.contains("E.P(x\n            | y) => 1"), "{fixed}");
         // An arm that is not a sub-pattern keeps its split.
         let src = in_main(&in_arm("1\n        | 2 => 1"));
+        assert_eq!(parse_diagnostic(&src).code(), Code::ArmSplit, "{src}");
+        // After a sub-pattern, the arm is the place again, so the split arm stays.
+        let src = in_main(&in_arm("E.P(x, y)\n        | E.Q => 1"));
         assert_eq!(parse_diagnostic(&src).code(), Code::ArmSplit, "{src}");
     }
 

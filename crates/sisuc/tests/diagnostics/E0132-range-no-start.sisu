@@ -1,0 +1,19 @@
+// GIVEN a range pattern in another language's form that has no start: `..<5` and `...5`
+// WHEN `sisu check` runs on it
+// THEN it reports E0132 at 7:9 and 14:9
+// AND the message writes the missing start as `start`
+fn exclusive(n: i64) {
+    match n {
+        ..<5 => print(1)
+        _ => print(2)
+    }
+}
+
+fn ellipsis(n: i64) {
+    match n {
+        ...5 => print(1)
+        _ => print(2)
+    }
+}
+
+fn main() {}
