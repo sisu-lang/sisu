@@ -2679,3 +2679,18 @@ fn write_to_a_copy_should_read_no_initializer_text_until_it_warns() {
     assert_eq!(copy_warnings(src).len(), 1);
     assert_eq!(COPY_TEXT.get(), "xs[0]".len());
 }
+
+/// GIVEN a user enum and then `struct L<T> { v: T; next: L<T>? }`. WHEN the program checks. THEN
+/// `next` names `L` applied to its own parameter, so it ranks `Own`; `v` is a bare parameter. The
+/// struct node comes after every enum node, the prelude's too.
+#[test]
+fn self_applied_struct_field_should_rank_own() {
+    let src = "enum E { A }\nstruct L<T> { v: T; next: L<T>? }\nfn main() {\n    \
+               let l = L(v: 1, next: None)\n    print(l.v)\n    print(l.next == None)\n    \
+               print(E.A)\n}";
+    let (program, diagnostics) = crate::front_end::checked(src);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let l = (program.structs.iter().find(|s| s.name == "L")).expect("`L` should be a struct");
+    let ranks: Vec<tir::Rank> = l.fields.iter().map(|f| f.rank).collect();
+    assert_eq!(ranks, [tir::Rank::Never, tir::Rank::Own]);
+}
