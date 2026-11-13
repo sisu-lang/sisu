@@ -1,0 +1,11 @@
+// GIVEN a `match` whose arm is the range pattern `..2`, with no start
+// WHEN `sisu check` runs on it
+// THEN it reports E0011 at the range, 7:9
+// AND the help writes the missing bound as `start`
+fn main() {
+    let x = 3
+    match x {
+        ..2 => print("low")
+        _ => print("other")
+    }
+}

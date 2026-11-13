@@ -1,0 +1,17 @@
+// GIVEN a braced pattern whose sub-pattern has `|` at the start of the next line
+// WHEN `sisu check` runs on it
+// THEN it reports E0123 at the `{`, 11:13, with a message on one line
+// AND the fix writes the alternatives in `( )` as they are written
+enum E {
+    P(x: i64, y: i64)
+}
+
+fn main() {
+    let e = E.P(x: 1, y: 2)
+    match e {
+        E.P {
+            x
+            | y
+        } => print(1)
+    }
+}

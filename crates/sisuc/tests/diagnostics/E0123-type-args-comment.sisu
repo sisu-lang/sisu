@@ -1,0 +1,15 @@
+// GIVEN a pattern with type arguments and a comment inside them
+// WHEN `sisu check` runs on it
+// THEN it reports E0123 over the type arguments, 11:10
+// AND it gives no fix, because the fix would delete the comment
+enum E {
+    P(x: i64, y: i64)
+}
+
+fn main() {
+    let e = E.P(x: 1, y: 2)
+    match e {
+        E<i64, // c
+            i64>.P(x, y) => print(x)
+    }
+}

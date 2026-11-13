@@ -8340,10 +8340,10 @@ mod tests {
 
     /// GIVEN a name followed by `{ ... }` in each place where a pattern stands
     /// WHEN the parser reads it
-    /// THEN it reports the braced pattern (E0123) only when a pattern can end at the `}` that
-    /// closes the `{`: the token after it is `=`, `=>`, `->`, `if`, `|` or `:`, or, in a
-    /// sub-pattern, `,`, `)` or `}`, or a line break and then `=>`, `|` or, in a sub-pattern, `,`
-    /// or `}`
+    /// THEN it reports the braced pattern (E0123) only when a pattern of that place can end at the
+    /// `}` that closes the `{`: in a `let`, `if let` or `while let`, `=`, `:` or `|`; in a match
+    /// arm, `=>`, `->`, `if` or `|`, or a line break and then `=>` or `|`; in a sub-pattern, `,`,
+    /// `)`, `}` or `|`, or a line break and then `,`, `}` or `|`
     /// AND otherwise it reports the `{` as a stray token (E0011) with no fix, as `let a { }` does,
     /// before it reads anything inside the braces
     #[test]
@@ -8408,6 +8408,25 @@ mod tests {
             (in_arm("Some(S(x) | R { w }) => 1"), Code::PatternForm, 3, 23),
             // An `if` after a line break starts a statement, not a guard.
             ("    let a { }\n    if true { }".into(), Code::Expected, 2, 11),
+            // A token ends a pattern only in its own place. `=>`, `->` and `if` end the pattern
+            // of an arm. `=` and `:` end the pattern of a `let`. The place of an outer pattern
+            // does not count in a sub-pattern or in an interpolation.
+            ("    if let a { } if true { }".into(), Code::Expected, 2, 14),
+            ("    if let a { } -> 1".into(), Code::Expected, 2, 14),
+            ("    if let a { } => 1".into(), Code::Expected, 2, 14),
+            ("    while let a { } if true { }".into(), Code::Expected, 2, 17),
+            ("    let a { } if true".into(), Code::Expected, 2, 11),
+            ("    let a { } -> 1".into(), Code::Expected, 2, 11),
+            ("    if let a { }\n    => 1".into(), Code::Expected, 2, 14),
+            (in_arm("a { } = 1 => 2"), Code::Expected, 3, 11),
+            (in_arm("a { } : i64 => 2"), Code::Expected, 3, 11),
+            (in_arm("E.P(a { } if true) => 2"), Code::Expected, 3, 15),
+            (
+                in_arm(r#"E.P { "a{ f(if let b { }) }" } => print(1)"#),
+                Code::Expected,
+                3,
+                30,
+            ),
             // A guard on the next line: the `{` is the mistake.
             (in_arm("E.P { x }\n        if x > 0 => print(x)"), Code::Expected, 3, 13),
             // A pattern ends at the `}`: one row for each token of the rule.
@@ -8515,6 +8534,16 @@ mod tests {
                 Code::PatternForm,
                 2,
                 11,
+            ),
+            // A `|` ends the pattern of a `let`, and `)` or `,` ends a sub-pattern of a `let`.
+            ("    if let a { } | b = e { }".into(), Code::PatternForm, 2, 14),
+            ("    if let E.P(a { }, b) = e { }".into(), Code::PatternForm, 2, 18),
+            // An arm in an interpolation is an arm again: `=>` ends its pattern.
+            (
+                in_arm(r#"E.P { "a{ match n { b { } => 1 } }" } => 1"#),
+                Code::PatternForm,
+                3,
+                31,
             ),
             // A line break and then `=>` or `|`: neither can start a statement.
             (in_arm("E.P { x }\n        => print(x)"), Code::PatternForm, 3, 13),
@@ -8856,6 +8885,50 @@ mod tests {
         assert!(now.contains("// c"), "{now}");
     }
 
+    /// GIVEN a braced pattern whose sub-pattern is continued by a line that starts with `|`, with
+    /// a line break or a comment before the `|`
+    /// WHEN the parser reads it
+    /// THEN it joins the alternatives and reports the braces (E0123) at the `{`, with one fix
+    /// AND the fixed source parses, and keeps the comment
+    /// AND in an arm, a line break and then `|` is still the split arm (`ArmSplit`); the message
+    /// has one line (the fixture E0123-braces-pipe-line pins the text)
+    #[test]
+    fn a_line_break_before_a_pipe_in_braces_should_join_the_alternatives() {
+        let rows = [
+            in_main(&in_arm(
+                "E.P {\n            x\n            | y\n        } => 1",
+            )),
+            in_main("    let E.P {\n        x\n        | y\n    } = e"),
+            in_main(&in_arm("E.P { x\n            | y, z } => 1")),
+            in_main(&in_arm("E.P { x // c\n            | y } => 1")),
+            in_main(&in_arm("E.P { x\n            | y\n            | z } => 1")),
+            in_main(&in_arm("E.P { x,\n            y\n            | z } => 1")),
+            // Kept: a `|` at the end of the line already joined them.
+            in_main(&in_arm("E.P { x |\n            y } => 1")),
+        ];
+        for src in rows {
+            let d = parse_diagnostic(&src);
+            assert_eq!(d.code(), Code::PatternForm, "{src}");
+            assert_eq!(&src[d.span().range()], "{", "{src}");
+            assert!(src[..d.span().start()].ends_with("E.P "), "{src}");
+            assert_eq!(d.fixes().len(), 1, "{src}");
+            let fixed = apply_fix(&src, &d);
+            assert!(parsed(&fixed).diagnostics.is_empty(), "{fixed}");
+            if src.contains("// c") {
+                assert!(fixed.contains("// c"), "{fixed}");
+            }
+        }
+        // The fix writes the sub-pattern as written.
+        let src = in_main(&in_arm(
+            "E.P {\n            x\n            | y\n        } => 1",
+        ));
+        let fixed = apply_fix(&src, &parse_diagnostic(&src));
+        assert!(fixed.contains("E.P(x\n            | y) => 1"), "{fixed}");
+        // An arm that is not a sub-pattern keeps its split.
+        let src = in_main(&in_arm("1\n        | 2 => 1"));
+        assert_eq!(parse_diagnostic(&src).code(), Code::ArmSplit, "{src}");
+    }
+
     /// `arm` as an arm of a `match`, before the arm `None`.
     fn before_none(arm: &str) -> String {
         format!("fn main() {{\n    match o {{\n        {arm}\n        None => print(0)\n    }}\n}}")
@@ -8947,6 +9020,134 @@ mod tests {
         }
     }
 
+    /// GIVEN a `case` and then a token that starts no pattern, with or without a line break
+    /// AND a `case` and then a `let` first
+    /// WHEN the parser reads the arm
+    /// THEN `case` is a binding, or (E0122) it has a fix only when a pattern follows it
+    /// AND a fix that is there gives a source that parses
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        clippy::type_complexity,
+        reason = "one row per form, so the table reads in one place"
+    )]
+    fn case_with_no_pattern_after_it_should_not_lose_the_arm() {
+        // (arm, the one diagnostic with its position or none, fixes, the code of the fixed source)
+        let rows: [(&str, Option<(Code, (usize, usize))>, usize, Option<Code>); 17] = [
+            (
+                "case\n        | x => print(1)",
+                Some((Code::ArmSplit, (4, 9))),
+                1,
+                None,
+            ),
+            (
+                "case\n        if true => print(1)",
+                Some((Code::ArmSplit, (4, 9))),
+                1,
+                None,
+            ),
+            ("case | x => print(1)", None, 0, None),
+            ("case if true => print(1)", None, 0, None),
+            (
+                "case -> print(1)",
+                Some((Code::MatchIdiom, (3, 14))),
+                1,
+                None,
+            ),
+            (
+                "case let => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                0,
+                None,
+            ),
+            (
+                "case\n        let => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                0,
+                None,
+            ),
+            (
+                "case let\n        | x => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                0,
+                None,
+            ),
+            // Kept: a pattern follows.
+            (
+                "case 1 => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                1,
+                None,
+            ),
+            (
+                "case .P(x, y) => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                1,
+                None,
+            ),
+            (
+                "case let .P(x, y) => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                1,
+                None,
+            ),
+            (
+                "case // c\n        1 => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                1,
+                None,
+            ),
+            (
+                "case ..2 => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                1,
+                Some(Code::Expected),
+            ),
+            // Kept: a `;` ends the arm, so the fix stays.
+            (
+                "case; 1 => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                1,
+                None,
+            ),
+            // Kept: a binding.
+            ("case => print(1)", None, 0, None),
+            (
+                "case\n        => print(1)",
+                Some((Code::ArmSplit, (4, 9))),
+                1,
+                None,
+            ),
+            ("case if case > 0 => print(case)", None, 0, None),
+        ];
+        for (arm, want, fixes, fixed_code) in rows {
+            let src = before_none(arm);
+            let found = parsed(&src).diagnostics;
+            let Some((code, position)) = want else {
+                assert!(found.is_empty(), "{src}: {found:?}");
+                continue;
+            };
+            let [d] = found.as_slice() else {
+                panic!("{src}: expected one diagnostic, got {found:?}");
+            };
+            assert_eq!(
+                (d.code(), line_col(&src, d.span().start())),
+                (code, position),
+                "{src}"
+            );
+            assert_eq!(d.fixes().len(), fixes, "{src}");
+            if fixes > 0 {
+                let fixed = apply_fix(&src, d);
+                let after: Vec<_> = parsed(&fixed)
+                    .diagnostics
+                    .iter()
+                    .map(Diagnostic::code)
+                    .collect();
+                assert_eq!(after, fixed_code.into_iter().collect::<Vec<_>>(), "{fixed}");
+            }
+        }
+    }
+
     /// The text that each edit of each fix of the one error of `src` removes, with the check that
     /// no edit replaces it with text.
     fn removed_text(src: &str) -> Vec<String> {
@@ -8996,6 +9197,58 @@ mod tests {
         ];
         for (src, want) in rows {
             assert_eq!(removed_text(src), want, "{src}");
+        }
+    }
+
+    /// GIVEN a pattern with type arguments or labels
+    /// AND a comment in the text that its fix removes: in the `<...>`, or before a label's `:`
+    /// WHEN the parser reports it (E0123)
+    /// THEN the diagnostic has no fix, because the fix would delete the comment
+    /// AND a comment that the fix does not remove, after the `:` or the type arguments, keeps
+    /// the fix
+    /// AND the fixed source keeps that comment
+    #[test]
+    fn a_pattern_fix_should_not_delete_a_comment() {
+        let rows = [
+            (
+                in_main(&in_arm("E<i64, // c\n            i64>.P(x, y) => print(x)")),
+                (3, 10),
+            ),
+            (
+                in_main("    if let E<i64, // c\n        i64>.P(x, y) = e { }"),
+                (2, 13),
+            ),
+            (
+                in_main(&in_arm("E.P(x // c\n            : a, y: b) => print(a)")),
+                (3, 13),
+            ),
+            (
+                in_main(&in_arm(
+                    "E.P(x\n            // c\n            : a, y: b) => print(a)",
+                )),
+                (3, 13),
+            ),
+        ];
+        for (src, position) in rows {
+            let d = parse_diagnostic(&src);
+            assert_eq!(
+                (d.code(), line_col(&src, d.span().start())),
+                (Code::PatternForm, position),
+                "{src}"
+            );
+            assert!(d.fixes().is_empty(), "{src}");
+        }
+        let kept = [
+            in_main(&in_arm("E.P(x: // c\n            a, y: b) => print(a)")),
+            in_main(&in_arm(
+                "E<i64, i64> // c\n            .P(x, y) => print(x)",
+            )),
+        ];
+        for src in kept {
+            let d = parse_diagnostic(&src);
+            assert_eq!(d.code(), Code::PatternForm, "{src}");
+            assert_eq!(d.fixes().len(), 1, "{src}");
+            assert!(apply_fix(&src, &d).contains("// c"), "{src}");
         }
     }
 
@@ -10025,6 +10278,67 @@ mod tests {
             expr_err("f(0..9223372036854775808)"),
             (Code::IntegerTooLarge, 1, 18)
         );
+    }
+
+    /// GIVEN a range pattern with one bound, a literal or a name, in each place that has patterns
+    /// WHEN the parser reads it
+    /// THEN it reports one error (E0011) over the operator and the bound, with no fix
+    /// AND a range whose end is no bound keeps its error, and a foreign operator is E0132
+    /// AND the fixtures E0011-range-pattern-no-start, -no-end and -forms pin the text
+    #[test]
+    fn a_range_pattern_with_one_bound_should_name_the_missing_bound() {
+        let arm = |arm: &str| {
+            format!(
+                "fn f(e: E, n: i64, c: char, lo: i64) {{\n    match n {{\n        {arm}\n        _ => print(2)\n    }}\n}}"
+            )
+        };
+        let body = |stmts: &str| format!("fn f(x: i64) {{\n{stmts}\n}}");
+        // (source, code, the text under the span)
+        let rows: Vec<(String, Code, &str)> = vec![
+            (arm("..2 => print(1)"), Code::Expected, "..2"),
+            (arm("..=2 => print(1)"), Code::Expected, "..=2"),
+            (arm("5.. => print(1)"), Code::Expected, "5.."),
+            (arm("5..= => print(1)"), Code::Expected, "5..="),
+            (arm(".. => print(1)"), Code::Expected, ".."),
+            (arm("1 | ..2 => print(1)"), Code::Expected, "..2"),
+            (arm("5.. | 7 => print(1)"), Code::Expected, "5.."),
+            (arm("5.. if true => print(1)"), Code::Expected, "5.."),
+            (arm("5..\n        => print(1)"), Code::Expected, "5.."),
+            (arm("E.P(..2, y) => print(1)"), Code::Expected, "..2"),
+            (arm("E.P(5.., y) => print(1)"), Code::Expected, "5.."),
+            (arm("E.P(x, 5..) => print(1)"), Code::Expected, "5.."),
+            (arm("'a'.. => print(1)"), Code::Expected, "'a'.."),
+            (arm("..'z' => print(1)"), Code::Expected, "..'z'"),
+            (arm("lo.. => print(1)"), Code::Expected, "lo.."),
+            (arm("..lo => print(1)"), Code::Expected, "..lo"),
+            (arm("-5.. => print(1)"), Code::Expected, "-5.."),
+            (arm("..-5 => print(1)"), Code::Expected, "..-5"),
+            (
+                body("    let 5.. = x else { return }"),
+                Code::Expected,
+                "5..",
+            ),
+            (body("    if let ..2 = x { }"), Code::Expected, "..2"),
+            (body("    while let 5.. = x { }"), Code::Expected, "5.."),
+            // A bound that is no literal or name: the range has the one bound that is there.
+            (arm("..foo(1) => print(1)"), Code::Expected, ".."),
+            (arm("..- => print(1)"), Code::Expected, ".."),
+            (arm(".. <5 => print(1)"), Code::Expected, ".."),
+            // Unchanged: the end is a call, so the literal error names it.
+            (arm("5..foo(1) => print(1)"), Code::Expected, "foo"),
+            // A foreign operator with no start is E0132, as after a start.
+            (arm("..<5 => print(1)"), Code::ForeignRange, "..<"),
+            (arm("...5 => print(1)"), Code::ForeignRange, "..."),
+            // Unchanged.
+            (arm("5..< => print(1)"), Code::ForeignRange, "..<"),
+            (arm("5... => print(1)"), Code::ForeignRange, "..."),
+        ];
+        for (src, code, under) in rows {
+            let d = parse_diagnostic(&src);
+            assert_eq!(d.code(), code, "{src}");
+            assert_eq!(&src[d.span().range()], under, "{src}");
+            assert!(d.fixes().is_empty(), "{src}");
+        }
     }
 
     /// `xs[1:3]` in Python and Go: each form is one E0132 at the `:`, with a fix, and the range it
