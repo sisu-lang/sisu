@@ -155,12 +155,15 @@ each must fail, and for the stated cause.
 
 A large fix round of a final diff runs one more mutation test ([final-diff.md](final-diff.md), A large fix round).
 
-When you fixed a blocking finding, review again. In a diff, a fix range
-that changes only Markdown files, and none under `docs/reference/`,
-`docs/diagnostics/` or `.agents/skills/`, gets no second review. `sisu` or
-its tests read the first two, and an agent follows a skill. Read the fix
-diff yourself, and name it in the report. A spec or a plan always gets its
-second review. Otherwise, write `RUN/focus-<round>.md`
+When you fixed a blocking finding, review again. There is one exception:
+in a diff, a fix range that changes only Markdown files gets no second
+review. The exception does not apply to `CODING_STANDARDS.md`, `AGENTS.md`,
+`docs/register.md`, or a file under `docs/adr/`, `docs/reference/`,
+`docs/diagnostics/` or `.agents/skills/`. `sisu` or its tests read the
+reference and the diagnostics, and agents follow the others as rules. For
+the exception, read the fix diff yourself, and name it in the report. A
+spec or a plan always gets its second review. For a second review, write
+`RUN/focus-<round>.md`
 with the fixes and what you probed. Run `review_round.py prepare` with
 the round's target (for a diff, the fix range) and `--round <round>`. It writes
 `RUN/brief-<round>.md` and takes `RUN/rulings-<round - 1>.md` and each earlier report from `RUN`.
