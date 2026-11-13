@@ -69,6 +69,12 @@ class Box<A, B> {
 }
 type Alias<T> = Box<T, T.Item>
 type Bqa<T> = Bq<T>
+enum Bv<T> {
+    B(v: T)
+    E
+}
+type Bva<T> = Bv<T?>
+fn unbv<T>(b: Bv<T>) -> T { unbv(b) }
 fn nothing<T>() -> T? { None }
 fn nn<T>() -> T?? { None }
 fn n3<T>() -> T??? { None }
@@ -174,6 +180,9 @@ Bx().none()
 nn()
 n3()
 mk()
+# A `-` and a fill of a call whose result type waits.
+-mk()
+[mk(); 2]
 Some(None)
 Some(Some(None))
 Some(nothing())
@@ -202,6 +211,12 @@ OP.Some(p, p)
 Option.Some(n: p)
 Bqa(v: p, w: 1)
 Bqa<Fox>(1)
+# A variant of an enum through an alias that holds an optional, bare and under a call that waits.
+Bva.E
+Bva.B(v: None)
+unbv(Bva.E)
+unbv(Bva.B(v: None))
+unbv(Bva.B(v: p))
 # A `Some` whose argument is poisoned (E0062), bare, with a written list and through `Option`.
 Some(ob.wrap(1))
 Some<i64>(ob.wrap(1))
@@ -432,3 +447,12 @@ let _a = if let Some(_x) = $ { 1 } else { 2 }
 let _a = loop { break $ }
 let _a = loop { if c { break }; break $ }
 let _y: f64 = "b" + $
+# An argument of a generic call under a written context: the value of an array fill, a side of an
+# arithmetic operator, the operand of `-`, a later element, and the right side of `==`, which
+# hints the optional of the left side.
+let _r: Result<[u8], bool> = Ok([$; 2])
+let _r: Result<u8, bool> = Ok(1 + $)
+let _r: Result<u8, bool> = Ok($ + 1)
+let _r: Result<u8, bool> = Ok(-$)
+let _r: Result<[u8], bool> = Ok([1, $])
+let _x = k == id($)

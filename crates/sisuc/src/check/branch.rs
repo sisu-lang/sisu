@@ -1,8 +1,8 @@
 //! Branches: `if`, `if let` and the join of branch types.
 
-use super::any::{AnyJoin, is_target};
+use super::any::{AnyJoin, SEED, is_target};
 use super::expr::fits;
-use super::generic::{Ahead, Rank};
+use super::generic::{Ahead, Rank, Ranked};
 use super::pattern::{LetPattern, arm_key};
 use super::reports::Reported;
 use super::{
@@ -259,7 +259,7 @@ impl Checker<'_> {
         // Each branch converts to an `any` type that is expected, as a value does.
         if let Some(want) = expected.ty() {
             for (block, source) in blocks.iter_mut().zip(sources) {
-                self.any_block(block, want, source.span);
+                self.any_block(block, want, source.span, expected.origin());
             }
         }
         let (joined, error, failed) =
@@ -272,7 +272,7 @@ impl Checker<'_> {
                     if block_type(block).is_some_and(|t| t != ty && t != Type::NEVER) {
                         if is_target(ty) {
                             unwrap_some_object(block, ty);
-                            self.any_block(block, ty, source.span);
+                            self.any_block(block, ty, source.span, Origin::None);
                         } else {
                             wrap_block(block, ty);
                         }
@@ -407,9 +407,22 @@ impl Checker<'_> {
                 never: false,
             }
             .into(),
-            AnyJoin::Leaves { ty, member: (i, t) } => {
+            AnyJoin::Leaves {
+                ty,
+                giver,
+                member: (i, t),
+            } => {
+                // The giver is the seed, the sibling's type, when it is no branch.
+                let given = if giver == SEED {
+                    siblings.map_or(Origin::None, |(_, origin)| origin)
+                } else {
+                    types[giver].map_or(Origin::None, |ty| Origin::Branch {
+                        at: sources[giver].span,
+                        ty,
+                    })
+                };
                 let (at, tail, want, got) = self.reported(&sources[i], &blocks[i], ty, t);
-                self.leaves_any(at, tail, want, got, Origin::None)
+                self.leaves_any(at, tail, want, got, given)
             }
             AnyJoin::Fails { earlier, later } => {
                 // A hint that is no `any` type names the branch that leaves it, as an expected
@@ -553,7 +566,8 @@ pub(super) struct Branch<'a> {
     rank: Rank,
     optional: bool,
     /// Whether the type of the value comes only from the defaults of its integer literals
-    /// (`Rank::Literal`; see `rank_value` in `check/generic.rs`), as in `8`, `[8]` and `id(8)`.
+    /// (`Ranked::of_literals`; see `rank_value` in `check/generic.rs`), as in `8`, `[8]` and
+    /// `id(8)`. A value that only waited, such as `[mk(); 2]`, holds no literal.
     /// Only `join` under `Poisoned` reads it. `value_branch` sets it from the rank after
     /// `Ranked::sibling`, so `[8]` is `false` there; `hinted_elements` joins under `None`, where
     /// the flag is not read.
@@ -599,7 +613,7 @@ impl Checker<'_> {
         Branch {
             rank: ranked.map_or(Rank::Concrete, |ranked| ranked.sibling(fit)),
             optional: ranked.is_some_and(|ranked| ranked.optional),
-            literal: fit && ranked.is_some_and(|ranked| ranked.rank == Rank::Literal),
+            literal: fit && ranked.is_some_and(Ranked::of_literals),
             span: value_span(block),
             tail: tail(block),
         }
@@ -636,7 +650,7 @@ impl Checker<'_> {
         Branch {
             rank: ranked.map_or(Rank::Concrete, |ranked| ranked.sibling(fit)),
             optional: ranked.is_some_and(|ranked| ranked.optional),
-            literal: fit && ranked.is_some_and(|ranked| ranked.rank == Rank::Literal),
+            literal: fit && ranked.is_some_and(Ranked::of_literals),
             span: e.span,
             tail: Some(e),
         }

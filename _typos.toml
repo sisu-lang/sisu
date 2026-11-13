@@ -1,7 +1,8 @@
 # Did-you-mean tests need near-miss names such as `tru` or `wdth`.
 
 [default]
-# A test keeps a deliberate typo with a trailing `// spellchecker:disable-line`, in a Rust or Sisu file.
+# A test keeps a deliberate typo with a trailing `// spellchecker:disable-line`, in a Rust or Sisu
+# file.
 # The name of the xxHash author is in the notices of LLVM's embedded code.
 extend-ignore-re = ["(?Rm)^.*(#|//)\\s*spellchecker:disable-line$", "Yann Collet"]
 

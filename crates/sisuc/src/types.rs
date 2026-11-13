@@ -77,6 +77,8 @@ struct Names {
     assoc: bool,
     /// An `any` type.
     any: bool,
+    /// An optional, other than under an associated type.
+    optional: bool,
     /// How many levels of types nest in it: 0 for a type with no part. A list holds the most of
     /// its elements'.
     depth: u32,
@@ -90,6 +92,7 @@ impl Names {
             rejected: self.rejected || other.rejected,
             assoc: self.assoc || other.assoc,
             any: self.any || other.any,
+            optional: self.optional || other.optional,
             depth: self.depth.max(other.depth),
         }
     }
@@ -119,9 +122,14 @@ impl TypeKind {
                 rejected: i == REJECTED_INDEX,
                 ..Names::default()
             },
-            TypeKind::Array(ty) | TypeKind::Optional(ty) => ty.names().deeper(),
+            TypeKind::Array(ty) => ty.names().deeper(),
+            TypeKind::Optional(ty) => Names {
+                optional: true,
+                ..ty.names().deeper()
+            },
             TypeKind::Assoc(base, _, args, _) => Names {
                 assoc: true,
+                optional: false,
                 ..base.names().or(args.names()).deeper()
             },
             TypeKind::Any(_, args) => Names {
@@ -602,6 +610,11 @@ impl Type {
         self.names().assoc
     }
 
+    /// Whether the type is an optional, or holds one, other than under an associated type.
+    pub(crate) fn holds_optional(self) -> bool {
+        self.names().optional
+    }
+
     /// Whether the type holds an `any` type, anywhere inside it.
     pub(crate) fn holds_any(self) -> bool {
         self.names().any
@@ -946,6 +959,44 @@ mod tests {
         assert!(SUBSTITUTED.get() <= 2 * 21, "{} visits", SUBSTITUTED.get());
     }
 
+    /// An optional is found inside an array and the arguments of a class, an enum and an `any`
+    /// type, and nowhere else: not under an associated type, and not in a type parameter.
+    #[test]
+    fn holds_optional_should_find_an_optional_outside_an_associated_type() {
+        let optional = Type::optional(Type::I64);
+        let args = |ty| TypeArgs::intern(&[ty]);
+        let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        let assoc = |base, args| Type::intern(TypeKind::Assoc(base, InterfaceId(0), args, 0));
+        let class = |ty| Type::intern(TypeKind::Class(ClassId(0), args(ty)));
+        for (name, ty, want) in [
+            ("i64", Type::I64, false),
+            ("i64?", optional, true),
+            ("[i64?]", Type::array(optional), true),
+            ("[i64]", Type::array(Type::I64), false),
+            ("class of i64?", class(optional), true),
+            ("class of i64", class(Type::I64), false),
+            (
+                "enum of i64?",
+                Type::intern(TypeKind::Enum(EnumId(0), args(optional))),
+                true,
+            ),
+            ("param", param, false),
+            ("assoc over i64?", assoc(optional, TypeArgs::NONE), false),
+            (
+                "assoc with i64? arguments",
+                assoc(param, args(optional)),
+                false,
+            ),
+            (
+                "any of i64?",
+                Type::intern(TypeKind::Any(InterfaceId(0), args(optional))),
+                true,
+            ),
+        ] {
+            assert_eq!(ty.holds_optional(), want, "{name}");
+        }
+    }
+
     /// `t_20` has 21 distinct types but 2^20 paths to its leaf. A walk of it reads many entries; a
     /// flag read reads one.
     #[test]
@@ -961,7 +1012,7 @@ mod tests {
         let (holed, rejected, named, plain) = (
             doubled(hole, 20),
             doubled(rejected, 20),
-            doubled(param, 20),
+            doubled(Type::optional(param), 20),
             doubled(Type::I64, 20),
         );
         assert!(NAMED.get() <= 4 * 21, "{} kinds looked at", NAMED.get());
@@ -970,12 +1021,12 @@ mod tests {
             let answer = query(ty);
             (answer, READS.get())
         };
-        for (ty, hole, rejected_only, param) in [
-            (holed, true, false, true),
-            (rejected, true, true, true),
-            (mixed, true, false, true),
-            (named, false, false, true),
-            (plain, false, false, false),
+        for (ty, hole, rejected_only, param, optional) in [
+            (holed, true, false, true, false),
+            (rejected, true, true, true, false),
+            (mixed, true, false, true, false),
+            (named, false, false, true, true),
+            (plain, false, false, false, false),
         ] {
             assert_eq!(reads(Type::holds_hole, ty), (hole, 1));
             assert_eq!(
@@ -983,12 +1034,13 @@ mod tests {
                 (rejected_only, 1)
             );
             assert_eq!(reads(Type::has_param, ty), (param, 1));
+            assert_eq!(reads(Type::holds_optional, ty), (optional, 1));
         }
         // A walk of `t_20` for its depth would read the entries of every part.
         for (ty, depth) in [
             (holed, 20),
             (rejected, 20),
-            (named, 20),
+            (named, 21),
             (plain, 20),
             (mixed, 2),
         ] {

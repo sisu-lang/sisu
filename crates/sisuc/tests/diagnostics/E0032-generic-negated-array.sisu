@@ -1,0 +1,4 @@
+fn main() {
+    let r: Result<[u8], i64> = Ok(-[5; 2])
+    print(r)
+}

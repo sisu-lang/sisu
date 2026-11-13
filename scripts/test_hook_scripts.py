@@ -14,10 +14,10 @@ import session_url
 import test_names
 
 
-def run(main: Callable[[list[str]], int], text: str) -> tuple[int, str]:
-    """`main`'s exit code and output on one file holding `text`."""
+def run(main: Callable[[list[str]], int], text: str, name: str = "f.rs") -> tuple[int, str]:
+    """`main`'s exit code and output on one file `name` holding `text`."""
     with tempfile.TemporaryDirectory() as d:
-        path = Path(d, "f.rs")
+        path = Path(d, name)
         with path.open("w", encoding="utf-8") as f:
             f.write(text)
         out = io.StringIO()
@@ -35,6 +35,15 @@ class CommentWidth(unittest.TestCase):
     def test_a_comment_of_100_columns_and_long_code_pass(self) -> None:
         text = "    // " + "x" * 93 + '\nlet s = "' + "x" * 100 + '";\n'
         self.assertEqual(run(comment_width.main, text), (0, ""))
+
+    def test_a_hash_comment_over_100_columns_in_toml_and_yaml_should_fail(self) -> None:
+        for name in ("f.toml", "f.yml"):
+            code, _ = run(comment_width.main, "  # " + "x" * 97 + "\n", name)
+            self.assertEqual(code, 1, name)
+
+    def test_a_long_toml_value_and_a_long_rust_attribute_should_pass(self) -> None:
+        self.assertEqual(run(comment_width.main, 'a = "' + "x" * 100 + '"\n', "f.toml"), (0, ""))
+        self.assertEqual(run(comment_width.main, '#[doc = "' + "x" * 100 + '"]\n'), (0, ""))
 
 
 class RegistryDebugFormat(unittest.TestCase):

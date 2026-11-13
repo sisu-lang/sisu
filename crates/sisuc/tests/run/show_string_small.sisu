@@ -11,13 +11,14 @@ enum Expr {
 }
 
 fn main() {
-    let e = if iterations() > 100000 {
+    let n = iterations()
+    let e = if n > 100000 {
         Expr.Add(Expr.Num(1), Expr.Mul(Expr.Num(2), Expr.Num(3)))
     } else {
         Expr.Num(1)
     }
     let mut last = "-"
-    for _ in 0..iterations() {
+    for _ in 0..n {
         last = e.to_string()
     }
     print(last)

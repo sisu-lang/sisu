@@ -453,7 +453,7 @@ impl Checker<'_> {
         checked: Checked,
         want: Expectation,
     ) -> (Checked, bool) {
-        let (want, origin) = (want.ty(), want.origin());
+        let (hint, want, origin) = (want, want.ty(), want.origin());
         if let (Some(want), Some(got)) = (want, type_of(&checked))
             && want != got
         {
@@ -466,10 +466,10 @@ impl Checker<'_> {
                 };
                 return (wrapped, false);
             }
-            if let Ok(done) = self.any_conversion(e.span, checked, want, got) {
+            if let Ok(done) = self.any_conversion(e.span, checked, want, got, origin) {
                 return done;
             }
-            let d = self.mismatch(e.span, Some(e), want, got, origin);
+            let d = self.mismatch(e.span, Some(e), hint.shown(got), got, origin);
             return (Err(Poisoned::untyped(self.diagnostics.error(d))), true);
         }
         // A generic call that cannot meet `want` is reported with the type it found, as a
@@ -477,7 +477,7 @@ impl Checker<'_> {
         if let Some(want) = want
             && let Some(found) = self.misfit_type(&checked).filter(|&found| found != want)
         {
-            let d = self.mismatch(e.span, Some(e), want, found, origin);
+            let d = self.mismatch(e.span, Some(e), hint.shown(found), found, origin);
             let reported = self.diagnostics.error(d);
             self.settle_misfit(&checked);
             return (Err(Poisoned::untyped(reported)), true);

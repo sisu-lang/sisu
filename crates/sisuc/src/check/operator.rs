@@ -320,7 +320,8 @@ impl Checker<'_> {
     /// The first operand whose type names a type parameter is reported, as lacking `op` of its
     /// index, and makes the type `Error`. In a comparison, a leader that lacks `<` holds the
     /// other operands to its type, and its report waits: an operand of another type is the
-    /// first mistake.
+    /// first mistake. A type parameter beside an operand of another type in an ordering is
+    /// E0047, as in `==`: it is reported over both operands, with the types in source order.
     #[expect(
         clippy::too_many_lines,
         reason = "one pass over the operands, so the rules that depend on each other read in one place"
@@ -463,6 +464,14 @@ impl Checker<'_> {
             let start = self.diagnostics.mark();
             let value = match first.take_if(|(k, _)| *k == i) {
                 Some((_, operand)) => operand,
+                // A literal, or a generic call of literals such as `id(5)`, is checked alone, so
+                // its own type meets the parameter below: E0047.
+                None if !arithmetic
+                    && ranks[i] == Rank::Literal
+                    && want.is_some_and(Type::has_param) =>
+                {
+                    self.value(e, Expectation::None)
+                }
                 None if hinted => {
                     let hint = want.map_or(Expectation::Poisoned, |want| Expectation::Hint {
                         want,
@@ -487,7 +496,7 @@ impl Checker<'_> {
                 !arithmetic && leader == Some(i) && by_ord.is_none() && c.unordered(ty)
             };
             // A comparison lacks `<` for a type parameter of the leader's type, or when there is no
-            // leader type. A type parameter of another type is a mismatch, whatever its bounds.
+            // leader type. A type parameter of another type is E0047, whatever its bounds.
             let lacking = got.filter(|&ty| {
                 let param = ty.has_param()
                     && by_ord != Some(ty)
@@ -600,6 +609,30 @@ impl Checker<'_> {
                     deferred.absorb(self.diagnostics.take_since(start));
                     settled
                 }
+            } else if let Some((k, w, g)) = leader
+                .zip(want)
+                .zip(got)
+                .map(|((k, w), g)| (k, w, g))
+                .filter(|&(k, w, g)| {
+                    !arithmetic
+                        && k != i
+                        && (w.has_param() || g.has_param())
+                        && !fits(w, g)
+                        && !fits(g, w)
+                })
+            {
+                // A type parameter beside another type cannot be compared, whatever its bounds.
+                let (left, right) = if k < i { (w, g) } else { (g, w) };
+                let at = operands[k.min(i)].span.to(operands[k.max(i)].span);
+                let start = self.diagnostics.mark();
+                let kind = DiagnosticKind::CannotCompare {
+                    left: self.type_name(left),
+                    right: self.type_name(right),
+                    at,
+                };
+                let reported = self.diagnostics.error(kind);
+                deferred.absorb(self.diagnostics.take_since(start));
+                (Err(Poisoned::untyped(reported)), true)
             } else {
                 let start = self.diagnostics.mark();
                 let takes = takes.filter(|_| leader == Some(i));
@@ -1185,7 +1218,7 @@ impl Checker<'_> {
         // payload converts to.
         let other = match type_of(&other) {
             Some(got) if got != payload && self.any_join(payload, got) != Some(got) => {
-                match self.any_conversion(rhs.span, other, payload, got) {
+                match self.any_conversion(rhs.span, other, payload, got, Origin::None) {
                     // The conversion failed: its value is untyped, with the proof of its report.
                     Ok((failed, true)) => return failed,
                     Ok((converted, false)) | Err(converted) => converted,

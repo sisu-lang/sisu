@@ -1,0 +1,24 @@
+// GIVEN a `main` with three joins: a branch, an element and a `break`
+// AND each joins a value of type `any Sh` and a `D`, a class that does not conform to `Sh`
+// WHEN `sisu check` runs on it
+// THEN it reports E0154 at 21:32, with a label at 21:21, "this branch gives the type `any Sh`"
+// AND it reports E0154 at 22:18, with a label at 22:15, "this element gives the type `any Sh`"
+// AND it reports E0154 at 23:45, with a label at 23:28, "this `break` gave the loop the type `any Sh`"
+interface Sh {
+    fn n(self) -> i64
+}
+
+enum En: Sh {
+    A
+    fn n(self) -> i64 { 1 }
+}
+
+class D {}
+
+fn main() {
+    let c = true
+    let s: any Sh = En.A
+    let _a = if c { s } else { D() }
+    let _b = [s, D()]
+    let _c = loop { if c { break s }; break D() }
+}

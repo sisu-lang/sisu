@@ -4,7 +4,7 @@ error[E0154]: `Dot` does not conform to `Shape`
 10 |     let s: any Shape = Dot(x: 1.0)
    |            ---------   ^^^^^^^^^^^
    |            |
-   |            required by this `any Shape`
+   |            declared as `any Shape` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0154

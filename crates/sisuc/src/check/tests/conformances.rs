@@ -2786,8 +2786,8 @@ fn operators_should_report_a_missing_bound() {
         (
             "order of two parameters",
             "fn f<T, U>(a: T, b: U) -> bool { a < b < a }",
-            "b < a",
-            Code::Mismatch,
+            "a < b < a",
+            Code::CannotCompare,
         ),
         (
             "contains of another parameter",
@@ -4373,37 +4373,37 @@ fn comparisons_should_report_operands_of_two_types_before_a_missing_operator() {
         (
             "order of two parameters that have Ord",
             "fn f<T: Ord, U: Ord>(a: T, b: U) -> bool { a < b }",
-            vec![(Code::Mismatch, "b }")],
+            vec![(Code::CannotCompare, "a < b }")],
         ),
         (
             "at-least order of two parameters that have Ord",
             "fn f<T: Ord, U: Ord>(a: T, b: U) -> bool { a >= b }",
-            vec![(Code::Mismatch, "b }")],
+            vec![(Code::CannotCompare, "a >= b }")],
         ),
         (
             "a chain with a third operand of another parameter",
             "fn f<T: Ord, U: Ord>(a: T, b: T, c: U) -> bool { a < b < c }",
-            vec![(Code::Mismatch, "c }")],
+            vec![(Code::CannotCompare, "a < b < c }")],
         ),
         (
             "order of a number and a parameter that has Ord",
             "fn f<U: Ord>(a: i64, b: U) -> bool { a < b }",
-            vec![(Code::Mismatch, "b }")],
+            vec![(Code::CannotCompare, "a < b }")],
         ),
         (
             "order of a parameter and a number",
             "fn f<T>(a: T) -> bool { a < 5 }",
-            vec![(Code::Mismatch, "5")],
+            vec![(Code::CannotCompare, "a < 5")],
         ),
         (
             "order of a number and a parameter",
             "fn f<T>(a: T) -> bool { 5 < a }",
-            vec![(Code::Mismatch, "5")],
+            vec![(Code::CannotCompare, "5 < a")],
         ),
         (
             "order of two parameters that have no Ord",
             "fn f<T, U>(a: T, b: U) -> bool { a < b }",
-            vec![(Code::Mismatch, "b }")],
+            vec![(Code::CannotCompare, "a < b }")],
         ),
         (
             "order of an enum with no Ord and a number",
@@ -4418,27 +4418,27 @@ fn comparisons_should_report_operands_of_two_types_before_a_missing_operator() {
         (
             "order of a class of a parameter and a number",
             "class Box<T> {\n    v: T\n}\nfn f<T>(a: Box<T>, n: i64) -> bool { a < n }",
-            vec![(Code::Mismatch, "n }")],
+            vec![(Code::CannotCompare, "a < n }")],
         ),
         (
             "order of arrays of two parameters",
             "fn f<T, U>(a: [T], b: [U]) -> bool { a < b }",
-            vec![(Code::Mismatch, "b }")],
+            vec![(Code::CannotCompare, "a < b }")],
         ),
         (
             "order of a string and a parameter",
             "fn f<T>(a: T) -> bool { \"x\" < a }",
-            vec![(Code::Mismatch, "a }")],
+            vec![(Code::CannotCompare, "\"x\" < a")],
         ),
         (
             "order of a parameter that has Ord and a parameter with none",
             "fn f<T: Ord, U>(a: T, b: U) -> bool { b < a }",
-            vec![(Code::Mismatch, "a }")],
+            vec![(Code::CannotCompare, "b < a }")],
         ),
         (
             "a chain of a parameter and a number",
             "fn f<T>(a: T, b: T) -> bool { a < b < 5 }",
-            vec![(Code::Mismatch, "5")],
+            vec![(Code::CannotCompare, "a < b < 5")],
         ),
     ];
     for (row, src, expected) in rows {

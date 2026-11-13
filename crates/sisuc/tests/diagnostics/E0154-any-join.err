@@ -1,0 +1,26 @@
+error[E0154]: `D` does not conform to `Sh`
+  --> E0154-any-join.sisu:21:32
+   |
+21 |     let _a = if c { s } else { D() }
+   |                     -          ^^^
+   |                     |
+   |                     this branch gives the type `any Sh`
+
+error[E0154]: `D` does not conform to `Sh`
+  --> E0154-any-join.sisu:22:18
+   |
+22 |     let _b = [s, D()]
+   |               -  ^^^
+   |               |
+   |               this element gives the type `any Sh`
+
+error[E0154]: `D` does not conform to `Sh`
+  --> E0154-any-join.sisu:23:45
+   |
+23 |     let _c = loop { if c { break s }; break D() }
+   |                            -------          ^^^
+   |                            |
+   |                            this `break` gave the loop the type `any Sh`
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0154

@@ -2,7 +2,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::any::{AnyJoin, is_target, widen};
+use super::any::{AnyJoin, SEED, is_target, widen};
 use super::array::must_unwrap;
 use super::enums::unwrapped;
 use super::expr::{fits, local};
@@ -1418,8 +1418,20 @@ impl Checker<'_> {
             }
             AnyJoin::Leaves {
                 ty,
+                giver,
                 member: (i, got),
-            } => self.leaves_any(span(i), None, ty, got, Origin::None),
+            } => {
+                // The seed of a hinted loop, member `SEED`, is no `break`.
+                let given = match giver {
+                    SEED => Origin::None,
+                    0 => Origin::Break { at, ty: first },
+                    _ => Origin::Break {
+                        at: span(giver),
+                        ty: members[giver].1,
+                    },
+                };
+                self.leaves_any(span(i), None, ty, got, given)
+            }
             AnyJoin::Fails {
                 earlier: (_, want),
                 later: (i, got),
@@ -1596,13 +1608,14 @@ impl Checker<'_> {
                 return checked;
             }
             // A `Some` of an object is the mistake at the object, as in a branch.
+            let given = Origin::Break { at, ty: first };
             if let Ok(value) = &checked
                 && let Some((at, want, object)) = self.object_in_some(value, first)
             {
-                let d = self.leaves_any(at, None, want, object, Origin::None);
+                let d = self.leaves_any(at, None, want, object, given);
                 return Err(Poisoned::untyped(self.diagnostics.error(d)));
             }
-            let want = Expectation::Required(first, Origin::Break { at, ty: first });
+            let want = Expectation::Required(first, given);
             return self.against(v, checked, want).0;
         };
         let checked = if got == joined {

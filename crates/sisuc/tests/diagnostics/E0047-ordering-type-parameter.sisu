@@ -1,0 +1,29 @@
+fn literal_first<T: Ord>(a: T) -> bool {
+    5 < a
+}
+
+fn literal_last<T: Ord>(a: T) -> bool {
+    a < 5
+}
+
+fn chain_with_literals<T: Ord>(a: T) -> bool {
+    0 <= a < 5
+}
+
+fn two_parameters<T: Ord, U: Ord>(a: T, b: U) -> bool {
+    a < b
+}
+
+fn small_number_first<T: Ord>(a: T, b: u8) -> bool {
+    b < a
+}
+
+fn chain_ends_with_literal<T: Ord>(a: T, b: T) -> bool {
+    a < b < 5
+}
+
+fn chain_of_literals<T: Ord>(a: T) -> bool {
+    5 < 6 < a
+}
+
+fn main() {}

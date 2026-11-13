@@ -81,10 +81,19 @@ rest. Neither CI nor the hook fails on a slow test: wall-clock time depends on
 the machine and its load. A CI warning for a test you added or changed is a nit.
 The budget is for a CI runner, so a local time is only a hint. See one with
 `python3 scripts/slow_tests.py target/nextest/default/junit.xml --diff <base>`.
+CI keeps the report of each part of the `Test` job and of the `Coverage` run
+for 14 days. The artifacts are `junit-test-part-<part>` and `junit-coverage`.
+They give the time of each test on a runner.
 
 The pre-commit hook also runs `crates/sisuc/tests/architecture.rs` when a commit
 changes a file that the test reads. CI's lint job skips that hook, because its
 test job runs the test.
+
+CI runs the `Test` job in two parts, `Test (part 1 of 2)` and `Test (part 2 of 2)`.
+Each part runs half of the tests (`--partition slice:<part>/2`). The `Test`
+check, which the branch ruleset requires, passes only when both parts pass: a
+part that fails, is cancelled or does not start fails it. The test-name check and
+the filter check give the same result in each part, so only part 1 runs them.
 
 After the tests pass, `make test` checks each `test(...)` leaf of a filter in
 `.config/nextest.toml`, and CI does the same. A leaf that matches no test, such
@@ -100,6 +109,10 @@ quotes it before and after.
 Each target is one line in the `Makefile`, a script in `scripts/` or a cargo
 command. Run a script directly for the flags no target passes, such as
 `scripts/fuzz.sh --replay`.
+
+The `dev` and `test` profiles build `sisuc` at `opt-level = 1`, with debug
+assertions and overflow checks on, because the tests run the checker thousands
+of times.
 
 The end-to-end cases are files. The `cases` test binary runs one test per
 `.sisu` file in three directories under `crates/sisuc/tests`:
@@ -422,6 +435,10 @@ line `coverage: measured (HEAD <sha>)`, with `with uncommitted changes` when the
 tracked tree differs from HEAD, or when HEAD changes during the run. The review
 script (`diff_brief.py --coverage`) refuses coverage of another commit or of
 uncommitted changes.
+
+The run uses the nextest `ci` profile, unless `NEXTEST_PROFILE` names another
+one. The kills of the `ci` profile in `.config/nextest.toml` are sized for
+coverage.
 
 Programs that the tests compile link an uninstrumented runtime, whose two
 archives are built in `target/llvm-cov-runtime` and copied next to the
@@ -1660,7 +1677,7 @@ must accept any syntax those programs use.
 | `bench` | The benchmark programs, under `features/` the Sisu-only ones for CodSpeed, and under `compile/` the compile-speed units and the saved counts that the tests of `scripts/scaling.py` read. |
 | `selfhost` | The lexer in Sisu, `lexer.sisu`, which the tests check against `sisu build --emit tokens` (see [The growing proof program](#the-growing-proof-program)). |
 | `codspeed.yml`, `codspeed-main.yml` | The CodSpeed benchmark lists: `codspeed.yml` on every run, `codspeed-main.yml` on pushes to `main` only. |
-| `.coderabbit.yaml`, `.greptile/` | The settings of the CodeRabbit and Greptile pull request reviews. Their findings are advice; CI is the merge gate. A `@coderabbitai review` or `@greptileai` comment starts a review again. |
+| `.coderabbit.yaml`, `.greptile/` | The settings of the CodeRabbit and Greptile pull request reviews. Their findings are advice; CI is the merge gate. A `@coderabbitai review` or `@greptileai` comment starts a review again. Start a reply to a rejected finding with `@coderabbitai` and give the reason, so that CodeRabbit can keep it as a learning. With `chat.auto_reply` off, CodeRabbit answers only a reply that mentions it. When the reason holds only for this pull request, reply without the mention. |
 | `fuzz` | The fuzz targets, `front_end` and `program`, in their own Cargo workspace, run by `scripts/fuzz.sh`. |
 | `ruff.toml`, `pyrefly.toml` | The rules for each tracked Python file: Ruff for lint and format, Pyrefly for types. The Python hooks of `prek.toml` run them (see `CODING_STANDARDS.md`, Python). |
 | `Makefile` | The entry point for the commands; `make help` lists its targets. |

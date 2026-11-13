@@ -5,7 +5,7 @@ use super::unused_names::Owner;
 use crate::diagnostic::MismatchOrigin;
 use crate::source::Span;
 use crate::symbol::Symbol;
-use crate::tir::Type;
+use crate::tir::{Type, TypeKind};
 use std::rc::Rc;
 
 /// Where the type that a context requires or hints comes from: a declaration, an earlier value or
@@ -98,6 +98,22 @@ impl Expectation {
         match self {
             Self::Required(ty, _) | Self::Hint { want: ty, .. } => Some(ty),
             Self::None | Self::Poisoned => None,
+        }
+    }
+
+    /// The type that a report of the value `found` names as expected. It is `ty`, but for a hint
+    /// that adds a `?` to the type of its siblings: a `found` that is not optional is not at
+    /// fault for that `?`, so the report names `siblings`, as a plain branch does. The value is
+    /// still checked against `ty`. Without an expectation it is `found`.
+    pub(super) fn shown(self, found: Type) -> Type {
+        match self {
+            Self::Hint { want, siblings, .. }
+                if matches!(want.kind(), TypeKind::Optional(payload) if payload == siblings)
+                    && !matches!(found.kind(), TypeKind::Optional(_)) =>
+            {
+                siblings
+            }
+            _ => self.ty().unwrap_or(found),
         }
     }
 

@@ -11,7 +11,8 @@ hooks = [
   # The `.in`, `.out` and `.err` files of `run/` and `run-fail/` cases hold raw bytes as a
   # program reads or writes them: tabs, `\r`, `\0`, and a last line with no newline.
   { id = "trailing-whitespace", exclude = '^(crates/sisuc/tests|site/programs)/run(-fail)?/.*\.(in|out|err)$' },
-  # `no_trailing_newline.sisu`, `eof-quote.sisu`, `E0093-end-of-file.sisu` and `W0007-places.sisu` must not end in a newline, and the stderr snapshots end in one blank line.
+  # `no_trailing_newline.sisu`, `eof-quote.sisu`, `E0093-end-of-file.sisu` and `W0007-places.sisu`
+  # must not end in a newline, and the stderr snapshots end in one blank line.
   # `.config/notices/LLVM-LICENSE.txt` keeps the text as LLVM wrote it, with its blank last line.
   { id = "end-of-file-fixer", exclude = '^(crates/sisuc/tests/(diagnostics/(.*\.err|no_trailing_newline\.sisu|eof-quote\.sisu|E0093-end-of-file\.sisu|W0007-places\.sisu)|run(-fail)?/.*\.(in|out|err))|site/programs/((diagnostics|explanations)/.*\.err|run(-fail)?/.*\.(in|out|err))|\.config/notices/LLVM-LICENSE\.txt)$' },
   { id = "mixed-line-ending", exclude = '^(crates/sisuc/tests|site/programs)/run(-fail)?/.*\.(in|out|err)$' },
@@ -122,7 +123,7 @@ id = "comment-width"
 name = "comments fit in 100 columns"
 language = "system"
 entry = "python3 scripts/comment_width.py"
-types = ["rust"]
+types_or = ["rust", "toml", "yaml"]
 
 # Reads the diff against HEAD. CI's `--all-files` has a clean tree, so only a commit can fail this.
 [[repos.hooks]]
@@ -153,7 +154,10 @@ id = "python-tests"
 name = "script unit tests"
 language = "system"
 entry = "python3 -m unittest discover -s scripts -p 'test_*.py'"
-files = '^(scripts|\.agents/skills/[^/]+/scripts)/.*\.py$|^bench/compile/.*\.json$|^bench/structs/|^crates/sisuc/src/generate/coverage\.rs$|^scripts/fuzz\.sh$|^\.github/workflows/fuzz-program\.yml$|^install\.sh$|^\.github/workflows/nightly-build\.yml$|^scripts/nightly_.*$'
+# The tests read the scripts, the workflows, the actions, prek.toml, the Makefile and the
+# notices, so a change to any of them runs the tests. A list of single files became stale each
+# time a test started to read a new file.
+files = '^(scripts|\.agents/skills/[^/]+/scripts|\.github)/|^bench/compile/.*\.json$|^bench/structs/|^crates/sisuc/src/generate/coverage\.rs$|^install\.sh$|^prek\.toml$|^Makefile$|^\.config/notices/'
 pass_filenames = false
 
 # A new diagnostic code needs a category, or the site build fails long after the commit.
