@@ -1982,10 +1982,11 @@ pub(super) struct Ranked {
     /// `id([Some(2)])`, `wrap(Some(2))` for `-> [T]`, and `Bx(v: Some(2))`. Not `k2(Some(1), [2])`
     /// for `fn k2<T, U>(a: T, b: U) -> U`, and not `h(1, Some(2))` for `fn h<T>(a: T, b: T?) -> T`:
     /// there the optional fills the `?` of the place. So does a call that waits for its type, when
-    /// its declared type holds an optional: `mkl()` for `fn mkl<X>() -> [X?]`. Not a call of
-    /// literals, as `kp(5)` for `fn kp<Y>(y: Y) -> Pr<i64?, Y>`: its argument binds `Y`, and the
-    /// optional of its declared type is not at a place that an outer call binds. The order of the
-    /// arguments of a call reads it (see `infer_call`), and joins do not.
+    /// its declared type holds an optional: `mkl()` for `fn mkl<X>() -> [X?]`, and a variant
+    /// through an alias that builds one: `BE.B(v: None)` and `BE.E` for `type BE<X> = Bx<X?>`. Not
+    /// a call of literals, as `kp(5)` for `fn kp<Y>(y: Y) -> Pr<i64?, Y>`: its argument binds `Y`,
+    /// and the optional of its declared type is not at a place that an outer call binds. The order
+    /// of the arguments of a call reads it (see `infer_call`), and joins do not.
     pub(super) holds_optional: bool,
     /// Whether the value is an optional that has an optional payload, which the value makes by
     /// itself: `Some(Some(2))`, `opt(Some(2))` for `fn opt<T>(x: T) -> T?`, and `Some(if c {
@@ -3915,13 +3916,16 @@ impl Checker<'_> {
                 name,
                 safe: false,
             } => {
-                let waits = self
+                // A unit variant through an alias holds what the alias builds: `BE.E`.
+                match self
                     .generic_variant(base, name)
-                    .is_some_and(|v| v.fields.is_empty());
-                if waits {
-                    Ranked::WAITS
-                } else {
-                    Ranked::CONCRETE
+                    .filter(|v| v.fields.is_empty())
+                {
+                    Some(v) => Ranked {
+                        holds_optional: v.built.holds_optional(),
+                        ..Ranked::WAITS
+                    },
+                    None => Ranked::CONCRETE,
                 }
             }
             // A user item cannot be named `panic` (E0034), and `call` tries the prelude first.
@@ -4119,6 +4123,7 @@ impl Checker<'_> {
                         generic: true,
                         shaped,
                         open: !open.is_empty(),
+                        ret_optional: v.built.holds_optional(),
                         places: carried_by_construction(v.fields.iter().copied(), v.names.len()),
                         wait: open_call(open, Some(v.built), v.names.len()),
                         ..CallShape::default()

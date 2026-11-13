@@ -6962,8 +6962,10 @@ fn type_walks_should_visit_each_distinct_type_once() {
 }
 
 /// `n` calls that do not fit, over a type of depth `n`, read the optional flag of the type of each
-/// call. A walk of the type for each call, even with a memo for each walk, reads `n * n` steps:
-/// from 3 to 6 calls that walk reads 5.5 times as many, and the flag reads 2 times as many.
+/// call. A walk of the type for each call has a memo that starts only after `MEMO_AFTER` visits.
+/// Below that count it follows every path of the alias chain. So the pair (3, 6) catches a walk
+/// whose memo starts only after `MEMO_AFTER` visits: it reads 5.5 times as many steps, and the
+/// flag reads 2 times as many. The triple (4, 8, 12) catches a walk whose memo starts at once.
 #[test]
 fn repeated_misfit_should_read_the_optional_flag_of_each_type() {
     let steps = |n: usize| {

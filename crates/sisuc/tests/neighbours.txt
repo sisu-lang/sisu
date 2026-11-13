@@ -64,6 +64,12 @@ class Box<A, B> {
 }
 type Alias<T> = Box<T, T.Item>
 type Bqa<T> = Bq<T>
+enum Bv<T> {
+    B(v: T)
+    E
+}
+type Bva<T> = Bv<T?>
+fn unbv<T>(b: Bv<T>) -> T { unbv(b) }
 fn nothing<T>() -> T? { None }
 fn nn<T>() -> T?? { None }
 fn n3<T>() -> T??? { None }
@@ -169,6 +175,12 @@ OP.Some(p, p)
 Option.Some(n: p)
 Bqa(v: p, w: 1)
 Bqa<Fox>(1)
+# A variant of an enum through an alias that holds an optional, bare and under a call that waits.
+Bva.E
+Bva.B(v: None)
+unbv(Bva.E)
+unbv(Bva.B(v: None))
+unbv(Bva.B(v: p))
 # A `Some` whose argument is poisoned (E0062), bare, with a written list and through `Option`.
 Some(ob.wrap(1))
 Some<i64>(ob.wrap(1))
