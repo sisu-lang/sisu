@@ -19,6 +19,8 @@ FAKE_GH = f"""#!{sys.executable}
 import json, os, sys
 table = json.load(open(os.environ['GH_TABLE']))
 answer = table[sys.argv[-1].split('?')[0]]
+if isinstance(answer, dict) and 'fail' in answer:
+    sys.exit(answer['fail'])
 # --paginate --slurp: a list of pages. A list over 2 items comes as two pages.
 if '--slurp' in sys.argv:
     answer = [answer[:2], answer[2:]] if isinstance(answer, list) and len(answer) > 2 else [answer]
@@ -115,6 +117,38 @@ class PrThreads(unittest.TestCase):
             {"id": 10, "user": {"login": BOT}, "body": "Actionable comments: 1", "html_url": "r10"},
         ]
         self.assertEqual(self.run_script().stdout, f"outside 9 {BOT}: 2 findings r9\n")
+
+    def test_threads_should_keep_a_title_that_holds_a_middle_dot(self) -> None:
+        self.table[f"{P}/pulls/7/comments"] = [
+            inline(1, BOT, SEVERITY + "**Use `a · b` in the table.**\n\nText")
+        ]
+        self.assertEqual(
+            self.run_script().stdout, f"open 1 {BOT} a.py:3: Minor: Use `a · b` in the table. u1\n"
+        )
+
+    def test_threads_should_place_an_outdated_comment_at_its_original_line(self) -> None:
+        outdated = inline(1, BOT, "**Old**")
+        outdated |= {"line": None, "original_line": 9}
+        self.table[f"{P}/pulls/7/comments"] = [outdated]
+        self.assertEqual(self.run_script().stdout, f"open 1 {BOT} a.py:9: Old u1\n")
+
+    def test_threads_should_cut_a_plain_body_at_160_characters(self) -> None:
+        self.table[f"{P}/pulls/7/comments"] = [inline(1, "someone", "x" * 200)]
+        self.assertEqual(self.run_script().stdout, f"open 1 someone a.py:3: {'x' * 160} u1\n")
+
+    def test_threads_should_skip_my_own_review(self) -> None:
+        self.table[f"{P}/pulls/7/reviews"] = [
+            {"id": 9, "user": {"login": "me"}, "body": "Outside diff range comments (1)"}
+        ]
+        self.assertEqual(self.run_script().stdout, "")
+
+    def test_threads_should_print_the_reason_of_a_failed_gh_call(self) -> None:
+        self.table["user"] = {"fail": "gh: Bad credentials (HTTP 401)"}
+        out = self.run_script()
+        self.assertEqual(
+            (out.returncode, out.stdout, out.stderr.strip()),
+            (1, "", "gh: Bad credentials (HTTP 401)"),
+        )
 
     def test_threads_should_print_usage_without_a_pull_request(self) -> None:
         out = subprocess.run([sys.executable, SCRIPT], capture_output=True, text=True, check=False)
