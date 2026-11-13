@@ -55,7 +55,7 @@ audit-sisu skill's probes; `.llvm/23` then takes about 1.2 GB.
 Run this once per clone:
 
 ```console
-$ make setup   # LLVM 23 into .llvm/23, the pre-commit and commit-msg hooks, cargo-shear, cargo-mutants, cargo-llvm-cov, cargo-fuzz
+$ make setup   # LLVM 23 into .llvm/23, the pre-commit and commit-msg hooks, cargo-shear, cargo-mutants, cargo-llvm-cov, cargo-fuzz, the coverage nightly
 ```
 
 ## Build and test
@@ -449,8 +449,10 @@ the other lines of a multi-line `assert!`; a `let ... else {` line whose next
 line is such a panic; the lines of an inline `#[cfg(test)] mod` in the same
 file. The region lists keep their own rules for these. It says `(none)` when no
 line qualifies. A run with lines only has no third list. The nightly `Coverage` job
-of CI measures branches too and prints `Branch coverage (exact)`. It has a gate
-for lines only, not for branches. To change the nightly toolchain, edit
+of CI measures branches too and prints `Branch coverage (exact)`. It fails when
+line coverage is below 98.5%, when branch coverage is below 94.0%, or when the
+branch figure is missing. `make setup` installs the nightly toolchain, so a
+local `make coverage` measures branches. To change the nightly toolchain, edit
 `scripts/coverage-toolchain`: both the script and the job read it. Commit new files, or
 `git add -N` them, so the diff sees them. Before the report, the output has a
 line `coverage: measured (HEAD <sha>)`, with `with uncommitted changes` when the

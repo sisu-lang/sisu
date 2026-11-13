@@ -12,8 +12,9 @@ env:
   CARGO_TERM_COLOR: always
 
 # Third-party actions are pinned to commit SHAs; Dependabot bumps them.
-# The job fails when a step fails or when line coverage is below the limit. It measures
-# branches too, on the nightly toolchain that scripts/coverage-toolchain names. No branch gate.
+# The job fails when a step fails, when line coverage is below its limit, when branch coverage is
+# below its limit, or when the branch figure is missing. It measures branches on the nightly
+# toolchain that scripts/coverage-toolchain names, and the job installs that toolchain.
 jobs:
   coverage:
     name: Coverage
@@ -92,6 +93,7 @@ jobs:
       - id: gate
         env:
           MIN_LINE_COVERAGE: 98.5
+          MIN_BRANCH_COVERAGE: 94.0
         run: |
           file=target/llvm-cov/coverage.json
           pct=$(jq -r '.data[0].totals.lines.percent // "no"' "$file" 2>/dev/null) || pct=no
@@ -101,18 +103,27 @@ jobs:
           else
             echo "Line coverage (exact): ${pct}%" >>"$GITHUB_STEP_SUMMARY"
           fi
-          # No gate on branches: the figure only shows how it moves.
+          # The job installs the pinned nightly, so a missing branch figure is a fault.
           bpct=$(jq -r 'if .data[0].totals.branches.count > 0 then .data[0].totals.branches.percent else "no" end' "$file" 2>/dev/null) || bpct=no
           if [ "$bpct" = no ]; then
             echo "Branch coverage (exact): not available" >>"$GITHUB_STEP_SUMMARY"
           else
             echo "Branch coverage (exact): ${bpct}%" >>"$GITHUB_STEP_SUMMARY"
           fi
+          failed=0
           jq -e --argjson min "$MIN_LINE_COVERAGE" '.data[0].totals.lines.percent >= $min' "$file" >/dev/null 2>&1 || {
             if [ "$pct" = no ]; then
               echo "::error::line coverage is not in $file"
             else
               echo "::error::line coverage ${pct}% is below ${MIN_LINE_COVERAGE}%"
             fi
-            exit 1
+            failed=1
           }
+          if [ "$bpct" = no ]; then
+            echo "::error::branch coverage is not in $file"
+            failed=1
+          elif ! jq -e --argjson min "$MIN_BRANCH_COVERAGE" '.data[0].totals.branches.percent >= $min' "$file" >/dev/null 2>&1; then
+            echo "::error::branch coverage ${bpct}% is below ${MIN_BRANCH_COVERAGE}%"
+            failed=1
+          fi
+          exit "$failed"
