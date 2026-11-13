@@ -10,7 +10,7 @@ use super::names::{self, ItemId, Position, Resolved};
 use super::reports::Reported;
 use super::{Checked, Checker, Expectation, Origin, Poisoned};
 use crate::ast;
-use crate::diagnostic::{Definition, DiagnosticKind, MathFix, NanFix};
+use crate::diagnostic::{Definition, DiagnosticKind, MathFix, NanFix, ReceiverArgument};
 use crate::source::Span;
 use crate::tir::{self, MathOp, Type, TypeKind};
 
@@ -223,9 +223,8 @@ impl Checker<'_> {
 
     /// `written(args)`, where `written` is `math.member`, `Math.member` or `f64.member`: the
     /// idiom when `member` is a method of `f64`, else `None`. The fix is `receiver.member(rest)`,
-    /// offered only where that surely checks and the rewrite deletes no comment: the first
-    /// argument checks and has the method, and the others fit its parameters. Each argument is
-    /// checked once.
+    /// offered only where that surely checks: the first argument checks and has the method, and
+    /// the others fit its parameters. The fix keeps each comment. Each argument is checked once.
     fn math_call(
         &mut self,
         written: Span,
@@ -238,7 +237,7 @@ impl Checker<'_> {
     }
 
     /// The fix of `written(args)`, the call of the method `name`, or `None` where it is no
-    /// safe rewrite. Checks each argument once.
+    /// sure rewrite. Checks each argument once.
     fn method_fix(
         &mut self,
         written: Span,
@@ -258,16 +257,18 @@ impl Checker<'_> {
             self.stray(rest);
             return None;
         };
-        let (receiver, next) = (first.value.span, rest.first().map(|arg| arg.value.span));
-        let deleted = [
-            written.start()..receiver.start(),
-            receiver.end()..next.map_or_else(|| receiver.end(), Span::start),
-        ];
-        let arguments = self.number_arguments(ty, params, rest);
-        if !arguments || self.comment_in(&deleted) {
+        let receiver = first.value.span;
+        let head = Span::new(written.start(), receiver.start());
+        let gap = Span::new(
+            receiver.end(),
+            rest.first()
+                .map_or_else(|| receiver.end(), |arg| arg.value.span.start()),
+        );
+        if !self.number_arguments(ty, params, rest) {
             return None;
         }
-        let wrap = !postfix(&first.value);
+        // A comment before the receiver keeps its line break, which must stay in brackets.
+        let wrap = !postfix(&first.value) || self.comment_in(&[head.range()]);
         let (open, close) = if wrap { ("(", ")") } else { ("", "") };
         let text = self.source.slice(receiver.range());
         let tail = rest.last().map_or("", |last| {
@@ -277,9 +278,11 @@ impl Checker<'_> {
         Some(MathFix::Method {
             name,
             form: format!("{open}{text}{close}.{name}({tail})"),
-            receiver,
-            next,
-            wrap,
+            receiver: ReceiverArgument {
+                head: self.source.removal_parts(head),
+                gap: self.source.removal_parts(gap),
+                wrap,
+            },
         })
     }
 

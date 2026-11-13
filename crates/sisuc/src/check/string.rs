@@ -430,25 +430,17 @@ impl Checker<'_> {
         let tail = arg.value.span.end()..span.end();
         let d = match type_of(&checked) {
             Some(ty) if ty == to => {
-                let grouped = !single_term(&arg.value);
-                // The removal deletes the head, from the name when the value stays grouped, and
-                // the tail unless it does.
-                let deleted = if grouped {
-                    name.start()..head.end
-                } else {
-                    head
-                };
-                let commented =
-                    self.comment_in(&[deleted]) || (!grouped && self.comment_in(&[tail]));
+                // A comment in the head or the tail keeps its line break, which must stay in
+                // brackets: the value stays grouped.
+                let grouped = !single_term(&arg.value) || self.comment_in(&[head.clone(), tail]);
                 DiagnosticKind::AlreadyConverted {
                     value: path(&arg.value).or_else(|| self.literal_name(&arg.value)),
                     ty: self.type_name(to),
                     at: arg.value.span,
                     conversion: span,
-                    name,
                     grouped,
                     labeled: labeled.is_some(),
-                    commented,
+                    head: self.source.removal_parts(Span::new(name.start(), head.end)),
                 }
                 .into()
             }

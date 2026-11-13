@@ -190,16 +190,24 @@ impl Checker<'_> {
                         Some((self.idiom_of(callee.name, ty)?, ty, optional))
                     });
                 if let Some((idiom, ty, optional)) = idiom {
-                    let next = rest.first().map(|arg| arg.value.span);
-                    // The rewrite deletes the text before the receiver and between it and
-                    // `next`, so a comment there makes it unsafe.
-                    let (lo, hi) = (first.value.span.start(), first.value.span.end());
-                    let deleted = [callee.span.start()..lo, hi..next.map_or(hi, Span::start)];
+                    // The rewrite deletes the text before the receiver and between it and the next
+                    // argument, except each comment in it.
+                    let receiver = first.value.span;
+                    let head = Span::new(callee.span.start(), receiver.start());
+                    let gap = Span::new(
+                        receiver.end(),
+                        rest.first()
+                            .map_or_else(|| receiver.end(), |arg| arg.value.span.start()),
+                    );
                     let (takes, bound) = self.idiom_call(&idiom, name, ty, rest);
+                    // A comment before the receiver keeps its line break, which must stay in
+                    // brackets.
                     let argument = ReceiverArgument {
-                        at: first.value.span,
-                        next,
-                        wrap: !postfix(&first.value) || self.label_starts_receiver(callee, first),
+                        wrap: !postfix(&first.value)
+                            || self.label_starts_receiver(callee, first)
+                            || self.comment_in(&[head.range()]),
+                        head: self.source.removal_parts(head),
+                        gap: self.source.removal_parts(gap),
                     };
                     let receiver = if optional {
                         MethodReceiver::Optional {
@@ -210,7 +218,7 @@ impl Checker<'_> {
                     } else {
                         MethodReceiver::Argument {
                             argument,
-                            safe: takes && !self.comment_in(&deleted),
+                            safe: takes,
                         }
                     };
                     let reported = self.error(DiagnosticKind::MethodAsFunction {

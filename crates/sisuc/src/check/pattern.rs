@@ -23,13 +23,13 @@ use crate::source::{Span, removal_end};
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeKind};
 
-/// What the fix of W0006 removes for the unreached alternative `at`. It removes the `|` before the
-/// alternative, unless a comment lies between them and another alternative follows: then it
-/// removes the alternative and the `|` after it, up to a comment, so that the comment stays. That
-/// cut works only when the `|` comes before the comment: `after_gap` is the text from the end of
-/// `at` to the start of the alternative after it. Else the removal runs to the next alternative,
-/// or starts at the end of the alternative before, and each comment in the removed text goes: one
-/// span cannot remove the `|` and keep a comment that lies before it.
+/// The span that the fix of W0006 removes for the unreached alternative `at`. It removes the `|`
+/// before the alternative, unless a comment lies between them and another alternative follows: then
+/// it removes the alternative and the `|` after it, up to a comment, so that the comment stays.
+/// That cut works only when the `|` comes before the comment: `after_gap` is the text from the end
+/// of `at` to the start of the alternative after it. Else the span runs to the next alternative,
+/// or starts at the end of the alternative before. A span that holds a comment is one text: the
+/// caller splits it at the comments (`Source::removal_parts`), where a kept comment is safe.
 fn alternative_removal(
     comments: &[usize],
     at: Span,
@@ -56,6 +56,15 @@ fn alternative_removal(
         // An `|` joins two alternatives or more, so each one has a neighbour.
         (_, None) => at,
     }
+}
+
+/// Whether `at` is an alternative of the `|` that makes the pattern of `arm`, not one inside
+/// brackets.
+fn top_alternative(arm: &ast::Arm, at: Span) -> bool {
+    matches!(
+        &arm.pattern.kind,
+        ast::PatternKind::Or(alternatives) if alternatives.iter().any(|alt| alt.span == at)
+    )
 }
 
 /// The names one pattern binds, at `top`, as its check goes; `arm` is the `match` arm it
@@ -397,13 +406,22 @@ impl Checker<'_> {
             };
             let end = found.at.end();
             let remove = match found.alternative {
-                Some(neighbours) => alternative_removal(
-                    self.source.comments,
-                    found.at,
-                    neighbours,
-                    source.slice(end..neighbours.after.unwrap_or(end)),
-                ),
-                None => whole_arm(),
+                Some(neighbours) => {
+                    let span = alternative_removal(
+                        self.source.comments,
+                        found.at,
+                        neighbours,
+                        source.slice(end..neighbours.after.unwrap_or(end)),
+                    );
+                    // At the top of an arm, a kept comment would put its line break before the
+                    // `=>`, which ends the pattern there. So the span goes whole.
+                    if top_alternative(arm, found.at) {
+                        vec![span]
+                    } else {
+                        self.source.removal_parts(span)
+                    }
+                }
+                None => vec![whole_arm()],
             };
             self.warn(DiagnosticKind::UnreachableArm {
                 at: found.at,

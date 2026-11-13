@@ -108,11 +108,33 @@ pub(crate) fn removal_end(comments: &[usize], after: usize, next: usize) -> usiz
 }
 
 impl<'a> Source<'a> {
-    /// Stub: the red tests need a function to compile against.
-    #[cfg_attr(not(test), expect(dead_code, reason = "a stub for the red tests"))]
-    #[expect(clippy::unused_self, reason = "a stub for the red tests")]
-    pub(crate) fn removal_parts(&self, _comments: &[usize], span: Span) -> Vec<Span> {
-        vec![span]
+    /// The parts of `span` that a removal deletes so that each comment that starts in `span`
+    /// stays: the text before, between and after the comments. `comments` are the sorted offsets
+    /// where the comments start, as for `removal_end`. A part before a comment ends at its last
+    /// non-blank byte, so the blanks before `//` stay. A part after a comment starts at the first
+    /// non-blank byte after the comment's line break, so the break and the indent stay. The first
+    /// part is always there, even when it is empty, so that a replacement has a place; a later
+    /// empty part is dropped.
+    pub(crate) fn removal_parts(&self, comments: &[usize], span: Span) -> Vec<Span> {
+        let first = comments.partition_point(|&start| start < span.start());
+        let mut parts = Vec::new();
+        let mut from = span.start();
+        for &comment in comments[first..].iter().take_while(|&&c| c < span.end()) {
+            let end = from + self.slice(from..comment).trim_end().len();
+            if end > from || parts.is_empty() {
+                parts.push(Span::new(from, end));
+            }
+            let after = self.slice(comment..span.end());
+            let line = after
+                .find('\n')
+                .map_or_else(|| span.end(), |n| comment + n + 1);
+            let rest = self.slice(line..span.end());
+            from = line + rest.len() - rest.trim_start().len();
+        }
+        if from < span.end() || parts.is_empty() {
+            parts.push(Span::new(from, span.end()));
+        }
+        parts
     }
 
     /// `text`, whose first byte has offset `base`.

@@ -867,21 +867,20 @@ pub(crate) enum DiagnosticKind {
         at: Span,
     },
     /// A conversion to `ty` of the value at `at`, which already has that type. `value` is its
-    /// path as written, when it has one, `conversion` is the whole call, with any parentheses
-    /// around it, and `name` the type's name that starts the call. `grouped` is set when the
-    /// value is more than one term, so removing the conversion keeps its parentheses.
+    /// path as written, when it has one, and `conversion` is the whole call, with any parentheses
+    /// around it. `grouped` is set when the value is more than one term, or a comment lies in the
+    /// head or the tail of the call. Then removing the conversion keeps its parentheses.
     /// `labeled` is set when the argument has a label, which the removal would delete along with
-    /// its own error, so there is no fix. `commented` is set when the removal would delete a
-    /// comment, which makes it unsafe.
+    /// its own error, so there is no fix. `head` is the text from the type's name to `at`, in the
+    /// parts between its comments, which a grouped removal keeps.
     AlreadyConverted {
         value: Option<String>,
         ty: String,
         at: Span,
         conversion: Span,
-        name: Span,
         grouped: bool,
         labeled: bool,
-        commented: bool,
+        head: Vec<Span>,
     },
     /// A label at `at` on an argument of a call that is not a constructor. A call of a variant
     /// that declares no labels is reported once, at its first label: `variant` holds them all.
@@ -1303,14 +1302,16 @@ pub(crate) enum DiagnosticKind {
     },
     /// The arm whose pattern is at `at`, or the alternative at `at` when `alternative`, which no
     /// value reaches; `covered_by` is the arm that takes all its values, when one does.
-    /// `remove` is the arm's line, or, when the `match`'s `}` ends that line, from the line
-    /// break before the arm through its body; for an alternative, the alternative and the `|`
-    /// that joins it to the one before it, or after it when it is first.
+    /// `remove` is the text that the fix deletes: the arm's line, or, when the `match`'s `}` ends
+    /// that line, from the line break before the arm through its body; for an alternative, the
+    /// alternative and the `|` that joins it to the one before it, or after it when it is first.
+    /// It is one span, or, for an alternative inside brackets, the parts of that span between its
+    /// comments, so that each comment stays.
     UnreachableArm {
         at: Span,
         alternative: bool,
         covered_by: Option<Span>,
-        remove: Span,
+        remove: Vec<Span>,
     },
     /// A `;` at `at` that separates nothing. `space` when it touches a token on each side, so
     /// that removing it would join them.
@@ -1604,34 +1605,28 @@ pub(crate) enum MethodReceiver {
     SelfValue { safe: bool },
 }
 
-/// A first argument that becomes the receiver of the method call.
+/// A first argument that becomes the receiver of the method call. `head` and `gap` are the text
+/// that the fix deletes, as the parts between its comments (`Source::removal_parts`), so that each
+/// comment stays.
 pub(crate) struct ReceiverArgument {
-    pub(crate) at: Span,
-    /// The next argument, if any.
-    pub(crate) next: Option<Span>,
-    /// Whether `at` needs parentheses to take a `.name(...)`.
+    /// The text from the callee to the receiver.
+    pub(crate) head: Vec<Span>,
+    /// The text from the receiver to the next argument, if any, else the empty span at the end of
+    /// the receiver.
+    pub(crate) gap: Vec<Span>,
+    /// Whether the receiver needs parentheses to take a `.name(...)`: it is no postfix
+    /// expression, or a comment comes before it.
     pub(crate) wrap: bool,
 }
 
 impl ReceiverArgument {
-    /// The edits that move the receiver before the method name at `callee`. `access` replaces
-    /// the text from the end of the receiver to the next argument: it ends with the `(` of the
-    /// method call.
-    fn edits(&self, callee: Span, access: &str) -> Vec<Edit> {
+    /// The edits that move the receiver before the method name. `access` replaces the first part
+    /// of the gap: it ends with the `(` of the method call.
+    fn edits(&self, access: &str) -> Vec<Edit> {
         let (open, close) = if self.wrap { ("(", ")") } else { ("", "") };
-        vec![
-            Edit {
-                span: Span::new(callee.start(), self.at.start()),
-                replacement: open.to_string(),
-            },
-            Edit {
-                span: Span::new(
-                    self.at.end(),
-                    self.next.map_or_else(|| self.at.end(), Span::start),
-                ),
-                replacement: format!("{close}{access}"),
-            },
-        ]
+        let mut edits = part_edits(&self.head, open);
+        edits.extend(part_edits(&self.gap, &format!("{close}{access}")));
+        edits
     }
 }
 
@@ -1740,15 +1735,13 @@ pub(crate) struct NanFix {
 pub(crate) enum MathFix {
     /// The constant `f64.<name>`.
     Constant { name: &'static str },
-    /// The method call `receiver.<name>(next...)` for `written(receiver, next...)`. `wrap` is
-    /// whether `receiver` needs parentheses to take the call, and `form` is the call as it
-    /// reads.
+    /// The method call `receiver.<name>(next...)` for `written(receiver, next...)`. `receiver`
+    /// holds the text that the fix deletes, and whether the receiver needs parentheses to take
+    /// the call. `form` is the call as it reads.
     Method {
         name: &'static str,
         form: String,
-        receiver: Span,
-        next: Option<Span>,
-        wrap: bool,
+        receiver: ReceiverArgument,
     },
 }
 
@@ -5042,20 +5035,19 @@ impl From<DiagnosticKind> for Diagnostic {
                 ty,
                 at,
                 conversion,
-                name,
                 grouped,
                 labeled,
-                commented,
+                head,
             } => {
                 let edit = |span: Span, replacement: &str| Edit {
                     span,
                     replacement: replacement.to_string(),
                 };
-                // A grouped value keeps the `)` after it, so only `T(` and what sits before the
-                // value becomes its `(`: parentheses around the call stay paired. Otherwise the
-                // head and the tail go, with those parentheses, in pairs.
+                // A grouped value keeps the `)` after it, so only `T(` becomes its `(`, and
+                // each comment before the value stays: parentheses around the call stay paired.
+                // Otherwise the head and the tail go, with those parentheses, in pairs.
                 let edits = if grouped {
-                    vec![edit(Span::new(name.start(), at.start()), "(")]
+                    part_edits(&head, "(")
                 } else {
                     vec![
                         edit(Span::new(conversion.start(), at.start()), ""),
@@ -5067,12 +5059,8 @@ impl From<DiagnosticKind> for Diagnostic {
                     return d;
                 }
                 d.with_fix(Fix {
-                    message: if commented {
-                        "remove the conversion, and the comments inside it".to_string()
-                    } else {
-                        "remove the conversion".to_string()
-                    },
-                    safe: !commented,
+                    message: "remove the conversion".to_string(),
+                    safe: true,
                     edits,
                 })
             }
@@ -5394,7 +5382,7 @@ impl From<DiagnosticKind> for Diagnostic {
                             format!("try calling `{name}` as a method, then fix its arguments")
                         },
                         safe,
-                        argument.edits(at, &format!(".{name}(")),
+                        argument.edits(&format!(".{name}(")),
                     ),
                     MethodReceiver::Optional {
                         argument,
@@ -5411,7 +5399,7 @@ impl From<DiagnosticKind> for Diagnostic {
                                 "to skip the call when {value} is `None`, call `{name}` with `?.`{fix}"
                             ),
                             safe: false,
-                            edits: argument.edits(at, &format!("?.{name}(")),
+                            edits: argument.edits(&format!("?.{name}(")),
                         });
                     }
                 };
@@ -5806,25 +5794,7 @@ impl From<DiagnosticKind> for Diagnostic {
                         name,
                         form,
                         receiver,
-                        next,
-                        wrap,
-                    } => {
-                        let (open, close) = if wrap { ("(", ")") } else { ("", "") };
-                        let edits = vec![
-                            Edit {
-                                span: Span::new(written.start(), receiver.start()),
-                                replacement: open.to_string(),
-                            },
-                            Edit {
-                                span: Span::new(
-                                    receiver.end(),
-                                    next.map_or_else(|| receiver.end(), Span::start),
-                                ),
-                                replacement: format!("{close}.{name}("),
-                            },
-                        ];
-                        (form, edits)
-                    }
+                    } => (form, receiver.edits(&format!(".{name}("))),
                 };
                 d.with_fix(Fix {
                     message: format!("write `{form}`"),
@@ -6251,7 +6221,11 @@ impl From<DiagnosticKind> for Diagnostic {
                     Some(arm) => d.with_secondary(arm, "this arm covers it"),
                     None => d,
                 }
-                .with_fix(unsafe_fix(&format!("remove the {what}"), remove, ""))
+                .with_fix(Fix {
+                    message: format!("remove the {what}"),
+                    safe: false,
+                    edits: part_edits(&remove, ""),
+                })
             }
             DiagnosticKind::RedundantSemicolon { at, remove, space } => {
                 let warning = Diagnostic::coded(code, at, "unnecessary `;`");
@@ -6902,6 +6876,19 @@ fn held_label(
         (false, false) => return None,
     };
     Some(format!("{this} holds {held} inline"))
+}
+
+/// The edits of a removal that keeps the comments in it: `parts` are from `removal_parts`. The
+/// first part takes `replacement`, and each other part takes nothing.
+fn part_edits(parts: &[Span], replacement: &str) -> Vec<Edit> {
+    parts
+        .iter()
+        .enumerate()
+        .map(|(i, &span)| Edit {
+            span,
+            replacement: if i == 0 { replacement } else { "" }.to_string(),
+        })
+        .collect()
 }
 
 fn unsafe_fix(message: &str, span: Span, replacement: &str) -> Fix {
