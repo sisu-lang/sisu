@@ -579,12 +579,11 @@ on a C function with n parameters. This is mut call width and mut returns. The
 list scheduler of LLVM's SelectionDAG does it. Float left (#613) is a step,
 not a curve: one size of the sweep falls on a one-time step of LLVM's tables.
 
-The other four rows are for the shapes of structs. Struct paths is a chain of
-nested structs. Its `codegen` grows because LLVM's `StructType::checkBody` grows
-with the depth of the chain. Struct writes at `-O2` is a function with hundreds
-of writes to struct paths. LLVM's passes grow faster than the writes. Each of
-the two rows waits for an issue, and names the file of the issue until it is
-filed. Never built is a tree of aliases over `k` classes, with `k` enums and one
+The other four rows are for the shapes of structs. Struct paths (#686) is a
+chain of nested structs. Its `codegen` grows because LLVM's
+`StructType::checkBody` grows with the depth of the chain. Struct writes at
+`-O2` (#687) is a function with hundreds of writes to struct paths. LLVM's
+passes grow faster than the writes, in `optimize` and in `object`. Never built is a tree of aliases over `k` classes, with `k` enums and one
 struct that hold its root. The `check` stage grows with the product of the enums
 and the classes, as the register says ([docs/register.md](register.md)). The
 struct adds 1.4% of that growth at 8n, and nothing of its own. The shape struct

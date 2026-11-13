@@ -1390,7 +1390,9 @@ error[E0032]: expected `bool`, found `i64`
  --> bad.sisu:2:19
   |
 2 |     let x: bool = 1
-  |                   ^
+  |            ----   ^
+  |            |
+  |            declared as `bool` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

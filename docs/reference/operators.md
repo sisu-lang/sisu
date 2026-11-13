@@ -242,7 +242,7 @@ fn main() {
 
 - The two operands must have one type. [E0032](../diagnostics/E0032.md)
 - A `bool` or an array has no `<`. [E0159](../diagnostics/E0159.md)
-- A class or an enum has `<` only when it conforms to `Ord` ([Display, Eq and Ord](generics.md#display-eq-and-ord)). [E0159](../diagnostics/E0159.md)
+- A class, a struct or an enum has `<` only when it conforms to `Ord` ([Display, Eq and Ord](generics.md#display-eq-and-ord)). [E0159](../diagnostics/E0159.md)
 - An optional cannot be compared with `<`. [E0032](../diagnostics/E0032.md)
 
 ### Comparison chains

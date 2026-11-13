@@ -618,7 +618,7 @@ fn main() {
 - A loop label can be before `loop`, `while` or `for`, and on a line of its own.
 - A loop label before an `if`, a `match` or a block is an error. So is the loop label `_`. [E0145](../diagnostics/E0145.md)
 - A loop cannot take the loop label of a loop around it. Two loops one after the other can have the same loop label. [E0143](../diagnostics/E0143.md)
-- At a jump that names a loop label, no binding, function, constant, class, enum or built-in type in scope can have that name. [E0142](../diagnostics/E0142.md)
+- At a jump that names a loop label, no binding, function, constant, class, struct, enum or built-in type in scope can have that name. [E0142](../diagnostics/E0142.md)
 - A `continue` that names no loop label around it is an error. [E0144](../diagnostics/E0144.md)
 - A loop label that no `break` or `continue` names builds with a warning. [W0008](../diagnostics/W0008.md)
 

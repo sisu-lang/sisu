@@ -82,9 +82,9 @@ before milestone 9.
   copies a place and is then only written to warns (`W0016`). `mut self` and
   writes through `?.` on a struct value wait for later parts of the work.
   Classes work beside structs until they go
-- generic functions, classes, enums and methods, such as
-  `fn first<T>(xs: [T]) -> T?`, `class Stack<T>` and `enum Tree<T>`, with
-  type arguments inferred from the arguments and the expected type, or
+- generic functions, classes, structs, enums and methods, such as
+  `fn first<T>(xs: [T]) -> T?`, `class Stack<T>` and `enum Tree<T>`. The
+  type arguments come from the arguments and the expected type, or are
   written out (`first<i64>([])`, `Stack<string>(top: None)`); a generic body
   is checked once, at its definition, and compiled once for each list of type
   arguments the program reaches. A type parameter takes bounds that name
@@ -97,10 +97,10 @@ before milestone 9.
 - interfaces: `interface Shape { fn area(self) -> f64 }` lists method
   signatures with no body, associated types (`type Item`), type parameters
   and inherited interfaces (`interface Solid: Named`), and `Self` is the
-  conforming type. A class or an enum conforms in its declaration
-  (`class Circle: Shape`, with the methods in its body) or in an `extend`
-  block (`extend Celsius: Convert<Fahrenheit> { ... }`, one interface for each
-  block); `extend<T> Stack<T>` and `extend Stack<i64>` add methods to some
+  conforming type. A class, a struct or an enum conforms in its declaration,
+  as in `class Circle: Shape` with the methods in its body. It can also
+  conform in an `extend` block, one interface for each block
+  (`extend Celsius: Convert<Fahrenheit> { ... }`); `extend<T> Stack<T>` and `extend Stack<i64>` add methods to some
   instantiations, and a plain `extend T { ... }` adds methods that follow no
   interface. Generic code calls the methods of its bounds, and `S.Item` names
   an associated type through a bound. A call through a bound is static: `mono`
@@ -128,19 +128,20 @@ before milestone 9.
   errors (`E0165`)
 - type aliases, `type Grid = [[char?]]` and `type Pairs<T> = [[T]]`: another
   name for a type, so a `Grid` is a `[[char?]]` everywhere, inside type
-  arguments too. An alias of a class or an enum builds values as the type does
-  (`P(x: 1.0, y: 2.0)`, `E.Num(1)`), and an alias of a number type converts. An
-  alias that refers to itself is an error (`E0161`), and so is a type that
-  nests past 256 levels (`E0071`) or holds more than 100,000 distinct types
-  (`E0162`). The checker replaces each alias, so no later stage sees one
+  arguments too. An alias of a class, a struct or an enum builds values as the
+  type does: `P(x: 1.0, y: 2.0)`, `E.Num(1)`. An alias of a number type
+  converts. An alias that refers to itself is an error (`E0161`). So is a type
+  that nests past 256 levels (`E0071`) or holds more than 100,000 distinct
+  types (`E0162`). The checker replaces each alias, so no later stage
+  sees one
 - the prelude's interfaces `Display`, `Eq`, `Ord` and `AnyObject`. `print`,
   interpolation and `to_string()` use `Display`, and every type that can be a
   type argument has one: a class prints its name, or the text of its own
   `to_string`. `==` and `!=` use `Eq`, and `<`, `<=`, `>` and `>=` use `Ord`.
   The compiler writes the conformances of numbers, strings, arrays,
-  optionals and enums, and a program writes those of a class. A type that has
-  no `==` or `<` is an error (`E0159`), and only a class conforms to
-  `AnyObject` (`E0158`); `a is b` on a `T: AnyObject` tests identity. Printing
+  optionals, enums and structs, and a program writes those of a class. A type
+  that has no `==` or `<` is an error (`E0159`). Only a class conforms to
+  `AnyObject` (`E0158`), and `a is b` on a `T: AnyObject` tests identity. Printing
   an optional at the top level warns (`W0015`), and `.to_string()` does not
   ([ADR 0036](adr/0036-every-type-prints-and-printing-an-optional-warns.md))
 - `dbg(x)`, which writes `file:line:column: source = value` to standard error
