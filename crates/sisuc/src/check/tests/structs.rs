@@ -780,6 +780,51 @@ fn failed_struct_write_should_keep_its_root_reassigned() {
     );
 }
 
+/// GIVEN a class `C` with an array of structs, and an optional `C`. WHEN a write through `?.` on
+/// it reaches a field of an element. THEN it is the E0062 of an optional array, as a write of a
+/// scalar element is. Only a `?.` that takes out a struct value gives the struct form.
+#[test]
+fn class_chain_write_should_report_its_optional_array() {
+    // `main` declares the one local that the write names.
+    let program = |body: &str| {
+        let local = if body.starts_with('w') {
+            "let mut w: W? = W(xs: [])"
+        } else {
+            "let c: C? = C(xs: [])"
+        };
+        format!(
+            "struct S {{ n: i64; ys: [i64] }}\nclass C {{ mut xs: [S] }}\nstruct W {{ xs: [S] }}\nfn get() -> C? {{\n    C(xs: [])\n}}\nfn main() {{\n    {local}\n    {body}\n}}"
+        )
+    };
+    // Each row: the write, and where its one E0062 is. The optional array is the whole `c?.xs`,
+    // and the struct form is the `?.xs` of the struct value.
+    let rows = [
+        ("assign", "c?.xs[0].n = 2", (9, 5, "c?.xs")),
+        ("compound", "c?.xs[0].n += 2", (9, 5, "c?.xs")),
+        ("push", "c?.xs[0].ys.push(2)", (9, 5, "c?.xs")),
+        ("call", "get()?.xs[0].n = 2", (9, 5, "get()?.xs")),
+        ("struct", "w?.xs[0].n = 2", (9, 6, "?.xs")),
+    ];
+    let mut red = Vec::new();
+    for (row, body, (line, col, text)) in rows {
+        let src = program(body);
+        let (_, ds) = checked(&src);
+        let found: Vec<_> = (ds.iter())
+            .map(|d| (d.code(), at(&src, d.span()), &src[d.span().range()]))
+            .collect();
+        let wanted = [(MayBeNone, (line, col), text)];
+        if found != wanted {
+            red.push(format!("row `{row}`: found {found:?}, wanted {wanted:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
 /// GIVEN a `let`, a plain parameter and a pattern binding of a struct `T`. WHEN `t.n = 2` and
 /// `t.i.xs[0] = 1` write through it. THEN each is E0001 at the write.
 #[test]
