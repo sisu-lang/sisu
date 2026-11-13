@@ -2369,7 +2369,7 @@ fn write_through_some_should_need_a_presence_test_of_its_path() {
 }
 
 /// The rows of a path that the tests and statements before the write do not name.
-fn unproved_by_another_path() -> [Classes; 2] {
+fn unproved_by_another_path() -> [Classes; 3] {
     [
         (
             "make_unique of another path of the same root, with no test of this one",
@@ -2384,6 +2384,22 @@ fn unproved_by_another_path() -> [Classes; 2] {
                 b.block(released(vec![], &[c]), ret());
             },
             Some(1),
+        ),
+        (
+            // The proved `make_unique` is long enough to reach the write's last `Some`, but it
+            // names the field `items` where the write names `other`.
+            "make_unique of the same length through another field, with a test of that one",
+            |b, c| {
+                b.block(vec![], test(whole(c), 1, 3));
+                b.block(vec![], test(some_items(c), 2, 3));
+                let stmts = vec![
+                    Statement::MakeUnique(some_items_some(c)),
+                    push_one(path(c, vec![Projection::Some, other(), Projection::Some])),
+                ];
+                b.block(released(stmts, &[c]), ret());
+                b.block(released(vec![], &[c]), ret());
+            },
+            Some(2),
         ),
         (
             "tests of another kind of projection",
@@ -4323,4 +4339,108 @@ fn certify_should_reject_a_write_through_a_slice_that_borrows() {
         ret(),
     );
     rejects(&b.finish(), 0, d, Rule::WriteBorrowed);
+}
+
+/// GIVEN a string `s` scoped at `bb1`, a block that no edge reaches, and a release of `s` in `bb0`
+/// WHEN the function is certified
+/// THEN it rejects the release with the scope rule: a scope block that never runs holds no
+/// region, so it dominates nothing
+#[test]
+fn certify_should_reject_a_mention_when_the_scope_block_is_unreachable() {
+    let mut b = Builder::new("f");
+    let s = b.local("s", Type::STRING);
+    b.scope(s, BlockId(1));
+    b.block(vec![fresh(s), Statement::Release(s)], ret());
+    b.block(vec![], ret());
+    rejects(&b.finish(), 0, s, Rule::Scope);
+}
+
+/// GIVEN a block that consumes `s` in place and then `t` in place
+/// WHEN the function is certified
+/// THEN it reports `s`: of two violations in one block, the first one wins
+#[test]
+fn certify_should_report_the_first_violation_of_a_block() {
+    let mut b = Builder::new("f");
+    let s = b.param("s", Type::STRING);
+    let t = b.param("t", Type::STRING);
+    b.block(
+        vec![
+            call(vec![read(s)], vec![false]),
+            call(vec![read(t)], vec![false]),
+            Statement::Release(s),
+            Statement::Release(t),
+        ],
+        ret(),
+    );
+    rejects(&b.finish(), 0, s, Rule::Consume);
+}
+
+/// GIVEN a borrow that has no destination, whose result nothing keeps
+/// WHEN the function is certified
+/// THEN it is accepted: no local borrows from `xs`, so no edge or unstable mark follows. No
+/// lowering makes this form; the row holds the check on the destination
+#[test]
+fn certify_should_accept_a_borrow_that_has_no_destination() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::STRING));
+    b.block(
+        vec![
+            Statement::Assign {
+                dest: None,
+                value: Rvalue::Borrow(first(xs)),
+            },
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// GIVEN a store of the element `ys[0]` of an `i64` array into `xs[0]`, with no `take`
+/// WHEN the function is certified
+/// THEN it is accepted: a read of a place with a projection is no counted value, though the
+/// local `ys` is counted, so the store needs no `take`
+#[test]
+fn certify_should_not_ask_a_take_for_a_store_of_an_element_read() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::I64));
+    let ys = b.param("ys", Type::array(Type::I64));
+    b.block(
+        vec![
+            Statement::Store {
+                place: first(xs),
+                value: Operand::Read(first(ys)),
+            },
+            Statement::Release(xs),
+            Statement::Release(ys),
+        ],
+        ret(),
+    );
+    assert_eq!(certify(&b.finish()), Ok(()));
+}
+
+/// GIVEN an optional `o` scoped at `bb2`, whose presence test in `bb2` has the `None` edge to
+/// `bb1`
+/// AND `bb0` also reaches `bb1`, which comes before `bb2` in pre-order
+/// WHEN the function is certified
+/// THEN it is accepted: `bb1` is outside the region of `o`, so the region does not add it as a
+/// node before its scope block
+#[test]
+fn certify_should_leave_a_none_target_outside_the_region_out_of_it() {
+    let mut b = Builder::new("f");
+    let c = b.param("c", Type::BOOL);
+    let o = b.local("o", Type::optional(Type::STRING));
+    b.scope(o, BlockId(2));
+    b.block(vec![], branch(c, 1, 2));
+    b.block(vec![], ret());
+    b.block(
+        vec![fresh(o)],
+        Terminator::IfPresent {
+            optional: o,
+            some: BlockId(3),
+            none: BlockId(1),
+        },
+    );
+    b.block(vec![Statement::Release(o)], ret());
+    assert_eq!(certify(&b.finish()), Ok(()));
 }

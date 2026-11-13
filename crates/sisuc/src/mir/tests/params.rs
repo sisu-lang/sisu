@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 
 use super::super::lower::{self, COUNTERS, DEDUPED, SEEDED};
-use super::super::params::{FOLLOWED, LOOKED, VISITED, quiet};
+use super::super::params::{FOLLOWED, LOOKED, TAIL_ARGUMENTS, VISITED, quiet};
 use super::*;
 use crate::tir::{ClassId, FuncId, Program as TirProgram, TypeArgs, TypeKind};
 
@@ -1222,4 +1222,59 @@ fn slice_of_a_parameter_passed_on_should_stay_borrowed() {
     );
     let f = function(&printed, "pass");
     assert!(!f.contains("= copy xs#0"), "{f}");
+}
+
+/// GIVEN a function `g` that passes `x`, a borrow of its local `r`, to itself in tail position
+/// AND another block of `g` that returns the element `xs[0]`
+/// WHEN the modes are inferred
+/// THEN `g`'s string parameter stays borrowed: `g` keeps `r` alive past the call, so it hands
+/// nothing over. No lowering returns a place with a projection, so the mir is by hand
+#[test]
+fn infer_should_keep_a_parameter_borrowed_when_a_tail_call_passes_a_borrow_of_a_local() {
+    let mut main = Builder::new("main");
+    main.block(vec![], ret());
+
+    let mut b = Builder::new("g");
+    let c = b.param("c", Type::BOOL);
+    let _s = b.param("s", Type::STRING);
+    let xs = b.param("xs", Type::array(Type::I64));
+    let r = b.local("r", Type::STRING);
+    let x = b.local("x", Type::STRING);
+    b.owner(x, r);
+    b.block(vec![], branch(c, 1, 2));
+    // A projection in the returned place is no `Return` of a local.
+    b.block(
+        vec![],
+        Terminator::Return(Some(Operand::Read(Place {
+            projections: vec![Projection::Index {
+                index: Operand::Const(Const::Int(0, Type::I64)),
+                span: Span::new(0, 0),
+            }],
+            ..whole(xs)
+        }))),
+    );
+    b.block(
+        vec![
+            fresh(r),
+            assign(x, Rvalue::Borrow(whole(r))),
+            Statement::Assign {
+                dest: None,
+                value: Rvalue::Call {
+                    func: FuncId(1),
+                    args: vec![read(c), Operand::Use(x)],
+                    borrowed: vec![false, false],
+                    span: Span::new(0, 0),
+                    quiet: false,
+                },
+            },
+            Statement::End(x),
+            Statement::ScopeRelease(r),
+        ],
+        ret(),
+    );
+    let functions = [main.finish(), b.finish()];
+    TAIL_ARGUMENTS.set(0);
+    let modes = super::super::params::infer(&functions, FuncId(0), &[vec![], vec![]]);
+    assert_eq!(TAIL_ARGUMENTS.get(), 1, "the call should be a tail call");
+    assert_eq!(modes[1], [false, true, true]);
 }

@@ -818,3 +818,126 @@ fn slice_should_stay_a_move_where_a_borrow_is_wrong() {
         );
     }
 }
+
+/// `t = copy xs[0]`, a read of `t`, and `release t` in one block of a function over `xs`, an
+/// array of strings, with `t` of the type `ty`. The pass is run on it.
+fn pair_candidate(ty: Type) -> Function {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::STRING));
+    let t = b.local("t", ty);
+    b.block(
+        vec![
+            assign(t, Rvalue::Copy(first(xs))),
+            Statement::Assign {
+                dest: None,
+                value: Rvalue::Print {
+                    stream: Stream::Stdout,
+                    operand: read(t),
+                    calls: false,
+                },
+            },
+            Statement::Release(t),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    pair_removed(b)
+}
+
+/// Runs the pass on the function of `b` and gives it back.
+fn pair_removed(b: Builder) -> Function {
+    let mut function = b.finish();
+    crate::mir::pairs::remove_pairs(&mut function);
+    function
+}
+
+/// `local[0]`.
+fn first(local: LocalId) -> Place {
+    Place {
+        projections: vec![Projection::Index {
+            index: Operand::Const(Const::Int(0, Type::I64)),
+            span: Span::new(0, 0),
+        }],
+        ..whole(local)
+    }
+}
+
+/// GIVEN a copy `t = copy xs[0]` that is read and then released, once with a counted `t` and once
+/// with an uncounted one
+/// WHEN the pairs are removed
+/// THEN only the counted copy becomes a borrow: an uncounted copy holds no reference to pair
+#[test]
+fn remove_pairs_should_keep_a_copy_into_an_uncounted_local() {
+    assert!(
+        !pair_candidate(Type::STRING).owners.is_empty(),
+        "a counted copy should be a pair"
+    );
+    assert!(
+        pair_candidate(Type::I64).owners.is_empty(),
+        "an uncounted copy should stay"
+    );
+}
+
+/// GIVEN two copies into the same local `t` before its release
+/// WHEN the pairs are removed
+/// THEN nothing changes: the second copy cannot open a candidate for a member that is open, and
+/// the first is not valid once `t` is assigned again. No lowering assigns a local twice in a pair
+#[test]
+fn remove_pairs_should_keep_two_copies_into_one_local() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::STRING));
+    let ys = b.param("ys", Type::array(Type::STRING));
+    let t = b.local("t", Type::STRING);
+    b.block(
+        vec![
+            assign(t, Rvalue::Copy(first(xs))),
+            assign(t, Rvalue::Copy(first(ys))),
+            Statement::Release(t),
+            Statement::Release(xs),
+            Statement::Release(ys),
+        ],
+        ret(),
+    );
+    assert!(
+        pair_removed(b).owners.is_empty(),
+        "no copy should become a borrow"
+    );
+}
+
+/// GIVEN a copy `t = copy xs[0]`, then `u = slice move m[t..]` that consumes `t` as a bound
+/// WHEN the pairs are removed
+/// THEN nothing changes: a step that consumes another member than the one it moves invalidates
+/// the candidate. No lowering gives a slice a counted bound
+#[test]
+fn remove_pairs_should_keep_a_copy_that_a_slice_bound_consumes() {
+    let mut b = Builder::new("f");
+    let xs = b.param("xs", Type::array(Type::STRING));
+    let m = b.local("m", Type::array(Type::STRING));
+    let t = b.local("t", Type::STRING);
+    let u = b.local("u", Type::array(Type::STRING));
+    b.block(
+        vec![
+            fresh(m),
+            assign(t, Rvalue::Copy(first(xs))),
+            assign(
+                u,
+                Rvalue::Slice {
+                    base: Operand::Move(m),
+                    start: Some(Operand::Move(t)),
+                    end: None,
+                    inclusive: false,
+                    safe: false,
+                    span: Span::new(0, 0),
+                },
+            ),
+            Statement::Release(t),
+            Statement::Release(u),
+            Statement::Release(xs),
+        ],
+        ret(),
+    );
+    assert!(
+        pair_removed(b).owners.is_empty(),
+        "no copy should become a borrow"
+    );
+}

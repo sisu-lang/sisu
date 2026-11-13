@@ -814,3 +814,29 @@ fn borrowed_parameter_is_never_moved() {
     assert_eq!(count(&printed, "f", "move s#0"), 0);
     assert_eq!(count(&printed, "f", "move t#1"), 0);
 }
+
+/// GIVEN a `take` of a borrow site that no `store` to the same place follows
+/// WHEN the ownership pass places the function
+/// THEN the debug check stops it: lowering emits the two together
+#[test]
+#[should_panic(expected = "a borrowed take should be followed by the store to its place")]
+fn place_should_reject_a_borrowed_take_with_no_store_after_it() {
+    let mut b = Builder::new("f");
+    let a = b.param("a", Type::array(Type::STRING));
+    let old = b.local("old", Type::STRING);
+    b.block(
+        vec![
+            Statement::Take {
+                dest: old,
+                place: Place {
+                    borrow: true,
+                    ..whole(a)
+                },
+            },
+            Statement::Release(old),
+        ],
+        ret(),
+    );
+    let mut function = b.finish();
+    crate::mir::ownership::place(&mut function);
+}
