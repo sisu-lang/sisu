@@ -120,13 +120,29 @@ no ruling, and its counts go into the report to the user.
 - **Reject:** with a reason that cites the target, the code, or `CODING_STANDARDS.md`.
 - **Defer:** with where it goes: a later task, a roadmap entry, or a GitHub issue per `docs/agents/issue-tracker.md`.
 
-A diagnostic improvement (`CODING_STANDARDS.md`, Reviewing) is deferred without a fix round: add one line with its repro to the plan workspace's `diagnostic-issues.md`, or to `RUN/diagnostic-issues.md` outside a plan. After the pull request merges, run each repro again on `main` and file one issue per diagnostic code.
+A nit that a report lists under `Other nits:` needs no ruling. When one of
+them is blocking, rule on it as your own blocking finding, and name it in
+the report to the user. Give it the next number after the last numbered
+finding of its report, such as `sol 4`. Use that number for its ruling
+and its `retro.md` line. `stats` counts it under severity `none`,
+because its report has no block for it. A nit that names a surviving mutant is never in
+that list, because the brief makes it a block.
+
+For each blocking finding that you accept, add one line to `RUN/retro.md`:
+`<report> <n>: <class>: <the check that could have caught it before the review>`.
+`<report>` is the file stem of the report, such as `sol` or `opus-2`. The
+class is one of `incomplete fix`, `missed neighbour`, `missing test`,
+`wrong text`, `regression` or `design`. When none fits, write a new class
+of a few words. The check is a hook, a test, a lint, a line of the brief,
+or `none`.
+
+A diagnostic improvement (`CODING_STANDARDS.md`, Reviewing) is deferred without a fix round, also one under `Other nits:`. Add one line with its repro to the plan workspace's `diagnostic-issues.md`, or to `RUN/diagnostic-issues.md` outside a plan. After the pull request merges, run each repro again on `main` and file one issue per diagnostic code.
 
 Rules for ruling:
 
 1. Check a finding before you rule. Run its repro or read the source it cites. When the claim does not hold, reject it and say what you saw. Save each repro program you run as `RUN/probes/<round>/<reviewer>-<n>.sisu`.
    A fix that a reviewer suggests, or that you write yourself, is a claim too. Check its text, such as the wording of a comment, against the code before it goes into a brief or a commit.
-2. Severity follows "Reviewing" in `CODING_STANDARDS.md`. A blocking finding is fixed or deferred with the user's agreement; a nit may be rejected.
+2. Severity follows "Reviewing" in `CODING_STANDARDS.md`. A blocking finding is fixed or deferred with the user's agreement. Accept a nit only in round 1, because its fix is code that the next round must review. A nit that names a surviving mutant and the test that kills it is the exception (`solve-issues`, Scope).
 3. A ruling must not break a rule in `CODING_STANDARDS.md`.
 4. When two reviewers disagree, rule on the evidence and record the disagreement.
 5. Ask the user instead of ruling when the fix would change the spec's intent, syntax, a diagnostic code, a public interface or the scope, or when you would reject a blocking finding.
@@ -142,7 +158,15 @@ each must fail, and for the stated cause.
 
 A large fix round of a final diff runs one more mutation test ([final-diff.md](final-diff.md), A large fix round).
 
-When you fixed a blocking finding, review again. Write `RUN/focus-<round>.md`
+When you fixed a blocking finding, review again. There is one exception:
+in a diff, a fix range that changes only Markdown files gets no second
+review. The exception does not apply to `CODING_STANDARDS.md`, `AGENTS.md`,
+`docs/register.md`, or a file under `docs/adr/`, `docs/reference/`,
+`docs/diagnostics/` or `.agents/skills/`. `sisu` or its tests read the
+reference and the diagnostics, and agents follow the others as rules. For
+the exception, read the fix diff yourself, and name it in the report. A
+spec or a plan always gets its second review. For a second review, write
+`RUN/focus-<round>.md`
 with the fixes and what you probed. Run `review_round.py prepare` with
 the round's target (for a diff, the fix range) and `--round <round>`. It writes
 `RUN/brief-<round>.md` and takes `RUN/rulings-<round - 1>.md` and each earlier report from `RUN`.
@@ -152,11 +176,13 @@ work. Send it to the Claude seat; its report goes to `RUN/opus-<round>.md`. Allo
 fix rounds. After the review of the second fix round, do the redo below when
 it applies. Otherwise ask the user about
 each blocking finding that is still open: a third round, or a deferral.
-In a diff, a blocking finding can have a small fix, such as a pattern in a hook:
-fewer than 10 lines, and no change to `sisu` output. It needs no question: give it one more
-round, reviewed by `opus-medium` alone. Do this extra round once, for all
-such findings together. Ask the user about each blocking finding that its
-review reports. A spec or a plan gets no such round. Defer the nits.
+With the question, say whether the open findings have one cause in the
+approach. When they do, name the other approach.
+A blocking finding in a diff can still be open after the review of the
+second fix round. It can have a small fix, such as a pattern in a hook:
+fewer than 10 lines, and no change to `sisu` output. It needs no question and
+no reviewer: make the fix, read its diff yourself, and run its tests. A spec
+or a plan gets no such fix. Defer the nits.
 
 Two fix rounds in a row can each add a blocking regression, or the second
 fix of one finding can fail. Then stop patching and do a redo. Give it to a fresh `opus-high` executor.
@@ -185,6 +211,14 @@ directory above `git rev-parse --path-format=absolute --git-common-dir`.
 ```
 mkdir -p <main checkout>/.scratch/reviews/<RUN name> && cp RUN/*.md <main checkout>/.scratch/reviews/<RUN name>/ && cp -r RUN/probes <main checkout>/.scratch/reviews/<RUN name>/
 ```
+
+Measure the kept runs with `python3 <skill base>/scripts/review_round.py stats <main checkout>/.scratch/reviews/*`.
+It counts the rounds of each run, and the rulings by round and severity.
+It also counts the rulings of each reviewer, the origin of each later
+blocking finding, and the classes of `retro.md`.
+
+- A pull request that changes this skill, its brief or a seat gives the output in its body, so that the next change can compare.
+- At the end of a plan or a `solve-issues` batch, run it on the runs of that work only, such as `.scratch/reviews/sisu-review-m9p2-*`. Give the user each retro class that two or more findings share, with the hook or the test that would catch it.
 
 Then delete everything in `RUN` except the briefs, the reports and `probes`:
 `find RUN -mindepth 1 -maxdepth 1 -type d ! -name probes -exec rm -rf {} +`.

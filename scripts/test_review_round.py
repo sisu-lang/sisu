@@ -106,7 +106,7 @@ class ReviewRound(unittest.TestCase):
         self,
     ) -> None:
         names = ("rulings-1.md", "fable.md", "sol.md", "opus.md", "brief.md", "focus.md")
-        for name in (*names, "target-1.md", "diagnostic-issues.md", "focus-2.md"):
+        for name in (*names, "target-1.md", "diagnostic-issues.md", "focus-2.md", "retro.md"):
             (self.run_dir / name).write_text(name)
         result = self.script("prepare", "main..main", "--round", "2")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -416,6 +416,89 @@ class Rulings(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("opus: 2 findings: 1 Accept, 1 Reject", result.stdout)
+
+
+class Stats(unittest.TestCase):
+    @override
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root)
+
+    def run_dir(self, name: str, files: dict[str, str]) -> Path:
+        path = self.root / name
+        path.mkdir()
+        for file, text in files.items():
+            (path / file).write_text(text)
+        return path
+
+    def stats(self) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["python3", SCRIPT, "stats", *sorted(self.root.iterdir())],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=ENV,
+        )
+
+    def two_rounds(self, files: dict[str, str]) -> None:
+        """Make a run of two rounds, with one blocking finding and one nit in round 1."""
+        report = REPORT + "### 1. A\nSeverity: blocking\n### 2. B\nSeverity: nit\n"
+        rulings = "sol 1: Accept (same as opus 1): x.\nsol 2: Defer to #12: later.\n"
+        later = {"brief.md": "", "brief-2.md": "", "sol.md": report, "rulings-1.md": rulings}
+        self.run_dir("two-rounds", later | files)
+
+    def test_stats_should_count_rounds_and_rulings_by_round_and_severity(self) -> None:
+        self.two_rounds({"rulings-final.md": "sol 1: Reject: not a round.\n"})
+        self.run_dir("one-round", {"brief.md": ""})
+        self.run_dir("not-a-review", {"notes.md": ""})
+        result = self.stats()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for line in (
+            "runs: 2; last brief: 1: 1, 2: 1",
+            "runs with no rulings file: 1",
+            "round 1, blocking: 1: Accept: 1",
+            "round 1, nit: 1: Defer: 1",
+            "reviewer sol: 2: Accept: 1, Defer: 1",
+        ):
+            self.assertIn(line, result.stdout.splitlines())
+
+    def test_stats_should_count_the_origin_of_each_later_blocking_finding(self) -> None:
+        finding = "### {n}. C\nSeverity: blocking\n{origin}"
+        empty = "Origin:\nWhere: x\n"
+        origins = ("Origin: fix\n", "Origin: `missed`\n", "Origin: Missed\n", empty, "")
+        origins += ("Origin: unfixed\n",)
+        report = REPORT + "".join(finding.format(n=n, origin=o) for n, o in enumerate(origins))
+        rulings = "".join(f"opus {n}: Accept: x.\n" for n in range(len(origins)))
+        self.two_rounds({"opus-2.md": report, "rulings-2.md": rulings})
+        result = self.stats()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("later rounds, blocking: 6: Accept: 6", result.stdout.splitlines())
+        line = "origin of blocking findings after round 1: missed: 2, none: 2, fix: 1, unfixed: 1"
+        self.assertIn(line, result.stdout.splitlines())
+
+    def test_stats_should_count_retro_classes_without_case(self) -> None:
+        retro = "sol 1: Incomplete fix: a neighbour row.\nopus-2 1: incomplete fix: x.\nno class\n"
+        self.two_rounds({"retro.md": retro})
+        result = self.stats()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("retro classes: incomplete fix: 2", result.stdout.splitlines())
+
+    def test_stats_should_stop_on_a_run_that_is_not_a_directory(self) -> None:
+        result = subprocess.run(
+            ["python3", SCRIPT, "stats", self.root / "nope"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("is not a directory", result.stderr)
+
+    def test_stats_should_stop_when_no_run_has_a_brief(self) -> None:
+        self.run_dir("not-a-review", {"notes.md": ""})
+        result = self.stats()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no RUN has a brief", result.stderr)
 
 
 class SaveReport(unittest.TestCase):
