@@ -13,6 +13,9 @@ reviews:
   in_progress_fortune: false
   auto_review:
     drafts: false
+    # Review a PR once, when it opens. Each later push gets no review
+    # unless a comment asks for one with `@coderabbitai review`.
+    auto_incremental_review: false
     # Also review stacked PRs into stage branches.
     base_branches: [".*"]
   path_filters:
