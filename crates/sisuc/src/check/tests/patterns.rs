@@ -755,9 +755,9 @@ fn unreachable_rows(enums: &[tir::Enum], ty: Type, patterns: &[tir::Pattern]) ->
 /// of 145,000 variants, with an arm for each, given to `exhaust::check`. Finding a variant's
 /// bucket by a search of the buckets, or specializing the column once per variant over every
 /// row, is quadratic and hangs. A counter cannot see these: the search is a new loop, not a step
-/// the solver counts. On a developer machine at load 1 the current code takes 0.2 s, the search
-/// of the buckets 24 s, and the scan of every row for each bucket more than 300 s; the kill is
-/// 4 s.
+/// the solver counts. At `opt-level = 1` on a developer machine the current code takes 0.11 s at
+/// a load average of 41 to 53. The search of the buckets takes 9.3 s at a load average of 16 to
+/// 22. The scan of every row for each bucket was not measured at `opt-level = 1`. The kill is 2 s.
 #[test]
 fn variants_should_check_in_linear_time() {
     const VARIANTS: usize = 145_000;
@@ -776,15 +776,18 @@ fn variants_should_check_in_linear_time() {
     assert_eq!(unreachable_rows(&enums, enum_type(0), &rows), []);
 }
 
-/// The kill override for this test is in `.config/nextest.toml`: the rows of a `match` on 140,000
+/// The kill override for this test is in `.config/nextest.toml`: the rows of a `match` on 220,000
 /// literals, given to `exhaust::check`. A split that rescans the column for each row, or finds a
 /// row's first interval by a search from the start, is quadratic in the literals and hangs. A
-/// counter cannot see these, as for `variants_should_check_in_linear_time`. On a developer
-/// machine at load 1 the current code takes 0.3 s, the search from the start 20 s, the search of
-/// the buckets 26 s and the rescan of the whole column 80 s; the kill is 4 s.
+/// counter cannot see these, as for `variants_should_check_in_linear_time`. At `opt-level = 1`
+/// on a developer machine the current code takes 0.20 s at a load average of 17 to 18. The search
+/// from the start takes 5.2 s at a load average of 15 to 17. The search of the buckets takes 21 s
+/// at a load average of 7 to 14. The rescan of the whole column was not measured at
+/// `opt-level = 1`. The kill is 2 s. With 140,000 literals the search from the start took only
+/// 2.1 s, at a load average of 13 to 14: less than twice the kill.
 #[test]
 fn literal_arms_should_check_in_linear_time() {
-    const LITERALS: usize = 140_000;
+    const LITERALS: usize = 220_000;
     let literal = |i: usize| tir::PatternKind::Range {
         lo: i64::try_from(i).expect("a literal should fit an `i64`"),
         hi: i64::try_from(i).expect("a literal should fit an `i64`"),
@@ -818,8 +821,10 @@ fn or_fields_should_check_in_linear_time() {
 /// The kill override for this test is in `.config/nextest.toml`: one row of 60,000 `true | false`
 /// fields, given to `exhaust::check`. A `push` that walks the whole rest of the row, to rehash it
 /// or to read its flags, is quadratic in the fields and hangs. A counter cannot see this,
-/// because the walk builds no stack node. Each `|` has a span of its own, as in a source. On a
-/// developer machine at load 1 the current code takes 0.3 s and the walk 17 s; the kill is 4 s.
+/// because the walk builds no stack node. Each `|` has a span of its own, as in a source. At
+/// `opt-level = 1` on a developer machine the current code takes 0.15 s at a load average of 41
+/// to 53. The walk that reads the flags takes 6.4 s at a load average of 8 to 9. The walk that
+/// rehashes the row was not measured at `opt-level = 1`. The kill is 2 s.
 #[test]
 fn long_or_row_should_check_in_linear_time() {
     const FIELDS: usize = 60_000;
@@ -850,9 +855,9 @@ fn long_or_row_should_check_in_linear_time() {
 /// 1,000 literal arms and 1,000 range arms of the `i64`, and each range arm is unreachable. The
 /// arms below the first are in the bucket of each alternative, and the literal arms take the
 /// range arms. A list of every row that took a row's values costs alternatives times literals
-/// times ranges and hangs. A counter cannot see this, because the list is a new loop. On a
-/// developer machine at load 2 the current code takes 0.5 s and the list 12.5 s; the kill is
-/// 4 s.
+/// times ranges and hangs. A counter cannot see this, because the list is a new loop. At
+/// `opt-level = 1` on a developer machine the current code takes 0.16 s at a load average of 41
+/// to 53. The list takes 21 s at a load average of 5 to 7. The kill is 2 s.
 #[test]
 fn takers_should_check_in_linear_time() {
     const ALTERNATIVES: usize = 2_400;
@@ -894,15 +899,17 @@ fn takers_should_check_in_linear_time() {
     assert_eq!(unreachable_rows(&enums, enum_type(1), &rows), expected);
 }
 
-/// The kill override for this test is in `.config/nextest.toml`: a source with an enum of 44,000
-/// variants, a `match` with an arm for each, and a `match` whose first arm is one `|` of 4,400 of
-/// them. The solver tests above build their rows by hand, so this one gives the parser and the
-/// lowering of names and patterns (`check/pattern.rs`) a large well-formed `match`. A search of
-/// the variants for a name, in place of the index, is quadratic and hangs. On a developer machine
-/// the current code takes 0.35 s, and the search 9.9 s at load 13; the kill is 4 s.
+/// The kill override for this test is in `.config/nextest.toml`. The source has an enum of
+/// 96,000 variants and a `match` with an arm for each. A second `match` has a first arm that is
+/// one `|` of 4,400 of them. The solver tests above build their rows by hand. This one gives a
+/// large well-formed `match` to the parser and to the lowering of names and patterns
+/// (`check/pattern.rs`). A search of the variants for a name, in place of the index, is quadratic
+/// and hangs. At `opt-level = 1` on a developer machine the current code takes 0.30 s at a load
+/// average of 17 to 18. The search takes 5.1 s at a load average of 5 to 6. The kill is 2 s. With
+/// 44,000 variants the search took only 1.1 s, at a load average of 10: less than twice the kill.
 #[test]
 fn match_on_many_variants_should_check_in_linear_time() {
-    const VARIANTS: usize = 44_000;
+    const VARIANTS: usize = 96_000;
     const ALTERNATIVES: usize = 4_400;
     let variants = (0..VARIANTS)
         .map(|i| format!("    V{i}\n"))

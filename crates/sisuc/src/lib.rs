@@ -1197,4 +1197,14 @@ mod tests {
         fs::remove_dir_all(&dir).expect("removes the directory");
         assert_eq!(mode & 0o077, 0, "mode {mode:o}");
     }
+
+    /// GIVEN the test build of sisuc
+    /// WHEN the test build reads `cfg!(debug_assertions)` and adds 1 to a `u8` of 255
+    /// THEN debug assertions are on and the addition panics
+    #[test]
+    fn test_build_should_keep_debug_assertions_and_overflow_checks() {
+        const { assert!(cfg!(debug_assertions)) };
+        let max = std::hint::black_box(u8::MAX);
+        assert!(std::panic::catch_unwind(|| max + 1).is_err());
+    }
 }

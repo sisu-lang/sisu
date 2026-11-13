@@ -59,6 +59,13 @@ redundant_clone = "warn"
 # ignore this setting.
 panic = "abort"
 
+# The tests run the checker thousands of times, and at opt-level 1 the checker tests take about
+# half the time.
+# Debug assertions and overflow checks stay on
+# (test_build_should_keep_debug_assertions_and_overflow_checks).
+[profile.dev.package.sisuc]
+opt-level = 1
+
 [profile.release]
 panic = "abort"
 lto = "thin"

@@ -153,10 +153,10 @@ fn allocs_in(valgrind_stderr: &str) -> u64 {
         .unwrap_or_else(|_| panic!("no allocation count after `total heap usage: ` in:\n{after}"))
 }
 
-/// Runs `exe` under Valgrind and returns its stdout and `allocs_in` of its stderr. Valgrind runs
-/// without `-q`, which prints the heap summary.
-fn heap_allocs(exe: &Path) -> (String, u64) {
-    let out = support::Invocation::default().run(exe, true);
+/// Runs `exe` under Valgrind with `stdin` and returns its stdout and `allocs_in` of its stderr.
+/// Valgrind runs without `-q`, which prints the heap summary.
+fn heap_allocs(exe: &Path, stdin: &[u8]) -> (String, u64) {
+    let out = support::Invocation::new(stdin.to_vec(), Vec::new()).run(exe, true);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(0), "{}: {stderr}", exe.display());
     (
@@ -165,10 +165,12 @@ fn heap_allocs(exe: &Path) -> (String, u64) {
     )
 }
 
-/// Builds `<name>.sisu` twice, with its first line `fn iterations() -> i64 { 1000 }` replaced by
-/// `fn iterations() -> i64 { (read_line() ?? "").len() + k }`, for `k` = 1000 and `k` = 0, at `-O2`
-/// if `o2`. Returns both builds' stdout and the difference in allocations. The `k` = 0 build is
-/// the baseline: the runtime's own allocations cancel.
+/// Builds `<name>.sisu` once, with its first line `fn iterations() -> i64 { 1000 }` replaced by
+/// `fn iterations() -> i64 { if (read_line() ?? "") == "go" { 1000 } else { 0 } }`, at `-O2` if
+/// `o2`. Runs it with the line `go` and with the line `no`. Returns both runs' stdout and the
+/// difference in allocations. The `no` run is the baseline: both runs read a line of the same
+/// length, so the allocations of `read_line` cancel, as the runtime's do. LLVM cannot know the
+/// count, so at `-O2` it cannot delete the loop.
 fn extra_allocs(name: &str, o2: bool) -> (String, String, i64) {
     const FIRST_LINE: &str = "fn iterations() -> i64 { 1000 }\n";
     let source =
@@ -176,23 +178,31 @@ fn extra_allocs(name: &str, o2: bool) -> (String, String, i64) {
     let rest = source
         .strip_prefix(FIRST_LINE)
         .unwrap_or_else(|| panic!("{name}.sisu should start with `{}`", FIRST_LINE.trim_end()));
-    // Standard input is empty, so `iterations()` is `k`, but LLVM cannot know it. A constant `0`
-    // makes the loop dead, and at `-O2` LLVM deletes an allocation that nothing reads, which the
-    // other build still makes.
-    let build =
-        |k: &str| format!("fn iterations() -> i64 {{ (read_line() ?? \"\").len() + {k} }}\n{rest}");
+    let calls = rest
+        .lines()
+        .map(|line| {
+            line.split("//")
+                .next()
+                .unwrap_or_default()
+                .matches("iterations()")
+                .count()
+        })
+        .sum::<usize>();
+    assert_eq!(
+        calls, 1,
+        "{name}.sisu: `iterations()` reads standard input, so a program calls it once, before any other `read_line`"
+    );
+    // `iterations()` reads the first line: `go` gives 1000 and `no` gives 0. LLVM cannot know the
+    // count. A constant `0` makes the loop dead, and at `-O2` LLVM deletes an allocation that
+    // nothing reads, which the other build still makes.
+    let source = format!(
+        "fn iterations() -> i64 {{ if (read_line() ?? \"\") == \"go\" {{ 1000 }} else {{ 0 }} }}\n{rest}"
+    );
 
-    // Own file names, so these builds never share an executable with the test of `<name>.out`.
-    let (stdout, allocs) = heap_allocs(&compile_tmp_for_valgrind(
-        &format!("{name}_k1000"),
-        &build("1000"),
-        o2,
-    ));
-    let (base_stdout, base_allocs) = heap_allocs(&compile_tmp_for_valgrind(
-        &format!("{name}_k0"),
-        &build("0"),
-        o2,
-    ));
+    // Own file name, so this build never shares an executable with the test of `<name>.out`.
+    let exe = compile_tmp_for_valgrind(&format!("{name}_k"), &source, o2);
+    let (stdout, allocs) = heap_allocs(&exe, b"go\n");
+    let (base_stdout, base_allocs) = heap_allocs(&exe, b"no\n");
     let extra = i64::try_from(allocs).expect("a count fits i64")
         - i64::try_from(base_allocs).expect("a count fits i64");
     (stdout, base_stdout, extra)
@@ -225,8 +235,9 @@ fn numbered_lines(first: &str, count: u32) -> String {
     })
 }
 
-/// One test per row, `allocation_counts::<program>`: (program, stdout at k = 1000, stdout at
-/// k = 0, extra allocations), checked against `extra_allocs` at both optimization levels.
+/// One test per row, `allocation_counts::<program>`: (program, stdout of the run with `go`,
+/// stdout of the run with `no`, extra allocations), checked against `extra_allocs` at both
+/// optimization levels.
 macro_rules! allocation_counts {
     ($(($name:ident, $stdout:expr, $base_stdout:expr, $extra:expr),)*) => {
         mod allocation_counts {
@@ -419,8 +430,10 @@ fn any_shapes_should_keep_its_boxes_at_o2() {
     let path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bench/features/any_shapes/main.sisu");
     let source = fs::read_to_string(path).expect("reads the benchmark");
-    let (stdout, allocs) =
-        heap_allocs(&compile_tmp_for_valgrind("any_shapes_bench", &source, true));
+    let (stdout, allocs) = heap_allocs(
+        &compile_tmp_for_valgrind("any_shapes_bench", &source, true),
+        b"",
+    );
     assert_eq!(stdout, "99985\n749977\n");
     assert!(allocs >= 150_000, "{allocs} allocations");
 }
@@ -1971,16 +1984,14 @@ fn print_should_allocate_one_buffer_however_much_it_prints() {
             "fn main() {{\n    let mut i = 0\n    while i < {limit} {{\n        print(i)\n        i += 1\n    }}\n}}\n"
         )
     };
-    let (_, one) = heap_allocs(&compile_tmp_for_valgrind(
-        "one_buffer_k1",
-        &program(1),
-        false,
-    ));
-    let (_, many) = heap_allocs(&compile_tmp_for_valgrind(
-        "one_buffer_k20000",
-        &program(20_000),
-        false,
-    ));
+    let (_, one) = heap_allocs(
+        &compile_tmp_for_valgrind("one_buffer_k1", &program(1), false),
+        b"",
+    );
+    let (_, many) = heap_allocs(
+        &compile_tmp_for_valgrind("one_buffer_k20000", &program(20_000), false),
+        b"",
+    );
     assert_eq!(many, one);
 }
 

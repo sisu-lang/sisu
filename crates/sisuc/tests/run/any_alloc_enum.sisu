@@ -30,10 +30,12 @@ fn size_of(s: any Shape, depth: i64) -> i64 {
 }
 
 fn main() {
-    // Standard input is empty, so the depth is 0, but the compiler cannot know it.
+    let n = iterations()
+    // In the allocation-count build, `iterations()` reads the only line first. In each build,
+    // `read_line()` then gives none, so the depth is 0, but the compiler cannot know it.
     let depth = (read_line() ?? "").len()
     let mut total = 0
-    for i in 0..iterations() {
+    for i in 0..n {
         let kind = if i % 2 == 0 { Kind.Small } else { Kind.Large }
         let s: any Shape = kind
         total += size_of(s, depth)

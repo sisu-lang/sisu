@@ -27,12 +27,13 @@ fn pass(m: Msg, depth: i64) -> Msg {
 }
 
 fn main() {
-    let a = Msg.Text("n{iterations()}")
+    let n = iterations()
+    let a = Msg.Text("n{n}")
     let mut b = a
     let e = Expr.Add(Expr.Num(1), Expr.Num(2))
     let mut f = e
     let mut count = 0
-    for i in 0..iterations() {
+    for i in 0..n {
         let copy = a
         b = pass(copy, i % 2 + 1)
         f = e
