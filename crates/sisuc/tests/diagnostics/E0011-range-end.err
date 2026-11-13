@@ -1,8 +1,10 @@
-error[E0011]: expected a literal, found `|`
- --> E0011-range-end.sisu:3:12
+error[E0011]: a range pattern needs a start and an end
+ --> E0011-range-end.sisu:3:9
   |
 3 |         0..| => print(1)
-  |            ^
+  |         ^^^
+  |
+  = help: write `0..end`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0011

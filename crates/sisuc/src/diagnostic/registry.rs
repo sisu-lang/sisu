@@ -68,7 +68,7 @@ codes! {
     DigitSeparator = "E0008",
     IntegerTooLarge = "E0009",
     UnexpectedCharacter | LogicalOperatorWritten = "E0010",
-    Expected | JumpTakesBlock | LetTakesNoType = "E0011",
+    Expected | JumpTakesBlock | LetTakesNoType | RangeBoundMissing = "E0011",
     Var = "E0013",
     FieldComma = "E0015",
     FieldLet = "E0016",
@@ -1331,6 +1331,15 @@ pub(crate) enum DiagnosticKind {
     /// A range written another language's way, reported at `at`: its operator, or the first
     /// negative bound of a colon slice that has one.
     ForeignRange { form: ForeignRange, at: Span },
+    /// The range pattern at `at`, which has one bound only. `start` and `end` are the bounds as
+    /// written, and `None` for the one that is missing; `inclusive` is whether the operator is
+    /// `..=`.
+    RangeBoundMissing {
+        start: Option<String>,
+        inclusive: bool,
+        end: Option<String>,
+        at: Span,
+    },
     /// A line of an arm list, from `at`, its first token, that starts with `|`, `=>` or a
     /// guard's `if`, and so continues the arm above. `join` is the space from the end of the
     /// line above to `at`, which the fix replaces with one space; `None` when a comment lies in
@@ -2417,8 +2426,8 @@ pub(crate) enum MatchIdiomForm {
     /// `switch` for `match`.
     Switch,
     /// `case` starting an arm; `remove` is `case ` and, for Swift's `case let .p`, `let ` and the
-    /// `.`.
-    Case { remove: Vec<Span> },
+    /// `.`. It is `None` when no pattern follows, so removing them leaves an arm with no pattern.
+    Case { remove: Option<Vec<Span>> },
     /// `default:` starting an arm.
     Default,
     /// `else` starting an arm, before its `=>`.
@@ -2433,8 +2442,12 @@ pub(crate) enum MatchIdiomForm {
 
 /// A pattern written another language's way. `form` is how Sisu writes it: `Rect(x, y)`.
 pub(crate) enum ForeignPattern {
-    /// Labels on the sub-patterns; `labels` are each `label: ` the fix deletes.
-    Labels { form: String, labels: Vec<Span> },
+    /// Labels on the sub-patterns; `labels` are each `label: ` the fix deletes. It is `None` when
+    /// a comment lies in one of them, which the fix would delete.
+    Labels {
+        form: String,
+        labels: Option<Vec<Span>>,
+    },
     /// Rust's braces, `Rect { w, h }`; `fix` is what the fix replaces, from the end of the name
     /// through the `}`, and the `(w, h)` that replaces it. It is `None` when a comment lies
     /// between the `{`, the sub-patterns and the `}`, which the fix would delete.
@@ -2442,22 +2455,26 @@ pub(crate) enum ForeignPattern {
         form: String,
         fix: Option<(Span, String)>,
     },
-    /// Type arguments, `Option<i64>.Some(v)`; the fix deletes them. The type of the matched
-    /// value gives them.
-    TypeArgs,
+    /// Type arguments, `Option<i64>.Some(v)`; the fix deletes them, unless `fix` is false because
+    /// a comment lies in them. The type of the matched value gives them.
+    TypeArgs { fix: bool },
 }
 
-/// A range written another language's way. `start` and `end` are its bounds as written; `end` is
-/// `None` when it did not parse, and the message then calls it `end`.
+/// A range written another language's way. `start` and `end` are its bounds as written; each is
+/// `None` when it is missing or did not parse, and the message then calls it `start` or `end`.
 pub(crate) enum ForeignRange {
     /// `start..<end`; `remove` is the `<`, unless removing it leaves a range the parser rejects.
+    /// `start` is `None` when the range has none, and the message calls it `start`.
     Exclusive {
-        start: String,
+        start: Option<String>,
         end: Option<String>,
         remove: Option<Span>,
     },
     /// `start...end`.
-    Ellipsis { start: String, end: Option<String> },
+    Ellipsis {
+        start: Option<String>,
+        end: Option<String>,
+    },
     /// `base[start:end]`, as Python and Go write a slice. `at` is the `:`, or the first negative
     /// bound when a bound is negative. A bound that is left out is `None`. `whole` is the `[:]`
     /// of `base[:]`, which the fix removes. `base_place` is true when `base` is a place that starts
@@ -6048,22 +6065,23 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::MatchIdiom { form, at } => match form {
                 MatchIdiomForm::Switch => Diagnostic::coded(code, at, "Sisu writes `match`")
                     .with_fix(unsafe_fix("write `match`", at, "match")),
-                MatchIdiomForm::Case { remove } => Diagnostic::coded(
-                    code,
-                    at,
-                    "an arm is `pattern => body`, with no `case`",
-                )
-                .with_fix(Fix {
-                    message: "remove the `case`".to_string(),
-                    safe: false,
-                    edits: remove
-                        .into_iter()
-                        .map(|span| Edit {
-                            span,
-                            replacement: String::new(),
-                        })
-                        .collect(),
-                }),
+                MatchIdiomForm::Case { remove } => {
+                    let d = Diagnostic::coded(code, at, "an arm is `pattern => body`, with no `case`");
+                    match remove {
+                        Some(remove) => d.with_fix(Fix {
+                            message: "remove the `case`".to_string(),
+                            safe: false,
+                            edits: remove
+                                .into_iter()
+                                .map(|span| Edit {
+                                    span,
+                                    replacement: String::new(),
+                                })
+                                .collect(),
+                        }),
+                        None => d,
+                    }
+                }
                 MatchIdiomForm::Default => Diagnostic::coded(code, at, "write `_ =>`")
                     .with_fix(safe_fix("write `_ =>`", at, "_ =>")),
                 MatchIdiomForm::Else => Diagnostic::coded(code, at, "write `_`")
@@ -6080,23 +6098,28 @@ impl From<DiagnosticKind> for Diagnostic {
                 }
             },
             DiagnosticKind::PatternForm { form, at } => match form {
-                ForeignPattern::Labels { form, labels } => Diagnostic::coded(
-                    code,
-                    at,
-                    format!("a pattern binds by position: `{form}`"),
-                )
-                .with_fix(Fix {
-                    message: "remove the labels".to_string(),
-                    // Labels out of order would swap the bindings.
-                    safe: false,
-                    edits: labels
-                        .into_iter()
-                        .map(|span| Edit {
-                            span,
-                            replacement: String::new(),
-                        })
-                        .collect(),
-                }),
+                ForeignPattern::Labels { form, labels } => {
+                    let d = Diagnostic::coded(
+                        code,
+                        at,
+                        format!("a pattern binds by position: `{form}`"),
+                    );
+                    match labels {
+                        Some(labels) => d.with_fix(Fix {
+                            message: "remove the labels".to_string(),
+                            // Labels out of order would swap the bindings.
+                            safe: false,
+                            edits: labels
+                                .into_iter()
+                                .map(|span| Edit {
+                                    span,
+                                    replacement: String::new(),
+                                })
+                                .collect(),
+                        }),
+                        None => d,
+                    }
+                }
                 ForeignPattern::Braces { form, fix } => {
                     let message = format!("write `{form}`");
                     let found = Diagnostic::coded(code, at, message.as_str());
@@ -6107,10 +6130,14 @@ impl From<DiagnosticKind> for Diagnostic {
                         None => found,
                     }
                 }
-                ForeignPattern::TypeArgs => {
-                    Diagnostic::coded(code, at, "a pattern takes no type arguments")
-                        .with_help("the type of the matched value gives the type arguments")
-                        .with_fix(safe_fix("remove the type arguments", at, ""))
+                ForeignPattern::TypeArgs { fix } => {
+                    let d = Diagnostic::coded(code, at, "a pattern takes no type arguments")
+                        .with_help("the type of the matched value gives the type arguments");
+                    if fix {
+                        d.with_fix(safe_fix("remove the type arguments", at, ""))
+                    } else {
+                        d
+                    }
                 }
             },
             DiagnosticKind::CannotMatch { ty, at } => {
@@ -6266,6 +6293,7 @@ impl From<DiagnosticKind> for Diagnostic {
             },
             DiagnosticKind::ForeignRange { form, at } => match form {
                 ForeignRange::Exclusive { start, end, remove } => {
+                    let start = start.as_deref().unwrap_or("start");
                     let end = end.as_deref().unwrap_or("end");
                     let d = Diagnostic::coded(code, at, format!("write `{start}..{end}`"));
                     match remove {
@@ -6314,6 +6342,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     }
                 }
                 ForeignRange::Ellipsis { start, end } => {
+                    let start = start.as_deref().unwrap_or("start");
                     let end = end.as_deref().unwrap_or("end");
                     Diagnostic::coded(
                     code,
@@ -6324,6 +6353,18 @@ impl From<DiagnosticKind> for Diagnostic {
                     )
                 }
             },
+            DiagnosticKind::RangeBoundMissing {
+                start,
+                inclusive,
+                end,
+                at,
+            } => {
+                let start = start.as_deref().unwrap_or("start");
+                let end = end.as_deref().unwrap_or("end");
+                let op = if inclusive { "..=" } else { ".." };
+                Diagnostic::coded(code, at, "a range pattern needs a start and an end")
+                    .with_help(format!("write `{start}{op}{end}`"))
+            }
             DiagnosticKind::ArmSplit { at, join } => {
                 let d = Diagnostic::coded(code, at, "an arm continues on the line above");
                 match join {

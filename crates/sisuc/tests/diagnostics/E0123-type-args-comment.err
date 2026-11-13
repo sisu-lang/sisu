@@ -1,0 +1,12 @@
+error[E0123]: a pattern takes no type arguments
+  --> E0123-type-args-comment.sisu:12:10
+   |
+12 |           E<i64, // c
+   |  __________^
+13 | |             i64>.P(x, y) => print(x)
+   | |________________^
+   |
+   = help: the type of the matched value gives the type arguments
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0123

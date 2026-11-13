@@ -1,0 +1,8 @@
+error[E0122]: an arm is `pattern => body`, with no `case`
+ --> E0122-case-let-no-pattern.sisu:8:9
+  |
+8 |         case let => print(1)
+  |         ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0122
