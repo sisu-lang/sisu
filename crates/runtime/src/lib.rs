@@ -1319,6 +1319,8 @@ mod tests {
         out.append_bytes(b"ab")
             .expect("the pipe should take a line");
         assert_eq!(out.buffer, b"", "the line should have gone out");
+        // The reader sees the end of the pipe, not a wait, when the line was lost.
+        drop(out);
         let mut line = [0; 3];
         reader
             .read_exact(&mut line)

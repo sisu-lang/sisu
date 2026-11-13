@@ -2676,19 +2676,34 @@ fn a_constant_should_not_be_a_mut_argument() {
     diagnostic(src, E169, (6, 14, "N"), &[(1, 7)]);
 }
 
-/// GIVEN a `mut` field `f` whose type `Nope` fails with E0030, and `set(mut n: i64)`
+/// GIVEN a `mut` field `f` whose type `Nope` fails with E0030, and `set(mut n: Nope)`, whose
+///   parameter has no type either
 /// WHEN `main` calls `set(c.f)`, with no `mut`
-/// THEN the E0166 stands at `c.f` and offers no fix: the field has no type to compare with `i64`
+/// THEN the E0166 stands at `c.f` and offers no fix: two unknown types are not the same type
 #[test]
 fn a_missing_mut_before_a_field_with_no_type_should_offer_no_fix() {
-    let src = "class C {\n    mut f: Nope\n}\nfn set(mut n: i64) {\n    n = 1\n}\n\
+    let src = "class C {\n    mut f: Nope\n}\nfn set(mut n: Nope) {\n    n = 1\n}\n\
         fn main() {\n    let c = C(f: 1)\n    set(c.f)\n}";
     let (_, ds) = checked(src);
     let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
     assert_eq!(
         found,
-        [(E30, (2, 12)), (Code::MutMarkerMissing, (9, 9))],
+        [
+            (E30, (2, 12)),
+            (E30, (4, 15)),
+            (Code::MutMarkerMissing, (9, 9))
+        ],
         "{src}"
     );
-    assert!(ds[1].fixes().is_empty(), "{ds:?}");
+    assert!(ds[2].fixes().is_empty(), "{ds:?}");
+}
+
+/// GIVEN a `mut` field `f` whose type `Nope` fails with E0030, and `set(mut n: i64)`
+/// WHEN `main` calls `set(mut c.f)`
+/// THEN the E0030 of the declaration is the one error: the place has no type to compare
+#[test]
+fn a_mut_argument_that_is_a_field_with_no_type_should_report_only_the_declaration() {
+    let src = "class C {\n    mut f: Nope\n}\nfn set(mut n: i64) {\n    n = 1\n}\n\
+        fn main() {\n    let c = C(f: 1)\n    set(mut c.f)\n}";
+    codes(src, &[(E30, (2, 12))]);
 }

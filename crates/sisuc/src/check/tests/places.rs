@@ -1027,12 +1027,13 @@ fn push_on_failed_array_receiver_should_report_the_temporary() {
     );
 }
 
-/// A write to a field whose declared type fails with E0030 adds no error of its own: the
-/// declaration's error is the only one.
+/// A compound write to a field whose declared type fails with E0030 adds no error of its own:
+/// the declaration's error is the only one. A plain `=` does not read the field, so it would not
+/// need the token of the declaration's error.
 #[test]
 fn write_to_a_field_with_no_type_should_report_only_the_declaration() {
     codes(
-        "class C {\n    mut f: Nope\n}\nfn main() {\n    let c = C(f: 1)\n    c.f = 2\n}",
+        "class C {\n    mut f: Nope\n}\nfn main() {\n    let c = C(f: 1)\n    c.f += 2\n}",
         &[(Code::UnknownType, (2, 12))],
     );
 }

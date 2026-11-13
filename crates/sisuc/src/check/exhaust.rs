@@ -1421,7 +1421,8 @@ mod tests {
                 None,
                 false,
             ),
-            // The `bool` that the arms leave is in the bucket of `true`, so it prints as `false`.
+            // `P(false, _)` and `P(true, true)` leave `P(true, false)`: the witness is found under
+            // `true`, and its second column prints as `false`.
             (
                 "p",
                 &["P(false, _) => 1", "P(true, true) => 2"],
