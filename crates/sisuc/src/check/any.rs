@@ -38,8 +38,13 @@ pub(super) enum AnyJoin {
         later: (usize, Type),
     },
     /// The `any` types join to `ty`, the widest, and `member`, an index and a type that is no
-    /// `any` type, does not convert to it.
-    Leaves { ty: Type, member: (usize, Type) },
+    /// `any` type, does not convert to it. The member `giver` has the type `ty`; it is
+    /// `usize::MAX` for the seed of a hinted join.
+    Leaves {
+        ty: Type,
+        giver: usize,
+        member: (usize, Type),
+    },
 }
 
 /// The interfaces that an `any` type conforms to, and whether it is unknown (`any_unknown`). The
@@ -79,11 +84,7 @@ impl Checker<'_> {
     /// arguments resolve as a bound does. The check that the interface can be `any` waits for
     /// every interface, as a bound check does. The result is `None`, reported, when `written`
     /// names no interface or the interface cannot be `any`.
-    pub(super) fn resolve_any(
-        &mut self,
-        ty: &ast::TypeExpr,
-        written: &ast::TypeExpr,
-    ) -> Option<Type> {
+    pub(super) fn resolve_any(&mut self, written: &ast::TypeExpr) -> Option<Type> {
         let bound = self.bound(written, None)?;
         let any = Type::intern(TypeKind::Any(bound.interface, bound.args));
         // A program that names an `any` type needs the layout of its table, which only `mono`
@@ -98,9 +99,6 @@ impl Checker<'_> {
                 let ats = applied.args.iter().map(|arg| arg.span).collect();
                 self.check_arguments(bound, any, ats);
             }
-        }
-        if !ty.span.in_prelude() {
-            self.any_written.entry(any).or_insert(ty.bare);
         }
         self.record(Used::Interface(bound.interface), bound.at);
         self.check_or_wait(Check::Any { bound }).ok().map(|()| any)
@@ -354,6 +352,7 @@ impl Checker<'_> {
         checked: Checked,
         want: Type,
         got: Type,
+        origin: Origin,
     ) -> Result<(Checked, bool), Checked> {
         let (target, layers) = match want.kind() {
             TypeKind::Any(..) => (want, 0),
@@ -369,7 +368,7 @@ impl Checker<'_> {
             return Err(checked);
         }
         if !self.conforms(got, interface, args) {
-            let reported = self.error(self.not_conform(at, got, target));
+            let reported = self.error(self.not_conform(at, got, target, origin));
             return Ok((Err(Poisoned::untyped(reported)), true));
         }
         // A conversion makes a table, which only `mono` reaches.
@@ -387,7 +386,13 @@ impl Checker<'_> {
 
     /// Converts the value of `block`, which ends at `at`, where `want` is expected. It does what
     /// `any_conversion` does for an expression, for the value of a function's body or a branch.
-    pub(super) fn any_block(&mut self, block: &mut CheckedBlock, want: Type, at: Span) {
+    pub(super) fn any_block(
+        &mut self,
+        block: &mut CheckedBlock,
+        want: Type,
+        at: Span,
+        origin: Origin,
+    ) {
         let Some(got) = block_type(block) else {
             return;
         };
@@ -401,7 +406,7 @@ impl Checker<'_> {
                     .value
                     .take()
                     .expect("a block checked as a value type should end in its value");
-                match self.any_conversion(at, Ok(*value), want, got) {
+                match self.any_conversion(at, Ok(*value), want, got, origin) {
                     Ok((Ok(converted), _)) => {
                         done.value = Some(Box::new(converted));
                         done.ty = want;
@@ -416,7 +421,7 @@ impl Checker<'_> {
                 else {
                     unreachable!("the block should have failed");
                 };
-                *block = match self.any_conversion(at, Err(poisoned), want, got) {
+                *block = match self.any_conversion(at, Err(poisoned), want, got, origin) {
                     Ok((converted, _)) | Err(converted) => Err(converted
                         .err()
                         .unwrap_or_else(|| Poisoned::untyped(reported))),
@@ -468,9 +473,16 @@ impl Checker<'_> {
         let Some(&(first, mut ty)) = targets.next() else {
             return AnyJoin::NoAny;
         };
+        // The member whose type is `ty`.
+        let mut giver = first;
         for &(other, t) in targets {
             match self.any_join(ty, t) {
-                Some(wider) => ty = wider,
+                Some(wider) => {
+                    if wider == t {
+                        giver = other;
+                    }
+                    ty = wider;
+                }
                 None => {
                     return AnyJoin::Fails {
                         earlier: (first, ty),
@@ -483,6 +495,7 @@ impl Checker<'_> {
             if !is_target(t) && t != ty && !self.converts_to_any(t, ty) {
                 return AnyJoin::Leaves {
                     ty,
+                    giver,
                     member: (other, t),
                 };
             }
@@ -535,7 +548,7 @@ impl Checker<'_> {
                     && !matches!(got.kind(), TypeKind::Any(..))
                     && !self.conforms(got, interface, args) =>
             {
-                self.not_conform(at, got, target).into()
+                self.not_conform(at, got, target, origin).into()
             }
             _ => self.mismatch(at, source, want, got, origin),
         }
@@ -543,7 +556,7 @@ impl Checker<'_> {
 
     /// The value at `at`, of type `got`, does not conform to the interface of `target`, an `any`
     /// type.
-    fn not_conform(&self, at: Span, got: Type, target: Type) -> DiagnosticKind {
+    fn not_conform(&self, at: Span, got: Type, target: Type, origin: Origin) -> DiagnosticKind {
         let TypeKind::Any(interface, args) = target.kind() else {
             unreachable!("the target should be an `any` type");
         };
@@ -552,7 +565,7 @@ impl Checker<'_> {
             interface: self.bound_text(interface, args),
             at,
             form: NotConformForm::Any {
-                asks: self.any_written.get(&target).copied(),
+                origin: self.origin_fact(origin),
             },
         }
     }

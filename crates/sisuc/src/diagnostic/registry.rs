@@ -2120,6 +2120,7 @@ impl Expected {
 }
 
 /// Where a mismatch's expected type came from: the fact that the report names.
+#[derive(Clone)]
 pub(crate) enum MismatchOrigin {
     /// The `string` operand of a `+` that expects a `string` of the other.
     Concat(Span),
@@ -2811,9 +2812,9 @@ pub(crate) enum NotConformForm {
         add: Option<AddBound>,
         make: Option<Make>,
     },
-    /// The type is converted to `any I`, which asks for the interface. `asks` is where that `any I`
-    /// is written, when the program writes it.
-    Any { asks: Option<Span> },
+    /// The type is converted to `any I`, which asks for the interface. `origin` is where that
+    /// `any I` comes from: the declared type, a parameter, a return, or the member of a join.
+    Any { origin: Option<MismatchOrigin> },
     /// A bound of a declaration, written at `bound` (nowhere a user can see for the prelude's),
     /// needs it. `implied` holds the text of an associated type and of its base, when `bound` is
     /// that associated type: no one writes the bound there. `add` is the bound that a type
@@ -3661,13 +3662,15 @@ impl From<DiagnosticKind> for Diagnostic {
                             },
                         }
                     }
-                    NotConformForm::Any { asks } => match asks {
-                        Some(asks) => d.with_secondary(
-                            asks,
-                            format!("required by this `any {interface}`"),
-                        ),
-                        None => d,
-                    },
+                    NotConformForm::Any { origin } => {
+                        match origin.map(|origin| origin.text(&format!("`any {interface}`"))) {
+                            Some((None, text)) => d.with_label(text),
+                            // No diagnostic points into the prelude, and this one has no note.
+                            Some((Some(at), _)) if at.in_prelude() => d,
+                            Some((Some(at), text)) => d.with_secondary(at, text),
+                            None => d,
+                        }
+                    }
                     NotConformForm::Bound {
                         bound,
                         implied,
