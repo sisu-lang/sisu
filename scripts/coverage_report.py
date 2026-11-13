@@ -23,8 +23,9 @@ INVARIANT = re.compile(r"\b(?:unreachable|panic)!\(")
 ASSERT = re.compile(r"\b(?:debug_)?assert(?:_eq|_ne)?!\(")
 # What `unmeasured` walks back over: the longest statement it follows, in lines.
 CONTINUATION = 30
-# A string literal or a `//` comment, which `test_module_lines` strips before it counts braces.
-BRACE_NOISE = re.compile(r'"(?:\\.|[^"\\])*"|//.*')
+# What `code_of` strips: a raw string, a string, a one-char literal (a lifetime has no closing
+# quote) and a `//` comment. A string that runs over several lines is not handled.
+BRACE_NOISE = re.compile(r"""r(#*)".*?"\1|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])'|//.*""")
 TEST_MOD = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?mod\s+\w+\s*\{")
 HUNK = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
@@ -207,17 +208,13 @@ def report(
 
 
 def test_module_lines(path: str, last: int, read_line: Callable[[str, int], str]) -> set[int]:
-    """Return the lines up to `last` that an inline `#[cfg(test)] mod name {` encloses.
-
-    shortcut: braces are counted after a rough strip of strings and `//` comments. A raw
-    string or a char literal with a brace can end a module early. Use `syn` if that happens.
-    """
+    """Return the lines up to `last` that an inline `#[cfg(test)] mod name {` encloses."""
     result: set[int] = set()
     armed = False
     depth = 0
     for number in range(1, last + 1):
         text = read_line(path, number).strip()
-        code = BRACE_NOISE.sub("", text)
+        code = code_of(text)
         if depth > 0:
             result.add(number)
             depth += code.count("{") - code.count("}")
@@ -232,21 +229,32 @@ def test_module_lines(path: str, last: int, read_line: Callable[[str, int], str]
     return result
 
 
+def code_of(line: str) -> str:
+    """Return `line` without its literals and comments, which hold no code."""
+    return BRACE_NOISE.sub("", line)
+
+
 def unmeasured(path: str, number: int, read_line: Callable[[str, int], str]) -> bool:
     """Return whether line `number` is one whose branches no test should take.
 
     That is an assert, or a line that an assert spans, or a `let ... else {` whose body is
-    an invariant panic, as in the region lists.
+    an invariant panic, as in the region lists. Comments do not count.
+
+    shortcut: a statement ends at a line that ends in `;`, `{` or `}`. After an assert in a
+    match arm (`A => assert!(x),`) or in a closure argument, the walk goes on to the next
+    lines. It can hide a branch there. No such line exists in the repository now.
     """
-    line = read_line(path, number)
-    if ASSERT.search(line) or INVARIANT.search(line):
+    code = code_of(read_line(path, number))
+    if ASSERT.search(code) or INVARIANT.search(code):
         return True
-    if line.rstrip().endswith("else {") and INVARIANT.search(read_line(path, number + 1)):
+    if code.rstrip().endswith("else {") and INVARIANT.search(code_of(read_line(path, number + 1))):
         return True
-    # A statement goes on while the lines before it end in neither `;` nor a brace.
     for before in range(number - 1, max(number - CONTINUATION, 0), -1):
-        text = read_line(path, before).rstrip()
-        if not text or text.endswith((";", "{", "}")):
+        raw = read_line(path, before).strip()
+        if not raw:
+            return False
+        text = code_of(raw).rstrip()
+        if text.endswith((";", "{", "}")):
             return False
         if ASSERT.search(text):
             return True
