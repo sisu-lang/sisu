@@ -106,11 +106,27 @@ def diff_ends(target: str) -> tuple[str, str] | None:
     return None
 
 
-def stem_of(value: str) -> str:
-    """Return the STEM of `value`: a stem as it is, or the stem of a path such as RUN/sol-2.md."""
+def unnumbered(name: str) -> str:
+    """Return a file stem without its round number: sol-2 gives sol."""
+    return re.sub(r"-\d+$", "", name)
+
+
+def stem_of(value: str, run: Path, round_number: int) -> str:
+    """Return the STEM of `value`: a stem as it is, or the stem of a path such as RUN/sol.md.
+
+    A path must name the report of RUN for this round, or the script stops.
+    """
     if not value.endswith(".md"):
         return value
-    return re.sub(r"-\d+$", "", Path(value).stem)
+    path = Path(value)
+    stem = unnumbered(path.stem)
+    if path.name != numbered(stem, round_number) or (
+        path.parent != Path() and path.parent.resolve() != run.resolve()
+    ):
+        raise SystemExit(
+            f"review_round: {value} is not the report of round {round_number} in {run}"
+        )
+    return stem
 
 
 def numbered(stem: str, round_number: int) -> str:
@@ -139,7 +155,7 @@ def round_options(run: Path, round_number: int) -> list[str]:
             raise SystemExit(f"review_round: {rulings} does not exist")
         options += ["--rulings", str(rulings)]
         for report in sorted(run.glob("*.md")):
-            if re.sub(r"-\d+$", "", report.stem) not in NOT_REPORTS:
+            if unnumbered(report.stem) not in NOT_REPORTS:
                 options += ["--prior", str(report)]
     return options
 
@@ -334,6 +350,11 @@ def save_report(run: Path, stem: str, agent: str, round_number: int, transcripts
     return 0
 
 
+def stems(args: argparse.Namespace) -> list[str]:
+    """Return the STEM of each --report value of the command line."""
+    return [stem_of(r, args.run, args.round) for r in args.report]
+
+
 def main() -> int:
     """Run the action that the command line names."""
     parser = argparse.ArgumentParser(description="Do the fixed steps of one review round.")
@@ -344,20 +365,16 @@ def main() -> int:
     rulings_parser = commands.add_parser("rulings")
     record_parser = commands.add_parser("record")
     rulings_parser.add_argument("run", type=Path)
-    rulings_parser.add_argument(
-        "--report", action="append", required=True, metavar="STEM", type=stem_of
-    )
+    rulings_parser.add_argument("--report", action="append", required=True, metavar="STEM")
     for command in (prepare_parser, verify_parser, record_parser):
         command.add_argument("repo", type=Path)
         command.add_argument("run", type=Path)
     prepare_parser.add_argument("target")
     prepare_parser.add_argument("--old-main", action="store_true")
     prepare_parser.add_argument("--pr-body", type=Path, metavar="FILE")
-    verify_parser.add_argument(
-        "--report", action="append", required=True, metavar="STEM", type=stem_of
-    )
+    verify_parser.add_argument("--report", action="append", required=True, metavar="STEM")
     save_parser.add_argument("run", type=Path)
-    save_parser.add_argument("stem", type=stem_of)
+    save_parser.add_argument("stem")
     save_parser.add_argument("--agent", required=True, metavar="ID")
     save_parser.add_argument(
         "--transcripts", type=Path, default=Path.home() / ".claude" / "projects"
@@ -368,14 +385,15 @@ def main() -> int:
     if args.command != "prepare" and extra:
         parser.error(f"unrecognized arguments: {' '.join(extra)}")
     if args.command == "verify":
-        return verify(args.repo, args.run, args.round, args.report)
+        return verify(args.repo, args.run, args.round, stems(args))
     if args.command == "rulings":
-        return rulings(args.run, args.round, args.report)
+        return rulings(args.run, args.round, stems(args))
     if args.command == "record":
         record(args.repo, args.run / f"tree-{args.round}.txt")
         return 0
     if args.command == "save-report":
-        return save_report(args.run, args.stem, args.agent, args.round, args.transcripts)
+        stem = stem_of(args.stem, args.run, args.round)
+        return save_report(args.run, stem, args.agent, args.round, args.transcripts)
     # parse_known_args would take the value of an option before TARGET as the target.
     if args.target != sys.argv[4]:
         parser.error("write TARGET just after RUN, before each option")

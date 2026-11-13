@@ -80,6 +80,23 @@ class OpenPr(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("open_pr: FAIL: HTTP 422: a pull request already exists", result.stdout)
 
+    def test_a_missing_body_file_should_fail_with_its_reason(self) -> None:
+        self.body.unlink()
+        result = self.open_pr()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("open_pr: FAIL:", result.stdout)
+        self.assertIn("body.md", result.stdout)
+        self.assertFalse(self.log.exists())
+
+    def test_a_detached_head_should_fail_and_ask_for_a_branch(self) -> None:
+        git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
+        subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "one"], check=True, env=ENV)
+        subprocess.run([*git, "switch", "-q", "--detach"], check=True, env=ENV)
+        result = self.open_pr()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("open_pr: FAIL: no branch is checked out", result.stdout)
+        self.assertFalse(self.log.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

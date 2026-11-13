@@ -604,7 +604,10 @@ to the same directory.
 `--against <commit>` replays one input in this checkout and in an export of
 `<commit>` under `target/against/`, and says which of the two fail. It exits
 1 only when the input fails here and not at `<commit>`, so the checkout
-brought the failure. The first run on a commit builds the export.
+brought the failure. It exits 2 on a bad argument or a failed build, and
+does not export when the input passes here. A later run on the same commit
+uses the same export. It takes `--target program` too, and the replay of the
+export writes its dump to `<input name>.dump.against/`.
 
 Three limits of fork mode:
 

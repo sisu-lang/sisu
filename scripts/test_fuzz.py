@@ -682,12 +682,16 @@ class GapsCheck(unittest.TestCase):
         self.assertNotIn("## Generator gaps", run.summary)
 
 
-# The fake cargo of --against: `cargo fuzz run` exits with $FAKE_HERE in the checkout and with
-# $FAKE_THERE in an export under target/against, and logs where it ran to $FAKE_SEEN.
+# The fake cargo of --against. In an export under target/against, `cargo fuzz run` exits with
+# $FAKE_THERE and `cargo fuzz build` with $FAKE_BUILD_THERE; in the checkout, the run exits with
+# $FAKE_HERE. Each run writes its directory and $SISU_RUNTIME to $FAKE_SEEN.
 AGAINST_CARGO = """#!/usr/bin/env bash
+there=false
+[[ $PWD == */target/against/* ]] && there=true
+if [[ $1 == fuzz && $2 == build && $there == true ]]; then exit "${FAKE_BUILD_THERE:-0}"; fi
 [[ $1 == fuzz && $2 == run ]] || exit 0
-echo "$PWD" >>"$FAKE_SEEN"
-if [[ $PWD == */target/against/* ]]; then exit "${FAKE_THERE:-0}"; fi
+echo "$PWD ${SISU_RUNTIME:-none}" >>"$FAKE_SEEN"
+if [[ $there == true ]]; then exit "${FAKE_THERE:-0}"; fi
 exit "${FAKE_HERE:-0}"
 """
 
@@ -707,46 +711,96 @@ class FuzzAgainst(unittest.TestCase):
         cargo.write_text(AGAINST_CARGO)
         cargo.chmod(cargo.stat().st_mode | stat.S_IXUSR)
         git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
-        subprocess.run([*git, "init", "-q"], check=True, env=ENV)
+        subprocess.run([*git, "init", "-q", "-b", "trunk"], check=True, env=ENV)
         subprocess.run([*git, "add", "."], check=True, env=ENV)
         subprocess.run([*git, "commit", "-q", "-m", "base"], check=True, env=ENV)
+        self.sha = subprocess.run(
+            [*git, "rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=ENV
+        ).stdout.strip()
         self.input = self.dir / "crash-1"
         self.input.write_text("fn")
         self.seen = self.dir / "seen"
         self.env = dict(ENV, PATH=f"{bin_dir}:{ENV['PATH']}", FAKE_SEEN=str(self.seen))
 
-    def against(self, here: int, there: int) -> subprocess.CompletedProcess[str]:
+    def against(
+        self, here: int, there: int, *, target: str = "front_end", build_there: int = 0
+    ) -> subprocess.CompletedProcess[str]:
+        env = dict(
+            self.env,
+            FAKE_HERE=str(here),
+            FAKE_THERE=str(there),
+            FAKE_BUILD_THERE=str(build_there),
+        )
         return subprocess.run(
-            ["bash", "scripts/fuzz.sh", "--against", "HEAD", str(self.input)],
+            ["bash", "scripts/fuzz.sh", "--target", target, "--against", "trunk", str(self.input)],
             cwd=self.repo,
             capture_output=True,
             text=True,
-            env=dict(self.env, FAKE_HERE=str(here), FAKE_THERE=str(there)),
+            env=env,
             timeout=60,
             check=False,
         )
 
-    def test_a_failure_on_both_commits_should_pass_and_say_both_fail(self) -> None:
-        run = self.against(77, 77)
+    def runs(self) -> list[list[str]]:
+        return [line.split() for line in self.seen.read_text().splitlines()]
+
+    def test_a_failure_on_both_commits_should_pass_and_name_the_commit(self) -> None:
+        run = self.against(77, 1)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-        self.assertIn("fails at HEAD and at HEAD", run.stdout)
+        self.assertIn("fails in this checkout and at trunk", run.stdout)
 
     def test_a_failure_here_only_should_fail_and_say_the_checkout_brought_it(self) -> None:
         run = self.against(77, 0)
         self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
-        self.assertIn("this checkout brought the failure", run.stdout)
+        self.assertIn("the checkout brought the failure", run.stdout)
 
-    def test_a_pass_here_should_say_so(self) -> None:
+    def test_a_pass_here_should_not_export_the_commit(self) -> None:
         run = self.against(0, 77)
         self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-        self.assertIn("the input passes at HEAD", run.stdout)
+        self.assertIn("the input passes in this checkout", run.stdout)
+        self.assertEqual(len(self.runs()), 1)
+        self.assertFalse((self.repo / "target" / "against").exists())
 
-    def test_the_export_should_hold_the_commit_and_run_the_second_replay(self) -> None:
+    def test_a_failed_build_of_the_export_should_exit_2_with_no_verdict(self) -> None:
+        run = self.against(77, 0, build_there=101)
+        self.assertEqual(run.returncode, 2, run.stdout + run.stderr)
+        self.assertNotIn("brought", run.stdout)
+        self.assertEqual(len(self.runs()), 1)
+
+    def test_a_missing_input_should_exit_2_before_a_replay(self) -> None:
+        self.input.unlink()
+        run = self.against(77, 77)
+        self.assertEqual(run.returncode, 2, run.stdout + run.stderr)
+        self.assertFalse(self.seen.exists())
+
+    def test_the_export_should_hold_the_commit_and_replace_a_stopped_export(self) -> None:
+        stopped = self.repo / "target" / "against" / f"{self.sha}.part"
+        stopped.mkdir(parents=True)
+        (stopped / "stale.txt").write_text("x")
         self.against(77, 77)
-        here, there = self.seen.read_text().split()
-        self.assertEqual(Path(here), self.repo.resolve())
-        self.assertEqual((Path(there) / "marker.txt").read_text(), "base\n")
-        self.assertFalse(Path(f"{there}.part").exists())
+        export = self.repo / "target" / "against" / self.sha
+        self.assertEqual(Path(self.runs()[0][0]), self.repo.resolve())
+        self.assertEqual(Path(self.runs()[1][0]), export)
+        self.assertEqual((export / "marker.txt").read_text(), "base\n")
+        self.assertFalse((export / "stale.txt").exists())
+        self.assertFalse(stopped.exists())
+        self.assertTrue((export / ".llvm").is_symlink())
+
+    def test_a_second_replay_should_keep_the_export(self) -> None:
+        self.against(77, 77)
+        export = self.repo / "target" / "against" / self.sha
+        (export / "kept.txt").write_text("x")
+        self.against(77, 77)
+        self.assertTrue((export / "kept.txt").exists())
+
+    def test_the_program_target_should_use_the_runtime_of_the_export(self) -> None:
+        self.against(77, 77, target="program")
+        export = self.repo / "target" / "against" / self.sha
+        here, there = self.runs()
+        self.assertEqual(
+            here[1], f"{self.repo.resolve()}/target/release/libsisu_runtime_mimalloc.a"
+        )
+        self.assertEqual(there[1], f"{export}/target/release/libsisu_runtime_mimalloc.a")
 
 
 if __name__ == "__main__":
