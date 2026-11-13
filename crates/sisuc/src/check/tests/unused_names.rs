@@ -1199,6 +1199,72 @@ fn shown_by_dbg_should_visit_each_enum_declaration_once() {
     assert!(many > few, "each enum should be read: {few} and {many}");
 }
 
+/// The chain `S0<T>` to `S{n-1}<T>` of structs, as `class_chain` is of classes. `Sk` holds
+/// `[S(k+1)<[T]>]` and `[S(k+1)<T?>]`. So the instances of the next struct double at each level.
+/// The last struct holds `T`. `Unread` is built and nothing reads its field `u`, so the walk runs.
+/// `main` builds `S0<i64>` and shows it with `body`.
+fn struct_chain(n: usize, body: &str) -> String {
+    let mut src = String::new();
+    for k in 0..n - 1 {
+        let next = k + 1;
+        writeln!(
+            src,
+            "struct S{k}<T> {{\n    a: [S{next}<[T]>]\n    b: [S{next}<T?>]\n}}"
+        )
+        .expect("writing to a `String` should succeed");
+    }
+    let last = n - 1;
+    writeln!(src, "struct S{last}<T> {{\n    x: T\n}}")
+        .expect("writing to a `String` should succeed");
+    src + "struct Unread { u: i64 }\n"
+        + &format!(
+            "fn main() {{\n    let _u = Unread(u: 1)\n    let s: S0<i64> = S0(a: [], b: [])\n    {body}\n}}"
+        )
+}
+
+/// The struct `W<T>` of `n` fields, and one generic constructor `mk`. `main` prints `n` instances
+/// of `W`. Their type arguments are `i64` in `n` different arrays. `Unread` is built and nothing
+/// reads its field.
+fn wide_instances(n: usize) -> String {
+    let fields: Vec<String> = (0..n).map(|k| format!("f{k}: T")).collect();
+    let labels: Vec<String> = (0..n).map(|k| format!("f{k}: x")).collect();
+    let mut src = format!("struct W<T> {{ {} }}\n", fields.join("; "));
+    writeln!(src, "fn mk<T>(x: T) -> W<T> {{ W({}) }}", labels.join(", "))
+        .expect("writing to a `String` should succeed");
+    writeln!(
+        src,
+        "struct Unread {{ u: i64 }}\nfn main() {{\n    let _u = Unread(u: 1)"
+    )
+    .expect("writing to a `String` should succeed");
+    for k in 0..n {
+        writeln!(src, "    print(mk({}1{}))", "[".repeat(k), "]".repeat(k))
+            .expect("writing to a `String` should succeed");
+    }
+    src + "}"
+}
+
+/// The walk reads a declaration once for all its printed instances. So a wide declaration with
+/// many instances costs the sum of their sizes, not their product.
+#[test]
+fn shown_walk_should_read_a_wide_declaration_once_for_all_its_instances() {
+    let visits = |n| shown_visits(&wide_instances(n));
+    assert_near_linear(visits(10), visits(20), visits(30));
+}
+
+/// The walk of a shown struct reads the structure of the operand and each struct declaration once.
+/// It does not read the instances that the declarations make, which double at each level of the
+/// chain. This holds for a generated `print`, for `==` and for `dbg`.
+#[test]
+fn shown_walk_should_visit_each_struct_declaration_once() {
+    for body in ["print(s)", "dbg(s)"] {
+        let visits = |n| shown_visits(&struct_chain(n, body));
+        assert_near_linear(visits(20), visits(40), visits(60));
+    }
+    // The proof of a generated `==` grows with the instances, so this chain is shorter.
+    let visits = |n| shown_visits(&struct_chain(n, "print(s == s)"));
+    assert_near_linear(visits(4), visits(8), visits(12));
+}
+
 /// A class shows its fields as `print` does, so the walk stops at it: it reads no type that the
 /// class holds, whatever the chain of classes below it.
 #[test]

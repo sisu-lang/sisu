@@ -1,0 +1,12 @@
+// GIVEN `struct P { a: K }`, where `K` is a class with no `Eq`
+// WHEN `extend P: Eq {}` asks for a generated `Eq`
+// THEN it reports E0152 at `Eq` (8:11): the field type `K` has none
+class K {}
+
+struct P { a: K }
+
+extend P: Eq {}
+
+fn main() {
+    print(P(a: K()).a is K())
+}

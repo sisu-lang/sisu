@@ -156,6 +156,7 @@ impl Placer<'_> {
             Rvalue::Call { args, .. }
             | Rvalue::DynCall { args, .. }
             | Rvalue::New { args, .. }
+            | Rvalue::Struct { args, .. }
             | Rvalue::Variant { args, .. }
             | Rvalue::ArrayLit(args)
             | Rvalue::Interpolate { parts: args, .. }

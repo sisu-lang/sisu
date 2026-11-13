@@ -1,0 +1,12 @@
+warning[W0016]: this writes to a copy of `xs[0]`, and nothing reads the copy
+ --> W0016-let.sisu:6:5
+  |
+5 |     let mut a = xs[0]
+  |             - a copy
+6 |     a.balance = 2
+  |     ^^^^^^^^^ `xs[0]` does not change
+  |
+  = help: `xs` is a `let`, so `xs[0]` cannot change: delete the write, or make `xs` a `let mut` and write to the place
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0016

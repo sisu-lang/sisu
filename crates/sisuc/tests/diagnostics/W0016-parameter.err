@@ -1,0 +1,12 @@
+warning[W0016]: this writes to a copy of `h.account`, and nothing reads the copy
+ --> W0016-parameter.sisu:6:5
+  |
+5 |     let mut a = h.account
+  |             - a copy
+6 |     a.balance = 2
+  |     ^^^^^^^^^ `h.account` does not change
+  |
+  = help: `h` is a plain parameter, so `h.account` cannot change here: delete the write, or return the changed copy
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0016

@@ -490,7 +490,7 @@ fn enum_layouts(src: &str) -> Vec<Compared> {
     let (program, diagnostics) = crate::check::check(&parsed, &prelude, src, &[]);
     let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
     let program = crate::mono::instantiate(program).unwrap_or_else(|found| panic!("{found:?}"));
-    let measured = payload_limit::measure(&program.enums);
+    let measured = payload_limit::measure(&program.enums, &program.structs);
     let mir = mir::build(&program);
     let machine = target_machine(OptLevel::O0).expect("the host is a target");
     let module = compile(
@@ -1774,6 +1774,40 @@ fn wide_enum_should_stay_in_memory_at_each_site() {
     }
 }
 
+/// GIVEN `wide_struct.sisu`, with a struct `W` of 33 `i64` fields (264 bytes) and a struct `N` of
+///   32 (256 bytes) at each site
+/// AND `wide_struct_any.sisu`, which passes and returns each through an `any I`
+/// WHEN each compiles
+/// THEN only a type line, an `alloca` or a `getelementptr` names `%sisu.W`
+/// AND some other line, such as a `load`, names `%sisu.N`, so a limit that moves fails one of the
+///   two
+#[test]
+fn wide_struct_should_stay_in_memory_at_each_site() {
+    let programs = [
+        include_str!("../../tests/run/wide_struct.sisu"),
+        include_str!("../../tests/run/wide_struct_any.sisu"),
+    ];
+    let names = |line: &str, name: &str| {
+        line.split(|c: char| !(c.is_alphanumeric() || matches!(c, '%' | '.')))
+            .any(|word| word == name)
+    };
+    let in_memory = |line: &str| {
+        line.starts_with('%') || line.contains(" = alloca ") || line.contains(" = getelementptr ")
+    };
+    for program in programs {
+        let context = Context::create();
+        let ir = compiled(&context, program).print_to_string().to_string();
+        for line in ir.lines() {
+            assert!(in_memory(line) || !names(line, "%sisu.W"), "{line}");
+        }
+        assert!(
+            ir.lines()
+                .any(|line| !in_memory(line) && names(line, "%sisu.N")),
+            "no value of `%sisu.N` outside memory in\n{ir}"
+        );
+    }
+}
+
 /// GIVEN programs that copy an enum of over 256 bytes, which stays in memory
 /// WHEN they compile
 /// THEN no `memcpy` has the same place as its source and its destination
@@ -1802,6 +1836,29 @@ fn wide_enum_copy_should_never_copy_a_place_onto_itself() {
                 .collect();
             assert!(places.len() != 2 || places[0] != places[1], "{call}");
         }
+    }
+}
+
+/// GIVEN `wide_struct.sisu`, which copies a struct of 264 bytes, which stays in memory
+/// WHEN it compiles
+/// THEN no `memcpy` has the same place as its source and its destination
+#[test]
+fn wide_struct_copy_should_never_copy_a_place_onto_itself() {
+    let context = Context::create();
+    let ir = compiled(&context, include_str!("../../tests/run/wide_struct.sisu"))
+        .print_to_string()
+        .to_string();
+    let calls = ir
+        .lines()
+        .filter_map(|line| line.split_once("@llvm.memcpy"));
+    for (_, call) in calls {
+        let arguments = call.split_once('(').map_or("", |(_, arguments)| arguments);
+        let places: Vec<&str> = arguments
+            .split(", ")
+            .filter_map(|argument| argument.strip_prefix("ptr align "))
+            .filter_map(|argument| argument.split_once(' ').map(|(_, place)| place))
+            .collect();
+        assert!(places.len() != 2 || places[0] != places[1], "{call}");
     }
 }
 
@@ -5694,11 +5751,11 @@ fn dbg_should_retain_only_a_mut_field_whose_helper_may_run_a_written_method() {
     assert!(!body.contains("@sisu_rc."), "{body}");
 }
 
-/// `tir::layout_enums` boxes a field on every cycle, so the checker cannot give codegen an
+/// `tir::layout_types` boxes a field on every cycle, so the checker cannot give codegen an
 /// enum that holds itself inline. This test unboxes the one field of a recursive enum, so the
 /// walk of `lay_out_enums` must stop on the cycle and not loop.
 #[test]
-#[should_panic(expected = "tir::layout_enums should box a field on every cycle")]
+#[should_panic(expected = "tir::layout_types should box a field on every cycle")]
 fn lay_out_enums_should_panic_on_an_enum_that_holds_itself_inline() {
     let src = "enum L {\n    End\n    A(L)\n}\nfn main() {\n    let _ = L.A(L.End)\n}";
     let program = parse_ok(src);

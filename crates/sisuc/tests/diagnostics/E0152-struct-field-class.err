@@ -1,0 +1,10 @@
+error[E0152]: `P` does not meet `Eq`
+ --> E0152-struct-field-class.sisu:8:11
+  |
+8 | extend P: Eq {}
+  |           ^^ `P` gets no generated `Eq`, since `K` has none
+  |
+  = help: fn eq(self, other: Self) -> bool
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152

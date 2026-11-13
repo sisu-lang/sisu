@@ -1,0 +1,27 @@
+struct In {
+    n: i64
+    xs: [i64]
+}
+
+struct S {
+    o: In?
+}
+
+class C {
+    mut p: In?
+}
+
+fn f() -> In? {
+    None
+}
+
+fn main() {
+    let mut o: In? = None
+    let mut s = S(o: None)
+    let c: C? = None
+    o?.n = 1
+    s.o?.n = 1
+    f()?.n = 1
+    c?.p?.n = 1
+    o?.xs[0] = 1
+}

@@ -7,7 +7,7 @@ use std::fmt;
 use std::sync::{LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use crate::symbol::Symbol;
-use crate::tir::{ClassId, EnumId, InterfaceId};
+use crate::tir::{ClassId, EnumId, InterfaceId, StructId};
 
 /// A type, interned: two types are equal exactly when their structures are. `kind` reads the
 /// structure.
@@ -29,14 +29,16 @@ pub(crate) enum TypeKind {
     Never,
     /// A class, with the type arguments of a generic one (`TypeArgs::NONE` when it takes none).
     Class(ClassId, TypeArgs),
+    /// A struct, with the type arguments of a generic one (`TypeArgs::NONE` when it takes none).
+    Struct(StructId, TypeArgs),
     /// An enum, with the type arguments of a generic one (`TypeArgs::NONE` when it takes none).
     Enum(EnumId, TypeArgs),
     /// A type parameter: its name and its index in its declaration's list.
     Param(Symbol, u32),
     /// `[T]`.
     Array(Type),
-    /// Holds `I64`, `U8`, `F64`, `Bool`, `Char`, `String`, `Class`, `Enum`, `Param`, `Assoc`,
-    /// `Any` or `Array`.
+    /// Holds `I64`, `U8`, `F64`, `Bool`, `Char`, `String`, `Class`, `Struct`, `Enum`, `Param`,
+    /// `Assoc`, `Any` or `Array`.
     Optional(Type),
     /// An associated type of a base: `S.Item`. It is the type at the index of the associated type
     /// among the interface's, through the interface with its arguments (without `Self`). The base
@@ -138,10 +140,14 @@ impl TypeKind {
                     args.names().deeper()
                 }
             },
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) if args == TypeArgs::NONE => {
+            TypeKind::Class(_, args) | TypeKind::Struct(_, args) | TypeKind::Enum(_, args)
+                if args == TypeArgs::NONE =>
+            {
                 Names::default()
             }
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args.names().deeper(),
+            TypeKind::Class(_, args) | TypeKind::Struct(_, args) | TypeKind::Enum(_, args) => {
+                args.names().deeper()
+            }
             TypeKind::I64
             | TypeKind::U8
             | TypeKind::F64
@@ -250,6 +256,7 @@ pub(crate) const NAME_LIMIT: usize = 256;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Head {
     Class(ClassId),
+    Struct(StructId),
     Enum(EnumId),
     Interface(InterfaceId),
     Assoc(InterfaceId, u32),
@@ -431,6 +438,10 @@ fn write_steps<'n>(
         let args = match ty.kind() {
             TypeKind::Class(id, args) => {
                 out.push_str(head(Head::Class(id)));
+                args
+            }
+            TypeKind::Struct(id, args) => {
+                out.push_str(head(Head::Struct(id)));
                 args
             }
             TypeKind::Enum(id, args) => {
@@ -628,7 +639,9 @@ impl Type {
                     stack.push(base);
                     stack.extend(args.get());
                 }
-                TypeKind::Class(_, args) | TypeKind::Enum(_, args) => stack.extend(args.get()),
+                TypeKind::Class(_, args) | TypeKind::Struct(_, args) | TypeKind::Enum(_, args) => {
+                    stack.extend(args.get());
+                }
                 TypeKind::Any(interface, args) => {
                     if !found.contains(&interface) {
                         found.push(interface);
@@ -743,6 +756,9 @@ impl Type {
             TypeKind::Optional(payload) => Type::optional(payload.subst_in(args, memo)),
             TypeKind::Class(id, list) => {
                 Type::intern(TypeKind::Class(id, list.subst_in(args, memo)))
+            }
+            TypeKind::Struct(id, list) => {
+                Type::intern(TypeKind::Struct(id, list.subst_in(args, memo)))
             }
             TypeKind::Enum(id, list) => Type::intern(TypeKind::Enum(id, list.subst_in(args, memo))),
             TypeKind::Any(id, list) => Type::intern(TypeKind::Any(id, list.subst_in(args, memo))),
@@ -898,7 +914,9 @@ mod tests {
             let cut = write_type(&mut out, ty, |head| match head {
                 Head::Class(_) => &long,
                 Head::Assoc(_, k) => ["B", "C"][k as usize],
-                Head::Enum(_) | Head::Interface(_) => unreachable!("the type holds no enum"),
+                Head::Enum(_) | Head::Interface(_) | Head::Struct(_) => {
+                    unreachable!("the type holds no enum and no struct")
+                }
             });
             (out, cut)
         };

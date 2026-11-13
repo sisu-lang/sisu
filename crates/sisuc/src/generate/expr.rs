@@ -5,7 +5,7 @@ use std::ops::Range;
 
 use super::mistake::Kind;
 use super::mut_call::Place;
-use super::scope::{Nodes, RESULT, Scope, Ty, Var};
+use super::scope::{Field, Nodes, RESULT, Scope, Ty, Var};
 use super::stmt::MAX_BLOCKS;
 use super::writer::{Mark, Rewrite, Site, allowed};
 use super::{Gen, LINE, MAX_BOUND, MAX_LOOPS, MAX_NESTING, MAX_SIZE, PART_SIZE};
@@ -472,7 +472,7 @@ impl Gen<'_> {
                 }
                 &[]
             }
-            Ty::Unit | Ty::Class { .. } | Ty::Enum { .. } => &[],
+            Ty::Unit | Ty::Class { .. } | Ty::Struct { .. } | Ty::Enum { .. } => &[],
         };
         rules.extend_from_slice(own);
         if *ty == Ty::Bool && !self.scope.classes.is_empty() {
@@ -602,17 +602,17 @@ impl Gen<'_> {
     }
 
     /// `((o).g)` of a field of type `ty`, or if `safe`, `((o)?.g)` of one of the type
-    /// `safe_member` says.
+    /// `safe_member` says. The holder is a class or a struct.
     fn field(&mut self, ty: &Ty, max: u64, safe: bool) -> Info {
         let wanted = if safe { safe_member(ty) } else { ty };
         let fields = self.fields(wanted, max);
-        let (class, field) = fields[self.pick(fields.len())];
+        let (holder, field) = fields[self.pick(fields.len())].clone();
         let (name, cap) = {
-            let field = &self.scope.classes[class].fields[field];
+            let field = &self.scope.fields_of(&holder)[field];
             (field.name.clone(), field.cap)
         };
         self.w.text("((");
-        let receiver = self.receiver(class, safe);
+        let receiver = self.receiver(&holder, safe);
         self.w
             .text(&format!("){}{name})", if safe { "?." } else { "." }));
         // A field may be `mut`, and an assignment between here and a `let` moved before this
@@ -633,41 +633,42 @@ impl Gen<'_> {
 
     /// `(a is b)` of two objects of one class.
     fn identity(&mut self) -> Info {
-        let class = self.pick(self.scope.classes.len());
+        let pick = self.pick(self.scope.classes.len());
+        let class = self.scope.class_ty(pick);
         self.w.text("(");
-        let lhs = self.receiver(class, false);
+        let lhs = self.receiver(&class, false);
         self.w.text(" is ");
-        let rhs = self.receiver(class, false);
+        let rhs = self.receiver(&class, false);
         self.w.text(")");
         Info::of(&[lhs, rhs], 0, true)
     }
 
-    /// The fields of a type `ty` within `max`: each one's class and its index there.
-    fn fields(&self, ty: &Ty, max: u64) -> Vec<(usize, usize)> {
-        let classes = self.scope.classes.iter().enumerate();
+    /// The fields of a type `ty` within `max`: each one's holder, a class or a struct, and its
+    /// index there.
+    fn fields(&self, ty: &Ty, max: u64) -> Vec<(Ty, usize)> {
+        let classes = (0..self.scope.classes.len()).map(|c| self.scope.class_ty(c));
+        let structs = (0..self.scope.structs.len()).map(|s| self.scope.struct_ty(s));
         classes
-            .flat_map(|(c, class)| {
-                class
-                    .fields
-                    .iter()
-                    .enumerate()
-                    .filter_map(move |(f, field)| {
-                        (field.ty == *ty && field.cap <= max).then_some((c, f))
-                    })
+            .chain(structs)
+            .flat_map(|holder| {
+                let fields = self.scope.fields_of(&holder);
+                (0..fields.len())
+                    .filter(|&f| fields[f].ty == *ty && fields[f].cap <= max)
+                    .map(|f| (holder.clone(), f))
+                    .collect::<Vec<_>>()
             })
             .collect()
     }
 
-    /// An object of the class `class`, or an optional one if `safe`: what a `.` or a `?.`
-    /// reads.
-    fn receiver(&mut self, class: usize, safe: bool) -> Info {
-        let ty = self.scope.class_ty(class);
-        let size = self.scope.classes[class].size;
+    /// A value of the class or struct `holder`, or an optional one if `safe`: what a `.` or a
+    /// `?.` reads.
+    fn receiver(&mut self, holder: &Ty, safe: bool) -> Info {
+        let size = holder.floor();
         if safe {
             self.synth = true;
-            self.expr(&Ty::Optional(Box::new(ty)), size)
+            self.expr(&Ty::Optional(Box::new(holder.clone())), size)
         } else {
-            self.expr(&ty, size)
+            self.expr(holder, size)
         }
     }
 
@@ -676,19 +677,30 @@ impl Gen<'_> {
         self.scope.funcs[f].owner.is_some()
     }
 
-    /// `K(g: a, h: b)`: every field, each within its cap. An instance of a generic class is
-    /// `G<n><A>(g: a)`, or `G<n>(g: a)` as often as its fields name every type parameter, where
-    /// each field is of its own type (`Gen::expr`).
+    /// `K(g: a, h: b)` of a class or `S(g: a, h: b)` of a struct: every field, each within its
+    /// cap. An instance of a generic class or struct is `G<n><A>(g: a)`. It is `G<n>(g: a)` as
+    /// often as its fields name every type parameter, where each field is of its own type
+    /// (`Gen::expr`).
     pub(crate) fn object(&mut self, ty: &Ty) -> Info {
-        let Ty::Class { id, size, .. } = *ty else {
-            unreachable!("only a class has objects")
+        self.object_in(ty, false)
+    }
+
+    /// `object`, where `nested` says that it is built inside the box of a pair of structs.
+    /// They hold each other (`Gen::struct_pair`). The box holds an `A` now and then, whose own `B`
+    /// is built here too, with a box of `None`.
+    fn object_in(&mut self, ty: &Ty, nested: bool) -> Info {
+        let size = ty.floor();
+        let cycle = match ty {
+            Ty::Struct { id, .. } => self.scope.structs[*id]
+                .cycle
+                .as_ref()
+                .map(|c| (c.partner, c.link)),
+            _ => None,
         };
+        let fields = self.scope.fields_of(ty).to_vec();
         // A field of its own type holds at least what `Ty::least` says.
-        let fits = self.scope.classes[id]
-            .fields
-            .iter()
-            .all(|field| field.ty.least() <= field.cap);
-        let infer = fits && self.scope.classes[id].inferable && self.pick(2) == 0;
+        let fits = fields.iter().all(|field| field.ty.least() <= field.cap);
+        let infer = fits && self.scope.inferable(ty) && self.pick(2) == 0;
         let plain = self.plain_owner(Some(ty));
         let name = if infer { ty.bare() } else { ty.to_string() };
         // An alias of the class builds it as the class does, with the alias's fixed arguments.
@@ -699,20 +711,41 @@ impl Gen<'_> {
         };
         self.w.text(&format!("{name}("));
         let mut parts = Vec::new();
-        for f in 0..self.scope.classes[id].fields.len() {
-            let (name, field, cap) = {
-                let field = &self.scope.classes[id].fields[f];
-                (field.name.clone(), field.ty.clone(), field.cap)
-            };
+        for (
+            f,
+            Field {
+                name,
+                ty: field,
+                cap,
+                ..
+            },
+        ) in fields.iter().enumerate()
+        {
             if f > 0 {
                 self.w.text(", ");
             }
             self.w.text(&format!("{name}: "));
             self.synth = infer;
+            if let Some((partner, link)) = cycle {
+                let partner = self.scope.struct_ty(partner);
+                if link == Some(f) {
+                    let filled = !nested && *cap > 0 && self.pick(2) == 0;
+                    parts.push(if filled {
+                        self.object_in(&partner, true)
+                    } else {
+                        self.none(&partner)
+                    });
+                    continue;
+                }
+                if nested && link.is_none() && f == 0 {
+                    parts.push(self.object_in(&partner, true));
+                    continue;
+                }
+            }
             parts.push(if infer || !plain {
-                self.expr(&field, cap)
+                self.expr(field, *cap)
             } else {
-                self.declared(&field, cap)
+                self.declared(field, *cap)
             });
         }
         self.w.text(")");
@@ -1268,12 +1301,13 @@ impl Gen<'_> {
         info
     }
 
-    /// Whether the methods of `owner`, if any, are those of a class that is no instance of a
-    /// generic class: the type of a parameter or a field there is written as it is.
+    /// Whether the methods of `owner`, if any, are those of a class or struct that is no instance
+    /// of a generic one: the type of a parameter or a field there is written as it is.
     pub(crate) fn plain_owner(&self, owner: Option<&Ty>) -> bool {
         match owner {
             None => true,
             Some(Ty::Class { id, .. }) => self.scope.classes[*id].applied.is_none(),
+            Some(Ty::Struct { id, .. }) => self.scope.structs[*id].applied.is_none(),
             Some(_) => false,
         }
     }
@@ -1318,7 +1352,7 @@ impl Gen<'_> {
                 self.w.text(&format!("\"{text}\""));
                 Info::literal(len, None)
             }
-            Ty::Class { .. } => self.object(ty),
+            Ty::Class { .. } | Ty::Struct { .. } => self.object(ty),
             Ty::Enum { .. } => self.variant(ty, max, None),
             Ty::Unit | Ty::Array(_) | Ty::Optional(_) => {
                 unreachable!("`Rule::Literal` writes a literal of a scalar only")
@@ -1814,11 +1848,14 @@ impl Gen<'_> {
         };
         let mut parts = Vec::new();
         let owner = self.scope.funcs[callee].owner.clone();
+        // A call with `mut` arguments runs the places of the `mut` arguments and spills the other
+        // arguments first, and the receiver last (`tir::ExprKind::MutCall`): no rewrite moves it.
+        self.effect |= !places.is_empty();
         // Where the call starts: before `((` of a method, else before its name.
         let call = self.here();
-        if let Some(Ty::Class { id, .. }) = owner {
+        if let Some(holder @ (Ty::Class { .. } | Ty::Struct { .. })) = &owner {
             self.w.text("((");
-            parts.push(self.receiver(id, safe));
+            parts.push(self.receiver(holder, safe));
             self.w.text(if safe { ")?." } else { ")." });
         }
         let name = self.scope.funcs[callee].name.clone();
@@ -2516,12 +2553,14 @@ impl Gen<'_> {
                     inside => format!("Some({})", inside.unwrap_or_else(|| "_".to_string())),
                 },
             }),
+            // A struct has no pattern (E0124).
             Ty::Enum { .. }
             | Ty::F64
             | Ty::Unit
             | Ty::Array(_)
             | Ty::Optional(_)
-            | Ty::Class { .. } => None,
+            | Ty::Class { .. }
+            | Ty::Struct { .. } => None,
         }
     }
 }

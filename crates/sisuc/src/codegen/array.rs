@@ -436,7 +436,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         // A block below this many bytes is kept: it holds too little to be worth a copy.
         const SMALL_BLOCK: u64 = 256;
         let i64_type = self.context.i64_type();
-        // `cap * size < 256` is `cap < ceil(256 / size)`, with no multiplication to overflow.
+        // `cap * size < 256` is `cap < ceil(256 / size)`, with no multiplication to overflow. A
+        // block of elements of no bytes holds no bytes, so it is always kept.
+        if size == 0 {
+            return self.context.bool_type().const_all_ones();
+        }
         let few = i64_type.const_int(SMALL_BLOCK.div_ceil(size), false);
         let small = self.int_compare(IntPredicate::ULT, cap, few);
         let quarter = self
@@ -760,7 +764,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         });
         if counted_core(element).is_some() {
             self.share_filler(filler, element, count);
-        } else if element.is_counted(&self.program.enums) {
+        } else if element.is_counted(&self.program.enums, &self.program.structs) {
             self.count_loop(count, |_| self.retain(filler, element));
             self.release(filler, element);
         }
@@ -831,7 +835,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             | Helper::ShowComponent(_)
             | Helper::Unbox
             | Helper::Free
-            | Helper::Reuse => {
+            | Helper::Reuse
+            | Helper::UniqueBox => {
                 unreachable!(
                     "`helper` should queue for an array only a helper that `define_array_helper` defines"
                 )
@@ -846,7 +851,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .position_at_end(self.context.append_basic_block(function, "entry"));
         let exit = self.begin_drop(function, Type::intern(TypeKind::Array(element)));
         let array = param(function);
-        if element.is_counted(&self.program.enums) {
+        if element.is_counted(&self.program.enums, &self.program.structs) {
             let data = self.array_data(element, array);
             self.count_loop(self.header_len(array), |index| {
                 self.release(self.load_element(element, data, index), element);
@@ -958,7 +963,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder
             .build_memcpy(to, align, from, align, bytes)
             .expect("an element's alignment should be a power of two, as each ABI alignment is");
-        if element.is_counted(&self.program.enums) {
+        if element.is_counted(&self.program.enums, &self.program.structs) {
             self.count_loop(len, |index| {
                 self.retain(self.load_element(element, to, index), element);
             });

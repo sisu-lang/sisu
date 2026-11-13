@@ -157,13 +157,13 @@ fn emit_tokens_should_split_an_interpolated_string_into_head_middle_and_tail_tok
     }
 }
 
-/// GIVEN a source with the words `record` and `const` on two lines
+/// GIVEN a source with the words `import` and `const` on two lines
 /// WHEN it is built with `--emit tokens`
-/// THEN `record` is a `Reserved` token at 1:1 and `const` is a `Const` token at 2:1
+/// THEN `import` is a `Reserved` token at 1:1 and `const` is a `Const` token at 2:1
 #[test]
 fn emit_tokens_should_print_reserved_and_const_words_as_their_own_tokens() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
-    fs::write(dir.join("emit_tokens_reserved.sisu"), "record\nconst\n").expect("writes");
+    fs::write(dir.join("emit_tokens_reserved.sisu"), "import\nconst\n").expect("writes");
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
         .current_dir(dir)
         .args(["build", "--emit", "tokens", "emit_tokens_reserved.sisu"])
@@ -171,7 +171,7 @@ fn emit_tokens_should_print_reserved_and_const_words_as_their_own_tokens() {
         .expect("sisu starts");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.starts_with("1:1 Reserved record\n"), "{stdout}");
+    assert!(stdout.starts_with("1:1 Reserved import\n"), "{stdout}");
     assert!(stdout.contains("\n2:1 Const const\n"), "{stdout}");
 }
 
@@ -217,6 +217,28 @@ fn emit_tokens_and_ast_should_exit_1_when_the_lexer_cannot_finish_the_source() {
         assert!(
             at_severity(&stderr, "error") == Some(0),
             "{stage}: {stderr}"
+        );
+    }
+}
+
+/// GIVEN a program with `struct Point { abscissa: i64 }`, which `main` builds and reads
+/// WHEN it is built with `--emit ast`, with `--emit tir` and with `--emit mir`
+/// THEN each run exits 0, and each output holds the struct's name and its field's name
+#[test]
+fn struct_should_appear_in_each_dump() {
+    let source = "struct Point { abscissa: i64 }\nfn main() {\n    let p = Point(abscissa: 1)\n    print(p.abscissa)\n}\n";
+    for stage in ["ast", "tir", "mir"] {
+        let out = run_on("struct_dump", source, &["build", "--emit", stage]);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{stage}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            stdout.contains("Point") && stdout.contains("abscissa"),
+            "{stage}: {stdout}"
         );
     }
 }
@@ -724,7 +746,7 @@ fn emit_ast_should_exit_1_with_e0011_when_a_top_level_item_is_a_let() {
     assert!(at_severity(&stderr, "error") == Some(0), "{stderr}");
     assert!(
         stderr.contains(
-            "error[E0011]: expected `fn`, `class`, `enum`, `interface`, `extend`, `const` or `type`, found `let`\n --> parse_error_exits_1.sisu:1:1"
+            "error[E0011]: expected `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `const` or `type`, found `let`\n --> parse_error_exits_1.sisu:1:1"
         ),
         "{stderr}"
     );
@@ -764,6 +786,26 @@ fn check_should_exit_0_with_no_output_when_the_file_is_valid() {
     let out = check("check_valid_file", "fn main() {\n    print(1)\n}\n");
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+}
+
+/// GIVEN a `let mut` that copies `xs[<CR>0]`, a place with a lone carriage return, and a write to
+/// the copy that nothing reads
+/// WHEN `sisu check` runs on it
+/// THEN stderr has W0016 that names only the root `xs`, and holds the place nowhere in the text
+///
+/// A carriage return in a message would move the cursor of a terminal, as a tab does.
+#[test]
+fn check_should_name_only_the_root_of_a_copied_place_with_a_carriage_return() {
+    let source = "struct A { b: i64 }\nfn main() {\n    let xs = [A(b: 1)]\n    let mut a = xs[\r0]\n    a.b = 2\n    print(xs[0].b)\n}\n";
+    let out = check("check_copy_place_with_a_carriage_return", source);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("W0016"), "{stderr}");
+    assert!(
+        stderr.contains("copy of a part of `xs`"),
+        "the message should name only the root: {stderr}"
+    );
+    assert!(!stderr.contains("`xs[\r"), "{stderr}");
 }
 
 /// GIVEN `tests/run/generics.sisu`, the generics demo

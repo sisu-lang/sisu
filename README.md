@@ -264,8 +264,8 @@ macOS.
 Today it compiles:
 
 - functions, and the types `i64`, `f64`, `u8`, `bool` and `char`
-- classes with methods, optionals, and enums with payloads and methods
-- generic functions, classes and enums, and interfaces: bounds such as
+- classes and structs with methods, optionals, and enums with payloads and methods
+- generic functions, classes, structs and enums, and interfaces: bounds such as
   `T: Shape & Named`, conformance in a declaration or an `extend` block, and
   associated types; `Display`, `Eq` and `Ord` give `print`, `==` and `<`
 - interface values, such as `[any Shape]` that holds a class and an enum, and

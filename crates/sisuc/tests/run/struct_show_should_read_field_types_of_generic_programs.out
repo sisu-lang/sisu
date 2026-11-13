@@ -1,0 +1,9 @@
+V(t: 3)
+N
+2
+S1(e: X(n: 1))
+S1(e: Y)
+S2(e: A(7))
+S3(t: tag-1)
+S3(t: tag-2)
+S4(c: class-7)

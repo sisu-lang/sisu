@@ -1,0 +1,16 @@
+error[E0105]: `G` is a type, not a value
+  --> E0062-struct-type-call.sisu:20:5
+   |
+20 |     G.put(c.m.v)
+   |     ^
+
+error[E0062]: `c` may be `None`
+  --> E0062-struct-type-call.sisu:20:11
+   |
+20 |     G.put(c.m.v)
+   |           ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0062, E0105

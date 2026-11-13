@@ -1,0 +1,24 @@
+P(x: 1)
+struct_show_should_reach_each_form.sisu:77:17: p = P(x: 1)
+struct_show_should_reach_each_form.sisu:82:9: c = C(p: P(x: 1))
+struct_show_should_reach_each_form.sisu:89:9: Held(t: Tag(id: 5)) = Held(t: tag-5)
+struct_show_should_reach_each_form.sisu:93:9: Rock() = Rock()
+struct_show_should_reach_each_form.sisu:101:9: long = Long(
+    leaf: Leaf(id: 1000000, name: "a long name for a leaf"),
+    kind: Big(label: "a long label for a kind", size: 2000000),
+    xs: [
+        111111,
+        222222,
+        333333,
+        444444,
+        555555,
+        666666,
+        777777,
+        888888,
+        999999,
+        101010,
+        121212,
+        131313
+    ],
+    tail: "the last field of the long struct"
+)

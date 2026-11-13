@@ -1,0 +1,21 @@
+fn iterations() -> i64 { 1000 }
+
+// GIVEN an array that `push` grows to `iterations() + 1000` structs of two fields
+// WHEN it runs with 2000 elements and with 1000
+// THEN it makes as many allocations as `struct_array_growth_ref`, which pushes `i64`s: the
+// array holds each struct inline, with no box for each element
+struct Point { x: i64; y: i64 }
+
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(p: Point) {
+    print(p)
+}
+
+fn main() {
+    let mut xs: [Point] = []
+    for i in 0..iterations() + 1000 {
+        xs.push(Point(x: i, y: i + 1))
+    }
+    print(xs.len())                  // 2000
+    print(xs[xs.len() - 1].y)        // 2000: the last point is Point(x: 1999, y: 2000)
+}

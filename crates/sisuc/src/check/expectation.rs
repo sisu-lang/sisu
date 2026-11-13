@@ -24,6 +24,8 @@ pub(super) enum Origin {
     Declared { at: Span, ty: Type },
     /// Field `index` of the class `class` (a `ClassId`).
     Field { class: u32, index: u32 },
+    /// Field `index` of the struct `id` (a `StructId`).
+    StructField { id: u32, index: u32 },
     /// Payload field `field` of the variant `variant` of the enum `enum_` (an `EnumId`).
     Payload {
         enum_: u32,
@@ -201,8 +203,17 @@ impl Checker<'_> {
                 at,
                 ty: self.want_name(at, ty),
             }),
-            Origin::Field { class, index } => {
-                let field = &self.classes[class as usize].fields[index as usize];
+            Origin::Field {
+                class: owner,
+                index,
+            }
+            | Origin::StructField { id: owner, index } => {
+                let table = if matches!(origin, Origin::Field { .. }) {
+                    &self.classes
+                } else {
+                    &self.structs
+                };
+                let field = &table[owner as usize].fields[index as usize];
                 let ty = field.ty.filter(|ty| !ty.has_param())?;
                 Some(MismatchOrigin::Field {
                     at: field.ty_span,

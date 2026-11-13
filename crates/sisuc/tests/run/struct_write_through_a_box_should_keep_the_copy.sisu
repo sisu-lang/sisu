@@ -1,0 +1,29 @@
+// GIVEN `struct A { b: B }` and `struct B { a: A?; n: i64; xs: [i64] }`, which hold each other,
+// so the field `b` is a box, `let x = A(b: B(a: None, n: 1, xs: [1]))` and `let mut y = x`
+// WHEN each block writes through the box of `y.b`: `y.b.n = 9` and `y.b.xs.push(9)`
+// THEN `x` keeps `1` and `[1]` after the write, and `y` has the change
+struct A { b: B }
+struct B { a: A?; n: i64; xs: [i64] }
+
+fn field() {
+    let x = A(b: B(a: None, n: 1, xs: [1]))
+    let mut y = x
+    y.b.n = 9
+    print(x.b.n)                     // 1
+    print(y.b.n)                     // 9
+    print(y)                         // A(b: B(a: None, n: 9, xs: [1]))
+}
+
+fn push() {
+    let x = A(b: B(a: None, n: 1, xs: [1]))
+    let mut y = x
+    y.b.xs.push(9)
+    print(x.b.xs)                    // [1]
+    print(y.b.xs)                    // [1, 9]
+    print(y)                         // A(b: B(a: None, n: 1, xs: [1, 9]))
+}
+
+fn main() {
+    field()
+    push()
+}

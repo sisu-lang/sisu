@@ -725,7 +725,7 @@ error[E0030]: cannot find type `Nope`
 217 | fn recv_unknown_type(c: Nope?) {
     |                         ^^^^
     |
-    = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+    = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums, structs and arrays such as `[i64]`
 help: a class with a similar name exists: `Node`
     |
 217 - fn recv_unknown_type(c: Nope?) {

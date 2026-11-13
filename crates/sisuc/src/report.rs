@@ -150,7 +150,7 @@ pub(crate) fn use_color(stderr_is_terminal: bool, no_color: Option<&OsStr>) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostic::{DiagnosticKind, Immutable, NeverReassignedForm};
+    use crate::diagnostic::{DiagnosticKind, Immutable, NeverReassignedForm, Written};
     use crate::source::Span;
 
     const SOURCE: &str = "fn main() {\n    let n = 0\n    n = 1\n    let mut m = 0\n}\n";
@@ -159,7 +159,7 @@ mod tests {
         DiagnosticKind::AssignToImmutable {
             name: "n".to_string(),
             at: Span::new(30, 35),
-            element: false,
+            written: Written::Whole,
             cause: Immutable::Let {
                 declared: Span::new(20, 21),
                 redeclared: false,

@@ -36,6 +36,7 @@ enum Kind {
     Break
     Continue
     Class
+    Struct
     Const
     Enum
     Interface
@@ -227,7 +228,7 @@ fn keyword(word: string) -> Kind {
         "let" => Kind.Let
         "mut" => Kind.Mut
         "var" => Kind.Var
-        "import" | "pub" | "record" | "weak" | "test" | "extern" | "as" => Kind.Reserved
+        "import" | "pub" | "move" | "weak" | "test" | "extern" | "as" => Kind.Reserved
         "todo" => Kind.Todo
         "if" => Kind.If
         "else" => Kind.Else
@@ -239,6 +240,7 @@ fn keyword(word: string) -> Kind {
         "break" => Kind.Break
         "continue" => Kind.Continue
         "class" => Kind.Class
+        "struct" => Kind.Struct
         "const" => Kind.Const
         "enum" => Kind.Enum
         "interface" => Kind.Interface
@@ -355,7 +357,7 @@ fn can_end_statement(kind: Kind) -> bool {
 // Whether a token of this kind starts a header, which a `}` ends.
 fn declares(kind: Kind) -> bool {
     match kind {
-        Fn | Class | Enum | Interface | Extend => true
+        Fn | Class | Struct | Enum | Interface | Extend => true
         _ => false
     }
 }
@@ -526,8 +528,8 @@ fn opens_list(prev: Kind, tokens: i64) -> bool {
 class Semi {
     // Where its token stands among the tokens.
     at: i64
-    // Whether it stands between top-level items, after a `fn`, `class`, `enum`, `interface` or
-    // `extend`.
+    // Whether it stands between top-level items, after a `fn`, `class`, `struct`, `enum`,
+    // `interface` or `extend`.
     between_items: bool
     // Whether a `>` or `??` before it closes a type annotation.
     annotates: bool
@@ -584,8 +586,8 @@ class Lexer {
     tracker: Tracker
     // How many `;` that separate statements end the tokens, which the tracker has not read.
     mut trailing: i64
-    // Whether the top-level item so far is a `fn`, `class`, `enum`, `interface` or `extend`. Such
-    // an item ends at its `}`. A `const` or a `type` ends at a line break.
+    // Whether the top-level item so far is a `fn`, `class`, `struct`, `enum`, `interface` or
+    // `extend`. Such an item ends at its `}`. A `const` or a `type` ends at a line break.
     mut self_ending: bool
     // The kind of the last token that is not a `;`.
     mut last_code: Kind

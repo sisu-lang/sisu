@@ -54,7 +54,9 @@ pub(super) fn assumed(program: &tir::Program) -> Vec<Vec<bool>> {
                 .map(|param| {
                     f.name != "main"
                         && !f.locals[param.0].mutable
-                        && f.locals[param.0].ty.is_counted(&program.enums)
+                        && f.locals[param.0]
+                            .ty
+                            .is_counted(&program.enums, &program.structs)
                 })
                 .collect()
         })

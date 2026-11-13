@@ -109,6 +109,9 @@ impl Checker<'_> {
                     if !reported {
                         self.warn_if_optional(part, &value);
                     }
+                    if let Some(found) = type_of(&value) {
+                        self.record_shown(found, self.lang.display);
+                    }
                     checked.push(value);
                     continue;
                 }
@@ -282,14 +285,9 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `span` holds no line break, which a string literal cannot hold. A comment inside
-    /// it would end at one, so it holds no comment either, and fits inside `{}`.
+    /// Whether `span` holds no line break: see `Source::one_line`.
     pub(super) fn one_line(&self, span: Span) -> bool {
-        let next = self.source.breaks.partition_point(|&b| b < span.start());
-        self.source
-            .breaks
-            .get(next)
-            .is_none_or(|&b| b >= span.end())
+        self.source.one_line(span)
     }
 
     /// A chain over the `string`s `operands`, which codegen compares two at a time. Two make

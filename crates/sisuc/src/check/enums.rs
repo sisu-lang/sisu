@@ -12,8 +12,8 @@ use super::mut_args::Callee;
 use super::reports::Reported;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Origin, Poisoned,
-    SelfType, own_args,
+    Checked, Checker, ClassInfo, Declared, Definition, DiagnosticKind, Expectation, Origin,
+    Poisoned, SelfType, own_args,
 };
 use crate::ast;
 use crate::diagnostic::{BuiltIn, Unbuilt, VariantLabels, suggestion};
@@ -66,59 +66,93 @@ pub(super) fn reserved_name(name: Symbol) -> Option<BuiltIn> {
     }
 }
 
-/// The enum declarations `ty` names where a value of it holds them inline: `ty` itself, or its
-/// optional's payload, and the type arguments of each enum it names, through optionals. With
-/// `open`, only those named with an argument that carries a parameter: `C<T>`, not `Wrap3<i64>`.
-/// A declaration comes once for each type that names it, in the order of the first visit. Each
-/// type is read once, whatever number of paths lead to it.
-fn inline_enums(ty: Type, open: bool) -> Vec<usize> {
-    fn collect(ty: Type, open: bool, seen: &mut FxHashSet<Type>, named: &mut Vec<usize>) {
+/// The enum and struct declarations `ty` names where a value of it holds them inline: `ty`
+/// itself, or its optional's payload, and the type arguments of each enum or struct it names,
+/// through optionals. Each is a node of `lower_types`: an enum by its id, and a struct after the
+/// `enums` enums. With `open`, only those named with an argument that carries a parameter:
+/// `C<T>`, not `Wrap3<i64>`. A declaration comes once for each type that names it, in the order
+/// of the first visit. Each type is read once, whatever number of paths lead to it.
+fn inline_enums(ty: Type, open: bool, enums: usize) -> Vec<usize> {
+    fn collect(
+        ty: Type,
+        (open, enums): (bool, usize),
+        seen: &mut FxHashSet<Type>,
+        named: &mut Vec<usize>,
+    ) {
         if !seen.insert(ty) {
             return;
         }
         #[cfg(test)]
         TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
-        match ty.kind() {
-            TypeKind::Optional(payload) => collect(payload, open, seen, named),
-            TypeKind::Enum(id, args) => {
-                if !open || ty.has_param() {
-                    named.push(id.0);
-                }
-                for &arg in args.get() {
-                    collect(arg, open, seen, named);
-                }
-            }
-            _ => {}
+        let (node, args) = match ty.kind() {
+            TypeKind::Optional(payload) => return collect(payload, (open, enums), seen, named),
+            TypeKind::Enum(id, args) => (id.0, args),
+            TypeKind::Struct(id, args) => (enums + id.0, args),
+            _ => return,
+        };
+        if !open || ty.has_param() {
+            named.push(node);
+        }
+        for &arg in args.get() {
+            collect(arg, (open, enums), seen, named);
         }
     }
     let mut named = Vec::new();
-    collect(ty, open, &mut FxHashSet::default(), &mut named);
+    collect(ty, (open, enums), &mut FxHashSet::default(), &mut named);
     named
 }
 
-/// Whether `ty` names, where `inline_enums` looks, the enum `e` applied to its own `count`
-/// parameters in order: `Tree<T>` in `Tree`, or `G<T>` in `G`'s `Wrap2<G<T>>`. Each type is read
+/// Whether `ty` names, where `inline_enums` looks, the enum or struct at node `e` applied to its
+/// own `count` parameters in order: `Tree<T>` in `Tree`, or `G<T>` in `G`'s `Wrap2<G<T>>`. The
+/// nodes are those of `inline_enums`, with the structs after the `enums` enums. Each type is read
 /// once.
-fn names_itself(ty: Type, e: usize, count: usize) -> bool {
-    fn find(ty: Type, e: usize, count: usize, seen: &mut FxHashSet<Type>) -> bool {
+fn names_itself(ty: Type, (e, count): (usize, usize), enums: usize) -> bool {
+    fn find(
+        ty: Type,
+        (e, count, enums): (usize, usize, usize),
+        seen: &mut FxHashSet<Type>,
+    ) -> bool {
         // A type seen before gave `false`: a `true` ends the whole search.
         if !seen.insert(ty) {
             return false;
         }
         #[cfg(test)]
         TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
-        match ty.kind() {
-            TypeKind::Optional(payload) => find(payload, e, count, seen),
-            TypeKind::Enum(id, args) => {
-                let args = args.get();
-                let own = |(i, arg): (usize, &Type)| matches!(arg.kind(), TypeKind::Param(_, j) if j as usize == i);
-                (id.0 == e && args.len() == count && args.iter().enumerate().all(own))
-                    || args.iter().any(|&arg| find(arg, e, count, seen))
-            }
-            _ => false,
-        }
+        let (node, args) = match ty.kind() {
+            TypeKind::Optional(payload) => return find(payload, (e, count, enums), seen),
+            TypeKind::Enum(id, args) => (id.0, args.get()),
+            TypeKind::Struct(id, args) => (enums + id.0, args.get()),
+            _ => return false,
+        };
+        let own = |(i, arg): (usize, &Type)| matches!(arg.kind(), TypeKind::Param(_, j) if j as usize == i);
+        (node == e && args.len() == count && args.iter().enumerate().all(own))
+            || args.iter().any(|&arg| find(arg, (e, count, enums), seen))
     }
-    find(ty, e, count, &mut FxHashSet::default())
+    find(ty, (e, count, enums), &mut FxHashSet::default())
+}
+
+/// The `Rank` of a payload or field of type `ty` of the enum or struct at node `e` of
+/// `lower_types`, which has `count` type parameters. `declared` gives the component of each node.
+fn rank(ty: Type, (e, count): (usize, usize), declared: &[usize], enums: usize) -> Rank {
+    if !ty.has_param() {
+        Rank::Plain
+    } else if names_itself(ty, (e, count), enums) {
+        Rank::Own
+    } else if inline_enums(ty, true, enums)
+        .iter()
+        .any(|&n| declared[n] == declared[e])
+    {
+        Rank::Open
+    } else if inline_enums(ty, false, enums)
+        .iter()
+        .any(|&n| declared[n] == declared[e])
+    {
+        Rank::Late
+    } else if ty.has_assoc() {
+        Rank::Assoc
+    } else {
+        Rank::Never
+    }
 }
 
 /// What a message calls the enum of the variant `member`, which `site` writes: the qualifier as
@@ -624,23 +658,29 @@ impl Checker<'_> {
             .collect()
     }
 
-    /// Lowers every enum, with each payload field's `Rank` from its declared type, and lays them
-    /// out (`tir::layout_enums`).
-    pub(super) fn lower_enums(&self) -> Vec<tir::Enum> {
-        // The declarations each enum's generic fields name, inline (see `Rank::Late`); a
-        // program without a generic enum has no such field and skips the graph.
-        let declared = if self.enums.iter().any(|info| !info.type_params.is_empty()) {
-            let named: Vec<Vec<usize>> = (self.enums.iter())
-                .map(|info| {
-                    let fields = info.variants.iter().flat_map(|v| v.fields.iter().flatten());
-                    let generic = fields.filter(|ty| ty.has_param());
-                    generic.flat_map(|&ty| inline_enums(ty, false)).collect()
-                })
-                .collect();
-            components(&named)
-        } else {
-            Vec::new()
+    /// Lowers every enum and every struct, with each payload or field's `Rank` from its declared
+    /// type, and lays them out (`tir::layout_types`).
+    pub(super) fn lower_types(&self) -> (Vec<tir::Enum>, Vec<tir::Struct>) {
+        // The declarations each enum's and struct's generic fields name, inline (see
+        // `Rank::Late`), the structs after the enums.
+        let enums = self.enums.len();
+        let named = |fields: &mut dyn Iterator<Item = Type>| -> Vec<usize> {
+            let generic = fields.filter(|ty| ty.has_param());
+            generic
+                .flat_map(|ty| inline_enums(ty, false, enums))
+                .collect()
         };
+        let enum_names = self.enums.iter().map(|info| {
+            named(
+                &mut info
+                    .variants
+                    .iter()
+                    .flat_map(|v| v.fields.iter().copied().flatten()),
+            )
+        });
+        let struct_names =
+            (self.structs.iter()).map(|info| named(&mut info.fields.iter().filter_map(|f| f.ty)));
+        let declared = components(&enum_names.chain(struct_names).collect::<Vec<_>>());
         let mut lowered: Vec<tir::Enum> = (self.enums.iter().enumerate())
             .map(|(e, info)| tir::Enum {
                 name: info.name.name.to_string(),
@@ -654,25 +694,8 @@ impl Checker<'_> {
                             .map(|(&ty, label)| {
                                 // An `Error` field's error stops the program before codegen.
                                 let ty = ty.unwrap_or(Type::NEVER);
-                                let rank = if !ty.has_param() {
-                                    Rank::Plain
-                                } else if names_itself(ty, e, info.type_params.len()) {
-                                    Rank::Own
-                                } else if inline_enums(ty, true)
-                                    .iter()
-                                    .any(|&n| declared[n] == declared[e])
-                                {
-                                    Rank::Open
-                                } else if inline_enums(ty, false)
-                                    .iter()
-                                    .any(|&n| declared[n] == declared[e])
-                                {
-                                    Rank::Late
-                                } else if ty.has_assoc() {
-                                    Rank::Assoc
-                                } else {
-                                    Rank::Never
-                                };
+                                let own = (e, info.type_params.len());
+                                let rank = rank(ty, own, &declared, enums);
                                 tir::Payload {
                                     ty,
                                     label: label.as_ref().map(Symbol::to_string),
@@ -688,19 +711,43 @@ impl Checker<'_> {
                 reaches: false,
             })
             .collect();
-        tir::layout_enums(&mut lowered);
-        lowered
+        let mut structs: Vec<tir::Struct> = (self.structs.iter().enumerate())
+            .map(|(s, info)| tir::Struct {
+                name: info.name.name.to_string(),
+                span: info.name.span,
+                instance: false,
+                type_params: info.type_params.iter().map(ToString::to_string).collect(),
+                fields: (info.fields.iter())
+                    .map(|f| {
+                        // An `Error` field's error stops the program before codegen.
+                        let ty = f.ty.unwrap_or(Type::NEVER);
+                        let own = (enums + s, info.type_params.len());
+                        tir::Payload {
+                            ty,
+                            label: Some(f.name.name.to_string()),
+                            boxed: false,
+                            rank: rank(ty, own, &declared, enums),
+                        }
+                    })
+                    .collect(),
+                counted: false,
+                cycle: None,
+                reaches: false,
+            })
+            .collect();
+        tir::layout_types(&mut lowered, &mut structs);
+        (lowered, structs)
     }
 
-    /// Reports each enum or class no value can be built of. Which classes and enums can be
-    /// built is a least fixed point over them all, with the arguments they are given: a class
-    /// can when every field's type can, an enum when every field of some variant can, and every
+    /// Reports each enum, struct or class no value can be built of. Which can be built is a
+    /// least fixed point over them all, with the arguments they are given. A class or a struct
+    /// can when every field's type can, and an enum when every field of some variant can. Every
     /// other type always can. A class in `cyclic` counts as built, and so does an enum with no
-    /// variant, since each has its error already. Each component of the rest that needs no
-    /// other, by what the fixed point found each one to need, is reported once, at its first
-    /// enum, or else its first class; a type that only needs one of those is not. Returns, by
-    /// node (the classes, then the enums), whether it is in a component reported here, or is a
-    /// class in `cyclic`: whether it has an error of that kind of its own.
+    /// variant, since each has its error already. The fixed point finds what each one needs.
+    /// Each component of the rest that needs no other is reported once. The report is at its
+    /// first enum or struct, or else its first class; a type that only needs one of those is not.
+    /// Returns, by node (the classes, the enums, then the structs), whether it is in a component
+    /// reported here, or is a class in `cyclic`: whether it has an error of that kind of its own.
     pub(super) fn never_built(&mut self, cyclic: &[bool]) -> Vec<bool> {
         let mut fix = Buildable::new(self, cyclic);
         fix.run();
@@ -729,16 +776,15 @@ impl Checker<'_> {
                 continue;
             }
             reported[component[n]] = true;
-            let chain = self.chain(n, &mut fix);
-            let name = if n < classes {
-                &self.classes[n].name
-            } else {
-                &self.enums[n - classes].name
-            };
+            let (links, first_struct) = self.chain(n, &mut fix);
+            let name = self.node_info(n).0;
             self.error(DiagnosticKind::NeverConstructed {
                 name: name.name.to_string(),
                 at: name.span,
-                cause: Unbuilt::Chain(chain),
+                cause: Unbuilt::Chain {
+                    links,
+                    first_struct,
+                },
             });
         }
         (0..nodes)
@@ -746,69 +792,111 @@ impl Checker<'_> {
             .collect()
     }
 
-    /// The chain of fields from the enum or class at node `start`, through types none of which
-    /// can be built by `fix`: each link's holder (`E.V` or `K.f`) and the type held, with the
-    /// arguments the chain gives it. At an enum it takes the first variant's first such field,
-    /// at a class the first such field, and it ends at the first type it meets again.
-    fn chain(&self, start: usize, fix: &mut Buildable) -> Vec<(String, String)> {
+    /// The chain of fields from the enum, class or struct at node `start`, through types none of
+    /// which can be built by `fix`. It gives each link's holder (`E.V` or `K.f`) and the type held,
+    /// with the arguments the chain gives it. At an enum it takes the first variant's first such
+    /// field, and at a class or a struct the first such field. It ends at the first type it meets
+    /// again. It also gives the first struct on the chain, if there is one, as the field that
+    /// holds it on the chain declares it: that field is where a `?` ends the chain.
+    fn chain(&self, start: usize, fix: &mut Buildable) -> (Vec<(String, String)>, Option<String>) {
         let classes = self.classes.len();
-        let params = if start < classes {
-            &self.classes[start].type_params
-        } else {
-            &self.enums[start - classes].type_params
-        };
+        let params = self.node_info(start).1;
         // A field named `name` of type `ty`, if that type cannot be built: its name, its type's
         // name, and its node and arguments.
-        let mut unbuilt = |(name, ty): (&str, Type)| {
-            let (n, args) = match ty.kind() {
-                TypeKind::Class(id, args) => (id.0, args),
-                TypeKind::Enum(id, args) => (classes + id.0, args),
-                _ => return None,
-            };
+        let mut unbuilt = |(name, ty, declared): (&str, Type, Type)| {
+            let (n, args) = fix.node_of(ty)?;
             let key = fix.key_of(n, args);
-            (!fix.built[key]).then(|| (name.to_string(), self.type_name(ty), (n, args), key))
+            (!fix.built[key]).then(|| {
+                (
+                    name.to_string(),
+                    self.type_name(ty),
+                    declared,
+                    (n, args),
+                    key,
+                )
+            })
         };
         let mut chain = Vec::new();
+        // Each link's next node and its field's declared type.
+        let mut held = Vec::new();
+        // The first struct's node, arguments and link.
+        let mut first_struct = None;
         // Asking for a key's flags can add keys to `fix`, so this is a set.
         let mut on_chain = FxHashSet::default();
         let (mut at, mut args) = (start, own_args(params));
         let mut key = start;
         while on_chain.insert(key) {
             let with = args.get();
-            let held = |ty: &Option<Type>| ty.and_then(|ty| self.subst(ty, with));
-            let (holder, field) = if at < classes {
-                let class = &self.classes[at];
-                let mut fields = class
-                    .fields
-                    .iter()
-                    .filter_map(|f| Some((f.name.name.as_str(), held(&f.ty)?)));
+            let typed = |ty: &Option<Type>| ty.and_then(|ty| Some((self.subst(ty, with)?, ty)));
+            let (holder, field) = if let Some(class) = self.class_node(at) {
+                let mut fields = (class.fields.iter())
+                    .filter_map(|f| typed(&f.ty).map(|(ty, d)| (f.name.name.as_str(), ty, d)));
                 (&class.name, fields.find_map(&mut unbuilt))
             } else {
                 let e = &self.enums[at - classes];
                 let mut fields = e.variants.first().into_iter().flat_map(|v| {
                     let name = v.name.name.as_str();
-                    v.fields
-                        .iter()
-                        .filter_map(move |ty| Some((name, held(ty)?)))
+                    (v.fields.iter()).filter_map(move |ty| typed(ty).map(|(ty, d)| (name, ty, d)))
                 });
                 (&e.name, fields.find_map(&mut unbuilt))
             };
-            let (name, ty, next, next_key) =
+            let (name, ty, declared, next, next_key) =
                 field.expect("a type no value can be built of should need another such type");
+            if first_struct.is_none() && at >= classes + self.enums.len() {
+                first_struct = Some((at, args, chain.len()));
+            }
             chain.push((format!("{}.{name}", holder.name), ty));
+            held.push((next.0, declared));
             ((at, args), key) = (next, next_key);
         }
-        chain
+        // The link before the struct holds it. The start is held by the link that closes the
+        // chain, if any. A field that names the struct only through a type parameter, or no such
+        // link, gives the struct with the chain's arguments.
+        let first_struct = first_struct.map(|(at, args, link)| {
+            let id = tir::StructId(at - classes - self.enums.len());
+            let holder = match link.checked_sub(1) {
+                Some(before) => held.get(before),
+                None => held.last().filter(|&&(next, _)| next == at),
+            };
+            let declared = holder
+                .map(|&(_, declared)| declared)
+                .filter(|d| matches!(d.kind(), TypeKind::Struct(s, _) if s == id));
+            self.type_name(declared.unwrap_or_else(|| Type::intern(TypeKind::Struct(id, args))))
+        });
+        (chain, first_struct)
     }
 
-    /// What a value of each enum and class may hold. The nodes are the enums, then the classes;
-    /// a field holds the node its array and optional wrappers end at. A field of the poison type
-    /// marks its node poison; a class field marks an enum `class`. Each fact then spreads to every
-    /// node that holds a marked one: `class` through enums only, `poison` through every node.
+    /// The name and type parameters of node `n` of `never_built`: a class, an enum, then a struct.
+    fn node_info(&self, n: usize) -> (&ast::Ident, &[Symbol]) {
+        if let Some(info) = self.class_node(n) {
+            (&info.name, &info.type_params)
+        } else {
+            let info = &self.enums[n - self.classes.len()];
+            (&info.name, &info.type_params)
+        }
+    }
+
+    /// The class or struct at node `n` of `never_built`, which have the same table; `None` for
+    /// an enum.
+    fn class_node(&self, n: usize) -> Option<&ClassInfo> {
+        let enums = self.classes.len() + self.enums.len();
+        match n.checked_sub(enums) {
+            Some(s) => Some(&self.structs[s]),
+            None => self.classes.get(n),
+        }
+    }
+
+    /// What a value of each enum, class and struct may hold. The nodes are the enums, then the
+    /// classes, then the structs; a field holds the node its array and optional wrappers end at.
+    /// A field of the poison type marks its node poison; a class field marks an enum or a struct
+    /// `class`. Each fact then spreads to every node that holds a marked one: `class` through
+    /// enums and structs only, `poison` through every node.
     pub(super) fn holds_table(&self) -> HoldsTable {
         let enums = self.enums.len();
-        let mut poison = vec![false; enums + self.classes.len()];
-        let mut class = vec![false; enums];
+        let structs = enums + self.classes.len();
+        let mut poison = vec![false; structs + self.structs.len()];
+        // A class node never takes `class`: it is a class object itself.
+        let mut class = vec![false; poison.len()];
         // Who holds each node.
         let mut holders = vec![Vec::new(); poison.len()];
         let enum_fields = self.enums.iter().enumerate().flat_map(|(i, e)| {
@@ -821,8 +909,10 @@ impl Checker<'_> {
             .iter()
             .enumerate()
             .flat_map(|(i, c)| c.fields.iter().map(move |f| (enums + i, f.ty)));
+        let struct_fields = (self.structs.iter().enumerate())
+            .flat_map(|(i, s)| s.fields.iter().map(move |f| (structs + i, f.ty)));
         let mut seen = FxHashSet::default();
-        for (holder, ty) in enum_fields.chain(class_fields) {
+        for (holder, ty) in enum_fields.chain(class_fields).chain(struct_fields) {
             let Some(ty) = ty else {
                 poison[holder] = true;
                 continue;
@@ -841,14 +931,16 @@ impl Checker<'_> {
                 match ty.kind() {
                     TypeKind::Array(inner) | TypeKind::Optional(inner) => types.push(inner),
                     TypeKind::Class(id, args) => {
-                        if let Some(c) = class.get_mut(holder) {
-                            *c = true;
-                        }
+                        class[holder] |= !(enums..structs).contains(&holder);
                         holders[enums + id.0].push(holder);
                         types.extend_from_slice(args.get());
                     }
                     TypeKind::Enum(id, args) => {
                         holders[id.0].push(holder);
+                        types.extend_from_slice(args.get());
+                    }
+                    TypeKind::Struct(id, args) => {
+                        holders[structs + id.0].push(holder);
                         types.extend_from_slice(args.get());
                     }
                     _ => {}
@@ -857,14 +949,14 @@ impl Checker<'_> {
         }
         mark_holders(&mut poison, &holders);
         mark_holders(&mut class, &holders);
+        let holds = |i: usize| Holds {
+            class: class[i],
+            poison: poison[i],
+        };
         HoldsTable {
-            enums: (0..enums)
-                .map(|i| Holds {
-                    class: class[i],
-                    poison: poison[i],
-                })
-                .collect(),
-            classes: poison.split_off(enums),
+            enums: (0..enums).map(holds).collect(),
+            structs: (structs..poison.len()).map(holds).collect(),
+            classes: poison[enums..structs].to_vec(),
             cache: std::cell::RefCell::default(),
         }
     }
@@ -900,6 +992,7 @@ impl Checker<'_> {
     fn holds_of(&self, ty: Type) -> Holds {
         let (own, args) = match ty.kind() {
             TypeKind::Enum(id, args) => (self.holds_table.enums[id.0], args),
+            TypeKind::Struct(id, args) => (self.holds_table.structs[id.0], args),
             TypeKind::Class(id, args) => {
                 let poison = self.holds_table.classes[id.0];
                 (
@@ -929,11 +1022,12 @@ pub(super) struct Holds {
     pub(super) poison: bool,
 }
 
-/// `Holds` for each enum, by `EnumId`, and whether each class, by `ClassId`, holds the poison
-/// type.
+/// `Holds` for each enum, by `EnumId`, and each struct, by `StructId`, and whether each class, by
+/// `ClassId`, holds the poison type.
 #[derive(Default)]
 pub(super) struct HoldsTable {
     enums: Vec<Holds>,
+    structs: Vec<Holds>,
     classes: Vec<bool>,
     /// What `Checker::holds` has decided, by type.
     cache: std::cell::RefCell<FxHashMap<Type, Holds>>,
@@ -972,6 +1066,8 @@ fn mark_holders(marked: &mut [bool], holders: &[Vec<usize>]) {
 /// enum's follows the classes) and a flag for each of its parameters.
 struct Buildable {
     classes: usize,
+    /// The node of the first struct: the structs follow the enums.
+    structs: usize,
     /// By node, its slots, each of which builds it when all its field types can be built: a
     /// class's fields, or each variant's payload, less the fields `may_wait` says are always
     /// built. A node built at once has none: a class on a cycle of fields, an enum with no
@@ -1004,13 +1100,7 @@ impl Buildable {
         let mut slots = Vec::new();
         let mut params = Vec::new();
         for (c, class) in checker.classes.iter().enumerate() {
-            let fields = class.fields.iter().map(|f| f.ty);
-            let fields: Vec<_> = fields.filter(|&ty| may_wait(ty)).collect();
-            slots.push(if cyclic[c] || fields.is_empty() {
-                Vec::new()
-            } else {
-                vec![fields]
-            });
+            slots.push(fields_slot(class, cyclic[c]));
             params.push(class.type_params.len());
         }
         for info in &checker.enums {
@@ -1031,6 +1121,11 @@ impl Buildable {
             );
             params.push(info.type_params.len());
         }
+        // A struct is built as a class is, and no struct is on a cycle of `cyclic`.
+        for info in &checker.structs {
+            slots.push(fields_slot(info, false));
+            params.push(info.type_params.len());
+        }
         let bound = params
             .iter()
             .map(|&p| {
@@ -1042,6 +1137,7 @@ impl Buildable {
             .fold(0, usize::saturating_add);
         let mut fix = Buildable {
             classes: checker.classes.len(),
+            structs: checker.classes.len() + checker.enums.len(),
             slots,
             bound,
             ids: FxHashMap::default(),
@@ -1111,6 +1207,16 @@ impl Buildable {
         key
     }
 
+    /// The node of the class, enum or struct `ty`, and its arguments; `None` for another type.
+    fn node_of(&self, ty: Type) -> Option<(usize, TypeArgs)> {
+        match ty.kind() {
+            TypeKind::Class(id, args) => Some((id.0, args)),
+            TypeKind::Enum(id, args) => Some((self.classes + id.0, args)),
+            TypeKind::Struct(id, args) => Some((self.structs + id.0, args)),
+            _ => None,
+        }
+    }
+
     /// The key `node` has when given `args`. A type parameter in `args` is a chain's start's,
     /// whose arguments are all buildable.
     fn key_of(&mut self, node: usize, args: TypeArgs) -> usize {
@@ -1133,10 +1239,8 @@ impl Buildable {
         }
         #[cfg(test)]
         TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
-        let (node, args) = match ty.kind() {
-            TypeKind::Class(id, args) => (id.0, args),
-            TypeKind::Enum(id, args) => (self.classes + id.0, args),
-            _ => return true,
+        let Some((node, args)) = self.node_of(ty) else {
+            return true;
         };
         let key = self.key_in(node, args, known);
         let built = self.built[key];
@@ -1191,9 +1295,10 @@ impl Buildable {
         TYPE_WALK_STEPS.set(TYPE_WALK_STEPS.get() + 1);
         let (node, args) = match ty.kind() {
             TypeKind::Param(_, i) => return flags[i as usize],
-            TypeKind::Class(id, args) => (id.0, args),
-            TypeKind::Enum(id, args) => (self.classes + id.0, args),
-            _ => return true,
+            _ => match self.node_of(ty) {
+                Some(node) => node,
+                None => return true,
+            },
         };
         let given = (args.get().iter())
             .map(|&arg| self.verdict(arg, flags, verdicts))
@@ -1286,15 +1391,28 @@ struct Walk {
     consulted: Vec<usize>,
 }
 
-/// Whether a field of type `ty` can wait to be built: only a class, an enum or a type parameter
-/// can. `Buildable::buildable` finds any other type, and an error type, always buildable.
+/// Whether a field of type `ty` can wait to be built: only a class, an enum, a struct or a type
+/// parameter can. `Buildable::buildable` finds any other type, and an error type, always buildable.
 fn may_wait(ty: Option<Type>) -> bool {
     ty.is_some_and(|ty| {
         matches!(
             ty.kind(),
-            TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Param(..)
+            TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Struct(..) | TypeKind::Param(..)
         )
     })
+}
+
+/// The one slot of a class or a struct, with the fields `may_wait` keeps; none for a class in
+/// `cyclic` or with no such field, which is built at once.
+fn fields_slot(info: &ClassInfo, cyclic: bool) -> Vec<Vec<Option<Type>>> {
+    let fields: Vec<_> = (info.fields.iter().map(|f| f.ty))
+        .filter(|&ty| may_wait(ty))
+        .collect();
+    if cyclic || fields.is_empty() {
+        Vec::new()
+    } else {
+        vec![fields]
+    }
 }
 
 #[cfg(test)]

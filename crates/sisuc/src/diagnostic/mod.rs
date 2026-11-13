@@ -18,7 +18,8 @@ pub(crate) use registry::{
     NotInterface, NotMutForm, NotPlace, Operand, Owner, Panic, Peel, PeelIs, PeelLayers, Plain,
     PowerFix, PrecisionHelp, PrintProblem, RETIRED, RangeForm, RangePlace, RangePush, RangeTarget,
     RangeWrite, ReceiverArgument, SliceOf, SpecForm, SpecLimit, Spelled, TypedLiteral, Unbuilt,
-    Ungenerated, UnknownForm, Unwrap, UnwrapHelp, UsedBy, VariantLabels, WideKind, invisible,
+    Ungenerated, UnknownForm, Unwrap, UnwrapHelp, UsedBy, VariantLabels, WideKind, Written,
+    copy_help, invisible,
 };
 pub(crate) use suggest::{Suggestion, alias, closest, suggestion};
 

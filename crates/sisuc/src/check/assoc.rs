@@ -187,6 +187,7 @@ impl Checker<'_> {
             Some(at) => Rc::clone(&self.extensions[at].assoc),
             None => match owner.and_then(super::extend::holder_of) {
                 Some(Holder::Class(c)) => Rc::clone(&self.classes[c.0].assoc),
+                Some(Holder::Struct(id)) => Rc::clone(&self.structs[id.0].assoc),
                 Some(Holder::Enum(e)) => Rc::clone(&self.enums[e.0].assoc),
                 Some(Holder::Array | Holder::I64) | None => Rc::default(),
             },
@@ -198,6 +199,7 @@ impl Checker<'_> {
     pub(super) fn assoc_named(&mut self, name: Symbol, at: Span) -> Named {
         if self.body.choosing.contains(&name) {
             let shadows = self.names.class(name).is_some()
+                || self.names.struct_id(name).is_some()
                 || self.names.enum_id(name).is_some()
                 || self.names.alias(name).is_some()
                 || built_in_type(name.as_str()).is_some();

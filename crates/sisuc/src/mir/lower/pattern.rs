@@ -6,13 +6,14 @@
 //! choice point first. `Some(p)` and `None` test an optional with `test_present`, which reads it in
 //! place, and `p` tests the value inside through `Projection::Some`. The first arm whose pattern
 //! and guard hold commits. When `temp` is a counted enum and the arm binds a counted name or tests
-//! a box, outside any `|` that would, the commit takes `temp` apart: each binding moves its part
-//! out (one of a boxed `F?`, whose box may be `null`, copies it), each box the pattern tests
-//! becomes a reuse token, which the scope stack frees, and the parts nothing moved are released.
-//! Otherwise each counted binding copies its value and `temp` is released. Either way `temp` leaves
-//! the scope stack, and the counted bindings, then the tokens, join it. Each edge that leaves a
-//! test or a guard before the commit ends the arm's bindings; the edges out of a committed body do
-//! not. The last arm's failure is `unreachable`: the checker proves some arm matches.
+//! a box, the commit takes `temp` apart. An `|` that binds or tests stops it. Each binding moves
+//! its part out. A binding of a boxed `F?`, whose box may be `null`, or of a boxed struct copies
+//! its part. Each box the pattern tests becomes a reuse token, which the scope stack frees. The
+//! parts nothing moved are released. Otherwise each counted binding copies its value and `temp` is
+//! released. Either way `temp` leaves the scope stack, and the counted bindings, then the tokens,
+//! join it. Each edge that leaves a test or a guard before the commit ends the arm's bindings; the
+//! edges out of a committed body do not. The last arm's failure is `unreachable`: the checker
+//! proves some arm matches.
 //!
 //! A scrutinee that is a borrowed place, a borrowed parameter or a field without `mut` of one,
 //! is not copied. A `match` tests the place itself; its commit copies and releases nothing, and
@@ -161,7 +162,7 @@ impl Lowering<'_> {
                     return None;
                 }
                 let mut place = self.borrowed_place(base)?;
-                place.projections.push(projection);
+                self.push_field(&mut place, base.ty, *index);
                 Some(place)
             }
             _ => None,
@@ -485,15 +486,15 @@ impl Lowering<'_> {
         true
     }
 
-    /// The commit of an arm whose pattern and guard held. With `parts`, it takes `temp` apart:
-    /// each boxed `F?` binding copies its value, each other counted binding's borrow ends, and
-    /// `take_apart` moves those bindings out, makes each tested box a token and releases each
-    /// rest; `temp` leaves the scope stack with no release, and the counted bindings, then the
-    /// tokens, join it. Otherwise each counted binding copies its borrowed value, then `temp`,
-    /// when `counted`, is released and leaves the scope stack, and the counted bindings join it.
-    /// The bindings are no longer borrowed. When the match `borrows` its scrutinee, the bindings
-    /// copy nothing: they stay borrowed through the body, and join the scope stack as borrowed,
-    /// so each edge that leaves the arm ends them.
+    /// The commit of an arm whose pattern and guard held. With `parts`, it takes `temp` apart. Each
+    /// boxed `F?` or struct binding copies its value, and each other counted binding's borrow ends.
+    /// `take_apart` moves those bindings out, makes each tested box a token and releases each rest.
+    /// `temp` leaves the scope stack with no release, and the counted bindings, then the tokens,
+    /// join it. Otherwise each counted binding copies its borrowed value, then `temp`, when
+    /// `counted`, is released and leaves the scope stack, and the counted bindings join it. The
+    /// bindings are no longer borrowed. When the match `borrows` its scrutinee, the bindings copy
+    /// nothing: they stay borrowed through the body, and join the scope stack as borrowed, so each
+    /// edge that leaves the arm ends them.
     fn commit(
         &mut self,
         temp: LocalId,
@@ -652,8 +653,9 @@ impl Lowering<'_> {
     ) -> Option<()> {
         match &pattern.kind {
             PatternKind::Bind(binding) if self.locals[binding.0].counted => {
-                if boxed && matches!(ty.kind(), TypeKind::Optional(_)) {
-                    // A boxed `F?` is never tested: its box may be `null`.
+                if boxed && !matches!(ty.kind(), TypeKind::Enum(..)) {
+                    // A boxed `F?` is never tested: its box may be `null`. Only the box of an
+                    // enum is a token, so the binding of a boxed struct copies it too.
                     parts.copied.push(*binding);
                     parts.kept[value] = true;
                 } else {
@@ -999,7 +1001,7 @@ struct Parts {
     tokens: Vec<(Type, Place)>,
     /// Each counted binding that moves out of its place, with the place.
     moved: Vec<(LocalId, Place)>,
-    /// Each counted binding of a boxed `F?`, which the commit copies.
+    /// Each counted binding of a boxed `F?` or a boxed struct, which the commit copies.
     copied: Vec<LocalId>,
     /// The scrutinee's place, then each tested box's, and whether that value keeps a counted
     /// part nothing moves or tests.

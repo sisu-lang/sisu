@@ -21,7 +21,8 @@ use super::{Codegen, POSITIONED};
 use crate::conformance::find;
 use crate::graph::components;
 use crate::tir::{
-    ClassId, EnumId, FuncId, InterfaceId, LocalId, Program, Type, TypeArgs, TypeKind,
+    ClassId, EnumId, FuncId, Inline, InterfaceId, LocalId, Program, StructId, Type, TypeArgs,
+    TypeKind,
 };
 
 /// The `==` helper of an array with this many array layers or more gets `noinline` (see
@@ -78,6 +79,9 @@ pub(super) enum Helper {
     /// `@sisu_rc.reuse.<F>(token) -> ptr`: a token's box, or a new block for a box of `F` when
     /// the token is `null`.
     Reuse,
+    /// `@sisu_rc.unique_box.<F>(slot)`: makes the box in a boxed field's slot the only holder of
+    /// its value, as `Unique` does for an array (see `box_unique`).
+    UniqueBox,
     /// `@sisu_show.<T>(sink, value)`: writes the text of a value of an array, a class or an
     /// enum type into a sink, as `print` writes it or as `dbg` does (see `codegen/show.rs`).
     Show(Mode),
@@ -263,6 +267,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             ),
             Helper::Free => ("free", takes_object),
             Helper::Reuse => ("reuse", ptr_type.fn_type(&[ptr_type.into()], false)),
+            Helper::UniqueBox => ("unique_box", takes_object),
             Helper::Show(_) => (
                 "",
                 self.context.void_type().fn_type(
@@ -317,6 +322,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             | Helper::Unbox
             | Helper::Free
             | Helper::Reuse
+            | Helper::UniqueBox
             | Helper::ShowComponent(_) => {}
         }
         self.helpers.borrow_mut().insert(key, function);
@@ -353,10 +359,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         );
     }
 
-    /// The parameter types of a helper for one value of the counted type `ty`: an enum is passed
-    /// by the address of its slot, and any other value by the calling convention.
+    /// The parameter types of a helper for one value of the counted type `ty`: an enum or a
+    /// struct is passed by the address of its slot, and any other value by the calling
+    /// convention.
     fn helper_value(&self, ty: Type) -> Vec<BasicMetadataTypeEnum<'ctx>> {
-        if let TypeKind::Enum(..) = ty.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Struct(..) = ty.kind() {
             vec![self.context.ptr_type(AddressSpace::default()).into()]
         } else {
             self.param_types(ty)
@@ -371,10 +378,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         first: u32,
         ty: Type,
     ) -> BasicValueEnum<'ctx> {
-        if let TypeKind::Enum(..) = ty.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Struct(..) = ty.kind() {
             function
                 .get_nth_param(first)
-                .expect("a helper should be declared with a slot pointer for an enum")
+                .expect("a helper should be declared with a slot pointer for an enum or a struct")
         } else {
             self.joined_params(function, first, &[ty])[0]
         }
@@ -386,7 +393,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         ty: Type,
         value: BasicValueEnum<'ctx>,
     ) -> Vec<BasicMetadataValueEnum<'ctx>> {
-        if let TypeKind::Enum(..) = ty.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Struct(..) = ty.kind() {
             vec![value.into()]
         } else {
             self.split(ty, value)
@@ -415,18 +422,28 @@ impl<'ctx> Codegen<'ctx, '_> {
             let function = self.helpers.borrow()[&(kind, ty)];
             match (kind, ty.kind()) {
                 (Helper::Show(mode), _) => self.define_show(function, ty, mode),
-                (Helper::ShowComponent(mode), TypeKind::Enum(id, _)) => {
+                (Helper::ShowComponent(mode), _) => {
+                    let id = ty
+                        .inline_type()
+                        .expect("only an enum or a struct should be queued for a component helper");
                     self.define_show_component(id, function, mode);
                 }
-                (Helper::Eq, TypeKind::Class(..) | TypeKind::Enum(..))
+                (Helper::Eq, TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Struct(..))
                     if self.written_eq(ty).is_some() =>
                 {
                     self.define_written_eq(function, ty);
                 }
-                (_, TypeKind::Enum(id, _)) => self.define_enum_helper(kind, id, function),
+                (_, TypeKind::Enum(id, _)) => {
+                    self.define_inline_helper(kind, Inline::Enum(id), function);
+                }
+                (_, TypeKind::Struct(id, _)) => {
+                    self.define_inline_helper(kind, Inline::Struct(id), function);
+                }
                 (Helper::Release, _) => self.define_release(function, ty),
                 (Helper::Retain, _) => {
-                    unreachable!("only an enum type should be queued for a `retain` helper")
+                    unreachable!(
+                        "only an enum or a struct type should be queued for a `retain` helper"
+                    )
                 }
                 (_, TypeKind::Array(element)) => self.define_array_helper(kind, element, function),
                 (_, TypeKind::String) => self.define_string_helper(kind, function),
@@ -442,11 +459,11 @@ impl<'ctx> Codegen<'ctx, '_> {
                         "`helper` should queue a helper of this kind only for an array or a string"
                     )
                 }
-                (Helper::Walk | Helper::EqComponent | Helper::ShowComponent(_), _) => {
-                    unreachable!("only an enum type should be queued for a component helper")
+                (Helper::Walk | Helper::EqComponent, _) => {
+                    unreachable!("only an enum or a struct should be queued for a component helper")
                 }
-                (Helper::Unbox | Helper::Free | Helper::Reuse, _) => {
-                    unreachable!("only an enum type should be queued for a box's helper")
+                (Helper::Unbox | Helper::Free | Helper::Reuse | Helper::UniqueBox, _) => {
+                    unreachable!("only an enum or a struct should be queued for a box's helper")
                 }
             }
         }
@@ -609,7 +626,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             let Some(((heads_type, heads), position)) =
                 heads.zip(self.analyses.class_cycles.link(id, field.ty))
             else {
-                if field.ty.is_counted(&self.program.enums) {
+                if field
+                    .ty
+                    .is_counted(&self.program.enums, &self.program.structs)
+                {
                     self.release_at(place, field.ty);
                 }
                 continue;
@@ -653,14 +673,14 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.call(self.free, &[object.into(), size.into(), align.into()]);
     }
 
-    /// The method of the written `Eq` of the class or enum `ty`, when the program has a record
-    /// for it. After `mono` each record is concrete, so the lookup is exact.
+    /// The method of the written `Eq` of the class, enum or struct `ty`, when the program has a
+    /// record for it. After `mono` each record is concrete, so the lookup is exact.
     pub(super) fn written_eq(&self, ty: Type) -> Option<FuncId> {
         self.written_method(ty, self.program.lang.eq)
     }
 
-    /// The method of the written `Display` of the class or enum `ty`, its `to_string`, when the
-    /// program has a record for it.
+    /// The method of the written `Display` of the class, enum or struct `ty`, its `to_string`,
+    /// when the program has a record for it.
     pub(super) fn written_display(&self, ty: Type) -> Option<FuncId> {
         self.written_method(ty, self.program.lang.display)
     }
@@ -675,11 +695,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             .copied()
     }
 
-    /// `@sisu_rc.eq.<T>(a, b)` for a class or an enum `ty` whose `Eq` is written: a call of its
-    /// `eq`, with each part passed as the method's final `borrowed` flags say. A parameter that
-    /// is not borrowed is owned by the callee, which releases it, so the helper retains the part
-    /// first. A class tests for `null` first, as the generated helper does; there is no look at
-    /// the same pointer, since a written `eq` need not be reflexive.
+    /// `@sisu_rc.eq.<T>(a, b)` for a class, an enum or a struct `ty` whose `Eq` is written: a call
+    /// of its `eq`, with each part passed as the method's final `borrowed` flags say. A parameter
+    /// that is not borrowed is owned by the callee, which releases it, so the helper retains the
+    /// part first. A class tests for `null` first, as the generated helper does; there is no look
+    /// at the same pointer, since a written `eq` need not be reflexive.
     fn define_written_eq(&self, function: FunctionValue<'ctx>, ty: Type) {
         let method = self
             .written_eq(ty)
@@ -705,8 +725,8 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// A call of the written `eq` `method` on the values of type `ty` at `places`: a class is the
-    /// pointer itself, and an enum is read by address. A part is retained first when the
-    /// method owns its parameter.
+    /// pointer itself, and an enum or a struct is read by address. A part is retained first when
+    /// the method owns its parameter.
     pub(super) fn call_written_eq(
         &self,
         method: FuncId,
@@ -715,7 +735,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         borrowed: &[bool],
     ) -> IntValue<'ctx> {
         let values = places.map(|place| {
-            if let TypeKind::Enum(..) = ty.kind() {
+            if let TypeKind::Enum(..) | TypeKind::Struct(..) = ty.kind() {
                 self.load_value(ty, place)
             } else {
                 place.into()
@@ -848,14 +868,17 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
     }
 
-    /// Whether every value of `ty` is `==` to itself: no `f64` is reachable from it, directly,
-    /// as an optional's payload, an array's element, or a field of a class or a payload field
-    /// of an enum it reaches, boxed or inline. `unreflexive` answers it for a class or an enum.
+    /// Whether every value of `ty` is `==` to itself. It is not when an `f64` is reachable from
+    /// it. The `f64` can be the type itself, an optional's payload or an array's element. It can
+    /// also be a field of a class, an enum or a struct that the type reaches, boxed or inline.
+    /// `unreflexive` answers it for a class, an enum or a struct.
     pub(super) fn reflexive(&self, ty: Type) -> bool {
+        let unreflexive = |node: usize| self.analyses.unreflexive[node];
         match unwrapped(ty).kind() {
             TypeKind::F64 => false,
-            TypeKind::Class(id, _) => !self.analyses.unreflexive[id.0],
-            TypeKind::Enum(id, _) => !self.analyses.unreflexive[self.program.classes.len() + id.0],
+            TypeKind::Class(id, _) => !unreflexive(id.0),
+            TypeKind::Enum(id, _) => !unreflexive(enum_node(self.program, id)),
+            TypeKind::Struct(id, _) => !unreflexive(struct_node(self.program, id)),
             _ => true,
         }
     }
@@ -871,8 +894,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             return self.call_eq(core, lhs, rhs);
         }
         let payload = match ty.kind() {
-            TypeKind::Enum(..) => {
-                return self.equal_at(ty, self.enum_slot(lhs), self.enum_slot(rhs));
+            TypeKind::Enum(..) | TypeKind::Struct(..) => {
+                return self.equal_at(ty, self.value_slot(lhs), self.value_slot(rhs));
             }
             TypeKind::Optional(payload) => payload,
             _ => return self.scalar_equal(lhs, rhs),
@@ -883,7 +906,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.has_value(ty, rhs, "part"),
         );
         let flags = self.int_compare(IntPredicate::EQ, fa, fb);
-        if let TypeKind::Enum(..) | TypeKind::Optional(_) = payload.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Struct(..) | TypeKind::Optional(_) = payload.kind() {
             // Equal flags decide, unless both are set: a `None`'s payload is never read.
             let function = self.current_function();
             let both = self.builder.build_and(fa, fb, "both").expect(POSITIONED);
@@ -919,15 +942,15 @@ impl<'ctx> Codegen<'ctx, '_> {
             .expect(POSITIONED)
     }
 
-    /// Whether the values of type `ty` at `a` and `b` are equal, as `equal` says. An enum goes
-    /// to its helper by address, with no copy; any other type is loaded.
+    /// Whether the values of type `ty` at `a` and `b` are equal, as `equal` says. An enum or a
+    /// struct goes to its helper by address, with no copy; any other type is loaded.
     pub(super) fn equal_at(
         &self,
         ty: Type,
         a: PointerValue<'ctx>,
         b: PointerValue<'ctx>,
     ) -> IntValue<'ctx> {
-        if let TypeKind::Enum(..) = ty.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Struct(..) = ty.kind() {
             return self.call_eq(ty, a.into(), b.into());
         }
         self.equal(ty, self.load_value(ty, a), self.load_value(ty, b))
@@ -1087,6 +1110,12 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.call(self.helper(Helper::Unique, ty), &[slot.into()]);
     }
 
+    /// Makes the box in `slot`, of a boxed field of type `ty`, the only holder of its value:
+    /// `@sisu_rc.unique_box.<F>` copies the value into a new box when another holder shares it.
+    pub(super) fn box_unique(&self, slot: PointerValue<'ctx>, ty: Type) {
+        self.call(self.helper(Helper::UniqueBox, ty), &[slot.into()]);
+    }
+
     /// Adds 1 to the count of each reference `value` holds when `ty` is counted.
     pub(super) fn retain(&self, value: BasicValueEnum<'ctx>, ty: Type) {
         self.retain_or_release(Helper::Retain, value, ty);
@@ -1107,11 +1136,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.retain_or_release_at(Helper::Release, place, ty);
     }
 
-    /// `retain_or_release` of the value of type `ty` at `place`. An enum goes to its helper by
-    /// address, with no copy; any other type is loaded. `ty` must be a counted
+    /// `retain_or_release` of the value of type `ty` at `place`. An enum or a struct goes to its
+    /// helper by address, with no copy; any other type is loaded. `ty` must be a counted
     /// type: unlike `retain_or_release`, this does not check.
     fn retain_or_release_at(&self, kind: Helper, place: PointerValue<'ctx>, ty: Type) {
-        if let TypeKind::Enum(..) = ty.kind() {
+        if let TypeKind::Enum(..) | TypeKind::Struct(..) = ty.kind() {
             self.call(self.helper(kind, ty), &[place.into()]);
         } else if three_words(ty) {
             // Only the block is counted, and it is the first word.
@@ -1134,10 +1163,10 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// `retain` or `release`, as `kind` says. A string, object or array counts its block or
-    /// itself, `null` for `None`; an enum goes to its helper by address; the payload of any other
-    /// optional is counted only when the optional holds a value, one layer at a time.
+    /// itself, `null` for `None`; an enum or a struct goes to its helper by address. The payload
+    /// of any other optional is counted only when the optional holds a value, one layer at a time.
     fn retain_or_release(&self, kind: Helper, value: BasicValueEnum<'ctx>, ty: Type) {
-        if ty.is_counted(&self.program.enums) {
+        if ty.is_counted(&self.program.enums, &self.program.structs) {
             self.count_counted(kind, value, ty);
         }
     }
@@ -1151,7 +1180,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             return;
         }
         match ty.kind() {
-            TypeKind::Enum(..) => self.retain_or_release_at(kind, self.enum_slot(value), ty),
+            TypeKind::Enum(..) | TypeKind::Struct(..) => {
+                self.retain_or_release_at(kind, self.value_slot(value), ty);
+            }
             TypeKind::Any(..) if kind == Helper::Retain => self.retain_any(value),
             TypeKind::Any(..) => self.release_any(value),
             TypeKind::Optional(payload) => {
@@ -1190,14 +1221,25 @@ fn unwrapped(mut ty: Type) -> Type {
     ty
 }
 
-/// Which classes, then which enums, of `program` reach an `f64` or a written `eq` through their
-/// fields (see `Codegen::reflexive`): the types with a field of `f64` and the types that have a
-/// written `Eq` seed it, since a written `eq` need not be reflexive, and each class or enum with
-/// a field of a type already in it joins, by a worklist over the reversed field graph. Every
-/// field is read once.
+/// The node of the enum `id` in the graph of `reaching_unreflexive`: the classes come first.
+fn enum_node(program: &Program, id: EnumId) -> usize {
+    program.classes.len() + id.0
+}
+
+/// The node of the struct `id` in the graph of `reaching_unreflexive`: the structs come after the
+/// classes and the enums.
+fn struct_node(program: &Program, id: StructId) -> usize {
+    program.classes.len() + program.enums.len() + id.0
+}
+
+/// Which classes, then which enums, then which structs, of `program` reach an `f64` or a written
+/// `eq` through their fields (see `Codegen::reflexive`). The types with a field of `f64` seed it.
+/// So do the types that have a written `Eq`, since a written `eq` need not be reflexive. Each
+/// class, enum or struct with a field of a type already in it joins, by a worklist over the
+/// reversed field graph. Every field is read once.
 pub(super) fn reaching_unreflexive(program: &Program) -> Vec<bool> {
     let classes = program.classes.len();
-    let node_count = classes + program.enums.len();
+    let node_count = classes + program.enums.len() + program.structs.len();
     let mut reaches = vec![false; node_count];
     let mut holders: Vec<Vec<usize>> = vec![Vec::new(); node_count];
     let class_fields = program
@@ -1207,25 +1249,34 @@ pub(super) fn reaching_unreflexive(program: &Program) -> Vec<bool> {
         .flat_map(|(node, class)| class.fields.iter().map(move |field| (node, field.ty)));
     let enum_fields = program.enums.iter().enumerate().flat_map(|(id, decl)| {
         let fields = decl.variants.iter().flat_map(|variant| &variant.fields);
-        fields.map(move |field| (classes + id, field.ty))
+        fields.map(move |field| (enum_node(program, EnumId(id)), field.ty))
     });
-    for (node, ty) in class_fields.chain(enum_fields) {
+    let struct_fields = program.structs.iter().enumerate().flat_map(|(id, decl)| {
+        let node = struct_node(program, StructId(id));
+        decl.fields.iter().map(move |field| (node, field.ty))
+    });
+    for (node, ty) in class_fields.chain(enum_fields).chain(struct_fields) {
         #[cfg(test)]
         super::TYPE_READS.set(super::TYPE_READS.get() + 1);
         match unwrapped(ty).kind() {
             TypeKind::F64 => reaches[node] = true,
             TypeKind::Class(id, _) => holders[id.0].push(node),
-            TypeKind::Enum(id, _) => holders[classes + id.0].push(node),
+            TypeKind::Enum(id, _) => holders[enum_node(program, id)].push(node),
+            TypeKind::Struct(id, _) => holders[struct_node(program, id)].push(node),
             _ => {}
         }
     }
     let written = |ty| find(&program.conformances, program.lang.eq, ty, TypeArgs::NONE).is_some();
-    let (class_seeds, enum_seeds) = reaches.split_at_mut(classes);
+    let (class_seeds, rest) = reaches.split_at_mut(classes);
+    let (enum_seeds, struct_seeds) = rest.split_at_mut(program.enums.len());
     for (id, seed) in class_seeds.iter_mut().enumerate() {
         *seed |= written(Type::intern(TypeKind::Class(ClassId(id), TypeArgs::NONE)));
     }
     for (id, seed) in enum_seeds.iter_mut().enumerate() {
         *seed |= written(Type::intern(TypeKind::Enum(EnumId(id), TypeArgs::NONE)));
+    }
+    for (id, seed) in struct_seeds.iter_mut().enumerate() {
+        *seed |= written(Type::intern(TypeKind::Struct(StructId(id), TypeArgs::NONE)));
     }
     // Each seed is queued once, however many `f64` fields it has.
     let mut work: Vec<usize> = (0..node_count).filter(|&node| reaches[node]).collect();

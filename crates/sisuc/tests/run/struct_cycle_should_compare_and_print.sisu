@@ -1,0 +1,16 @@
+// GIVEN `struct Node { v: i64; next: Node? }`, whose field `next` is a box
+// WHEN `main` compares two equal lists of three nodes, and lists that differ in the last node or
+// in their length. Then it prints a list of three
+// THEN the equal lists compare equal, the others unequal, and the print shows each node
+struct Node { v: i64; next: Node? }
+
+fn three(a: i64, b: i64, c: i64) -> Node {
+    Node(v: a, next: Some(Node(v: b, next: Some(Node(v: c, next: None)))))
+}
+
+fn main() {
+    print(three(1, 2, 3) == three(1, 2, 3)) // true
+    print(three(1, 2, 3) == three(1, 2, 4)) // false
+    print(three(1, 2, 3) == Node(v: 1, next: Some(Node(v: 2, next: None)))) // false
+    print(three(1, 2, 3))            // Node(v: 1, next: Node(v: 2, next: Node(v: 3, next: None)))
+}

@@ -388,7 +388,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             .enumerate()
             .skip(1)
         {
-            if function.borrowed[i] && local.ty.is_counted(&self.program.enums) {
+            if function.borrowed[i]
+                && local
+                    .ty
+                    .is_counted(&self.program.enums, &self.program.structs)
+            {
                 self.release(args[i], local.ty);
             }
         }

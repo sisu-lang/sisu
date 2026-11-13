@@ -11,7 +11,7 @@ use crate::graph::components;
 use crate::symbol::Symbol;
 use crate::tir::{
     ChoicePlace, Class, ClassId, Conformance, Conformances, Enum, EnumId, Interface, InterfaceId,
-    LangInterfaces, Type, TypeArgs, TypeKind, head_of,
+    LangInterfaces, Struct, StructId, Type, TypeArgs, TypeKind, head_of,
 };
 
 #[cfg(test)]
@@ -173,16 +173,20 @@ pub(crate) enum Generated {
     /// An enum has `Eq` when each payload type of each variant, with the arguments in place of
     /// the enum's parameters, has.
     Payloads(EnumId, TypeArgs),
+    /// A struct has `Eq` when each field type, with the arguments in place of the struct's
+    /// parameters, has.
+    Fields(StructId, TypeArgs),
 }
 
 /// The generated rule (spec, "Generated conformances"): what the compiler writes for `ty` and the
 /// language interface `interface`, when no written conformance covers `ty`. `Display` holds for
 /// every type but `unit` and `never`, a type parameter and a class included, and asks nothing.
-/// `Eq` holds for scalars and `string`, for an array or an optional of a type that has `Eq`, and
-/// for an enum whose payload types have it; never for a class. `Ord` holds for numbers, `char`
-/// and `string`, never for `bool`, and nothing else has it. `AnyObject` holds for a class and for
-/// nothing else. An interface of the program has no generated rule. The caller asks the parts, so
-/// that the checker and `mono` each keep their own answers.
+/// `Eq` holds for scalars and `string`, and for an array or an optional of a type that has `Eq`.
+/// It holds for an enum whose payload types have it, and for a struct whose field types have it.
+/// It never holds for a class. `Ord` holds for numbers, `char` and `string`, never for `bool`, and
+/// nothing else has it. `AnyObject` holds for a class and for nothing else. An interface of the
+/// program has no generated rule. The caller asks the parts, so that the checker and `mono` each
+/// keep their own answers.
 pub(crate) fn generated(lang: LangInterfaces, ty: Type, interface: InterfaceId) -> Generated {
     let holds = |yes: bool| {
         if yes {
@@ -212,6 +216,7 @@ pub(crate) fn generated(lang: LangInterfaces, ty: Type, interface: InterfaceId) 
         _ if number || kind == TypeKind::Bool => Generated::Holds,
         TypeKind::Array(part) | TypeKind::Optional(part) => Generated::Element(part),
         TypeKind::Enum(id, args) => Generated::Payloads(id, args),
+        TypeKind::Struct(id, args) => Generated::Fields(id, args),
         _ => Generated::Fails,
     }
 }
@@ -389,14 +394,15 @@ impl Payloads for [Vec<Type>] {
     }
 }
 
-/// The parts of `ty`, whatever the interface: an array's element, an optional's contents and each
-/// payload type of an enum, with the type's arguments in place of its parameters. Nothing for a
-/// scalar, `string`, a class (it compares by identity, or through a written `Eq`), a type
-/// parameter or an `any` value. A part whose associated type has no choice is poison, and is
-/// left out. A generated `Display`, which asks no part, still lists them.
-pub(crate) fn parts<P: Payloads + ?Sized>(
+/// The parts of `ty`, whatever the interface. They are an array's element, an optional's contents,
+/// each payload type of an enum and each field type of a struct. An enum's payload types have the
+/// type's arguments in place of its parameters. Nothing for a scalar, `string`, a class (it
+/// compares by identity, or through a written `Eq`), a type parameter or an `any` value. A part
+/// whose associated type has no choice is poison, and is left out. A generated `Display`, which
+/// asks no part, still lists them.
+pub(crate) fn parts<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     conformances: &Conformances,
-    enums: &P,
+    (enums, structs): (&P, &S),
     ty: Type,
     mut each: impl FnMut(Type),
 ) {
@@ -404,6 +410,11 @@ pub(crate) fn parts<P: Payloads + ?Sized>(
         TypeKind::Array(part) | TypeKind::Optional(part) => each(part),
         TypeKind::Enum(id, args) => enums.each(id, &mut |payload| {
             if let Some(part) = normalize(conformances, payload.subst(args.get())) {
+                each(part);
+            }
+        }),
+        TypeKind::Struct(id, args) => structs.each(id, &mut |field| {
+            if let Some(part) = normalize(conformances, field.subst(args.get())) {
                 each(part);
             }
         }),
@@ -432,6 +443,7 @@ pub(crate) fn prints_by_helper(ty: Type) -> bool {
             | TypeKind::Optional(_)
             | TypeKind::Class(..)
             | TypeKind::Enum(..)
+            | TypeKind::Struct(..)
             | TypeKind::Any(..)
     )
 }
@@ -454,6 +466,7 @@ pub(crate) fn makes_group(mut ty: Type) -> bool {
         ty.kind(),
         TypeKind::Array(_)
             | TypeKind::Enum(..)
+            | TypeKind::Struct(..)
             | TypeKind::Param(..)
             | TypeKind::Assoc(..)
             | TypeKind::Any(..)
@@ -479,10 +492,12 @@ impl Holds {
     }
 }
 
-/// What [`holds`] reads: the conformances of the program and the payload types of its enums.
-pub(crate) struct Source<'a, P: Payloads + ?Sized> {
+/// What [`holds`] reads: the conformances of the program, the payload types of its enums and the
+/// field types of its structs.
+pub(crate) struct Source<'a, P: Payloads + ?Sized, S: StructFields + ?Sized> {
     pub(crate) conformances: &'a Conformances,
     pub(crate) enums: &'a P,
+    pub(crate) structs: &'a S,
     pub(crate) lang: LangInterfaces,
     /// The interfaces of the program, for those that an `any` type inherits.
     pub(crate) interfaces: &'a [Interface],
@@ -507,9 +522,9 @@ pub(crate) struct Decide {
 ///
 /// `Display` is different (see [`display_holds`]): a bound on it always holds, and the choice of
 /// a written `to_string` is a root query of its own. Ask it only when no query is open.
-pub(crate) fn holds<P: Payloads + ?Sized>(
+pub(crate) fn holds<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     cx: &mut Decide,
-    src: &Source<'_, P>,
+    src: &Source<'_, P, S>,
     ty: Type,
     interface: InterfaceId,
     args: TypeArgs,
@@ -518,7 +533,9 @@ pub(crate) fn holds<P: Payloads + ?Sized>(
         return display_holds(cx, src, ty, args);
     }
     ensure_stack(|| match ty.kind() {
-        TypeKind::Class(..) | TypeKind::Enum(..) => holder_holds(cx, src, ty, interface, args),
+        TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Struct(..) => {
+            holder_holds(cx, src, ty, interface, args)
+        }
         // An `any` value has the interface that it is made from, and those that it inherits.
         TypeKind::Any(..) => {
             let closure = cx.any_closures.entry(ty).or_insert_with(|| {
@@ -541,7 +558,7 @@ pub(crate) fn holds<P: Payloads + ?Sized>(
                     Holds::No
                 }
             }
-            Generated::Fails | Generated::Payloads(..) => Holds::No,
+            Generated::Fails | Generated::Payloads(..) | Generated::Fields(..) => Holds::No,
         },
     })
 }
@@ -551,9 +568,9 @@ pub(crate) fn holds<P: Payloads + ?Sized>(
 /// failed bound is no failure of the query: the key is not on the stack of `cx.open`, and the
 /// bounds of the record are root queries that end before the choice does. A key on that stack
 /// would turn a pending answer of a query below it to `true` when its own fallback holds.
-fn display_holds<P: Payloads + ?Sized>(
+fn display_holds<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     cx: &mut Decide,
-    src: &Source<'_, P>,
+    src: &Source<'_, P, S>,
     ty: Type,
     args: TypeArgs,
 ) -> Holds {
@@ -563,7 +580,10 @@ fn display_holds<P: Payloads + ?Sized>(
     } else {
         Holds::No
     };
-    if !matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..)) {
+    if !matches!(
+        ty.kind(),
+        TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..)
+    ) {
         return generated;
     }
     let key = (ty, display, args);
@@ -583,9 +603,9 @@ fn display_holds<P: Payloads + ?Sized>(
     answer
 }
 
-fn holder_holds<P: Payloads + ?Sized>(
+fn holder_holds<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     cx: &mut Decide,
-    src: &Source<'_, P>,
+    src: &Source<'_, P, S>,
     ty: Type,
     interface: InterfaceId,
     args: TypeArgs,
@@ -619,9 +639,9 @@ fn holder_holds<P: Payloads + ?Sized>(
 }
 
 /// The answer for a key that `holder_holds` has opened.
-fn expanded<P: Payloads + ?Sized>(
+fn expanded<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     cx: &mut Decide,
-    src: &Source<'_, P>,
+    src: &Source<'_, P, S>,
     ty: Type,
     interface: InterfaceId,
     args: TypeArgs,
@@ -636,28 +656,46 @@ fn expanded<P: Payloads + ?Sized>(
     match generated(src.lang, ty, interface) {
         Generated::Holds => Holds::Generated,
         Generated::Fails | Generated::Element(_) => Holds::No,
+        Generated::Fields(id, own) => {
+            let mut parts = Vec::new();
+            src.structs.each(id, &mut |field| parts.push(field));
+            parts_hold(cx, src, &parts, own, interface)
+        }
         Generated::Payloads(id, own) => {
             let mut parts = Vec::new();
             src.enums.each(id, &mut |payload| parts.push(payload));
-            for payload in parts {
-                let Some(part) = normalize(src.conformances, payload.subst(own.get())) else {
-                    continue;
-                };
-                if !holds(cx, src, part, interface, TypeArgs::NONE).is_yes() {
-                    return Holds::No;
-                }
-            }
-            Holds::Generated
+            parts_hold(cx, src, &parts, own, interface)
         }
     }
+}
+
+/// Whether `interface` holds for each of `parts`, the declared field or payload types of a struct
+/// or an enum. The arguments `own` take the place of its parameters. A part whose associated type
+/// has no choice is poison, and holds.
+fn parts_hold<P: Payloads + ?Sized, S: StructFields + ?Sized>(
+    cx: &mut Decide,
+    src: &Source<'_, P, S>,
+    parts: &[Type],
+    own: TypeArgs,
+    interface: InterfaceId,
+) -> Holds {
+    for &declared in parts {
+        let Some(part) = normalize(src.conformances, declared.subst(own.get())) else {
+            continue;
+        };
+        if !holds(cx, src, part, interface, TypeArgs::NONE).is_yes() {
+            return Holds::No;
+        }
+    }
+    Holds::Generated
 }
 
 /// Whether the conformance `k` of `interface` holds when its block's parameters stand for
 /// `stands`: each bound of each parameter holds for the type that stands for it. A bound whose
 /// arguments have no choice for an associated type is poison, and holds.
-fn record_holds<P: Payloads + ?Sized>(
+fn record_holds<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     cx: &mut Decide,
-    src: &Source<'_, P>,
+    src: &Source<'_, P, S>,
     interface: InterfaceId,
     k: usize,
     stands: TypeArgs,
@@ -716,6 +754,30 @@ impl Fields for [Vec<Type>] {
     }
 }
 
+/// The field types of each struct, declared: what [`parts`] reads of a struct. The output of
+/// `mono` has `Struct`s; `mono` also keeps the field types of the input, because the output
+/// names the output's ids.
+pub(crate) trait StructFields {
+    /// Calls `each` with the type of each field of the struct `id`.
+    fn each(&self, id: StructId, each: &mut dyn FnMut(Type));
+}
+
+impl StructFields for [Struct] {
+    fn each(&self, id: StructId, each: &mut dyn FnMut(Type)) {
+        for field in &self[id.0].fields {
+            each(field.ty);
+        }
+    }
+}
+
+impl StructFields for [Vec<Type>] {
+    fn each(&self, id: StructId, each: &mut dyn FnMut(Type)) {
+        for &ty in &self[id.0] {
+            each(ty);
+        }
+    }
+}
+
 /// The field types of the class `ty`, with its arguments in place of its parameters, as `dbg`
 /// shows them: in `print` mode. Nothing for any other type.
 pub(crate) fn fields_of<F: Fields + ?Sized>(
@@ -743,14 +805,19 @@ pub(crate) fn fields_of<F: Fields + ?Sized>(
 ///
 /// With `dbg`, the helper is the one that `dbg` calls. A class with no written conformance also
 /// writes its fields, each in `print` mode, so each field type is a part of the class.
-pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
+pub(crate) fn calls_written<P, S, F>(
     conformances: &Conformances,
-    (enums, classes): (&P, &F),
+    (enums, structs, classes): (&P, &S, &F),
     ty: Type,
     interface: InterfaceId,
     dbg: bool,
     written: &mut Written,
-) -> bool {
+) -> bool
+where
+    P: Payloads + ?Sized,
+    S: StructFields + ?Sized,
+    F: Fields + ?Sized,
+{
     reaches(
         &mut written.settled,
         (ty, interface, dbg),
@@ -766,7 +833,7 @@ pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
                     parts_of((part, interface, false));
                 });
             } else {
-                parts(conformances, enums, key, |part| {
+                parts(conformances, (enums, structs), key, |part| {
                     parts_of((part, interface, dbg));
                 });
             }
@@ -776,14 +843,14 @@ pub(crate) fn calls_written<P: Payloads + ?Sized, F: Fields + ?Sized>(
 }
 
 /// Whether the concrete type `ty` holds a class with no written `Display`. It does when it is
-/// one or an `any` value, whose table may hold one, or when an array, an optional or an enum
-/// payload (any depth) is. Only such a class is written with its fields by `dbg`. A class or an
-/// enum with a written `Display` shows that text, so the walk stops at it. A `dbg` helper of a
-/// type that holds none is the `print` helper. The answers of `held` are the types decided so
-/// far, which later queries read.
-pub(crate) fn holds_class<P: Payloads + ?Sized>(
+/// one, or an `any` value, whose table may hold one. It also does when an array, an optional, an
+/// enum payload or a struct field (any depth) is one. Only such a class is written with its
+/// fields by `dbg`. A class or an enum with a written `Display` shows that text, so the walk
+/// stops at it. A `dbg` helper of a type that holds none is the `print` helper. The answers of
+/// `held` are the types decided so far, which later queries read.
+pub(crate) fn holds_class<P: Payloads + ?Sized, S: StructFields + ?Sized>(
     (conformances, display): (&Conformances, InterfaceId),
-    enums: &P,
+    (enums, structs): (&P, &S),
     ty: Type,
     held: &mut FxHashMap<Type, bool>,
 ) -> bool {
@@ -795,7 +862,7 @@ pub(crate) fn holds_class<P: Payloads + ?Sized>(
         if matches!(key.kind(), TypeKind::Class(..) | TypeKind::Any(..)) {
             return true;
         }
-        parts(conformances, enums, key, parts_of);
+        parts(conformances, (enums, structs), key, parts_of);
         false
     })
 }
@@ -809,9 +876,22 @@ pub(crate) fn has_written(conformances: &Conformances, interface: InterfaceId, t
 /// always applies. It does when each bound of the conformance is on `Display`, which always
 /// holds. A bound on another interface may fail for the types that stand for the parameters.
 pub(crate) fn always_written(conformances: &Conformances, display: InterfaceId, ty: Type) -> bool {
+    applies_written(conformances, display, display, ty)
+}
+
+/// Whether `ty`, a type of a body that may name type parameters, has a written conformance to
+/// `interface` that always applies. It does when it covers `ty` and each bound of the conformance
+/// is on `always`, an interface that each type meets. A conformance for another instance, such as
+/// `extend B<i64>: Display` beside `B<T>`, does not cover `ty`.
+pub(crate) fn applies_written(
+    conformances: &Conformances,
+    interface: InterfaceId,
+    always: InterfaceId,
+    ty: Type,
+) -> bool {
     head_of(ty).is_some()
-        && find_with(conformances, display, ty, TypeArgs::NONE, |c| {
-            (c.bounds.iter().flatten()).all(|bound| bound.interface == display)
+        && find_with(conformances, interface, ty, TypeArgs::NONE, |c| {
+            (c.bounds.iter().flatten()).all(|bound| bound.interface == always)
         })
         .is_some()
 }
@@ -995,6 +1075,7 @@ impl Normalizer<'_> {
             TypeKind::Array(element) => Type::array(self.walk(element)?),
             TypeKind::Optional(payload) => Type::optional(self.walk(payload)?),
             TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.all(args)?)),
+            TypeKind::Struct(id, args) => Type::intern(TypeKind::Struct(id, self.all(args)?)),
             TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.all(args)?)),
             TypeKind::Any(id, args) => Type::intern(TypeKind::Any(id, self.all(args)?)),
             TypeKind::Assoc(base, interface, args, k) => {
@@ -1021,7 +1102,7 @@ impl Normalizer<'_> {
         let base = self.walk(base)?;
         let args = self.all(args)?;
         match base.kind() {
-            TypeKind::Class(..) | TypeKind::Enum(..) => {
+            TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..) => {
                 self.choice(Type::intern(TypeKind::Assoc(base, interface, args, k)))
             }
             TypeKind::Param(..) | TypeKind::Assoc(..) => {
@@ -1110,7 +1191,8 @@ pub(crate) fn clash(
     mine.extend_from_slice(args.get());
     // A target without parameters meets the one of its exact type; one with parameters meets the
     // exact targets of its class or enum (the recorded exception of the doc comment).
-    let head = head_of(target).expect("the target of a conformance should be a class or an enum");
+    let head = head_of(target)
+        .expect("the target of a conformance should be a class, a struct or an enum");
     let exact = if params == 0 {
         conformances.exact(interface, target, args)
     } else {
@@ -1158,6 +1240,11 @@ fn matches(pattern: Type, ty: Type, slots: &mut [Option<Type>]) -> Option<()> {
         {
             matches_all(p, t, slots)
         }
+        (TypeKind::Struct(a, p), TypeKind::Struct(b, t))
+            if a == b && p.get().len() == t.get().len() =>
+        {
+            matches_all(p, t, slots)
+        }
         (TypeKind::Enum(a, p), TypeKind::Enum(b, t))
             if a == b && p.get().len() == t.get().len() =>
         {
@@ -1179,6 +1266,7 @@ fn matches(pattern: Type, ty: Type, slots: &mut [Option<Type>]) -> Option<()> {
             | TypeKind::Optional(_)
             | TypeKind::Class(..)
             | TypeKind::Enum(..)
+            | TypeKind::Struct(..)
             | TypeKind::Assoc(..)
             | TypeKind::Any(..),
             _,
@@ -1338,6 +1426,9 @@ impl Unifier {
             TypeKind::Array(element) => Type::array(self.resolve(element)?),
             TypeKind::Optional(payload) => Type::optional(self.resolve(payload)?),
             TypeKind::Class(id, args) => Type::intern(TypeKind::Class(id, self.resolve_all(args)?)),
+            TypeKind::Struct(id, args) => {
+                Type::intern(TypeKind::Struct(id, self.resolve_all(args)?))
+            }
             TypeKind::Enum(id, args) => Type::intern(TypeKind::Enum(id, self.resolve_all(args)?)),
             TypeKind::Any(id, args) => Type::intern(TypeKind::Any(id, self.resolve_all(args)?)),
             // An associated type is opaque here, as it is to `unify`.
@@ -1397,6 +1488,11 @@ impl Unifier {
             {
                 self.join(left, right) || self.unify_all(l, r)
             }
+            (TypeKind::Struct(from, l), TypeKind::Struct(to, r))
+                if from == to && l.get().len() == r.get().len() =>
+            {
+                self.join(left, right) || self.unify_all(l, r)
+            }
             (TypeKind::Enum(from, l), TypeKind::Enum(to, r))
                 if from == to && l.get().len() == r.get().len() =>
             {
@@ -1420,6 +1516,7 @@ impl Unifier {
                 | TypeKind::Optional(_)
                 | TypeKind::Class(..)
                 | TypeKind::Enum(..)
+                | TypeKind::Struct(..)
                 | TypeKind::Assoc(..)
                 | TypeKind::Any(..),
                 _,
@@ -1442,6 +1539,9 @@ mod tests {
     const CIRCLE: usize = 2;
     const PILE: usize = 3;
 
+    /// The field types of the structs of a program that has none.
+    const NO_STRUCTS: &[Vec<Type>] = &[];
+
     fn class(id: usize, args: &[Type]) -> Type {
         Type::intern(TypeKind::Class(ClassId(id), TypeArgs::intern(args)))
     }
@@ -1456,6 +1556,10 @@ mod tests {
 
     fn tree(id: usize, args: &[Type]) -> Type {
         Type::intern(TypeKind::Enum(EnumId(id), TypeArgs::intern(args)))
+    }
+
+    fn structure(id: usize, args: &[Type]) -> Type {
+        Type::intern(TypeKind::Struct(StructId(id), TypeArgs::intern(args)))
     }
 
     /// The conformances of interface 0 that `rows` write: the target with `params` parameters,
@@ -1488,7 +1592,8 @@ mod tests {
         let (t, u) = (param(0), param(0));
         let pair = |a, b| class(PAIR, &[a, b]);
         let circle = class(CIRCLE, &[]);
-        let rows: [Row<'_>; 25] = [
+        let cell = |arg| structure(0, &[arg]);
+        let rows: [Row<'_>; 28] = [
             // `extend<T> Box<T>: Convert<T>` and `extend<U> Box<U>: Convert<i64>`.
             (
                 &[boxed(t), t],
@@ -1554,6 +1659,17 @@ mod tests {
             (&[tree(0, &[t, t])], 1, &[tree(0, &[u])], 1, None),
             (&[class(BOX, &[t, t])], 1, &[class(BOX, &[u])], 1, None),
             (&[boxed(t)], 1, &[class(PILE, &[u])], 1, None),
+            // Structs as classes: the same struct with arguments that unify, another struct, and
+            // the same struct with other arguments.
+            (
+                &[cell(t)],
+                1,
+                &[cell(Type::I64)],
+                0,
+                Some(vec![cell(Type::I64)]),
+            ),
+            (&[cell(t)], 1, &[structure(1, &[u])], 1, None),
+            (&[cell(Type::I64)], 0, &[cell(Type::BOOL)], 0, None),
             // A parameter never stands for a type that holds it, in a class or an enum.
             (&[boxed(t), t], 1, &[boxed(u), boxed(u)], 1, None),
             (
@@ -1766,6 +1882,15 @@ mod tests {
         );
         assert_eq!(binds(tree(0, t), 1, tree(1, Type::I64)), None);
         assert_eq!(binds(tree(0, t), 1, boxed(Type::I64)), None);
+        // Structs match structs by their ids and arguments.
+        assert_eq!(
+            binds(structure(0, &[t]), 1, structure(0, &[Type::I64])),
+            Some(vec![Type::I64])
+        );
+        assert_eq!(
+            binds(structure(0, &[t]), 1, structure(1, &[Type::I64])),
+            None
+        );
     }
 
     /// A target without parameters is found by its exact type and its arguments; one with
@@ -2350,7 +2475,7 @@ mod tests {
     /// The program `src` checks without an error, and `ask` gets what `holds` reads of it.
     fn deciding<R>(
         src: &str,
-        ask: impl FnOnce(&crate::tir::Program, &mut Decide, &Source<'_, [Enum]>) -> R,
+        ask: impl FnOnce(&crate::tir::Program, &mut Decide, &Source<'_, [Enum], [Struct]>) -> R,
     ) -> R {
         let (program, diagnostics) =
             crate::check::check_alone(&crate::parser::parse_ok(src), src, &[]);
@@ -2358,6 +2483,7 @@ mod tests {
         let source = Source {
             conformances: &program.conformances,
             enums: program.enums.as_slice(),
+            structs: program.structs.as_slice(),
             lang: program.lang,
             interfaces: program.interfaces.as_slice(),
         };
@@ -2571,7 +2697,14 @@ mod tests {
         deciding(src, |program, _, source| {
             let parts = |ty| {
                 let mut out = Vec::new();
-                parts(source.conformances, source.enums, ty, |part| out.push(part));
+                parts(
+                    source.conformances,
+                    (source.enums, NO_STRUCTS),
+                    ty,
+                    |part| {
+                        out.push(part);
+                    },
+                );
                 out
             };
             assert_eq!(parts(Type::array(Type::I64)), [Type::I64]);
@@ -2645,6 +2778,7 @@ mod tests {
         let source = Source {
             conformances: &conformances,
             enums: payloads.as_slice(),
+            structs: NO_STRUCTS,
             lang,
             interfaces: &[],
         };
@@ -2653,7 +2787,7 @@ mod tests {
         // One collector for the calls: the array has a part; the payload and the field have none.
         let mut listed = Vec::new();
         let mut collect = |part| listed.push(part);
-        let enums = payloads.as_slice();
+        let enums = (payloads.as_slice(), NO_STRUCTS);
         parts(&conformances, enums, Type::array(Type::I64), &mut collect);
         parts(&conformances, enums, enum_type, &mut collect);
         parts(&conformances, enums, class, &mut collect);
@@ -2697,6 +2831,9 @@ mod tests {
         if let Some(id) = program.enums.iter().position(|e| e.name == name) {
             return tree(id, &[]);
         }
+        if let Some(id) = program.structs.iter().position(|s| s.name == name) {
+            return Type::intern(TypeKind::Struct(StructId(id), TypeArgs::NONE));
+        }
         let id = (program.classes.iter())
             .position(|c| c.name == name)
             .unwrap_or_else(|| panic!("no type {name}"));
@@ -2711,7 +2848,7 @@ mod tests {
     ) -> bool {
         holds_class(
             (&program.conformances, program.lang.display),
-            program.enums.as_slice(),
+            (program.enums.as_slice(), program.structs.as_slice()),
             ty,
             held,
         )
@@ -2801,7 +2938,11 @@ mod tests {
     fn calls_display(program: &crate::tir::Program, ty: Type, dbg: bool) -> bool {
         calls_written(
             &program.conformances,
-            (program.enums.as_slice(), program.classes.as_slice()),
+            (
+                program.enums.as_slice(),
+                program.structs.as_slice(),
+                program.classes.as_slice(),
+            ),
             ty,
             program.lang.display,
             dbg,
@@ -2837,5 +2978,34 @@ mod tests {
             assert_eq!(calls_display(&program, ty, false), print, "{row}, print");
             assert_eq!(calls_display(&program, ty, true), dbg, "{row}, dbg");
         }
+    }
+
+    /// The `to_string` of `Leaf` is written. A struct has no written one, so `print` of it runs
+    /// one only through a field: a `Leaf`, or a struct, an array or an optional that holds one.
+    /// `dbg` shows a class by its fields, so a struct that holds a class with a `Leaf` runs it.
+    #[test]
+    fn calls_written_should_follow_the_fields_of_a_struct() {
+        let program = instantiated(
+            "class Leaf {\n    v: i64\n}\nextend Leaf: Display {\n    fn to_string(self) -> string {\n        \"leaf\"\n    }\n}\nclass Outer {\n    inner: Leaf\n}\nstruct Plain {\n    n: i64\n    xs: [string]\n}\nstruct Wrap {\n    leaf: Leaf\n}\nstruct Deep {\n    w: Wrap?\n}\nstruct Hold {\n    o: Outer\n}\nstruct Empty {}",
+        );
+        for (row, name, print, dbg) in [
+            ("a struct of scalars and strings", "Plain", false, false),
+            ("a struct with no field", "Empty", false, false),
+            ("a struct that holds a written one", "Wrap", true, true),
+            ("a struct that holds one deeper", "Deep", true, true),
+            ("a struct that holds a class", "Hold", false, true),
+        ] {
+            let ty = named(&program, name);
+            assert_eq!(calls_display(&program, ty, false), print, "{row}, print");
+            assert_eq!(calls_display(&program, ty, true), dbg, "{row}, dbg");
+        }
+        let mut held = FxHashMap::default();
+        assert!(holds_a_class(&program, named(&program, "Hold"), &mut held));
+        assert!(!holds_a_class(&program, named(&program, "Wrap"), &mut held));
+        assert!(!holds_a_class(
+            &program,
+            named(&program, "Plain"),
+            &mut held
+        ));
     }
 }

@@ -1,0 +1,12 @@
+// GIVEN `struct Rock {}` and `let xs = [Rock(), Rock()]`
+// WHEN `main` prints `xs.len()` and `xs[0] == xs[1]`
+// THEN it prints `2` and `true`
+struct Rock {}
+
+fn main() {
+    let xs = [Rock(), Rock()]
+    print(xs.len())                  // 2
+    print(xs[0] == xs[1])            // true
+    print(xs[0] != xs[1])            // false
+    print(Rock() == Rock())          // true
+}

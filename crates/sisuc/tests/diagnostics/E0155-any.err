@@ -1,4 +1,4 @@
-error[E0155]: `extend` takes a class or enum, and `any Shape` is an interface value
+error[E0155]: `extend` takes a class, struct or enum, and `any Shape` is an interface value
  --> E0155-any.sisu:5:8
   |
 5 | extend any Shape {

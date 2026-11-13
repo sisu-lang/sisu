@@ -1,0 +1,36 @@
+// GIVEN optionals of structs that hold no counted field: `P?`, `Rock?` and `P??`
+// WHEN each is compared with `None`, with `==` and `!=`, on each side, and in a generic function
+// THEN each comparison tests whether the optional holds a value, and compares no payload
+struct P { n: i64 }
+struct Rock {}
+
+fn none<T>(o: T?) -> bool {
+    return o == None
+}
+
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(p: P) {
+    print(p)
+}
+
+fn main() {
+    let o: P? = P(n: 1)
+    let e: P? = None
+    print(o == None)                 // false
+    print(o != None)                 // true
+    print(e == None)                 // true
+    print(None == o)                 // false
+    print(None != e)                 // false
+
+    let r: Rock? = Rock()
+    let rn: Rock? = None
+    print(r == None)                 // false
+    print(rn != None)                // false
+
+    let oo: P?? = Some(None)
+    let on: P?? = None
+    print(oo == None)                // false
+    print(on == None)                // true
+
+    print(none(P(n: 2)))             // false
+}

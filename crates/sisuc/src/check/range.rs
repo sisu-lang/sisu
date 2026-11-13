@@ -1,7 +1,7 @@
 //! Ranges: the E0023 report of a range where it is not allowed, the range index of an array, and
 //! the E0021 report of an assignment to a range index.
 
-use super::array::optional_array;
+use super::array::must_unwrap;
 use super::call::Dot;
 use super::string::single_term;
 use super::{Checked, Checker, Expectation, Origin, Poisoned, known_type};
@@ -267,7 +267,7 @@ impl Checker<'_> {
             TypeKind::Optional(inner)
                 if inner == Type::STRING || matches!(inner.kind(), TypeKind::Array(_)) =>
             {
-                optional_array(base, UnwrapHelp::It)
+                must_unwrap(base, UnwrapHelp::It)
             }
             _ => DiagnosticKind::CannotIndex {
                 ty: self.type_name(ty),

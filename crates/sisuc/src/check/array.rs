@@ -3,6 +3,7 @@
 use super::any::{AnyJoin, is_target, widen};
 use super::expr::{fits, literal_type, no_member, path, typed};
 use super::generic::{Rank, mark, mismatch_poison};
+use super::place::{Change, first_safe, is_struct};
 use super::reports::Reported;
 use super::{
     Checked, Checker, Declared, Expectation, Origin, Poisoned, as_optional, known_type, payload,
@@ -173,6 +174,7 @@ impl Checker<'_> {
                 match value {
                     Ok(e) if e.ty != element => {
                         self.instantiates |= is_target(element);
+                        self.record_shown_any(e.ty, element);
                         Ok(widen(e, element))
                     }
                     value => value,
@@ -292,7 +294,10 @@ impl Checker<'_> {
             .into_iter()
             .map(|slot| {
                 match slot.expect("the three waves should check every element, one rank each") {
-                    Ok(e) if e.ty != element => Ok(widen(e, element)),
+                    Ok(e) if e.ty != element => {
+                        self.record_shown_any(e.ty, element);
+                        Ok(widen(e, element))
+                    }
                     checked => checked,
                 }
             })
@@ -548,9 +553,23 @@ impl Checker<'_> {
         let checked = self.value(base, Expectation::None);
         // An optional array is reported, and its element goes on typed, but no code reads it.
         let optional = type_of(&checked).is_some_and(is_optional_array);
-        let (element, report) = self.element(base, type_of(&checked), IndexUsage::Read);
+        let class_write = (self.body.write_chain.is_some() && optional)
+            .then(|| self.class_unwrap(base, &checked))
+            .flatten();
+        let (element, report) = match (class_write, type_of(&checked)) {
+            (Some(unwrap), Some(ty)) => {
+                let reported = self.diagnostics.error(must_unwrap(base, unwrap));
+                (optional_element(ty), Some(reported))
+            }
+            _ => self.element(
+                base,
+                (type_of(&checked), checked.is_err()),
+                IndexUsage::Read,
+            ),
+        };
         // The index is not part of the chain that it ends.
         self.body.indexed = false;
+        let chain = std::mem::take(&mut self.body.write_chain);
         // A base with no element, such as a string, takes no `i64` index either.
         let origin = if element.is_some() {
             Origin::Index
@@ -559,6 +578,7 @@ impl Checker<'_> {
         };
         let (index, mismatched) = self.operand(index, Expectation::Required(Type::I64, origin));
         self.body.indexed = outer;
+        self.body.write_chain = chain;
         match (checked, index, element) {
             (Ok(base), Ok(index), Some(element)) if !optional => {
                 Ok(self.spilled(span, element, vec![base, index], |operands| {
@@ -584,10 +604,11 @@ impl Checker<'_> {
     /// The element type of `base`, which is indexed and has type `ty` (`None` is `Error`). An
     /// optional array is reported and gives the element of its payload. A string, or a value that
     /// is no array, is reported and gives `Error`. With the proof of the report, when there is one.
+    /// A base that `failed` under the chain of a write to a struct has reported that write.
     pub(super) fn element(
         &mut self,
         base: &ast::Expr,
-        ty: Option<Type>,
+        (ty, failed): (Option<Type>, bool),
         usage: IndexUsage,
     ) -> (Option<Type>, Option<Reported>) {
         let Some(ty) = ty else {
@@ -596,8 +617,35 @@ impl Checker<'_> {
         let d: Diagnostic = match ty.kind() {
             TypeKind::Array(element) => return (Some(element), None),
             TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Array(_)) => {
-                let reported = self.diagnostics.error(optional_array(base, UnwrapHelp::It));
-                return (optional_element(ty), Some(reported));
+                let element = optional_element(ty);
+                // A struct element under the chain of a write, after a `?.`: part 1 cannot write
+                // through that `?.`, and an unwrap gives a copy.
+                let on_struct = self.body.write_chain.is_some()
+                    && element.is_some_and(|e| is_struct(innermost(e)));
+                if on_struct && failed {
+                    return (element, None);
+                }
+                let chain = (self.body.write_chain)
+                    .filter(|&(_, change)| on_struct && change != Change::MutArg)
+                    .zip(first_safe(base));
+                let unwrap = if on_struct {
+                    UnwrapHelp::Nothing
+                } else {
+                    UnwrapHelp::It
+                };
+                let reported = match chain {
+                    Some((write, object)) => {
+                        let d = match self.chain_write(write, base, object) {
+                            DiagnosticKind::ChainWriteOnStruct { at, .. } => {
+                                DiagnosticKind::ChainWriteOnStruct { at, replace: None }
+                            }
+                            d => d,
+                        };
+                        self.error(d)
+                    }
+                    None => self.diagnostics.error(must_unwrap(base, unwrap)),
+                };
+                return (element, Some(reported));
             }
             _ if ty == Type::STRING => DiagnosticKind::StringIndex {
                 at: base.span,
@@ -744,9 +792,9 @@ impl Checker<'_> {
     }
 }
 
-/// "`m` may be `None`", at the optional array `base` that an index or a `for` needs unwrapped.
-/// `unwrap` says what the help unwraps.
-pub(super) fn optional_array(base: &ast::Expr, unwrap: UnwrapHelp) -> Diagnostic {
+/// "`m` may be `None`", at the optional `base` that an index, a `for` or a write through a class
+/// `?.` needs unwrapped. `unwrap` says what the help unwraps.
+pub(super) fn must_unwrap(base: &ast::Expr, unwrap: UnwrapHelp) -> Diagnostic {
     DiagnosticKind::MayBeNone {
         value: path(base),
         at: base.span,

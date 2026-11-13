@@ -1,0 +1,67 @@
+error[E0001]: cannot assign to a part of `t`
+  --> E0001_struct.sisu:11:5
+   |
+10 | fn by_param(t: T) {
+   |             - declared as a parameter here
+11 |     t.n = 2
+   |     ^^^^^^^
+   |
+   = help: copy it into a variable: `let mut t = t`
+
+error[E0001]: cannot assign to a part of `t`
+  --> E0001_struct.sisu:12:5
+   |
+10 | fn by_param(t: T) {
+   |             - declared as a parameter here
+11 |     t.n = 2
+12 |     t.i.xs[0] = 1
+   |     ^^^^^^^^^^^^^
+   |
+   = help: copy it into a variable: `let mut t = t`
+
+error[E0001]: cannot assign to a part of `t`
+  --> E0001_struct.sisu:17:9
+   |
+16 |     if let Some(t) = o {
+   |                 - bound by `if let` here
+17 |         t.n = 2
+   |         ^^^^^^^
+
+error[E0001]: cannot assign to a part of `t`
+  --> E0001_struct.sisu:18:9
+   |
+16 |     if let Some(t) = o {
+   |                 - bound by `if let` here
+17 |         t.n = 2
+18 |         t.i.xs[0] = 1
+   |         ^^^^^^^^^^^^^
+
+error[E0001]: cannot assign to a part of `t`
+  --> E0001_struct.sisu:24:5
+   |
+23 |     let t = T(n: 1, i: In(xs: [1]))
+   |         - declared with `let` here
+24 |     t.n = 2
+   |     ^^^^^^^
+   |
+help: declare it with `let mut`
+   |
+23 |     let mut t = T(n: 1, i: In(xs: [1]))
+   |         +++
+
+error[E0001]: cannot assign to a part of `t`
+  --> E0001_struct.sisu:25:5
+   |
+23 |     let t = T(n: 1, i: In(xs: [1]))
+   |         - declared with `let` here
+24 |     t.n = 2
+25 |     t.i.xs[0] = 1
+   |     ^^^^^^^^^^^^^
+   |
+help: declare it with `let mut`
+   |
+23 |     let mut t = T(n: 1, i: In(xs: [1]))
+   |         +++
+
+sisu: 6 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001

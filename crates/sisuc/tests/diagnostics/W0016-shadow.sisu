@@ -1,0 +1,41 @@
+struct A { b: i64 }
+struct W { a: A }
+
+fn param(a: A) {
+    let mut a = a
+    a.b = 2
+}
+
+fn pattern(o: A?) {
+    if let a = o {
+        let mut a = a
+        a.b = 2
+    }
+}
+
+fn path() {
+    let a = W(a: A(b: 1))
+    let mut a = a.a
+    a.b = 2
+}
+
+fn mutable() {
+    let mut a = A(b: 1)
+    let mut a = a
+    a.b = 2
+}
+
+fn parens() {
+    let o = A(b: 1)
+    let mut a = (o)
+    a.b = 2
+    print(o.b)
+}
+
+fn main() {
+    param(A(b: 1))
+    pattern(None)
+    path()
+    mutable()
+    parens()
+}

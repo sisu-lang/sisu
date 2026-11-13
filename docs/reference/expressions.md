@@ -258,7 +258,7 @@ fn main() {
 
 A name that is not a field or a method of the type is an error ([E0063](../diagnostics/E0063.md)). A field called as a method is an error too ([E0058](../diagnostics/E0058.md)).
 
-A method of a class or an enum read as a field is an error ([E0057](../diagnostics/E0057.md)), and so is `len` of an array. Another built-in method read as a field, such as `s.len` on a string, is E0063.
+A method of a class, a struct or an enum read as a field is an error ([E0057](../diagnostics/E0057.md)), and so is `len` of an array. Another built-in method read as a field, such as `s.len` on a string, is E0063.
 
 ## Fields
 

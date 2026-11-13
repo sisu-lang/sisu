@@ -60,8 +60,14 @@ impl Checker<'_> {
             e.kind,
             ExprKind::Field { .. } | ExprKind::MethodCall { .. } | ExprKind::Index { .. }
         );
+        // The chain of a write runs only through field bases and indexed bases.
+        let chain = self.body.write_chain;
+        if !matches!(e.kind, ExprKind::Field { .. } | ExprKind::Index { .. }) {
+            self.body.write_chain = None;
+        }
         let checked = self.expr_kind(e, expected);
         self.body.indexed = outer;
+        self.body.write_chain = chain;
         checked
     }
 

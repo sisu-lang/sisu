@@ -1,0 +1,47 @@
+// GIVEN a struct with a class, an array, a string, an `any` and an enum field, and two sinks
+// that own it: one stores it in a class's `mut` field, and one returns it
+// WHEN a loop builds a struct with fields made at run time, and a sink takes it on some
+// branches only
+// THEN the release at the join frees each struct once, and a moved struct releases nothing,
+// because each of its fields holds the zero value; Valgrind finds no leak and no double free
+class C { n: i64 }
+class Holder {
+    mut kept: Bag?
+}
+enum E {
+    A(s: string)
+    B
+}
+struct Bag { c: C; xs: [i64]; s: string; d: any Display; e: E }
+
+fn keep(b: Bag, h: Holder) {
+    h.kept = b
+}
+
+fn pass(b: Bag) -> Bag {
+    b
+}
+
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(b: Bag) {
+    print(b)
+}
+
+fn main() {
+    let h = Holder(kept: None)
+    let mut total = 0
+    for i in 0..10 {
+        let e = if i == 5 { E.B } else { E.A(s: "e" + "{i}") }
+        let b = Bag(c: C(n: i), xs: [i], s: "s" + "{i}", d: i, e: e)
+        if i % 2 == 0 {
+            keep(b, h)
+        } else if i % 3 == 0 {
+            let p = pass(b)
+            total += p.c.n
+        }
+        total += i
+    }
+    print(total)                     // 57: 0 + 1 + ... + 9, and 3 + 9 from `pass`
+    print(h.kept?.c?.n ?? 0)         // 8: the last `keep` was at 8
+    print(h.kept?.s ?? "")           // s8
+}

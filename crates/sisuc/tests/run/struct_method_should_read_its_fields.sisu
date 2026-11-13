@@ -1,0 +1,28 @@
+// GIVEN `struct In` and `struct T`, each with a method that takes plain `self` and reads fields
+// WHEN `main` calls a method on a value, on a nested path and on an element of an array
+// THEN each call gives the sum of what it reads, and the caller's value stays live after it
+struct In {
+    n: i64
+    xs: [i64]
+    fn first(self) -> i64 {
+        self.xs[0]
+    }
+}
+struct T {
+    i: In
+    n: i64
+    fn sum(self) -> i64 {
+        self.n + self.i.n + self.i.first()
+    }
+}
+
+fn main() {
+    let t = T(i: In(n: 2, xs: [5, 6]), n: 1)
+    print(t.sum())                   // 8: 1 + 2 + 5
+    print(t.i.first())               // 5
+    let ts = [t, T(i: In(n: 20, xs: [50]), n: 10)]
+    print(ts[1].sum())               // 80: 10 + 20 + 50
+    print(ts[0].i.first())           // 5
+    print(t.n)                       // 1
+    print(t.i.xs)                    // [5, 6]
+}

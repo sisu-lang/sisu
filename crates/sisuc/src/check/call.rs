@@ -7,7 +7,7 @@ use super::alias::{Through, Via};
 use super::expr::{fits, no_member, option_written, path, postfix};
 use super::generic::{GenericSig, Site, mark, mismatched, written_args};
 use super::interface::{Bounds, LangPath};
-use super::member::Found;
+use super::member::{FieldOwner, Found};
 use super::mut_args::{Callee, MutParts, MutSite, site_of};
 use super::names::{self, ItemId, Position, Resolved};
 use super::prelude::PRELUDE;
@@ -77,7 +77,10 @@ impl Checker<'_> {
                 self.convert(span, callee.span, to, args)
             }
             Resolved::Item(ItemId::Class(class)) => {
-                self.construct_class(span, class, site, args, None)
+                self.construct_class(span, FieldOwner::Class(class), site, args, None)
+            }
+            Resolved::Item(ItemId::Struct(id)) => {
+                self.construct_class(span, FieldOwner::Struct(id), site, args, None)
             }
             Resolved::Item(ItemId::Function(func)) => self.invoke(span, func, None, site, args),
             Resolved::Item(ItemId::Interface(_)) => {
@@ -122,7 +125,10 @@ impl Checker<'_> {
     ) -> Checked {
         match through.ty.kind() {
             TypeKind::Class(class, _) => {
-                self.construct_class(span, class, site, args, Some(through))
+                self.construct_class(span, FieldOwner::Class(class), site, args, Some(through))
+            }
+            TypeKind::Struct(id, _) => {
+                self.construct_class(span, FieldOwner::Struct(id), site, args, Some(through))
             }
             TypeKind::I64 | TypeKind::U8 | TypeKind::F64 | TypeKind::Char | TypeKind::String => {
                 let converted = self.convert(span, site.name.span, through.ty, args);
@@ -336,15 +342,19 @@ impl Checker<'_> {
     }
 
     /// How the method `name` belongs to a receiver of type `ty`: a built-in array or `f64`
-    /// method, or a method of a class, an enum, an array or an `i64` that the program or the
-    /// prelude writes. `None` when the type has no such method.
+    /// method, or a method that the program or the prelude writes. Such a method is of a class,
+    /// a struct, an enum, an array or an `i64`. `None` when the type has no such method.
     fn idiom_of(&self, name: Symbol, ty: Type) -> Option<Idiom> {
         match ty.kind() {
             TypeKind::Array(_) if name.as_str() == "len" => {
                 return Some(Idiom::Built);
             }
             _ if number::method(ty, name.as_str()).is_some() => return Some(Idiom::Built),
-            TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Array(_) | TypeKind::I64 => {}
+            TypeKind::Class(..)
+            | TypeKind::Struct(..)
+            | TypeKind::Enum(..)
+            | TypeKind::Array(_)
+            | TypeKind::I64 => {}
             _ => return None,
         }
         match self.own_method(ty, name) {
@@ -746,6 +756,10 @@ impl Checker<'_> {
             && let Some(&Declared::Known(func)) = self.classes[id.0].methods.get(&method)
         {
             self.signatures[func.0].muts.clone()
+        } else if let Some(Declared::Known(id)) = self.names.struct_id(name)
+            && let Some(&Declared::Known(func)) = self.structs[id.0].methods.get(&method)
+        {
+            self.signatures[func.0].muts.clone()
         } else if let Some(Declared::Known(id)) = self.names.interface(name)
             && let Some(found) = (self.interfaces[id.0].requirements.iter())
                 .find(|requirement| requirement.name.name == method)
@@ -828,6 +842,7 @@ impl Checker<'_> {
         }
         match receiver {
             Ok(receiver) => {
+                self.record_shown(receiver.ty, self.lang.display);
                 self.spellings.insert(span, Lowered::Method);
                 Ok(self.spilled(span, Type::STRING, vec![receiver], |parts| {
                     let [part]: [tir::Expr; 1] = parts
@@ -892,6 +907,7 @@ impl Checker<'_> {
         Ok(match (receiver, other) {
             (Ok(lhs), Ok(rhs)) if labeled.is_none() => {
                 let eq = interface == self.lang.eq;
+                self.record_shown(ty, interface);
                 // No program shows this label for `less`: only numbers and strings have a
                 // generated `Ord`, and no cycle can pass them.
                 self.spellings.insert(span, Lowered::Method);
@@ -1032,6 +1048,7 @@ impl Checker<'_> {
         );
         self.marks(args, &mut parts, &mut_site, (&params, list), result);
         let (checked, types, solved) = checked?;
+        self.record_type_args(types);
         let parts = self.mut_overlaps(parts);
         let failed = labeled.is_some() || checked.iter().any(mismatched);
         let parted = labeled.is_some() || checked.iter().any(Result::is_err);
@@ -1172,15 +1189,25 @@ impl Checker<'_> {
     /// `C(f: e, ...)`, a construction of the class `class`, which `site` writes. Through an alias,
     /// the object has the type that the alias names, and the alias's parameters are the type
     /// arguments that the arguments bind.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "a class and a struct share the one construction, step by step"
+    )]
     fn construct_class(
         &mut self,
         span: Span,
-        class: tir::ClassId,
+        owner: FieldOwner,
         site: Site<'_>,
         args: &[ast::Arg],
         through: Option<&Through>,
     ) -> Checked {
-        self.record(Used::Class(class), span);
+        self.record(
+            match owner {
+                FieldOwner::Class(class) => Used::Class(class),
+                FieldOwner::Struct(id) => Used::Struct(id),
+            },
+            span,
+        );
         self.refuse_mut(
             args,
             Callee::Construct {
@@ -1189,22 +1216,27 @@ impl Checker<'_> {
                 labeled: true,
             },
         );
+        let info = self.owner_info(owner);
         let quiet = self.body.failed_let == Some(span);
-        let info = &self.classes[class.0];
         let name = info.name.name.as_str();
+        let own = match owner {
+            FieldOwner::Class(class) => TypeKind::Class(class, own_args(&info.type_params)),
+            FieldOwner::Struct(id) => TypeKind::Struct(id, own_args(&info.type_params)),
+        };
         let (declared, bounds, ret, fields): (_, _, _, Vec<(Symbol, Option<Type>)>) = match through
         {
             None => (
                 info.type_params.clone(),
                 info.bounds.clone(),
-                Type::intern(TypeKind::Class(class, own_args(&info.type_params))),
+                Type::intern(own),
                 info.fields.iter().map(|f| (f.name.name, f.ty)).collect(),
             ),
             // The fields have the types that the alias's arguments for the class's parameters
             // make them.
             Some(through) => {
-                let TypeKind::Class(_, list) = through.ty.kind() else {
-                    unreachable!("an alias that builds an object should name a class");
+                let (TypeKind::Class(_, list) | TypeKind::Struct(_, list)) = through.ty.kind()
+                else {
+                    unreachable!("an alias that builds a value should name a class or a struct");
                 };
                 let named: Vec<_> = info.fields.iter().map(|f| (f.name.name, f.ty)).collect();
                 let fields = (named.into_iter())
@@ -1246,9 +1278,10 @@ impl Checker<'_> {
             };
             let ty = self.built_type(ty, held, span)?;
             return match (args.into_iter().collect::<Result<Vec<_>, Poisoned>>(), held) {
-                (Ok(args), Ok(())) => {
-                    Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args }))
-                }
+                (Ok(args), Ok(())) => Ok(self.spilled(span, ty, args, |args| match owner {
+                    FieldOwner::Class(class) => tir::ExprKind::New { class, args },
+                    FieldOwner::Struct(id) => tir::ExprKind::Struct { id, args },
+                })),
                 (Ok(_), Err(reported)) => Err(Poisoned::untyped(reported)),
                 (Err(failed), held) => {
                     // No argument settles a parameter in a call with a failed part.
@@ -1260,8 +1293,7 @@ impl Checker<'_> {
         }
         let ty = ret;
         // A mismatch shows a field's alias as written.
-        let shown: Vec<_> = self.classes[class.0]
-            .fields
+        let shown: Vec<_> = (self.owner_info(owner).fields)
             .iter()
             .map(|f| f.shown.clone())
             .collect();
@@ -1270,12 +1302,21 @@ impl Checker<'_> {
                 self.show(arg.value.span, *want, text);
             }
         }
-        let field = |index| Origin::Field {
-            class: Origin::id(class.0),
-            index: Origin::id(index),
+        let field = |index| match owner {
+            FieldOwner::Class(class) => Origin::Field {
+                class: Origin::id(class.0),
+                index: Origin::id(index),
+            },
+            FieldOwner::Struct(id) => Origin::StructField {
+                id: Origin::id(id.0),
+                index: Origin::id(index),
+            },
         };
         match self.construct(span, &name, &fields, args, field) {
-            Ok(args) => Ok(self.spilled(span, ty, args, |args| tir::ExprKind::New { class, args })),
+            Ok(args) => Ok(self.spilled(span, ty, args, |args| match owner {
+                FieldOwner::Class(class) => tir::ExprKind::New { class, args },
+                FieldOwner::Struct(id) => tir::ExprKind::Struct { id, args },
+            })),
             Err(reported) => Err(Poisoned::typed(ty, reported)),
         }
     }

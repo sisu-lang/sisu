@@ -34,6 +34,7 @@ pub(crate) struct Broken {
 pub(crate) enum BrokenKind {
     Function,
     Class,
+    Struct,
     Enum,
     Constant,
     Alias,
@@ -45,6 +46,7 @@ pub(crate) enum BrokenKind {
 pub(crate) enum Item {
     Function(Function),
     Class(Class),
+    Struct(Struct),
     Enum(Enum),
     Const(Const),
     Alias(AliasDecl),
@@ -140,6 +142,22 @@ pub(crate) struct Class {
     pub(crate) assoc: Vec<AssocChoice>,
     pub(crate) members: Vec<Member>,
     /// The names of the methods that hold a syntax error; the class itself is intact.
+    pub(crate) broken_methods: Vec<Ident>,
+}
+
+/// `struct Name { members }`, which has the shape of a class.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Struct {
+    /// The `struct` keyword.
+    pub(crate) keyword: Span,
+    pub(crate) name: Ident,
+    /// `<T, U>` after the name; empty when the struct is not generic.
+    pub(crate) type_params: Vec<TypeParam>,
+    /// The interfaces after the `:`, as types.
+    pub(crate) conforms: Vec<TypeExpr>,
+    pub(crate) assoc: Vec<AssocChoice>,
+    pub(crate) members: Vec<Member>,
+    /// The names of the methods that hold a syntax error; the struct itself is intact.
     pub(crate) broken_methods: Vec<Ident>,
 }
 
@@ -943,6 +961,7 @@ impl fmt::Display for Program {
             match item {
                 Item::Function(function) => write!(f, "{function}")?,
                 Item::Class(class) => write!(f, "{class}")?,
+                Item::Struct(s) => write!(f, "{s}")?,
                 Item::Enum(e) => write!(f, "{e}")?,
                 Item::Interface(interface) => write!(f, "{interface}")?,
                 Item::Extend(extend) => write!(f, "{extend}")?,
@@ -974,25 +993,60 @@ impl fmt::Display for AliasDecl {
 
 impl fmt::Display for Class {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "(class {}{}{}",
-            self.name.name,
-            angled(&self.type_params),
-            Listed(&self.conforms)
-        )?;
-        spaced(f, &self.assoc)?;
-        for member in &self.members {
-            match member {
-                Member::Field(field) => {
-                    let keyword = if field.mutable { "mut " } else { "" };
-                    write!(f, " ({keyword}{} {})", field.name.name, field.ty)?;
-                }
-                Member::Method(method) => write!(f, " {method}")?,
-            }
-        }
-        f.write_str(")")
+        let Self {
+            name,
+            type_params,
+            conforms,
+            assoc,
+            members,
+            ..
+        } = self;
+        write_type_item(f, "class", name, type_params, conforms, assoc, members)
     }
+}
+
+impl fmt::Display for Struct {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            name,
+            type_params,
+            conforms,
+            assoc,
+            members,
+            ..
+        } = self;
+        write_type_item(f, "struct", name, type_params, conforms, assoc, members)
+    }
+}
+
+/// The form of a class or a struct: `(word Name<T>: Shape assoc members)`.
+fn write_type_item(
+    f: &mut fmt::Formatter<'_>,
+    word: &str,
+    name: &Ident,
+    type_params: &[TypeParam],
+    conforms: &[TypeExpr],
+    assoc: &[AssocChoice],
+    members: &[Member],
+) -> fmt::Result {
+    write!(
+        f,
+        "({word} {}{}{}",
+        name.name,
+        angled(type_params),
+        Listed(conforms)
+    )?;
+    spaced(f, assoc)?;
+    for member in members {
+        match member {
+            Member::Field(field) => {
+                let keyword = if field.mutable { "mut " } else { "" };
+                write!(f, " ({keyword}{} {})", field.name.name, field.ty)?;
+            }
+            Member::Method(method) => write!(f, " {method}")?,
+        }
+    }
+    f.write_str(")")
 }
 
 impl fmt::Display for Enum {

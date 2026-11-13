@@ -1,0 +1,12 @@
+warning[W0016]: this writes to a copy of `accounts[0]`, and nothing reads the copy
+ --> W0016.sisu:6:5
+  |
+5 |     let mut a = accounts[0]
+  |             - a copy
+6 |     a.balance += 100
+  |     ^^^^^^^^^ `accounts[0]` does not change
+  |
+  = help: `accounts` is a `let`, so `accounts[0]` cannot change: delete the write, or make `accounts` a `let mut` and write to the place
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0016

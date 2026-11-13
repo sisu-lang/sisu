@@ -5,13 +5,16 @@
 //! uses, each field that it does not read, each variant that it does not build, and the pending
 //! findings of the live functions.
 
+use std::cell::OnceCell;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::cycle::inline_of;
 use super::extend::holder_of;
-use super::{Checker, Declared, Holder};
-use crate::conformance::has_written;
+use super::{Checker, Declared, Holder, Source};
+use crate::conformance::{applies_written, has_written};
 use crate::diagnostic::{
-    Code, Definition, Diagnostic, DiagnosticKind, NeverReassignedForm, UsedBy,
+    Code, Definition, Diagnostic, DiagnosticKind, Immutable, NeverReassignedForm, UsedBy, copy_help,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -23,6 +26,8 @@ use crate::types::Head;
 thread_local! {
     /// How many types `shown_by_dbg` has read on this thread.
     pub(super) static SHOWN_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many bytes of initializer text `quoted` has read on this thread.
+    pub(super) static COPY_TEXT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Whether `d` is a warning that `Checker::unused` gives and `Checker::unjudged` does not: one
@@ -33,7 +38,7 @@ thread_local! {
 pub(crate) fn is_judged(d: &Diagnostic) -> bool {
     matches!(
         d.code(),
-        Code::UnusedItem | Code::UnusedMember | Code::UnusedVariable
+        Code::UnusedItem | Code::UnusedMember | Code::UnusedVariable | Code::WriteToCopy
     )
 }
 
@@ -54,10 +59,13 @@ pub(super) enum Owner {
 pub(super) enum Used {
     Func(tir::FuncId),
     Class(tir::ClassId),
+    Struct(tir::StructId),
     /// A variant, by its index in its enum.
     Variant(tir::EnumId, usize),
     /// A field read, by the field's index in its class.
     Field(tir::ClassId, usize),
+    /// A field read, by the field's index in its struct.
+    StructField(tir::StructId, usize),
     Const(usize),
     /// An interface: a bound that names it, or a call of a method that meets one of its
     /// requirements, or of the requirement itself.
@@ -72,10 +80,64 @@ pub(super) struct Use {
     at: Span,
 }
 
+/// A `let mut` whose initializer is a place that crosses no class object. It records what W0016
+/// needs: the first write to a part of the local, and whether any other use writes it. A read
+/// of the local is not recorded here: it keeps the binding out of the pass (`Pending`). It holds
+/// no text: the spans and the symbol are all that the `let` costs.
+pub(super) struct Copied {
+    /// The initializer.
+    pub(super) init: Span,
+    /// The name at the root of the place: `self` for the plain `self` of a struct method.
+    pub(super) root: Symbol,
+    /// Why the root cannot change; none for a root that can. A root keeps its kind between the
+    /// `let` and each write, so this is found once.
+    pub(super) cause: Option<Immutable>,
+    /// The first write to a part of the local that stays in structs and arrays.
+    pub(super) write: Option<Span>,
+    /// Whether the initializer is a bare name or `self`: then the help does not repeat the root.
+    pub(super) bare: bool,
+    /// Whether the root has the name of the copy, so the copy hides it.
+    pub(super) hidden: bool,
+    /// Whether a use is a write of another form: the whole local, a `mut` argument, or a path
+    /// that crosses a class object.
+    pub(super) other: bool,
+}
+
+/// The text of the initializer at `span`, when it is on one line and holds no tab or carriage
+/// return. A line break, a tab, a carriage return or a comment would change the message, so then
+/// the message names only the root. A `//` inside a string literal is part of the text.
+fn quoted(source: Source<'_>, span: Span) -> Option<&str> {
+    let text = source.text(span);
+    #[cfg(test)]
+    COPY_TEXT.set(COPY_TEXT.get() + text.len());
+    (source.one_line(span) && !text.contains(['\t', '\r'])).then_some(text)
+}
+
+impl Copied {
+    /// The W0016 of the local declared at `copy`. Each use of it must be a write to a part, and
+    /// its root must have a help to give.
+    fn warning(self, copy: Span, source: Source<'_>) -> Option<DiagnosticKind> {
+        let at = self.write.filter(|_| !self.other)?;
+        let root = self.root.as_str();
+        let place = quoted(source, self.init);
+        // The help says that the place cannot change only when the place is more than the root.
+        let named = place.filter(|_| !self.bare);
+        let help = copy_help(self.cause.as_ref(), root, named, self.hidden)?;
+        Some(DiagnosticKind::WriteToCopy {
+            place: place.map(str::to_string),
+            root: root.to_string(),
+            at,
+            copy,
+            help,
+        })
+    }
+}
+
 /// A binding of the function `func` that nothing read, a parameter when `param`, named `name`
 /// and declared at `at`. `fix` holds each place that binds a `for` or pattern name, which `_`
 /// can replace, and is empty for any other. `remove` is what the fix of W0002 removes for a
 /// `let mut` that W0002 would warn about: it does when the pass does not judge the binding.
+/// `copy` is set for a `let mut` that copies a place.
 pub(super) struct Pending {
     pub(super) func: tir::FuncId,
     pub(super) param: bool,
@@ -83,14 +145,19 @@ pub(super) struct Pending {
     pub(super) at: Span,
     pub(super) fix: Vec<Span>,
     pub(super) remove: Option<Span>,
+    pub(super) copy: Option<Copied>,
 }
 
 impl Pending {
-    /// The W0014 of the binding when its function is judged; otherwise its W0002, if it is a
-    /// `let mut` that W0002 warns about.
-    fn judged(self, judged: bool) -> Option<Diagnostic> {
+    /// The W0016 or the W0014 of the binding when its function is judged; otherwise its W0002, if
+    /// it is a `let mut` that W0002 warns about. A copy that only writes gets W0016, and not
+    /// W0014.
+    fn judged(self, judged: bool, source: Source<'_>) -> Option<Diagnostic> {
         let (name, at) = (self.name, self.at);
         if judged {
+            if let Some(kind) = self.copy.and_then(|copy| copy.warning(at, source)) {
+                return Some(kind.into());
+            }
             let (param, fix) = (self.param, self.fix);
             return Some(
                 DiagnosticKind::UnusedVariable {
@@ -114,7 +181,12 @@ impl Used {
         match self {
             Used::Func(f) => Some(Owner::Func(f)),
             Used::Const(c) => Some(Owner::Const(c)),
-            Used::Class(_) | Used::Variant(..) | Used::Field(..) | Used::Interface(_) => None,
+            Used::Class(_)
+            | Used::Struct(_)
+            | Used::Variant(..)
+            | Used::Field(..)
+            | Used::StructField(..)
+            | Used::Interface(_) => None,
         }
     }
 }
@@ -145,22 +217,58 @@ struct Reached {
     variants: Vec<Vec<bool>>,
     /// Each field that live code reads, by class.
     read: Vec<Vec<bool>>,
+    /// Each struct that live code builds.
+    struct_built: Vec<bool>,
+    /// Each field that live code reads by name, by struct.
+    struct_read: Vec<Vec<bool>>,
     /// Each interface that live code uses (see `reach`).
     interfaces: Vec<bool>,
 }
 
 /// Where each item's and member's list of cited uses is, past the owners: the classes, the
-/// enums, then each class's fields and each enum's variants.
+/// enums, the structs, then each class's fields, each enum's variants and each struct's fields.
 struct Slots {
     classes: usize,
     enums: usize,
+    structs: usize,
     /// The first slot of each class's fields.
     fields: Vec<usize>,
     /// The first slot of each enum's variants.
     variants: Vec<usize>,
+    /// The first slot of each struct's fields.
+    struct_fields: Vec<usize>,
     /// The first slot of the interfaces.
     interfaces: usize,
     len: usize,
+}
+
+/// What live code shows of its classes and structs (see `Checker::shown_types`).
+struct Shown {
+    /// By class, the first live `dbg` that can show its fields.
+    classes: Vec<Option<Span>>,
+    /// By struct, the first live `dbg` that can show its fields.
+    dbg_structs: Vec<Option<Span>>,
+    /// By struct, whether live code reads each of its fields by showing it.
+    read: Vec<bool>,
+}
+
+/// How a root of the walk of `shown_types` shows its type.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Mode {
+    /// `dbg`: it labels a warning and reads nothing.
+    Dbg,
+    /// A generated `Display`: `print`, an interpolation, `any Display` or a `Display` bound.
+    Display,
+    /// A generated `Eq`: `==` or an `Eq` bound.
+    Eq,
+}
+
+/// The rules of the walk of `shown_types` for one interface (`Checker::shown_rules`).
+struct Rules {
+    /// The types with a written conformance of the interface.
+    written: FxHashSet<Head>,
+    /// By inline declaration (`inline_of`), which of its arguments the walk shows.
+    params: Vec<Vec<bool>>,
 }
 
 impl Checker<'_> {
@@ -183,7 +291,11 @@ impl Checker<'_> {
             Used::Func(func) => func.0 >= self.prelude.funcs,
             Used::Class(class) => class.0 >= self.prelude.classes,
             Used::Variant(id, _) => id.0 >= self.prelude.enums,
-            Used::Field(..) | Used::Const(_) | Used::Interface(_) => false,
+            Used::Struct(_)
+            | Used::Field(..)
+            | Used::StructField(..)
+            | Used::Const(_)
+            | Used::Interface(_) => false,
         };
         self.reaches_prelude(of_prelude, at);
         if let Some(from) = self.body.owner {
@@ -226,16 +338,16 @@ impl Checker<'_> {
     }
 
     /// The W0012, W0013 and W0014 warnings, in no order. W0012 is for each function, method,
-    /// class, enum and constant that no live code uses. W0013 is for each field of a built class
-    /// that live code does not read. It is also for each variant of a built enum that live code
-    /// does not build. A `_` name gets no warning. A method of a class or an enum that nothing
-    /// builds is not reported: the class or enum is. An `extend` block is live when one of its
-    /// methods is live, or when it conforms a type that live code builds. A dead block of a type
-    /// that live code builds is reported, and its methods are not. Each cites up to three of its
-    /// uses in dead code. Each pending finding of a live function is W0014. A pending finding of a
-    /// dead function gives only the W0002 that it holds, if any. The function's warning tells you
-    /// to delete all of it. An alias is not judged, and the interface that its body names as
-    /// `S.Name` counts as used, also when the alias is dead.
+    /// class, enum, struct and constant that no live code uses. W0013 is for each field of a built
+    /// class or struct that live code does not read. It is also for each variant of a built enum
+    /// that live code does not build. A `_` name gets no warning. A method of a class, an enum or
+    /// a struct that nothing builds is not reported: the class, enum or struct is. An `extend`
+    /// block is live when one of its methods is live, or when it conforms a type that live code
+    /// builds. A dead block of a type that live code builds is reported, and its methods are not.
+    /// Each cites up to three of its uses in dead code. Each pending finding of a live function
+    /// is W0014. A pending finding of a dead function gives only the W0002 that it holds, if any.
+    /// The function's warning tells you to delete all of it. An alias is not judged, and the
+    /// interface that its body names as `S.Name` counts as used, also when the alias is dead.
     #[expect(
         clippy::too_many_lines,
         reason = "one report loop for each kind of item, so the warnings read in one place"
@@ -255,6 +367,7 @@ impl Checker<'_> {
         let built = |holder: Holder| match holder {
             Holder::Class(c) => reached.built[c.0],
             Holder::Enum(e) => reached.enum_built[e.0],
+            Holder::Struct(s) => reached.struct_built[s.0],
             Holder::Array | Holder::I64 => true,
         };
         let named = |o: Owner| match o {
@@ -331,7 +444,8 @@ impl Checker<'_> {
             if reached.built[c] {
                 for (f, field) in class.fields.iter().enumerate() {
                     if !reached.read[c][f] {
-                        let dbg = shown.get_or_insert_with(|| self.shown_by_dbg(&reached.live))[c];
+                        let shown = shown.get_or_insert_with(|| self.shown_types(&reached.live));
+                        let dbg = shown.classes[c];
                         report(Definition::Field, field.name.span, slots.fields[c] + f, dbg);
                     }
                 }
@@ -351,6 +465,27 @@ impl Checker<'_> {
                         variant.name.span,
                         slots.variants[e] + v,
                         None,
+                    );
+                }
+            }
+        }
+        for (s, info) in self.structs.iter().enumerate() {
+            if !reached.struct_built[s] {
+                report(Definition::Struct, info.name.span, slots.structs + s, None);
+                continue;
+            }
+            for (f, field) in info.fields.iter().enumerate() {
+                if reached.struct_read[s][f] {
+                    continue;
+                }
+                let shown = shown.get_or_insert_with(|| self.shown_types(&reached.live));
+                if !shown.read[s] {
+                    let dbg = shown.dbg_structs[s];
+                    report(
+                        Definition::Field,
+                        field.name.span,
+                        slots.struct_fields[s] + f,
+                        dbg,
                     );
                 }
             }
@@ -384,87 +519,151 @@ impl Checker<'_> {
         }
         found.extend(pending.into_iter().filter_map(|p| {
             let live = reached.live[p.func.0];
-            p.judged(live)
+            p.judged(live, self.source)
         }));
         found
     }
 
-    /// By class, the first live `dbg` that can show its fields. The walk reads types, not values:
-    /// an empty array or a `None` shows no field. `dbg` shows the fields of a class that
-    /// its operand is, or that the operand holds in an array, an optional or an enum payload. It
-    /// writes a field that is a class as `print` does, so the walk stops at a class. A type with a
-    /// written `Display` shows its text, so the walk skips it, as `Checker::dbg_show` does.
+    /// What live code shows of its classes and structs, without a read of a field. The walk reads
+    /// types, not values: an empty array or a `None` shows no field.
     ///
-    /// The walk follows the structure of each operand type. It reads the payloads of each enum
-    /// declaration once, as declared. It reads an argument of an enum only when `shown_params_with`
-    /// says that the enum shows it, with the same rule as the walk: an enum with any written
-    /// `Display` shows none. So the cost is linear in the operand types and the enum
-    /// declarations.
+    /// `dbg` shows the fields of a class or a struct. This holds when its operand is such a type,
+    /// or holds one in an array, an optional, an enum payload or a struct. That is not a read, so
+    /// the result holds, by class and by struct, the first live `dbg` that can show it. A class is
+    /// written as `print` writes it, so the walk stops at a class.
+    ///
+    /// These read each field of each struct that their operand holds, in the same way:
+    /// - a generated `print`, an interpolation, or a generated `==`;
+    /// - a call of the generated `to_string` or `eq`;
+    /// - a conversion to an `any` type;
+    /// - a type argument of a call.
+    ///
+    /// The result holds, by struct, whether live code does one of these. A `Display` root and an
+    /// `Eq` root are two walks. A written conformance of one interface does not stop the other.
+    ///
+    /// `dbg` skips a type with any written `Display` of its head, as `Checker::dbg_show` does. A
+    /// read mode skips a type only when a written conformance of the interface applies to that
+    /// instance. At each such stop, `dbg` included, every type argument becomes a read root of
+    /// both modes. The written body can show or compare it with either interface.
+    ///
+    /// The walk follows the structure of each operand type. It reads the payloads of each enum and
+    /// the fields of each struct once, as declared. It reads an argument of an enum or a struct
+    /// only when `shown_params_with` says that it shows it. For `dbg` a head with a written
+    /// `Display` shows none. So the cost is linear in the operand types and the declarations.
     ///
     /// shortcut: a `dbg` of a type parameter shows the instances that `mono` makes. The checker
-    /// does not see them, so such a field gets no label. A class or an enum with a parameter and
-    /// any written `Display` is skipped too: its text may apply to the instance that `dbg` prints,
-    /// so a field behind it gets no label. A type that holds no type parameter, such as
-    /// `Gate<string>`, is skipped too when it has a written `Display`. This holds also when a bound
-    /// of that `Display` fails. Then `dbg` prints its fields, but they get no label:
-    /// `extend<T: Mark> Gate<T>: Display` and `dbg(Gate(v: "one"))`.
+    /// does not see them, so such a field gets no label. A class, an enum or a struct with a
+    /// parameter and any written `Display` is skipped too: its text may apply to the instance that
+    /// `dbg` prints, so a field behind it gets no label. A type that holds no type parameter, such
+    /// as `Gate<string>`, is skipped too when it has a written `Display`. This holds also when a
+    /// bound of that `Display` fails. Then `dbg` prints its fields, but they get no label:
+    /// `extend<T: Mark> Gate<T>: Display` and `dbg(Gate(v: "one"))`. The same stop queues each
+    /// type argument as a read root. So with `dbg(Gate(v: P(n: 1)))` the field `P.n` gets no
+    /// W0013. This miss is allowed, because a false W0013 is worse.
     /// To give the label, check the bounds, as `record_holds` in `conformance.rs` does, when a
     /// program needs it.
-    fn shown_by_dbg(&self, live: &[bool]) -> Vec<Option<Span>> {
-        let live_calls = (self.dbg_shown.iter())
-            .filter(|&&(owner, ..)| owner.is_some_and(|owner| live[self.owner_index(owner)]));
-        let mut roots: Vec<(Span, Type)> = live_calls.map(|&(_, ty, span)| (span, ty)).collect();
-        roots.sort_unstable_by_key(|(span, _)| span.start());
-        let mut shown = vec![None; self.classes.len()];
+    ///
+    /// A false W0013 is worse than a missed one, so the roots cover more than they must. Each type
+    /// argument of a call is a root in both modes, whatever its bound: the body of the callee may
+    /// show it. So is the source type of each conversion to an `any` type of any interface. The
+    /// walk does not follow which type parameters a generic body shows.
+    ///
+    /// A `Display` or `Eq` root stops only at a type that a written conformance always covers
+    /// (`applies_written`): `extend B<i64>: Display` stops `B<i64>` and not `B<P>`. Each type
+    /// argument of a type that it stops becomes a root of both modes, because the written body can
+    /// show them.
+    fn shown_types(&self, live: &[bool]) -> Shown {
+        let is_live = |owner: Option<Owner>| owner.is_some_and(|o| live[self.owner_index(o)]);
+        let mut dbgs: Vec<(Span, Type)> = (self.dbg_shown.iter())
+            .filter(|&&(owner, ..)| is_live(owner))
+            .map(|&(_, ty, span)| (span, ty))
+            .collect();
+        dbgs.sort_unstable_by_key(|(span, _)| span.start());
+        let reads = (self.read_shown.iter()).filter(|&&(owner, ..)| is_live(owner));
+        let mut roots: Vec<(Mode, Option<Span>, Type)> = dbgs
+            .into_iter()
+            .map(|(span, ty)| (Mode::Dbg, Some(span), ty))
+            .collect();
+        roots.extend(reads.map(|&(_, ty, interface)| {
+            let mode = if interface == self.lang.eq {
+                Mode::Eq
+            } else {
+                Mode::Display
+            };
+            (mode, None, ty)
+        }));
+        let mut shown = Shown {
+            classes: vec![None; self.classes.len()],
+            dbg_structs: vec![None; self.structs.len()],
+            read: vec![false; self.structs.len()],
+        };
         if roots.is_empty() {
             return shown;
         }
-        let written: FxHashSet<Head> = (self.conformances.iter())
-            .filter(|&(interface, _)| interface == self.lang.display)
-            .filter_map(|(_, c)| head_of(c.target))
-            .collect();
-        // The walk skips a type with any written `Display`, so the arguments of such an enum are
-        // not shown through the payload of another enum either.
-        let hidden: Vec<bool> = (0..self.enums.len())
-            .map(|e| written.contains(&Head::Enum(tir::EnumId(e))))
-            .collect();
-        let params = self.shown_params_with(&hidden);
+        let inline = self.enums.len();
+        let (dbg, display, eq) = (OnceCell::new(), OnceCell::new(), OnceCell::new());
         let (mut seen, mut declared) = (FxHashSet::default(), FxHashSet::default());
-        for (call, root) in roots {
+        let mut next = 0;
+        while let Some(&(mode, call, root)) = roots.get(next) {
+            next += 1;
+            let (interface, rules) = match mode {
+                Mode::Dbg => (
+                    self.lang.display,
+                    dbg.get_or_init(|| self.shown_rules(self.lang.display, true)),
+                ),
+                Mode::Display => (
+                    self.lang.display,
+                    display.get_or_init(|| self.shown_rules(self.lang.display, false)),
+                ),
+                Mode::Eq => (
+                    self.lang.eq,
+                    eq.get_or_init(|| self.shown_rules(self.lang.eq, false)),
+                ),
+            };
             let mut walk = vec![root];
+            let mut later = Vec::new();
             while let Some(ty) = walk.pop() {
-                if !seen.insert(ty) {
+                if !seen.insert((ty, mode)) {
                     continue;
                 }
-                let skipped = if ty.has_param() {
-                    head_of(ty).is_some_and(|head| written.contains(&head))
-                } else {
-                    has_written(&self.conformances, self.lang.display, ty)
-                };
-                if skipped {
+                if self.shown_stops(mode, interface, rules, ty) {
+                    // The written body may show or compare the type arguments, with either
+                    // interface, so each is a read root of both modes.
+                    if let Some((_, args)) = inline_of(ty, inline) {
+                        for &a in args.get() {
+                            later.extend([(Mode::Display, None, a), (Mode::Eq, None, a)]);
+                        }
+                    }
                     continue;
                 }
                 #[cfg(test)]
                 SHOWN_VISITS.set(SHOWN_VISITS.get() + 1);
                 match ty.kind() {
+                    // A class shows its name, and `dbg` shows its fields.
                     TypeKind::Class(class, _) => {
-                        shown[class.0].get_or_insert(call);
+                        if let Some(call) = call {
+                            shown.classes[class.0].get_or_insert(call);
+                        }
                     }
-                    TypeKind::Array(inner) | TypeKind::Optional(inner) => walk.push(inner),
-                    TypeKind::Enum(id, args) => {
-                        let on = params[id.0].iter();
-                        walk.extend(
-                            args.get()
-                                .iter()
-                                .zip(on)
-                                .filter(|(_, on)| **on)
-                                .map(|(&a, _)| a),
-                        );
-                        if declared.insert(id) {
-                            let variants = &self.enums[id.0].variants;
+                    TypeKind::Array(part) | TypeKind::Optional(part) => walk.push(part),
+                    TypeKind::Enum(..) | TypeKind::Struct(..) => {
+                        if let TypeKind::Struct(id, _) = ty.kind() {
+                            match call {
+                                Some(call) => {
+                                    shown.dbg_structs[id.0].get_or_insert(call);
+                                }
+                                None => shown.read[id.0] = true,
+                            }
+                        }
+                        let (v, args) = inline_of(ty, inline)
+                            .expect("an enum or a struct should be an inline declaration");
+                        let on = rules.params[v].iter();
+                        let args = args.get().iter().zip(on);
+                        walk.extend(args.filter(|(_, on)| **on).map(|(&a, _)| a));
+                        if declared.insert((v, mode)) {
                             #[cfg(test)]
                             let before = walk.len();
-                            walk.extend(variants.iter().flat_map(|v| v.fields.iter().flatten()));
+                            walk.extend(self.inline_parts(v).filter_map(|(ty, ..)| ty));
                             #[cfg(test)]
                             SHOWN_VISITS.set(SHOWN_VISITS.get() + walk.len() - before);
                         }
@@ -472,8 +671,95 @@ impl Checker<'_> {
                     _ => {}
                 }
             }
+            roots.extend(later);
         }
         shown
+    }
+
+    /// Whether the walk of `shown_types` stops at `ty`, which a written conformance of `interface`
+    /// shows. For `dbg` any written conformance of the head counts. In a read mode the
+    /// conformance must apply to the instance (`applies_written`).
+    fn shown_stops(
+        &self,
+        mode: Mode,
+        interface: tir::InterfaceId,
+        rules: &Rules,
+        ty: Type,
+    ) -> bool {
+        if mode != Mode::Dbg {
+            applies_written(&self.conformances, interface, self.lang.display, ty)
+        } else if ty.has_param() {
+            head_of(ty).is_some_and(|head| rules.written.contains(&head))
+        } else {
+            has_written(&self.conformances, interface, ty)
+        }
+    }
+
+    /// The rules of the walk of `shown_types` for `interface`. They name, by declaration, the
+    /// arguments that it shows. With `by_head`, a declaration with any written conformance of the
+    /// head hides its arguments, and `written` names those heads. This is the rule of `dbg`. A
+    /// read mode hides none, because it walks the arguments of a type that it skips.
+    fn shown_rules(&self, interface: tir::InterfaceId, by_head: bool) -> Rules {
+        let written: FxHashSet<Head> = (self.conformances.iter())
+            .filter(|&(i, _)| by_head && i == interface)
+            .filter_map(|(_, c)| head_of(c.target))
+            .collect();
+        let hidden: Vec<bool> = if by_head {
+            (0..self.enums.len())
+                .map(|e| written.contains(&Head::Enum(tir::EnumId(e))))
+                .chain(
+                    (0..self.structs.len())
+                        .map(|s| written.contains(&Head::Struct(tir::StructId(s)))),
+                )
+                .collect()
+        } else {
+            vec![false; self.inline_count()]
+        };
+        Rules {
+            params: self.shown_params_with(&hidden),
+            written,
+        }
+    }
+
+    /// Records that generated code shows a value of type `ty` through `interface`, in the body
+    /// being checked. Only `Display` and `Eq` count (see `shown_types`).
+    pub(super) fn record_shown(&mut self, ty: Type, interface: tir::InterfaceId) {
+        let counts = interface == self.lang.display || interface == self.lang.eq;
+        if counts && self.body.owner.is_some() {
+            self.read_shown.push((self.body.owner, ty, interface));
+        }
+    }
+
+    /// Records that code of unknown reach, in the body being checked, may show a value of type
+    /// `ty` through `Display` or `Eq`. A type that cannot hold a struct is left out.
+    pub(super) fn record_both(&mut self, ty: Type) {
+        let holds = matches!(
+            ty.kind(),
+            TypeKind::Array(_) | TypeKind::Optional(_) | TypeKind::Enum(..) | TypeKind::Struct(..)
+        );
+        if holds {
+            self.record_shown(ty, self.lang.display);
+            self.record_shown(ty, self.lang.eq);
+        }
+    }
+
+    /// `record_both` for each type argument of a call: the callee may show them.
+    pub(super) fn record_type_args(&mut self, types: tir::TypeArgs) {
+        for &ty in types.get() {
+            self.record_both(ty);
+        }
+    }
+
+    /// `record_both` for a value of type `got` that converts to `want`: an `any` type of any
+    /// interface, or its optional. A value of any other type is not converted.
+    pub(super) fn record_shown_any(&mut self, got: Type, want: Type) {
+        let target = match want.kind() {
+            TypeKind::Optional(payload) => payload,
+            _ => want,
+        };
+        if matches!(target.kind(), TypeKind::Any(..)) {
+            self.record_both(got);
+        }
     }
 
     /// The W0002 of each pending finding that holds one, for a program that the pass does not
@@ -482,7 +768,7 @@ impl Checker<'_> {
         let pending = std::mem::take(&mut self.pending);
         pending
             .into_iter()
-            .filter_map(|p| p.judged(false))
+            .filter_map(|p| p.judged(false, self.source))
             .collect()
     }
 
@@ -490,19 +776,23 @@ impl Checker<'_> {
     fn slots(&self, owners: usize) -> Slots {
         let classes = owners;
         let enums = classes + self.classes.len();
-        let mut len = enums + self.enums.len();
+        let structs = enums + self.enums.len();
+        let mut len = structs + self.structs.len();
         let mut next = |count: usize| {
             len += count;
             len - count
         };
         let fields = self.classes.iter().map(|c| next(c.fields.len())).collect();
         let variants = self.enums.iter().map(|e| next(e.variants.len())).collect();
+        let struct_fields = self.structs.iter().map(|s| next(s.fields.len())).collect();
         let interfaces = next(self.interfaces.len());
         Slots {
             classes,
             enums,
+            structs,
             fields,
             variants,
+            struct_fields,
             interfaces,
             len,
         }
@@ -524,6 +814,10 @@ impl Checker<'_> {
                     self.cite(&mut cited[slots.variants[e.0] + v], i);
                 }
                 Used::Field(c, f) => self.cite(&mut cited[slots.fields[c.0] + f], i),
+                Used::Struct(s) => self.cite(&mut cited[slots.structs + s.0], i),
+                Used::StructField(s, f) => {
+                    self.cite(&mut cited[slots.struct_fields[s.0] + f], i);
+                }
                 Used::Interface(interface) => {
                     self.cite(&mut cited[slots.interfaces + interface.0], i);
                 }
@@ -574,6 +868,10 @@ impl Checker<'_> {
 
     /// What the uses reach from the roots: `main`, and each function, method and constant whose
     /// name starts with `_`. Owners are indexed by `Checker::owner_index`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one walk with an arm for each kind of use, so the reach reads in one place"
+    )]
     fn reach(&self, constants: &[Option<Span>]) -> Reached {
         let functions = self.signatures.len();
         let blocks = self.extensions.len();
@@ -610,7 +908,11 @@ impl Checker<'_> {
         let conforming = self.conformance_methods();
         let conforming_blocks = self.conformance_blocks();
         let chosen = self.chosen_types();
+        let mut struct_read: Vec<Vec<bool>> = (self.structs.iter())
+            .map(|s| vec![false; s.fields.len()])
+            .collect();
         let mut enum_started = vec![false; self.enums.len()];
+        let mut struct_started = vec![false; self.structs.len()];
         // The interfaces live code uses, and those not yet followed to the ones they name.
         let mut interfaces = vec![false; self.interfaces.len()];
         let mut to_follow = Vec::new();
@@ -636,6 +938,10 @@ impl Checker<'_> {
                         Holder::Enum(e),
                         !std::mem::replace(&mut enum_started[e.0], true),
                     )),
+                    Used::Struct(s) => Some((
+                        Holder::Struct(s),
+                        !std::mem::replace(&mut struct_started[s.0], true),
+                    )),
                     _ => None,
                 };
                 if let Some((holder, true)) = started {
@@ -654,11 +960,12 @@ impl Checker<'_> {
                 match to {
                     Used::Variant(e, v) => variants[e.0][v] = true,
                     Used::Field(c, f) => read[c.0][f] = true,
+                    Used::StructField(s, f) => struct_read[s.0][f] = true,
                     Used::Interface(interface) => {
                         use_interface(&mut interfaces, &mut to_follow, interface.0);
                     }
-                    // A class is built above, and an owner is reached next.
-                    Used::Class(_) | Used::Func(_) | Used::Const(_) => {}
+                    // A class or a struct is built above, and an owner is reached next.
+                    Used::Class(_) | Used::Func(_) | Used::Const(_) | Used::Struct(_) => {}
                 }
                 if let Some(owner) = to.owner() {
                     make_live(&mut live, &mut stack, self.owner_index(owner));
@@ -672,6 +979,8 @@ impl Checker<'_> {
             enum_built: variants.iter().map(|v| v.contains(&true)).collect(),
             variants,
             read,
+            struct_built: struct_started,
+            struct_read,
             interfaces,
         }
     }
@@ -761,8 +1070,12 @@ impl Checker<'_> {
                         .flat_map(|v| v.fields.iter().flatten().copied()),
                 ),
             ),
+            Holder::Struct(s) => (
+                &self.structs[s.0].bounds,
+                Box::new((self.structs[s.0].fields.iter()).filter_map(|f| f.ty)),
+            ),
             Holder::Array | Holder::I64 => {
-                unreachable!("only a class or an enum is started by a use")
+                unreachable!("only a class, a struct or an enum is started by a use")
             }
         };
         let bounds = bounds
@@ -773,7 +1086,7 @@ impl Checker<'_> {
         bounds.chain(declared.chain(chosen).flat_map(Type::anys))
     }
 
-    /// The class or enum of each function that is a method, by its `FuncId`.
+    /// The class, enum or struct of each function that is a method, by its `FuncId`.
     fn holders(&self) -> Vec<Option<Holder>> {
         let mut holders = vec![None; self.signatures.len()];
         for (c, class) in self.classes.iter().enumerate() {
@@ -787,6 +1100,13 @@ impl Checker<'_> {
             for method in info.methods.values() {
                 if let Declared::Known(f) = method {
                     holders[f.0] = Some(Holder::Enum(tir::EnumId(e)));
+                }
+            }
+        }
+        for (s, info) in self.structs.iter().enumerate() {
+            for method in info.methods.values() {
+                if let Declared::Known(f) = method {
+                    holders[f.0] = Some(Holder::Struct(tir::StructId(s)));
                 }
             }
         }

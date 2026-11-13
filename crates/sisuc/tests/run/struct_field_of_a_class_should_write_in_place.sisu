@@ -1,0 +1,13 @@
+// GIVEN `class C { mut p: P }` and `struct P { n: i64 }`
+// WHEN `c.p.n = 2` runs
+// THEN `c.p.n` prints 2: the write reaches the struct in the object, and not a copy of it
+class C {
+    mut p: P
+}
+struct P { n: i64 }
+
+fn main() {
+    let c = C(p: P(n: 1))
+    c.p.n = 2
+    print(c.p.n)                     // 2
+}

@@ -36,13 +36,15 @@ use inkwell::values::{
 use inkwell::attributes::AttributeLoc;
 
 use super::abi::{self, Abi, PAD_CENTER, PAD_LEFT, PAD_RIGHT, SINK_CAP, SINK_LEN, SINK_SIZE};
-use super::enums::{Component, Pending, boxed_enum, nested};
+use super::enums::{Component, Pending, boxed_type, nested, type_of};
 use super::layout::{BYTES, CAP, LEN};
 use super::rc::{Helper, Mode, param};
 use super::{Codegen, POSITIONED, zeroext};
 use crate::conformance::{calls_written, holds_class, prints_by_helper};
 use crate::source::Span;
-use crate::tir::{Align, ClassId, EnumId, Format, FuncId, Pad, Stream, Type, TypeArgs, TypeKind};
+use crate::tir::{
+    Align, ClassId, EnumId, Format, FuncId, Inline, Pad, Stream, StructId, Type, TypeKind,
+};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -50,9 +52,9 @@ use std::sync::Arc;
 struct ShowLoop<'ctx> {
     sink: PointerValue<'ctx>,
     mode: Mode,
-    members: Arc<[EnumId]>,
+    members: Arc<[Inline]>,
     /// The `kind` of each member, so that a link finds the one it enters at once.
-    kinds: FxHashMap<EnumId, u64>,
+    kinds: FxHashMap<Inline, u64>,
     /// The loop's head, and its `kind`, address and `owed` phis.
     top: BasicBlock<'ctx>,
     current: [PhiValue<'ctx>; 3],
@@ -174,7 +176,10 @@ impl<'ctx> Codegen<'ctx, '_> {
     pub(super) fn holds_class(&self, ty: Type) -> bool {
         holds_class(
             (&self.program.conformances, self.program.lang.display),
-            self.program.enums.as_slice(),
+            (
+                self.program.enums.as_slice(),
+                self.program.structs.as_slice(),
+            ),
             ty,
             &mut self.class_held.borrow_mut(),
         )
@@ -187,6 +192,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 &self.program.conformances,
                 (
                     self.program.enums.as_slice(),
+                    self.program.structs.as_slice(),
                     self.program.classes.as_slice(),
                 ),
                 ty,
@@ -383,11 +389,11 @@ impl<'ctx> Codegen<'ctx, '_> {
                 );
             }
             TypeKind::Optional(_) => self.show_optional(sink, ty, value, (quoted, mode)),
-            // An enum goes by the address of a scratch slot.
-            TypeKind::Enum(..) => {
+            // An enum or a struct goes by the address of a scratch slot.
+            TypeKind::Enum(..) | TypeKind::Struct(..) => {
                 let args = [
                     vec![sink.into()],
-                    self.helper_args(ty, self.enum_slot(value).into()),
+                    self.helper_args(ty, self.value_slot(value).into()),
                 ]
                 .concat();
                 self.call(self.helper(Helper::Show(mode), ty), &args);
@@ -433,8 +439,9 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.position_at_end(done);
     }
 
-    /// `@sisu_show.<T>(sink, value)`: writes a value of an array, a class or an enum type, as
-    /// `mode` says. The value is the pointer of an array or an object, or the address of an enum.
+    /// `@sisu_show.<T>(sink, value)`: writes a value of an array, a class, an enum or a struct
+    /// type, as `mode` says. The value is the pointer of an array or an object, or the address of
+    /// an enum or a struct.
     pub(super) fn define_show(&self, function: FunctionValue<'ctx>, ty: Type, mode: Mode) {
         let function = match ty.kind() {
             TypeKind::Array(element) if self.grows_stack(element) => {
@@ -461,22 +468,87 @@ impl<'ctx> Codegen<'ctx, '_> {
                     Some(method) => {
                         self.show_written(sink, method, ty, self.load_value(ty, slot));
                     }
-                    None => match &self.analyses.components[id.0] {
-                        Some(Component { members, index }) => {
-                            let first = Type::intern(TypeKind::Enum(members[0], TypeArgs::NONE));
-                            let kind = self.kind(*index);
-                            self.call(
-                                self.helper(Helper::ShowComponent(mode), first),
-                                &[sink.into(), kind.into(), slot.into()],
-                            );
+                    None => {
+                        if !self.show_in_component(sink, Inline::Enum(id), slot, mode) {
+                            self.show_variants(sink, id, slot, mode);
                         }
-                        None => self.show_variants(sink, id, slot, mode),
-                    },
+                    }
                 }
             }
-            _ => unreachable!("only an array, a class or an enum should have a `show` helper"),
+            TypeKind::Struct(id, _) => {
+                let slot = value.into_pointer_value();
+                match self.written_display(ty) {
+                    Some(method) => {
+                        self.show_written(sink, method, ty, self.load_value(ty, slot));
+                    }
+                    None => {
+                        if !self.show_in_component(sink, Inline::Struct(id), slot, mode) {
+                            self.show_struct(sink, id, slot, mode);
+                        }
+                    }
+                }
+            }
+            _ => unreachable!(
+                "only an array, a class, an enum or a struct should have a `show` helper"
+            ),
         }
         self.builder.build_return(None).expect(POSITIONED);
+    }
+
+    /// Writes the value of the enum or struct `id` at `slot` by the `show_component` helper of
+    /// its component, when the component has boxes. Returns whether it did.
+    fn show_in_component(
+        &self,
+        sink: PointerValue<'ctx>,
+        id: Inline,
+        slot: PointerValue<'ctx>,
+        mode: Mode,
+    ) -> bool {
+        let Some(Component { members, index }) =
+            &self.analyses.components[id.node(self.program.enums.len())]
+        else {
+            return false;
+        };
+        let kind = self.kind(*index);
+        self.call(
+            self.helper(Helper::ShowComponent(mode), type_of(members[0])),
+            &[sink.into(), kind.into(), slot.into()],
+        );
+        true
+    }
+
+    /// Writes the struct `id` at `slot`: its name, then the fields in declaration
+    /// order, each labeled, as a payload field of an enum is. No field writes `Name()`. A struct
+    /// or an enum in a field goes by its address in the slot, so the value is not copied.
+    fn show_struct(
+        &self,
+        sink: PointerValue<'ctx>,
+        id: StructId,
+        slot: PointerValue<'ctx>,
+        mode: Mode,
+    ) {
+        self.show_text(
+            "sisu_show_open",
+            sink,
+            &format!("{}(", self.program.structs[id.0].shown_name()),
+        );
+        for (index, field) in self.program.structs[id.0].fields.iter().enumerate() {
+            if index > 0 {
+                self.show_sep(sink);
+            }
+            let label = (field.label.as_deref()).expect("a struct field should have its name");
+            self.show_text("sisu_show_str", sink, &format!("{label}: "));
+            let place = self.struct_field_ptr(id, slot, index);
+            if let TypeKind::Enum(..) | TypeKind::Struct(..) = field.ty.kind() {
+                self.call(
+                    self.helper(Helper::Show(mode), field.ty),
+                    &[sink.into(), place.into()],
+                );
+            } else {
+                self.show_value(sink, field.ty, self.load_value(field.ty, place), true, mode);
+            }
+        }
+        self.show_text("sisu_show_close", sink, ")");
     }
 
     /// Writes the object `object` of the class `id`, of type `ty`, for `dbg`. It writes the
@@ -507,7 +579,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.show_text("sisu_show_str", sink, &format!("{}: ", field.name));
             let value = self.load_value(field.ty, self.field_ptr(id, object, index));
             let snapshot = field.mutable
-                && field.ty.is_counted(&self.program.enums)
+                && field
+                    .ty
+                    .is_counted(&self.program.enums, &self.program.structs)
                 && self.calls_display(field.ty);
             if snapshot {
                 self.retain(value, field.ty);
@@ -627,7 +701,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                     if let Some(label) = &payload.label {
                         self.show_text("sisu_show_str", sink, &format!("{label}: "));
                     }
-                    self.show_field(sink, (id, variant, field), value, mode);
+                    self.show_field(sink, (Inline::Enum(id), variant, field), value, mode);
                 }
                 self.show_text("sisu_show_close", sink, ")");
             }
@@ -636,17 +710,18 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.position_at_end(done);
     }
 
-    /// Writes payload field `field` of variant `variant` in the enum `id` at `value`, which is
-    /// not a link: an enum by its helper, in place, and any other type by its value.
+    /// Writes payload field `field` of variant `variant` in the enum or struct `id` at `value`,
+    /// which is not a link: an enum or a struct by its helper, in place, and any other type by
+    /// its value.
     fn show_field(
         &self,
         sink: PointerValue<'ctx>,
-        (id, variant, field): (EnumId, usize, usize),
+        (id, variant, field): (Inline, usize, usize),
         value: PointerValue<'ctx>,
         mode: Mode,
     ) {
-        let ty = self.program.enums[id.0].variants[variant].fields[field].ty;
-        if let TypeKind::Enum(..) = ty.kind() {
+        let ty = self.field_of(id, variant, field).ty;
+        if let TypeKind::Enum(..) | TypeKind::Struct(..) = ty.kind() {
             let place = self.payload_place(value, id, variant, field);
             self.call(
                 self.helper(Helper::Show(mode), ty),
@@ -666,7 +741,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// `@sisu_show_component.<F0>(sink, kind, value)`: see the module doc.
     pub(super) fn define_show_component(
         &self,
-        first: EnumId,
+        first: Inline,
         function: FunctionValue<'ctx>,
         mode: Mode,
     ) {
@@ -715,10 +790,7 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder.position_at_end(pop);
         let pop_owed = self.builder.build_phi(i64_type, "owed").expect(POSITIONED);
         self.builder.position_at_end(top);
-        let starts: Vec<_> = members
-            .iter()
-            .map(|m| block(&self.program.enums[m.0].name))
-            .collect();
+        let starts: Vec<_> = members.iter().map(|&m| block(self.name_of(m))).collect();
         let cases: Vec<_> = (0_u64..)
             .zip(&starts)
             .skip(1)
@@ -813,35 +885,40 @@ impl<'ctx> Codegen<'ctx, '_> {
     }
 
     /// Writes member `id` of the component at the builder's block: a written `to_string`, or
-    /// its variants.
+    /// its variants. A struct is its one variant, named by its type.
     fn show_member(
         &self,
         show: &ShowLoop<'ctx>,
         pending: &Pending<'ctx>,
         resumes: &mut Vec<BasicBlock<'ctx>>,
-        id: EnumId,
+        id: Inline,
     ) {
         let function = self.current_function();
         let address = show.current[1].as_basic_value().into_pointer_value();
         let owed = show.current[2].as_basic_value().into_int_value();
-        let ty = Type::intern(TypeKind::Enum(id, TypeArgs::NONE));
+        let ty = type_of(id);
         // A member whose `Display` is written is its `to_string`'s text, wherever a link meets it.
         if let Some(method) = self.written_display(ty) {
             self.show_written(show.sink, method, ty, self.load_value(ty, address));
             self.show_pop(show, owed);
             return;
         }
-        let variants = &self.program.enums[id.0].variants;
+        let Inline::Enum(enum_id) = id else {
+            self.show_variant(show, pending, resumes, (id, 0));
+            return;
+        };
+        let variants = &self.program.enums[enum_id.0].variants;
         let blocks: Vec<_> = variants
             .iter()
             .map(|variant| self.context.append_basic_block(function, &variant.name))
             .collect();
+        let tag_type = self.enum_layout(enum_id).tag;
         let cases: Vec<_> = (0_u64..)
             .zip(&blocks)
             .skip(1)
-            .map(|(index, &block)| (self.enum_layout(id).tag.const_int(index, false), block))
+            .map(|(index, &block)| (tag_type.const_int(index, false), block))
             .collect();
-        let tag = self.load_tag(id, address);
+        let tag = self.load_tag(enum_id, address);
         self.builder
             .build_switch(tag, blocks[0], &cases)
             .expect(POSITIONED);
@@ -862,24 +939,29 @@ impl<'ctx> Codegen<'ctx, '_> {
         show: &ShowLoop<'ctx>,
         pending: &Pending<'ctx>,
         resumes: &mut Vec<BasicBlock<'ctx>>,
-        (id, variant): (EnumId, usize),
+        (id, variant): (Inline, usize),
     ) {
         let function = self.current_function();
         let i64_type = self.context.i64_type();
         let mut address = show.current[1].as_basic_value().into_pointer_value();
         let mut owed = show.current[2].as_basic_value().into_int_value();
-        let v = &self.program.enums[id.0].variants[variant];
-        if v.fields.is_empty() {
-            self.show_text("sisu_show_str", show.sink, &v.name);
+        let fields = self.fields_of(id, variant);
+        // A struct on a cycle has a field: the one that closes it.
+        let name = match id {
+            Inline::Enum(enum_id) => self.program.enums[enum_id.0].variants[variant].name.clone(),
+            Inline::Struct(struct_id) => self.program.structs[struct_id.0].shown_name().to_string(),
+        };
+        if fields.is_empty() {
+            self.show_text("sisu_show_str", show.sink, &name);
             self.show_pop(show, owed);
             return;
         }
-        self.show_text("sisu_show_open", show.sink, &format!("{}(", v.name));
-        let looped = (v.fields.iter().enumerate())
+        self.show_text("sisu_show_open", show.sink, &format!("{name}("));
+        let looped = (fields.iter().enumerate())
             .next_back()
             .filter(|(_, payload)| self.is_link(id, payload))
             .map(|(field, _)| field);
-        for (field, payload) in v.fields.iter().enumerate() {
+        for (field, payload) in fields.iter().enumerate() {
             if field > 0 {
                 self.show_sep(show.sink);
             }
@@ -927,21 +1009,20 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// Loops into link `field` of variant `variant` in the value of the enum `id` at `address`,
-    /// with `owed` for the linked value. A link that holds none (an absent `G?`, a null box, a
-    /// clear flag of a boxed `G??`) writes `None` by the Some rule and goes to `pop`.
+    /// Loops into link `field` of variant `variant` in the value of the enum or struct `id` at
+    /// `address`, with `owed` for the linked value. A link can hold none: an absent `G?`, a null
+    /// box, or a clear flag of a boxed `G??`. Such a link writes `None` by the Some rule and goes
+    /// to `pop`.
     fn show_enter_link(
         &self,
         show: &ShowLoop<'ctx>,
-        (id, variant, field): (EnumId, usize, usize),
+        (id, variant, field): (Inline, usize, usize),
         address: PointerValue<'ctx>,
         owed: IntValue<'ctx>,
     ) {
-        let payload = &self.program.enums[id.0].variants[variant].fields[field];
+        let payload = self.field_of(id, variant, field);
         let ty = payload.ty;
-        let inner = ty
-            .inline_enum()
-            .expect("a link should be of an enum type or its optional");
+        let inner = boxed_type(ty);
         let linked = if payload.boxed {
             // A boxed `F` with k `?`s is k - 1 flags around a box pointer; a clear flag at layer
             // j is a `None` under j `Some`s, and a null box one under k - 1.
@@ -966,7 +1047,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                     .expect(POSITIONED);
                 self.show_unless(show, present, depth, owed);
             }
-            self.box_value(boxed_enum(ty), boxed)
+            self.box_value(inner, boxed)
         } else {
             // Each `?` of the link adds a `Some(` to the `None` that an absent layer writes.
             let mut place = self.payload_place(address, id, variant, field);

@@ -1,12 +1,13 @@
-//! The size limit of an enum payload.
+//! The size limit of an enum payload and of a struct.
 //!
 //! Codegen lays out an enum with no field as its tag integer. It lays out an enum with a field as
 //! `{ tag, [n x iA] }`: `n` units of the largest payload alignment `A`. `n` is a `u32`, and it is
 //! at most the payload size in bytes. A payload under `PAYLOAD_LIMIT` bytes thus always has an
 //! LLVM type, and one of that size or more may not.
 //! `oversized` finds the enums that may have none, so that the front end reports them and codegen
-//! never sees one. The limit promises only the type: a value lives on the stack (ADR 0048), so a
-//! value near the size of the stack overflows it when the program runs.
+//! never sees one. A struct holds its fields inline, as one variant of an enum does, so a struct
+//! of that size or more is reported too. The limit promises only the type: a value lives on the
+//! stack (ADR 0048), so a value near the size of the stack overflows it when the program runs.
 //!
 //! The sizes here are upper bounds that follow the layout rules of `codegen::enums` and
 //! `codegen::layout`. An optional adds one alignment unit, as when it keeps a flag beside its
@@ -20,7 +21,7 @@ use rustc_hash::FxHashSet;
 
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::source::Span;
-use crate::tir::Enum;
+use crate::tir::{Enum, Payload, Struct, held_inline};
 use crate::types::{Type, TypeArgs, TypeKind};
 
 /// The limit in GiB, as the diagnostic writes it.
@@ -83,10 +84,10 @@ fn tag_bytes(count: usize) -> u64 {
     }
 }
 
-/// An upper bound of what an enum takes.
+/// An upper bound of what an enum or a struct takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Measured {
-    /// The size of its largest variant.
+    /// The size of its largest variant, or the size of a struct.
     pub(crate) payload: u64,
     /// The size and alignment of a value.
     pub(crate) value: Layout,
@@ -100,18 +101,19 @@ thread_local! {
 
 #[cfg(test)]
 thread_local! {
-    /// How many calls of `spread_uses`, passes of its early return, enums and `held_inline` edges
+    /// How many calls of `spread_uses`, passes of its early return, nodes and `held_inline` edges
     /// it has visited on this thread.
     static SPREAD_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// What `measure` knows of each enum: `None` before it is measured, then its bound, which is
-/// `None` too when a field has a type that is not final or an inline cycle.
+/// What `measure` knows of each node of the holds-inline graph (`Inline::node`). It is `None`
+/// before the node is measured, then its bound. The bound is `None` when a field has a type that
+/// is not final or an inline cycle.
 type Known = [Option<Option<Measured>>];
 
-/// The bound of the layout of `ty`, which is the type of an unboxed field, once the enums that it
-/// holds are measured; `None` for a type that is not final.
-fn layout_of(ty: Type, known: &Known) -> Option<Layout> {
+/// The bound of the layout of `ty`, which is the type of an unboxed field, once the types that it
+/// holds are measured; `None` for a type that is not final. `enums` is the number of enums.
+fn layout_of(ty: Type, known: &Known, enums: usize) -> Option<Layout> {
     match ty.kind() {
         TypeKind::I64 | TypeKind::F64 => Some(Layout::new(8, 8)),
         TypeKind::U8 | TypeKind::Bool => Some(Layout::new(1, 1)),
@@ -121,12 +123,14 @@ fn layout_of(ty: Type, known: &Known) -> Option<Layout> {
         TypeKind::Class(..) => Some(Layout::new(WORD, WORD)),
         // An array or a string is three words: its block, its data and its length.
         TypeKind::String | TypeKind::Array(_) => Some(Layout::new(3 * WORD, WORD)),
-        // An enum with arguments is a generic one that `mono` has not instantiated.
-        TypeKind::Enum(_, args) if args != TypeArgs::NONE => None,
-        TypeKind::Enum(id, _) => Some(known[id.0].flatten()?.value),
+        // An enum or a struct with arguments is a generic one that `mono` has not instantiated.
+        TypeKind::Enum(_, args) | TypeKind::Struct(_, args) if args != TypeArgs::NONE => None,
+        TypeKind::Enum(..) | TypeKind::Struct(..) => {
+            Some(known[ty.inline_type()?.node(enums)].flatten()?.value)
+        }
         // A flag beside the payload, which a niche makes smaller.
         TypeKind::Optional(payload) => {
-            let payload = layout_of(payload, known)?;
+            let payload = layout_of(payload, known, enums)?;
             Some(Layout::new(
                 payload.size.saturating_add(payload.align),
                 payload.align,
@@ -152,17 +156,21 @@ fn boxed_layout(mut ty: Type) -> Layout {
     Layout::new(WORD * (1 + flags), WORD)
 }
 
-/// The bound of enum `e`, whose inline-held enums are measured.
-fn measure_enum(e: &Enum, known: &Known) -> Option<Measured> {
+/// The bound of the layout of the field `field` of an enum's variant or of a struct.
+fn field_layout(field: &Payload, known: &Known, enums: usize) -> Option<Layout> {
+    if field.boxed {
+        Some(boxed_layout(field.ty))
+    } else {
+        layout_of(field.ty, known, enums)
+    }
+}
+
+/// The bound of enum `e`, whose inline-held types are measured. `enums` is the number of enums.
+fn measure_enum(e: &Enum, known: &Known, enums: usize) -> Option<Measured> {
     let mut payload = Layout::EMPTY;
     for variant in &e.variants {
-        let variant = struct_of(variant.fields.iter().map(|field| {
-            if field.boxed {
-                Some(boxed_layout(field.ty))
-            } else {
-                layout_of(field.ty, known)
-            }
-        }))?;
+        let variant =
+            struct_of((variant.fields.iter()).map(|field| field_layout(field, known, enums)))?;
         payload = Layout::new(
             payload.size.max(variant.size),
             payload.align.max(variant.align),
@@ -186,23 +194,31 @@ fn measure_enum(e: &Enum, known: &Known) -> Option<Measured> {
     })
 }
 
-/// The enums that `e` holds inline: each unboxed field of an enum type or its optional.
-fn held_inline(e: &Enum) -> impl Iterator<Item = usize> + '_ {
-    (e.variants.iter().flat_map(|v| &v.fields))
-        .filter(|p| !p.boxed)
-        .filter_map(|p| p.ty.inline_enum())
-        .map(|id| id.0)
+/// The bound of struct `s`, whose inline-held types are measured: its fields, laid out in order.
+/// `enums` is the number of enums.
+fn measure_struct(s: &Struct, known: &Known, enums: usize) -> Option<Measured> {
+    let value = struct_of(
+        s.fields
+            .iter()
+            .map(|field| field_layout(field, known, enums)),
+    )?;
+    Some(Measured {
+        payload: value.size,
+        value,
+    })
 }
 
-/// The bound of each enum of `enums`, in one pass. An enum is measured after the enums it holds
-/// inline, in post-order with an explicit stack, as `codegen` lays them out. `tir::layout_enums`
-/// boxes a field on every cycle, so the walk ends; an inline cycle that remains gives no bound.
-pub(crate) fn measure(enums: &[Enum]) -> Vec<Option<Measured>> {
-    let mut known: Vec<Option<Option<Measured>>> = vec![None; enums.len()];
-    let mut waiting = vec![false; enums.len()];
-    // `(id, true)` once the enums `id` holds inline are queued before it. Empty after each root.
+/// The bound of each node of the holds-inline graph (`Inline::node`): each enum of `enums`, then
+/// each struct of `structs`, in one pass. A type is measured after the types it holds inline, in
+/// post-order with an explicit stack, as `codegen` lays them out. `tir::layout_types` boxes a
+/// field on every cycle, so the walk ends; an inline cycle that remains gives no bound.
+pub(crate) fn measure(enums: &[Enum], structs: &[Struct]) -> Vec<Option<Measured>> {
+    let nodes = enums.len() + structs.len();
+    let mut known: Vec<Option<Option<Measured>>> = vec![None; nodes];
+    let mut waiting = vec![false; nodes];
+    // `(id, true)` once the types `id` holds inline are queued before it. Empty after each root.
     let mut stack = Vec::new();
-    for root in 0..enums.len() {
+    for root in 0..nodes {
         stack.push((root, false));
         while let Some((id, held_queued)) = stack.pop() {
             #[cfg(test)]
@@ -211,29 +227,60 @@ pub(crate) fn measure(enums: &[Enum]) -> Vec<Option<Measured>> {
                 continue;
             }
             if held_queued {
-                known[id] = Some(measure_enum(&enums[id], &known));
+                known[id] = Some(match id.checked_sub(enums.len()) {
+                    None => measure_enum(&enums[id], &known, enums.len()),
+                    Some(s) => measure_struct(&structs[s], &known, enums.len()),
+                });
             } else if waiting[id] {
-                // An inline cycle: the enum is its own part.
+                // An inline cycle: the type is its own part.
                 known[id] = Some(None);
             } else {
                 waiting[id] = true;
                 stack.push((id, true));
-                stack.extend(held_inline(&enums[id]).map(|held| (held, false)));
+                stack.extend(held_inline(enums, structs, id).map(|held| (held, false)));
             }
         }
     }
     known.into_iter().map(Option::flatten).collect()
 }
 
-/// An enum whose payload may be `PAYLOAD_LIMIT` bytes or more.
+/// What a report of `oversized` names: an enum, whose payload is over the limit, or a struct.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Enum,
+    Struct,
+}
+
+impl Kind {
+    /// The word for this kind of type in a diagnostic.
+    pub(crate) fn noun(self) -> &'static str {
+        match self {
+            Kind::Enum => "enum",
+            Kind::Struct => "struct",
+        }
+    }
+}
+
+/// The kinds of type that a type holds inline, which the label of a report names.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Holds {
+    pub(crate) enums: bool,
+    pub(crate) structs: bool,
+}
+
+/// An enum whose payload may be `PAYLOAD_LIMIT` bytes or more, or a struct of that size.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Oversized {
-    /// The name of the enum that the user can change.
+    /// The name of the enum or the struct that the user can change.
     pub(crate) name: String,
-    /// Where the declaration of that enum names it.
+    /// Whether `name` is an enum or a struct.
+    pub(crate) kind: Kind,
+    /// Where the declaration of that type names it.
     pub(crate) at: Span,
     /// Whether `name` is an instance of a generic enum: `at` is then the declaration.
     pub(crate) instance: bool,
+    /// What `name` holds inline.
+    pub(crate) holds: Holds,
     /// The prelude enum that holds it, when the payload over the limit is that enum's: a
     /// `Result<E, E>` is as large as `E` and a tag.
     pub(crate) holder: Option<String>,
@@ -242,14 +289,20 @@ pub(crate) struct Oversized {
     pub(crate) used: Option<Span>,
 }
 
-/// The diagnostics of `oversized`, one for each report. `first_uses` is the first use of each enum
-/// that `mono` found, or `&[]` when there is none.
-pub(crate) fn diagnostics(enums: &[Enum], first_uses: &[Option<Span>]) -> Vec<Diagnostic> {
-    (oversized(enums, first_uses).into_iter())
+/// The diagnostics of `oversized`, one for each report. `first_uses` is the first use of each node
+/// that `mono` found, the enums then the structs, or `&[]` when there is none.
+pub(crate) fn diagnostics(
+    enums: &[Enum],
+    structs: &[Struct],
+    first_uses: &[Option<Span>],
+) -> Vec<Diagnostic> {
+    (oversized(enums, structs, first_uses).into_iter())
         .map(|o| {
             DiagnosticKind::PayloadTooLarge {
                 name: o.name,
+                kind: o.kind,
                 instance: o.instance,
+                holds: o.holds,
                 holder: o.holder,
                 at: o.at,
                 used: o.used,
@@ -259,104 +312,155 @@ pub(crate) fn diagnostics(enums: &[Enum], first_uses: &[Option<Span>]) -> Vec<Di
         .collect()
 }
 
-/// The enum that `id` holds inline with the largest value, which is the cause of its size.
-fn largest_held(enums: &[Enum], measured: &[Option<Measured>], id: usize) -> Option<usize> {
-    held_inline(&enums[id]).max_by_key(|&held| measured[held].map(|m| m.value.size))
+/// The type that node `id` holds inline with the largest value, which is the cause of its size.
+fn largest_held(
+    enums: &[Enum],
+    structs: &[Struct],
+    measured: &[Option<Measured>],
+    id: usize,
+) -> Option<usize> {
+    held_inline(enums, structs, id).max_by_key(|&held| measured[held].map(|m| m.value.size))
 }
 
-/// Each innermost enum of `enums` whose payload may be 4 GiB or more: none of the enums that
-/// it holds inline has such a payload. The enums that hold it have one too, but they are not
-/// another mistake. One report for each declaration: instances of a generic enum share one. An
-/// enum of the prelude is no place for the user to change, so the report names the user's enum
-/// that its largest field holds. When that chain reaches no user's enum, the report names the
-/// prelude's enum. On the checker path, `checked_with` treats a report in the prelude as an
-/// internal error. The reports are in the order of the enums. `first_uses` is the first use of each
-/// enum, which a report gives as the place that uses an instance.
-pub(crate) fn oversized(enums: &[Enum], first_uses: &[Option<Span>]) -> Vec<Oversized> {
-    oversized_with(enums, first_uses, PAYLOAD_LIMIT)
+/// The name, span, instance flag and kind of node `id` of the holds-inline graph.
+fn declared<'t>(
+    enums: &'t [Enum],
+    structs: &'t [Struct],
+    id: usize,
+) -> (&'t str, Span, bool, Kind) {
+    match id.checked_sub(enums.len()) {
+        None => (
+            &enums[id].name,
+            enums[id].span,
+            enums[id].instance,
+            Kind::Enum,
+        ),
+        Some(s) => (
+            &structs[s].name,
+            structs[s].span,
+            structs[s].instance,
+            Kind::Struct,
+        ),
+    }
 }
 
-/// The use of each instance in `enums`: its own in `first_uses`, else the one of its nearest
-/// holder that is an instance. The pass is breadth first from every instance that has a use, so
-/// it takes time linear in the enums and the `held_inline` edges, however many reports need it.
-/// An enum that is no instance has no use, and a use does not pass through it: a field of a
-/// non-generic enum or class is the declaration's, not the instance's. When no instance has a use
-/// the result is empty.
-fn spread_uses(enums: &[Enum], first_uses: &[Option<Span>]) -> Vec<Option<Span>> {
+/// Each innermost enum of `enums` whose payload may be 4 GiB or more, and each innermost struct of
+/// `structs` of that size: none of the types that it holds inline is over the limit. The enums that
+/// hold it have one too, but they are not another mistake. One report for each declaration:
+/// instances of a generic enum share one. An enum of the prelude is no place for the user to
+/// change, so the report names the user's enum that its largest field holds. When that chain
+/// reaches no user's enum, the report names the prelude's enum. On the checker path, `checked_with`
+/// treats a report in the prelude as an internal error. The reports are in the order of the nodes:
+/// the enums, then the structs. `first_uses` is the first use of each node, which a report gives as
+/// the place that uses an instance.
+pub(crate) fn oversized(
+    enums: &[Enum],
+    structs: &[Struct],
+    first_uses: &[Option<Span>],
+) -> Vec<Oversized> {
+    oversized_with(enums, structs, first_uses, PAYLOAD_LIMIT)
+}
+
+/// The use of each instance in `enums` and `structs`: its own in `first_uses`, else the one of its
+/// nearest holder that is an instance. The pass is breadth first from every instance that has a
+/// use. Thus it takes time linear in the nodes and the `held_inline` edges, however many reports
+/// need it. A node that is no instance has no use, and a use does not pass through it: a field of
+/// a non-generic type is the declaration's, not the instance's. When no instance has a use the
+/// result is empty.
+fn spread_uses(
+    enums: &[Enum],
+    structs: &[Struct],
+    first_uses: &[Option<Span>],
+) -> Vec<Option<Span>> {
     #[cfg(test)]
     SPREAD_STEPS.set(SPREAD_STEPS.get() + 1);
     let own = |id: usize| first_uses.get(id).copied().flatten();
-    let mut queue: VecDeque<usize> = (0..enums.len())
-        .filter(|&id| enums[id].instance && own(id).is_some())
+    let instance = |id: usize| declared(enums, structs, id).2;
+    let nodes = enums.len() + structs.len();
+    let mut queue: VecDeque<usize> = (0..nodes)
+        .filter(|&id| instance(id) && own(id).is_some())
         .collect();
     if queue.is_empty() {
         return Vec::new();
     }
     #[cfg(test)]
     SPREAD_STEPS.set(SPREAD_STEPS.get() + 1);
-    let mut uses = vec![None; enums.len()];
+    let mut uses = vec![None; nodes];
     for &id in &queue {
         uses[id] = own(id);
     }
     while let Some(holder) = queue.pop_front() {
         #[cfg(test)]
         SPREAD_STEPS.set(SPREAD_STEPS.get() + 1);
-        for held in held_inline(&enums[holder]) {
+        for held in held_inline(enums, structs, holder) {
             #[cfg(test)]
             SPREAD_STEPS.set(SPREAD_STEPS.get() + 1);
-            if enums[held].instance && uses[held].is_none() {
+            if instance(held) && uses[held].is_none() {
                 uses[held] = uses[holder];
                 queue.push_back(held);
             }
         }
     }
-    // shortcut: an instance that only a field of a non-generic class or enum reaches has no use,
-    // as `mono` lowers the classes before any expression, and a non-generic enum is no instance;
-    // no second label then. Upgrade by giving a class or enum field a span.
+    // shortcut: an instance that only a field of a non-generic type reaches has no use and no
+    // second label. `mono` lowers the classes before any expression, and a non-generic type is no
+    // instance. Upgrade by giving such a field a span.
     uses
 }
 
 /// `oversized` with `limit` in place of `PAYLOAD_LIMIT`, for the tests, which cannot build a
 /// payload of 4 GiB cheaply.
-fn oversized_with(enums: &[Enum], first_uses: &[Option<Span>], limit: u64) -> Vec<Oversized> {
-    let measured = measure(enums);
+fn oversized_with(
+    enums: &[Enum],
+    structs: &[Struct],
+    first_uses: &[Option<Span>],
+    limit: u64,
+) -> Vec<Oversized> {
+    let measured = measure(enums, structs);
     let over = |id: usize| measured[id].is_some_and(|m| m.payload >= limit);
     let mut seen = FxHashSet::default();
     let mut found = Vec::new();
     let mut spread = None;
-    for (id, e) in enums.iter().enumerate() {
-        if !over(id) || held_inline(e).any(over) {
+    for id in 0..measured.len() {
+        if !over(id) || held_inline(enums, structs, id).any(over) {
             continue;
         }
-        let user = e.span.in_prelude().then(|| {
+        let (name, span, instance, _) = declared(enums, structs, id);
+        let user = span.in_prelude().then(|| {
             let mut cause = id;
             loop {
-                cause = largest_held(enums, &measured, cause)?;
-                if !enums[cause].span.in_prelude() {
+                cause = largest_held(enums, structs, &measured, cause)?;
+                if !declared(enums, structs, cause).1.in_prelude() {
                     return Some(cause);
                 }
             }
         });
         let (target, holder) = match user.flatten() {
-            Some(user) => (user, Some(e.name.clone())),
+            Some(user) => (user, Some(name.to_owned())),
             None => (id, None),
         };
-        let target = &enums[target];
-        if seen.insert(target.span) {
+        let (target_name, target_span, target_instance, kind) = declared(enums, structs, target);
+        if seen.insert(target_span) {
             // The use is of `id`, not of `target`: with a holder, a use makes the holder's
-            // instance, and `target` may be a user's enum that is no instance.
-            let first = if !enums[id].instance {
+            // instance, and `target` may be a user's type that is no instance.
+            let first = if !instance {
                 None
             } else if let Some(own) = first_uses.get(id).copied().flatten() {
                 Some(own)
             } else {
-                let spread = spread.get_or_insert_with(|| spread_uses(enums, first_uses));
+                let spread = spread.get_or_insert_with(|| spread_uses(enums, structs, first_uses));
                 spread.get(id).copied().flatten()
             };
+            let held = held_inline(enums, structs, target);
+            let holds = held.fold(Holds::default(), |holds, node| Holds {
+                enums: holds.enums || node < enums.len(),
+                structs: holds.structs || node >= enums.len(),
+            });
             found.push(Oversized {
-                name: target.name.clone(),
-                at: target.span,
-                instance: target.instance,
+                name: target_name.to_owned(),
+                kind,
+                at: target_span,
+                instance: target_instance,
+                holds,
                 holder,
                 used: first,
             });
@@ -421,7 +525,7 @@ mod tests {
         // word before the array of two `i64`s.
         let padded = holding("A", 0, vec![Type::U8, Type::I64]);
         let bytes = holding("B", 1, vec![Type::U8]);
-        let measured = measure(&[padded, bytes]);
+        let measured = measure(&[padded, bytes], &[]);
         let layout = |size, align| Layout::new(size, align);
         assert_eq!(
             measured[0],
@@ -441,7 +545,7 @@ mod tests {
 
     #[test]
     fn measure_should_give_a_tag_alone_when_no_variant_has_a_field() {
-        let measured = measure(&[declared("A", 0, vec![vec![], vec![]])]);
+        let measured = measure(&[declared("A", 0, vec![vec![], vec![]])], &[]);
         assert_eq!(
             measured[0].map(|m| (m.payload, m.value)),
             Some((0, Layout::new(1, 1)))
@@ -454,7 +558,7 @@ mod tests {
             holding("A", 0, vec![Type::optional(Type::I64)]),
             holding("B", 1, vec![Type::optional(Type::U8)]),
         ];
-        let measured = measure(&enums);
+        let measured = measure(&enums, &[]);
         assert_eq!(measured[0].map(|m| m.payload), Some(16));
         assert_eq!(measured[1].map(|m| m.payload), Some(2));
     }
@@ -463,7 +567,7 @@ mod tests {
     fn measure_should_count_an_array_and_a_string_as_three_words_and_a_class_as_one() {
         let class = Type::intern(TypeKind::Class(crate::tir::ClassId(0), TypeArgs::NONE));
         let array = Type::array(enum_type(0));
-        let measured = measure(&[holding("A", 0, vec![array, Type::STRING, class])]);
+        let measured = measure(&[holding("A", 0, vec![array, Type::STRING, class])], &[]);
         // 24 + 24 + 8.
         assert_eq!(measured[0].map(|m| m.payload), Some(56));
     }
@@ -471,11 +575,14 @@ mod tests {
     #[test]
     fn measure_should_count_a_boxed_field_as_a_pointer_and_a_flag_for_each_nested_optional() {
         let nested = Type::optional(Type::optional(enum_type(0)));
-        let measured = measure(&[declared(
-            "A",
-            0,
-            vec![vec![(enum_type(0), true), (nested, true)]],
-        )]);
+        let measured = measure(
+            &[declared(
+                "A",
+                0,
+                vec![vec![(enum_type(0), true), (nested, true)]],
+            )],
+            &[],
+        );
         // One pointer, then a flag beside a pointer.
         assert_eq!(measured[0].map(|m| m.payload), Some(8 + 16));
     }
@@ -488,7 +595,7 @@ mod tests {
             pair("Inner", 1, 2),
             holding("Leaf", 2, vec![Type::I64]),
         ];
-        let measured = measure(&enums);
+        let measured = measure(&enums, &[]);
         let payloads: Vec<_> = measured.iter().map(|m| m.map(|m| m.payload)).collect();
         // Leaf: tag then `i64` = 16. Inner: two of Leaf = 32, with the tag 40. Outer: 80.
         assert_eq!(payloads, [Some(80), Some(32), Some(8)]);
@@ -506,7 +613,7 @@ mod tests {
             holding("Holder", 2, vec![enum_type(0)]),
             holding("Plain", 3, vec![Type::I64]),
         ];
-        let bounded: Vec<_> = measure(&enums).iter().map(Option::is_some).collect();
+        let bounded: Vec<_> = measure(&enums, &[]).iter().map(Option::is_some).collect();
         assert_eq!(bounded, [false, false, false, true]);
     }
 
@@ -524,7 +631,7 @@ mod tests {
                 .collect();
             enums.push(holding("Last", n - 1, vec![Type::I64]));
             MEASURE_STEPS.set(0);
-            assert!(measure(&enums).iter().all(Option::is_some));
+            assert!(measure(&enums, &[]).iter().all(Option::is_some));
             MEASURE_STEPS.get()
         };
         crate::mir::tests::assert_near_linear(steps(100), steps(200), steps(300));
@@ -533,7 +640,7 @@ mod tests {
     #[test]
     fn measure_should_give_no_bound_for_a_cycle_of_inline_fields() {
         let enums = [pair("A", 0, 1), pair("B", 1, 0)];
-        assert!(measure(&enums).iter().all(Option::is_none));
+        assert!(measure(&enums, &[]).iter().all(Option::is_none));
     }
 
     #[test]
@@ -541,7 +648,7 @@ mod tests {
         // 70 enums that each hold two of the next: 2^70 bytes cannot be a `u64`.
         let mut enums: Vec<_> = (0..70).map(|n| pair("E", n, n + 1)).collect();
         enums.push(holding("Last", 70, vec![Type::I64]));
-        let measured = measure(&enums);
+        let measured = measure(&enums, &[]);
         assert!(measured[0].is_some_and(|m| m.payload >= PAYLOAD_LIMIT));
     }
 
@@ -555,8 +662,8 @@ mod tests {
     fn oversized_should_flag_a_payload_that_equals_the_limit() {
         // The payload of `A` is two `i64`s: 16 bytes.
         let enums = [holding("A", 0, vec![Type::I64, Type::I64])];
-        assert_eq!(oversized_with(&enums, &[], 16).len(), 1);
-        assert_eq!(oversized_with(&enums, &[], 17), []);
+        assert_eq!(oversized_with(&enums, &[], &[], 16).len(), 1);
+        assert_eq!(oversized_with(&enums, &[], &[], 17), []);
     }
 
     #[test]
@@ -568,7 +675,7 @@ mod tests {
             pair("Low", 2, 3),
             holding("Leaf", 3, vec![Type::I64]),
         ];
-        let found = oversized_with(&enums, &[], 30);
+        let found = oversized_with(&enums, &[], &[], 30);
         let names: Vec<_> = found
             .iter()
             .map(|o| (o.name.as_str(), o.holder.as_deref()))
@@ -584,7 +691,7 @@ mod tests {
             holding("Leaf", 1, vec![Type::I64]),
             pair("B", 2, 1),
         ];
-        let names: Vec<_> = oversized_with(&enums, &[], 16)
+        let names: Vec<_> = oversized_with(&enums, &[], &[], 16)
             .into_iter()
             .map(|o| o.name)
             .collect();
@@ -599,7 +706,7 @@ mod tests {
             pair("P<u8>", 5, 2),
             holding("Leaf", 6, vec![Type::I64]),
         ];
-        let found = oversized_with(&enums, &[], 16);
+        let found = oversized_with(&enums, &[], &[], 16);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "P<i64>");
     }
@@ -613,14 +720,14 @@ mod tests {
             vec![vec![(enum_type(1), true), (enum_type(1), true)]],
         );
         let leaf = holding("Leaf", 1, vec![Type::I64]);
-        assert_eq!(oversized_with(&[boxed, leaf], &[], 20), []);
+        assert_eq!(oversized_with(&[boxed, leaf], &[], &[], 20), []);
     }
 
     #[test]
     fn oversized_should_not_report_an_enum_with_an_unknown_part() {
         let param = Type::intern(TypeKind::Param(crate::symbol::Symbol::intern("T"), 0));
         let enums = [holding("A", 0, vec![param, Type::I64, Type::I64])];
-        assert_eq!(oversized_with(&enums, &[], 1), []);
+        assert_eq!(oversized_with(&enums, &[], &[], 1), []);
     }
 
     #[test]
@@ -632,13 +739,15 @@ mod tests {
             holding("User", 3, vec![Type::I64, Type::I64]),
             holding("Wrap", base, vec![enum_type(0)]),
         ];
-        let found = oversized_with(&enums, &[], 20);
+        let found = oversized_with(&enums, &[], &[], 20);
         assert_eq!(
             found,
             [Oversized {
                 name: "User".to_string(),
+                kind: Kind::Enum,
                 at: Span::new(3, 4),
                 instance: false,
+                holds: Holds::default(),
                 holder: Some("Wrap".to_string()),
                 used: None,
             }]
@@ -654,7 +763,7 @@ mod tests {
             holding("Inner", base + 1, vec![enum_type(2)]),
             holding("User", 3, vec![Type::I64, Type::I64]),
         ];
-        let found = oversized_with(&enums, &[], 32);
+        let found = oversized_with(&enums, &[], &[], 32);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "User");
         assert_eq!(found[0].holder.as_deref(), Some("Outer"));
@@ -671,7 +780,7 @@ mod tests {
             holding("Middle", base + 1, vec![enum_type(2)]),
             holding("Inner", base + 2, vec![Type::I64]),
         ];
-        let found = oversized_with(&enums, &[], 20);
+        let found = oversized_with(&enums, &[], &[], 20);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "Outer");
         assert_eq!(found[0].holder, None);
@@ -681,7 +790,7 @@ mod tests {
     fn oversized_should_name_a_prelude_enum_that_is_over_the_limit_by_its_own_fields() {
         let base = PRELUDE_BASE as usize;
         let enums = [holding("Big", base, vec![Type::I64, Type::I64])];
-        let found = oversized_with(&enums, &[], 16);
+        let found = oversized_with(&enums, &[], &[], 16);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "Big");
         assert_eq!(found[0].holder, None);
@@ -709,7 +818,7 @@ mod tests {
     #[test]
     fn oversized_should_use_the_first_use_of_the_enum_over_the_limit() {
         let uses = [Some(Span::new(10, 11)), None, Some(Span::new(30, 31)), None];
-        let found = oversized_with(&chain(), &uses, 30);
+        let found = oversized_with(&chain(), &[], &uses, 30);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].used, Some(Span::new(30, 31)));
     }
@@ -718,7 +827,7 @@ mod tests {
     fn oversized_should_use_the_first_use_of_an_enum_that_holds_it_at_depth_two() {
         // `Low` and `Mid` have no use; `Top` holds `Low` through `Mid`.
         let uses = [Some(Span::new(10, 11)), None, None, None];
-        let found = oversized_with(&chain(), &uses, 30);
+        let found = oversized_with(&chain(), &[], &uses, 30);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].used, Some(Span::new(10, 11)));
     }
@@ -743,7 +852,7 @@ mod tests {
             None,
             None,
         ];
-        let found = oversized_with(&enums, &uses, 30);
+        let found = oversized_with(&enums, &[], &uses, 30);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "Low");
         assert_eq!(found[0].used, Some(Span::new(20, 21)));
@@ -753,7 +862,7 @@ mod tests {
     fn oversized_should_give_no_use_when_no_enum_that_holds_it_has_one() {
         let uses = [None, None, None, Some(Span::new(40, 41))];
         // The use of `Leaf`, which `Low` holds, is no use of `Low`.
-        let found = oversized_with(&chain(), &uses, 30);
+        let found = oversized_with(&chain(), &[], &uses, 30);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].used, None);
     }
@@ -764,7 +873,7 @@ mod tests {
         let mut enums = chain();
         enums[2].instance = false;
         let uses = [None, None, Some(Span::new(30, 31)), None];
-        let found = oversized_with(&enums, &uses, 30);
+        let found = oversized_with(&enums, &[], &uses, 30);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].used, None);
     }
@@ -776,7 +885,7 @@ mod tests {
         let mut enums = chain();
         enums[0].instance = false;
         let uses = [Some(Span::new(10, 11)), None, None, None];
-        let found = oversized_with(&enums, &uses, 30);
+        let found = oversized_with(&enums, &[], &uses, 30);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].used, None);
     }
@@ -804,7 +913,7 @@ mod tests {
             let mut uses = vec![None; enums.len()];
             uses[0] = Some(Span::new(5, 6));
             SPREAD_STEPS.set(0);
-            let found = oversized_with(&enums, &uses, 16);
+            let found = oversized_with(&enums, &[], &uses, 16);
             assert_eq!(found.len(), n);
             assert!(found.iter().all(|o| o.used == Some(Span::new(5, 6))));
             SPREAD_STEPS.get()
@@ -815,7 +924,7 @@ mod tests {
     #[test]
     fn oversized_should_not_spread_uses_when_no_enum_has_one() {
         SPREAD_STEPS.set(0);
-        let found = oversized_with(&chain(), &[], 30);
+        let found = oversized_with(&chain(), &[], &[], 30);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].used, None);
         // One step for the call, and none for the early return, the enums or the edges.
@@ -831,7 +940,7 @@ mod tests {
             holding("Wrap", base, vec![enum_type(0)]),
         ]);
         let uses = [Some(Span::new(60, 61)), Some(Span::new(70, 71))];
-        let found = oversized_with(&enums, &uses, 20);
+        let found = oversized_with(&enums, &[], &uses, 20);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].used, Some(Span::new(70, 71)));
     }

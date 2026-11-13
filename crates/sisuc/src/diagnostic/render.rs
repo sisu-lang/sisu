@@ -458,7 +458,7 @@ mod tests {
         DiagnosticKind::AssignToImmutable {
             name: "n".to_string(),
             at: Span::new(30, 35),
-            element: false,
+            written: crate::diagnostic::Written::Whole,
             cause: Immutable::Let {
                 declared: Span::new(20, 21),
                 redeclared: false,
@@ -500,12 +500,12 @@ mod tests {
     }
 
     #[test]
-    fn renders_error_with_secondary_and_help() {
+    fn error_with_secondary_and_help_should_render() {
         let source = "fn f(n: i64) {\n    n = 1\n}\n";
         let d: Diagnostic = DiagnosticKind::AssignToImmutable {
             name: "n".to_string(),
             at: Span::new(19, 24),
-            element: false,
+            written: crate::diagnostic::Written::Whole,
             cause: Immutable::Param {
                 declared: Span::new(5, 6),
             },
@@ -533,7 +533,7 @@ error[E0001]: cannot assign to `n`
         let mut d: Diagnostic = DiagnosticKind::AssignToImmutable {
             name: "n".to_string(),
             at: Span::new(19, 24),
-            element: false,
+            written: crate::diagnostic::Written::Whole,
             cause: Immutable::Param {
                 declared: Span::new(5, 6),
             },

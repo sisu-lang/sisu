@@ -2,16 +2,17 @@
 
 use rustc_hash::FxHashMap;
 
-use super::array::innermost;
+use super::array::{innermost, must_unwrap};
 use super::call::{Dot, takes_range};
 use super::expr::{if_some, local, no_member, path};
 use super::extend::{holder_of, method_holder};
 use super::generic::{Site, named_params};
+use super::place::{Change, first_safe, is_struct};
 use super::reports::Reported;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Expectation, Holder, Poisoned, as_optional, known_type, type_of,
-    wrap,
+    Checked, Checker, ClassInfo, Declared, Expectation, Holder, Poisoned, as_optional, known_type,
+    type_of, wrap,
 };
 use crate::ast;
 use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp};
@@ -32,8 +33,25 @@ pub(super) enum Access {
     Mut,
 }
 
-/// What a field lookup found: the field's class, its index, and its type, `None` for `Error`.
-pub(super) type FoundField = (tir::ClassId, usize, Option<Type>);
+/// The class or the struct that declares a field.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum FieldOwner {
+    Class(tir::ClassId),
+    Struct(tir::StructId),
+}
+
+impl FieldOwner {
+    /// The use of its field `index`.
+    pub(super) fn used(self, index: usize) -> Used {
+        match self {
+            Self::Class(class) => Used::Field(class, index),
+            Self::Struct(id) => Used::StructField(id, index),
+        }
+    }
+}
+
+/// What a field lookup found: the field's owner, its index, and its type, `None` for `Error`.
+pub(super) type FoundField = (FieldOwner, usize, Option<Type>);
 
 /// What a method lookup found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,6 +64,14 @@ pub(super) enum Found {
 }
 
 impl Checker<'_> {
+    /// The table entry of `owner`.
+    pub(super) fn owner_info(&self, owner: FieldOwner) -> &ClassInfo {
+        match owner {
+            FieldOwner::Class(class) => &self.classes[class.0],
+            FieldOwner::Struct(id) => &self.structs[id.0],
+        }
+    }
+
     /// `receiver.member`, which `member` checks on the checked receiver. With `safe`, it is
     /// `receiver?.member`, and `member` checks it on a fresh local bound to the receiver's
     /// value. Its type `U` makes the result a `U?`, or `unit` for a method with no value. A
@@ -145,23 +171,39 @@ impl Checker<'_> {
     ) -> Checked {
         let ty = known_type(&base).map_err(Poisoned::untyped)?;
         if let TypeKind::Optional(payload) = ty.kind() {
+            // A base that failed under the chain of a write to a struct has reported the write.
+            if let Err(failed) = &base
+                && self.body.write_chain.is_some()
+                && is_struct(innermost(payload))
+            {
+                return Err(Poisoned::untyped(failed.reported()));
+            }
+            // Under the chain of a write, a `?.` that takes out a class object needs the object
+            // unwrapped: its struct field is a place.
+            if self.body.write_chain.is_some()
+                && is_struct(innermost(payload))
+                && let Some(unwrap) = self.class_unwrap(receiver, &base)
+            {
+                let reported = self.diagnostics.error(must_unwrap(receiver, unwrap));
+                return Err(Poisoned::untyped(reported));
+            }
             let (_, reported) = (self.field_of_payload(payload, receiver, name, Access::Read))
                 .map_err(Poisoned::untyped)?;
             // E0062 is reported. The member is untyped: the fix of the E0062 decides it.
             return Err(Poisoned::untyped(reported));
         }
-        let (class, index, ty) =
+        let (owner, index, ty) =
             (self.find_field(ty, receiver, name, Access::Read)).map_err(Poisoned::untyped)?;
-        self.record(Used::Field(class, index), span);
+        self.record(owner.used(index), span);
         match (base, ty) {
-            (Ok(base), Some(ty)) => Ok(tir::Expr::new(
-                tir::ExprKind::Field {
-                    base: Box::new(base),
-                    index,
-                },
-                ty,
-                span,
-            )),
+            (Ok(base), Some(ty)) => {
+                let base = Box::new(base);
+                let kind = match owner {
+                    FieldOwner::Class(_) => tir::ExprKind::Field { base, index },
+                    FieldOwner::Struct(_) => tir::ExprKind::StructField { base, index },
+                };
+                Ok(tir::Expr::new(kind, ty, span))
+            }
             (Err(failed), ty) => Err(Poisoned::new(ty, failed.reported())),
             // The field's declared type did not resolve.
             (Ok(_), None) => Err(Poisoned::untyped(self.proof(name.span))), // proof: declaration
@@ -171,14 +213,17 @@ impl Checker<'_> {
     /// The type of field `index` of a value of the class type `base`: `base`'s arguments stand
     /// for its class's parameters. `None` when the field's type is `Error`.
     pub(super) fn field_type(&self, base: Type, index: usize) -> Option<Type> {
-        let TypeKind::Class(class, args) = base.kind() else {
-            panic!("a field should only be found on a value of a class type, not `{base}`")
+        let (info, args) = match base.kind() {
+            TypeKind::Class(class, args) => (&self.classes[class.0], args),
+            TypeKind::Struct(id, args) => (&self.structs[id.0], args),
+            _ => panic!(
+                "a field should only be found on a value of a class or struct type, not `{base}`"
+            ),
         };
-        let info = &self.classes[class.0];
         assert_eq!(
             args.get().len(),
             info.type_params.len(),
-            "a class type should give each of its class's type parameters an argument"
+            "a class or struct type should give each of its type parameters an argument"
         );
         info.fields[index]
             .ty
@@ -204,10 +249,14 @@ impl Checker<'_> {
             call: matches!(access, Access::Read).then_some(safe),
         };
         let d = match ty.kind() {
-            TypeKind::Class(class, _) => {
-                let info = &self.classes[class.0];
+            TypeKind::Class(..) | TypeKind::Struct(..) => {
+                let (owner, info) = match ty.kind() {
+                    TypeKind::Class(class, _) => (FieldOwner::Class(class), &self.classes[class.0]),
+                    TypeKind::Struct(id, _) => (FieldOwner::Struct(id), &self.structs[id.0]),
+                    _ => unreachable!("the arm should take only a class or a struct"),
+                };
                 if let Some(index) = info.field(name.name) {
-                    return Ok((class, index, self.field_type(ty, index)));
+                    return Ok((owner, index, self.field_type(ty, index)));
                 }
                 match self.own_method(ty, name.name) {
                     Some(Declared::Known(func)) => {
@@ -266,6 +315,12 @@ impl Checker<'_> {
     ) -> Result<(FoundField, Reported), Reported> {
         let inner = innermost(payload);
         let found = self.find_field(inner, receiver, name, access)?;
+        if matches!(inner.kind(), TypeKind::Struct(..)) {
+            return Ok((
+                found,
+                self.struct_may_be_none(payload, receiver, name, access),
+            ));
+        }
         let write = match access {
             Access::Read => false,
             Access::Assign | Access::Mut => true,
@@ -283,13 +338,84 @@ impl Checker<'_> {
         Ok((found, reported))
     }
 
-    /// Whether `ty` is a class type whose field `name` has an array type or an optional array
-    /// type, so that a `push` onto it writes.
-    fn field_is_array(&self, ty: Type, name: Symbol) -> bool {
-        let TypeKind::Class(class, _) = ty.kind() else {
-            return false;
+    /// E0062 for the `.` before `name` on `receiver`, an optional of the struct `payload?`, as
+    /// `field_of_payload` reports it. An unwrap gives a copy of a struct, so no help names one,
+    /// and a write gets no `?.` fix: part 1 cannot write through `?.` on a struct value. A write
+    /// after a `?.` in `receiver` is reported as that `?.`'s write (`Checker::chain_write`). A
+    /// read under the chain of a write (`Body::write_chain`) writes too.
+    fn struct_may_be_none(
+        &mut self,
+        payload: Type,
+        receiver: &ast::Expr,
+        name: &ast::Ident,
+        access: Access,
+    ) -> Reported {
+        let chain = match access {
+            Access::Read => self.body.write_chain,
+            Access::Assign | Access::Push | Access::Mut => None,
         };
-        let held = self.classes[class.0]
+        let write = match access {
+            Access::Read => chain.is_some_and(|(_, change)| change != Change::MutArg),
+            Access::Assign => true,
+            Access::Push => self.field_is_array(innermost(payload), name.name),
+            Access::Mut => false,
+        };
+        let mutable = matches!(access, Access::Mut) || matches!(chain, Some((_, Change::MutArg)));
+        if !write && !mutable {
+            // A read keeps its fix and its help.
+            let fix = payload_fix(payload, self.body.indexed);
+            let unwrap = if self.body.indexed {
+                UnwrapHelp::It
+            } else {
+                self.peel_or(payload, (receiver, name), UnwrapHelp::It)
+            };
+            return (self.diagnostics).error(may_be_none(receiver, name, fix, write, unwrap));
+        }
+        if let (Some(write), Some(object)) = (chain.filter(|_| write), first_safe(receiver)) {
+            let d = self.chain_write(write, receiver, object);
+            // The help would name a form that the rest of the path refuses too.
+            let d = match d {
+                DiagnosticKind::ChainWriteOnStruct { at, .. } => {
+                    DiagnosticKind::ChainWriteOnStruct { at, replace: None }
+                }
+                d => d,
+            };
+            return self.error(d);
+        }
+        let unwrap = if write {
+            self.reassign_root(receiver);
+            // Only a place on one line can be replaced.
+            if matches!(payload.kind(), TypeKind::Struct(..))
+                && self.one_line(receiver.span)
+                && self.replaceable(receiver).is_some_and(|(can, _)| can)
+            {
+                UnwrapHelp::Replace(self.source.text(receiver.span).to_string())
+            } else {
+                UnwrapHelp::Nothing
+            }
+        } else {
+            UnwrapHelp::Nothing
+        };
+        let d = DiagnosticKind::MayBeNone {
+            value: path(receiver),
+            at: receiver.span,
+            access: None,
+            write,
+            peel: None,
+            unwrap,
+        };
+        self.error(d)
+    }
+
+    /// Whether `ty` is a class or a struct type whose field `name` has an array type or an
+    /// optional array type. Then a `push` onto it writes.
+    fn field_is_array(&self, ty: Type, name: Symbol) -> bool {
+        let info = match ty.kind() {
+            TypeKind::Class(class, _) => &self.classes[class.0],
+            TypeKind::Struct(id, _) => &self.structs[id.0],
+            _ => return false,
+        };
+        let held = info
             .field(name)
             .and_then(|index| self.field_type(ty, index));
         let held = held.map(|held| match held.kind() {
@@ -306,6 +432,7 @@ impl Checker<'_> {
         let holder = method_holder(ty)?;
         let body = match holder {
             Holder::Class(c) => self.classes[c.0].methods.get(&name),
+            Holder::Struct(s) => self.structs[s.0].methods.get(&name),
             Holder::Enum(e) => self.enums[e.0].methods.get(&name),
             Holder::Array | Holder::I64 => None,
         };
@@ -439,21 +566,23 @@ impl Checker<'_> {
         if let Some(&reported) = self.rejected_methods.get(&name.name) {
             return Err(reported);
         }
-        let d = match ty.kind() {
-            TypeKind::Class(class, _) => {
-                let info = &self.classes[class.0];
-                if info.field(name.name).is_some() {
-                    DiagnosticKind::FieldNotMethod {
-                        name: name.name.to_string(),
-                        owner: self.type_name(ty),
-                        at: name.span,
-                    }
-                    .into()
-                } else {
-                    let methods = info.methods.keys().map(|method| method.as_str());
-                    no_member(Definition::Method, self.type_name(ty), name, methods)
+        // A class and a struct name a field that a call writes as a method alike.
+        let in_fields = |info: &ClassInfo| {
+            if info.field(name.name).is_some() {
+                DiagnosticKind::FieldNotMethod {
+                    name: name.name.to_string(),
+                    owner: self.type_name(ty),
+                    at: name.span,
                 }
+                .into()
+            } else {
+                let methods = info.methods.keys().map(|method| method.as_str());
+                no_member(Definition::Method, self.type_name(ty), name, methods)
             }
+        };
+        let d = match ty.kind() {
+            TypeKind::Class(class, _) => in_fields(&self.classes[class.0]),
+            TypeKind::Struct(id, _) => in_fields(&self.structs[id.0]),
             TypeKind::Enum(id, _) => {
                 let info = &self.enums[id.0];
                 if info.index.contains_key(&name.name) {

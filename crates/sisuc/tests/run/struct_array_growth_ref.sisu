@@ -1,0 +1,11 @@
+fn iterations() -> i64 { 1000 }
+
+// `struct_array_growth` with an `i64` for each `Point`: the reference for its allocation count.
+fn main() {
+    let mut xs: [i64] = []
+    for i in 0..iterations() + 1000 {
+        xs.push(i + 1)
+    }
+    print(xs.len())                  // 2000
+    print(xs[xs.len() - 1])          // 2000
+}

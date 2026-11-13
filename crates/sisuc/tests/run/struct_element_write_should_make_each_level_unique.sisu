@@ -1,0 +1,43 @@
+// GIVEN `struct In { xs: [i64]; ys: [[i64]] }`, `struct T { i: In }` and `let a`, an array of
+// one `T` whose arrays each have a second holder, then `let mut b = a`
+// WHEN a row writes through `b[0]`: `b[0].i.xs.push(1)`, `b[0].i.xs[0] = 9`, or
+// `b[0].i.ys[0][0] = 9`
+// THEN the row prints `a` and `b`: `a` keeps its value at each array level, and `b` changed
+struct In { xs: [i64]; ys: [[i64]] }
+struct T { i: In }
+
+fn source() -> [T] {
+    let row = [5]
+    let xs = [4]
+    [T(i: In(xs: xs, ys: [row, row]))]
+}
+
+fn push() {
+    let a = source()
+    let mut b = a
+    b[0].i.xs.push(1)
+    print(a)                         // [T(i: In(xs: [4], ys: [[5], [5]]))]
+    print(b)                         // [T(i: In(xs: [4, 1], ys: [[5], [5]]))]
+}
+
+fn element() {
+    let a = source()
+    let mut b = a
+    b[0].i.xs[0] = 9
+    print(a)                         // [T(i: In(xs: [4], ys: [[5], [5]]))]
+    print(b)                         // [T(i: In(xs: [9], ys: [[5], [5]]))]
+}
+
+fn inner_element() {
+    let a = source()
+    let mut b = a
+    b[0].i.ys[0][0] = 9
+    print(a)                         // [T(i: In(xs: [4], ys: [[5], [5]]))]
+    print(b)                         // [T(i: In(xs: [4], ys: [[9], [5]]))]
+}
+
+fn main() {
+    push()
+    element()
+    inner_element()
+}

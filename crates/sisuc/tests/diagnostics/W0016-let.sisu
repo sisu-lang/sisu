@@ -1,0 +1,8 @@
+struct Account { balance: i64 }
+
+fn main() {
+    let xs = [Account(balance: 1)]
+    let mut a = xs[0]
+    a.balance = 2
+    print(xs[0].balance)
+}

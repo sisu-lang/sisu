@@ -6,7 +6,8 @@ use rustc_hash::FxHashMap;
 
 use super::expr::{CHARS, OPS, arithmetic_value};
 use super::scope::{
-    Adds, Alias, Class, Const, Enum, Field, Func, MAX_MUT_LEN, Ty, Var, Variant, Wrap,
+    Adds, Alias, Class, Const, Cycle, Enum, Field, Func, MAX_MUT_LEN, Struct, Ty, Var, Variant,
+    Wrap,
 };
 use super::stmt::{GROW, Jumps, MUT_FUEL};
 use super::writer::Piece;
@@ -692,6 +693,9 @@ impl Gen<'_> {
         // what is left are the functions', which the methods would otherwise often spend.
         let functions = self.fuel * 3 / 4;
         self.fuel -= functions;
+        // A few structs come first, so a class or an enum may hold one. The rest come after, and
+        // may hold a class or an enum.
+        self.structs(true);
         for _ in 0..self.pick(MAX_TYPES + 1) {
             if self.pick(2) == 0 {
                 self.class();
@@ -699,6 +703,7 @@ impl Gen<'_> {
                 self.enumeration();
             }
         }
+        self.structs(false);
         self.generics();
         self.aliases();
         self.fuel += functions;
@@ -728,6 +733,7 @@ impl Gen<'_> {
             });
         }
         self.print_gap_args(main_args);
+        self.read_struct_fields();
         self.main_stmts();
         self.mut_epilogue();
         // Whether `main` calls the function of the conformances that follows it. The choice is
@@ -1048,24 +1054,28 @@ impl Gen<'_> {
     }
 
     /// Now and then, up to two functions with `mut` parameters, after the others. Each is a
-    /// function, or, as often, a method in an `extend K<n>` block of a class that is no instance of
-    /// a generic class. They are written from the spare streams with fuel of their own, so no
-    /// other function or item moves for them, and no ordinary call names them (`callees`): only a
-    /// `mut` call does.
+    /// function, or, as often, a method in an `extend K<n>` or `extend S<n>` block. The block is
+    /// of a class or a struct that is no instance of a generic one. They are written from the
+    /// spare streams with fuel of their own, so no other function or item moves for them. No
+    /// ordinary call names them (`callees`): only a `mut` call does.
     fn mut_functions(&mut self) {
         for _ in 0..self.mut_pick(MAX_MUT_FUNCTIONS + 1) {
             let fuel = std::mem::replace(&mut self.fuel, MUT_FUEL);
             self.swap_streams();
             self.mut_fn = true;
-            let plain: Vec<usize> = (0..self.scope.classes.len())
+            let classes = (0..self.scope.classes.len())
                 .filter(|&id| self.scope.classes[id].applied.is_none())
-                .collect();
+                .map(|id| self.scope.class_ty(id));
+            let structs = (0..self.scope.structs.len())
+                .filter(|&id| self.scope.structs[id].applied.is_none())
+                .map(|id| self.scope.struct_ty(id));
+            let plain: Vec<Ty> = classes.chain(structs).collect();
             if self.pick(2) == 1 && !plain.is_empty() {
-                let id = plain[self.pick(plain.len())];
-                self.w.text(&format!("extend K{id} "));
+                let ty = plain[self.pick(plain.len())].clone();
+                self.w.text(&format!("extend {ty} "));
                 self.w.open();
                 self.w.line();
-                self.function(Some(self.scope.class_ty(id)), true);
+                self.function(Some(ty), true);
                 self.w.close();
             } else {
                 self.function(None, true);
@@ -1075,6 +1085,37 @@ impl Gen<'_> {
             self.swap_streams();
             self.fuel = fuel;
         }
+    }
+
+    /// A read of each field of each struct, first in `main`, so no field stays unread (W0013). A
+    /// generic struct is read through its first instance. It is written from the spare streams
+    /// with fuel of its own, so no other statement moves for it.
+    fn read_struct_fields(&mut self) {
+        let mut generics = Vec::new();
+        let fuel = std::mem::replace(&mut self.fuel, MUT_FUEL);
+        self.swap_streams();
+        for id in 0..self.scope.structs.len() {
+            let generic = self.scope.structs[id].applied.as_ref().map(|a| a.generic);
+            if generic.is_some() {
+                if generics.contains(&generic) {
+                    continue;
+                }
+                generics.push(generic);
+            }
+            let ty = self.scope.struct_ty(id);
+            for field in 0..self.scope.structs[id].fields.len() {
+                let name = self.scope.structs[id].fields[field].name.clone();
+                self.w.line();
+                self.cost.statement();
+                self.statement(|g| {
+                    g.w.text("let _ = ((");
+                    g.expr(&ty, ty.floor());
+                    g.w.text(&format!(")).{name}"));
+                });
+            }
+        }
+        self.swap_streams();
+        self.fuel = fuel;
     }
 
     /// A `mut` function changes what it gets: each parameter that adds something has a statement
@@ -2116,7 +2157,7 @@ impl Gen<'_> {
     /// and one of `sizes`, an optional's floor that of its payload. 0 for a type without one.
     pub(crate) fn size_for(&mut self, ty: &Ty, sizes: &[u64]) -> u64 {
         let floor = least_size(ty);
-        if matches!(ty, Ty::Class { .. }) || !ty.sized() {
+        if matches!(ty, Ty::Class { .. } | Ty::Struct { .. }) || !ty.sized() {
             return floor;
         }
         (floor + sizes[self.pick(sizes.len())]).min(MAX_SIZE)
@@ -2143,6 +2184,14 @@ impl Gen<'_> {
                     .collect();
                 format!("{ty}({})", fields.join(", "))
             }
+            Ty::Struct { id, .. } => {
+                let fields: Vec<String> = self.scope.structs[*id]
+                    .fields
+                    .iter()
+                    .map(|field| format!("{}: {}", field.name, self.default(&field.ty)))
+                    .collect();
+                format!("{ty}({})", fields.join(", "))
+            }
             Ty::Enum { id, .. } => {
                 let variant = &self.scope.enums[*id].variants[0];
                 let values: Vec<String> = variant.fields.iter().map(|f| self.default(f)).collect();
@@ -2160,6 +2209,16 @@ impl Gen<'_> {
             Ty::I64
         } else {
             ty
+        }
+    }
+
+    /// The type of a field of a struct: now and then a `[i64]`, since few structs would hold an
+    /// array that a `mut` call names an element of, at any depth.
+    fn struct_field_type(&mut self, size: u64) -> Ty {
+        if self.pick(6) == 0 {
+            Ty::Array(Box::new(Ty::I64))
+        } else {
+            self.field_type(size)
         }
     }
 
@@ -2219,6 +2278,190 @@ impl Gen<'_> {
         }
         self.w.close();
         self.w.line();
+    }
+
+    /// Now and then, up to `MAX_TYPES` structs, and, unless `first`, a pair of structs that hold
+    /// each other. They are written from the spare streams with fuel of their own, so no class,
+    /// enum or function moves for them.
+    fn structs(&mut self, first: bool) {
+        for _ in 0..self.mut_pick(MAX_TYPES + 1 - usize::from(first)) {
+            let fuel = std::mem::replace(&mut self.fuel, MUT_FUEL);
+            self.swap_streams();
+            self.structure();
+            self.swap_streams();
+            self.fuel = fuel;
+        }
+        if !first && self.mut_pick(2) == 1 {
+            let fuel = std::mem::replace(&mut self.fuel, MUT_FUEL);
+            self.swap_streams();
+            self.struct_pair();
+            self.swap_streams();
+            self.fuel = fuel;
+        }
+    }
+
+    /// `struct S { f: T ... fn m(self, ...) ... }`: fields of types declared before, each with a
+    /// cap on its size, then methods, which take plain `self` and may give the struct itself. A
+    /// struct may list `Display` or `Eq`, which the compiler writes; one in three writes a
+    /// method `to_string`, which is its `Display`, and one in five writes `eq`, which is its `Eq`.
+    pub(crate) fn structure(&mut self) {
+        let id = self.scope.structs.len();
+        // The body goes into a piece, so the header can name what the compiler writes for it.
+        let header = self.w.swap(Piece::default());
+        self.w.open();
+        let mut fields = Vec::new();
+        let mut size = 1;
+        for _ in 0..self.pick(MAX_FIELDS + 1) {
+            let mut ty = self.struct_field_type(size);
+            let mut cap = self.size_for(&ty, &CAPS);
+            if size + cap > MOST {
+                (ty, cap) = (Ty::I64, 0);
+            }
+            size += cap;
+            let name = self.scope.fresh("g");
+            self.w.line();
+            let written = self.spell(&ty);
+            self.w.text(&format!("{name}: {written}"));
+            fields.push(Field {
+                name,
+                ty,
+                mutable: false,
+                cap,
+            });
+        }
+        let has_class = fields.iter().any(|f| self.scope.contains_class(&f.ty));
+        self.scope.note_struct(&format!("S{id}"), &fields);
+        self.scope.structs.push(Struct {
+            fields,
+            size,
+            applied: None,
+            inferable: false,
+            has_class,
+            cycle: None,
+        });
+        let ty = Ty::structure(id, size);
+        self.scope.types.push(ty.clone());
+        for _ in 0..self.pick(MAX_METHODS + 1) {
+            if !self.spend(1) {
+                break;
+            }
+            self.w.line();
+            self.function(Some(ty.clone()), false);
+        }
+        if id % 3 == 1 {
+            self.w.line();
+            self.w.text("fn to_string(self) -> string { \"s\" }");
+        }
+        let written_eq = id % 5 == 3;
+        if written_eq {
+            self.w.line();
+            self.w.text("fn eq(self, _other: Self) -> bool { true }");
+        }
+        self.w.close();
+        let body = self.w.swap(header);
+        let mut listed = Vec::new();
+        if id.is_multiple_of(3) {
+            listed.push("Display");
+        }
+        if written_eq || !has_class && id.is_multiple_of(2) {
+            listed.push("Eq");
+        }
+        let listed = if listed.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", listed.join(", "))
+        };
+        self.w.text(&format!("struct S{id}{listed} "));
+        self.w.paste(&body);
+        self.w.line();
+    }
+
+    /// `struct A { b: B ... }` and `struct B { a: A? ... }`, which hold each other, so one field is
+    /// a box. The box holds no more than an `A` whose own box is `None`, so every value ends; `B`
+    /// is the type of an earlier-declared kind: its other fields are types declared before the
+    /// pair.
+    fn struct_pair(&mut self) {
+        let (a, b) = (self.scope.structs.len(), self.scope.structs.len() + 1);
+        let other = |g: &mut Self, size: &mut u64| {
+            let mut fields = Vec::new();
+            for _ in 0..g.pick(MAX_FIELDS) {
+                let mut ty = g.field_type(*size);
+                let mut cap = g.size_for(&ty, &CAPS);
+                if *size + cap > MOST {
+                    (ty, cap) = (Ty::I64, 0);
+                }
+                *size += cap;
+                let name = g.scope.fresh("g");
+                fields.push(Field {
+                    name,
+                    ty,
+                    mutable: false,
+                    cap,
+                });
+            }
+            fields
+        };
+        let mut size_b = 1;
+        let mut fields_b = other(self, &mut size_b);
+        let mut size_a = 1 + size_b;
+        let name = self.scope.fresh("g");
+        let mut fields_a = vec![Field {
+            name,
+            ty: Ty::structure(b, size_b),
+            mutable: false,
+            cap: size_b,
+        }];
+        // The fields of the pair hold the same class objects, whichever of them names them.
+        let rest = other(self, &mut size_a);
+        let has_class = rest
+            .iter()
+            .chain(&fields_b)
+            .any(|f| self.scope.contains_class(&f.ty));
+        fields_a.extend(rest);
+        // The box holds one `A` whose own box is `None`, which is `size_a` (`Gen::object`). Then
+        // a `B` is its own fields and that `A`, and an `A` is its fields and that `B`.
+        let boxed = size_a;
+        let filled = 2 * boxed <= MOST;
+        let cap = if filled { boxed } else { 0 };
+        if filled {
+            size_b += boxed;
+            fields_a[0].ty = Ty::structure(b, size_b);
+            fields_a[0].cap = size_b;
+            size_a = 2 * boxed;
+        }
+        let name = self.scope.fresh("g");
+        let link = fields_b.len();
+        fields_b.push(Field {
+            name,
+            ty: Ty::Optional(Box::new(Ty::structure(a, size_a))),
+            mutable: false,
+            cap,
+        });
+        for (id, fields, size) in [(a, fields_a, size_a), (b, fields_b, size_b)] {
+            self.w.text(&format!("struct S{id} "));
+            self.w.open();
+            for field in &fields {
+                self.w.line();
+                let written = self.spell(&field.ty);
+                self.w.text(&format!("{}: {written}", field.name));
+            }
+            self.w.close();
+            self.w.line();
+            self.scope.note_struct(&format!("S{id}"), &fields);
+            let cycle = Cycle {
+                partner: a + b - id,
+                link: (id == b).then_some(link),
+            };
+            self.scope.structs.push(Struct {
+                fields,
+                size,
+                applied: None,
+                inferable: false,
+                has_class,
+                cycle: Some(cycle),
+            });
+            self.scope.types.push(Ty::structure(id, size));
+        }
     }
 
     /// `enum E { V ... fn m(self, _other: Self) -> bool { true } }`: variants with no payload,
@@ -2380,6 +2623,7 @@ impl Gen<'_> {
             | Ty::Array(_)
             | Ty::Optional(_)
             | Ty::Class { .. }
+            | Ty::Struct { .. }
             | Ty::Enum { .. } => {
                 self.literal(ty, max);
                 return Folded { value: 0, size: 0 };
@@ -2512,6 +2756,7 @@ impl Gen<'_> {
                 | Ty::Array(_)
                 | Ty::Optional(_)
                 | Ty::Class { .. }
+                | Ty::Struct { .. }
                 | Ty::Enum { .. },
                 _,
             ) => self.const_literal(ty, max),

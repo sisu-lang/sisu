@@ -377,6 +377,7 @@ impl Checker<'_> {
         // A conversion makes a table, which only `mono` reaches.
         self.instantiates = true;
         self.record(Used::Interface(interface), at);
+        self.record_both(got);
         let converted = match checked {
             Ok(e) => {
                 let e = to_any(e, target);
@@ -437,6 +438,8 @@ impl Checker<'_> {
     /// accepted for the type of `e`.
     pub(super) fn make_any(&mut self, e: tir::Expr, want: Type) -> tir::Expr {
         self.instantiates = true;
+        // Every conversion records its root. Only a class reaches this one today.
+        self.record_shown_any(e.ty, want);
         match want.kind() {
             TypeKind::Optional(payload) => wrap(to_any(e, payload), want),
             _ => to_any(e, want),
@@ -637,7 +640,10 @@ fn mentions_self(ty: Type) -> bool {
                 }
             }
             TypeKind::Array(part) | TypeKind::Optional(part) => stack.push(part),
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+            TypeKind::Class(_, args)
+            | TypeKind::Struct(_, args)
+            | TypeKind::Enum(_, args)
+            | TypeKind::Any(_, args) => {
                 stack.extend_from_slice(args.get());
             }
             TypeKind::Assoc(base, _, args, _) => {

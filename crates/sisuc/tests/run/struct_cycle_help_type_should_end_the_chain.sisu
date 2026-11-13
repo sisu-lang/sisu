@@ -1,0 +1,28 @@
+// GIVEN the types that the E0027 help gives for two struct cycles
+// WHEN a field of each takes that type
+// THEN the program checks clean, and a value of each can be built
+
+struct Tree<T> {
+    root: Node<T>
+}
+
+struct Node<U> {
+    v: U
+    kids: Tree<U>?
+}
+
+struct G<T> {
+    r: H
+}
+
+struct H {
+    g: G<i64>?
+}
+
+fn main() {
+    let t = Tree(root: Node(v: 1, kids: None))
+    print(t.root.v)
+    print(t.root.kids == None)
+    let g: G<string> = G(r: H(g: None))
+    print(g.r.g == None)
+}

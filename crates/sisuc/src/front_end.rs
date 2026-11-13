@@ -3266,7 +3266,7 @@ fn main() {
     }
 
     #[test]
-    fn unnamed_item_runs_to_the_next_line_item() {
+    fn unnamed_item_should_run_to_the_next_line_item() {
         let src = "def total() {}\nfn main() {\n    let = 1\n}\n";
         assert_eq!(
             codes(src),
@@ -3276,7 +3276,7 @@ fn main() {
         let src = "export fn main() {\n    let = 1\n}\n";
         assert_eq!(codes(src), [(Code::Expected, (1, 1))]);
         assert_eq!(
-            codes("fn main() {}\nstruct P {}\n"),
+            codes("fn main() {}\nrecord P {}\n"),
             [(Code::Expected, (2, 1))]
         );
     }

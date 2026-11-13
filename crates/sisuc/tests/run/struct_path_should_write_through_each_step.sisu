@@ -1,0 +1,78 @@
+// GIVEN structs that hold a class, an enum, an array, a string and other structs
+// WHEN `main` writes through paths of fields and elements, and through a `mut` argument.
+// It also writes through a method of a class, `self` across a class, and `?.` past a class or an
+// enum.
+// THEN each write reaches its place, and each row prints the place after it
+class C {
+    mut n: i64
+    fn push(self, x: i64) {
+        self.n += x
+    }
+}
+enum E {
+    A
+    fn push(self, x: i64) {
+        print(x)
+    }
+}
+struct S { c: C }
+struct V { ys: [i64] }
+struct W { i: V }
+struct U { s: string }
+struct In { n: i64; xs: [i64] }
+struct T { i: In }
+struct AB { a: i64; b: i64 }
+struct Q {
+    c: C
+    fn set(self) {
+        self.c.n = 2
+    }
+}
+struct O { c: C?; e: E? }
+
+fn add(mut xs: [i64], x: i64) {
+    xs.push(x)
+}
+
+fn bump(mut a: i64, mut b: i64) {
+    a += 1
+    b += 2
+}
+
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(i: In) {
+    print(i)
+}
+
+fn main() {
+    let s = S(c: C(n: 0))
+    s.c.push(1)
+    print(s.c.n)                     // 1
+
+    let mut xs = [W(i: V(ys: [0, 0]))]
+    xs[0].i.ys[1] = 2
+    print(xs[0].i.ys)                // [0, 2]
+
+    let mut u = U(s: "a" + "b")
+    u.s += "x"
+    print(u.s)                       // abx
+
+    let mut t = T(i: In(n: 1, xs: [1]))
+    add(mut t.i.xs, 9)
+    print(t.i.xs)                    // [1, 9]
+
+    let mut ab = AB(a: 1, b: 1)
+    bump(mut ab.a, mut ab.b)
+    print(ab.a)                      // 2
+    print(ab.b)                      // 3
+
+    let q = Q(c: C(n: 0))
+    q.set()
+    print(q.c.n)                     // 2
+
+    let c = C(n: 0)
+    let o: O? = O(c: c, e: E.A)
+    o?.c?.push(5)
+    print(c.n)                       // 5: `o` holds the object of `c`
+    o?.e?.push(7)                    // 7, from `E.push`
+}

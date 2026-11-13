@@ -1,0 +1,15 @@
+struct P {
+    n: i64
+
+    fn a(self) {
+        self.n = 1
+    }
+
+    fn b(self) {
+        self = P(n: 2)
+    }
+
+    fn c(mut self) {}
+}
+
+fn main() {}

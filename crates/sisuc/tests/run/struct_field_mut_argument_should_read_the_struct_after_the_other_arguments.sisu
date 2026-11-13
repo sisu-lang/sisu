@@ -1,0 +1,23 @@
+// GIVEN `class C { mut s: S }`, where `S` holds the class object `d`
+// WHEN `bump(mut c.s.d.k, swap(c))` runs, and `swap` puts a new `S` in `c`
+// THEN `bump` changes the new `d`, and the old `d` keeps 1
+class D { mut k: i64 }
+struct S { d: D }
+class C { mut s: S }
+
+fn swap(c: C) -> i64 {
+    c.s = S(d: D(k: 100))
+    0
+}
+
+fn bump(mut k: i64, _x: i64) {
+    k += 1
+}
+
+fn main() {
+    let c = C(s: S(d: D(k: 1)))
+    let old = c.s.d
+    bump(mut c.s.d.k, swap(c))
+    print(old.k)
+    print(c.s.d.k)
+}

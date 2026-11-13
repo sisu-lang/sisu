@@ -134,6 +134,7 @@ pub(crate) fn item_sites(program: &str) -> Vec<MistakeSite> {
             TokenKind::Extend if depth == 0 => items.push((token.span.range().start, None)),
             TokenKind::Fn
             | TokenKind::Class
+            | TokenKind::Struct
             | TokenKind::Enum
             | TokenKind::Interface
             | TokenKind::Const
@@ -408,6 +409,7 @@ mod tests {
             ("const c: i64 = 1\n", "c"),
             ("type A = i64\n", "A"),
             ("class C {\n    x: i64\n}\n", "C"),
+            ("struct S {\n    x: i64\n}\n", "S"),
             ("enum E {\n    V\n}\n", "E"),
             ("interface I {\n    type T\n    fn f(self)\n}\n", "I"),
         ];
@@ -512,9 +514,17 @@ mod tests {
                 // Nothing is replaced: the text is the empty range, and the copy starts an item.
                 Kind::Duplicate => {
                     text.is_empty()
-                        && ["fn ", "class ", "enum ", "interface ", "const ", "type "]
-                            .iter()
-                            .any(|keyword| m.by.starts_with(keyword))
+                        && [
+                            "fn ",
+                            "class ",
+                            "struct ",
+                            "enum ",
+                            "interface ",
+                            "const ",
+                            "type ",
+                        ]
+                        .iter()
+                        .any(|keyword| m.by.starts_with(keyword))
                 }
             };
             assert!(ok, "seed {n}: {:?} replaces {text:?}", m.kind);
@@ -621,14 +631,14 @@ mod tests {
         false
     }
 
-    /// GIVEN the programs of the 64 seeds
+    /// GIVEN the programs of the first 64 seeds, and of more while a site is not found
     /// WHEN the generator records the literal sites
     /// THEN some literal mistake sits at an argument of a free function
     /// AND some sits at the tail of a function, each with its E0032 at the literal
     #[test]
     fn literal_mistakes_should_sit_at_a_free_function_argument_and_at_a_function_tail() {
         let (mut arguments, mut tails) = (0, 0);
-        for n in 0..coverage::SEEDS {
+        coverage::search_seeds(coverage::SEEDS, |n| {
             let g = generate(&coverage::seed(n));
             let tokens = tokens(&g.program);
             for m in g.mistakes.iter().filter(|m| m.kind == Kind::Literal) {
@@ -641,7 +651,8 @@ mod tests {
                 arguments += usize::from(argument);
                 tails += usize::from(tail);
             }
-        }
+            arguments > 0 && tails > 0
+        });
         assert!(
             arguments > 0,
             "no literal mistake at a free-function argument"

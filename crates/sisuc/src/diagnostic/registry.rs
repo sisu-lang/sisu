@@ -2,7 +2,7 @@
 
 use super::{Diagnostic, Edit, Fix, Severity, Suggestion};
 use crate::conformance::CHOICE_DEPTH_LIMIT;
-use crate::payload_limit::PAYLOAD_LIMIT_GIB;
+use crate::payload_limit::{self, PAYLOAD_LIMIT_GIB};
 use crate::source::Span;
 
 /// The code table: each code's variant and number. A number is never reused or changed.
@@ -114,7 +114,7 @@ codes! {
     FieldNotMethod = "E0058",
     PrintArgument = "E0059",
     PrintNever = "E0061",
-    MayBeNone = "E0062",
+    MayBeNone | ChainWriteOnStruct = "E0062",
     NoMember = "E0063",
     TooManyArguments = "E0064",
     ArgumentNeedsLabel = "E0065",
@@ -227,6 +227,7 @@ codes! {
     LetElseCanFinish = "E0172",
     LetElseValueEndsInBrace = "E0173",
     RefutablePattern = "E0174",
+    StructFieldMut = "E0175",
     NanComparison = "W0005",
     UnreachableArm = "W0006",
     RedundantSemicolon = "W0007",
@@ -238,6 +239,7 @@ codes! {
     UnusedMember = "W0013",
     UnusedVariable = "W0014",
     PrintsOptional = "W0015",
+    WriteToCopy = "W0016",
 }
 
 /// Codes the compiler no longer reports, and their explanations (`docs/diagnostics/README.md`,
@@ -286,11 +288,12 @@ impl Code {
 
 /// What went wrong, and where: the facts each diagnostic code is built from.
 pub(crate) enum DiagnosticKind {
-    /// An assignment at `at` to `name`, or to an element of it, which cannot change.
+    /// An assignment at `at` to `name`, or to a part of it, which cannot change. `written` says
+    /// which part.
     AssignToImmutable {
         name: String,
         at: Span,
-        element: bool,
+        written: Written,
         cause: Immutable,
     },
     /// A `push` at `at` onto `name`, or onto an element of it, which cannot change.
@@ -529,6 +532,9 @@ pub(crate) enum DiagnosticKind {
         shown: String,
         always: bool,
     },
+    /// A `mut` at `keyword` in front of a field of a struct; the fix removes `remove`, from the
+    /// `mut` to the field's name or to a comment before it.
+    StructFieldMut { keyword: Span, remove: Span },
     /// The interface `interface`, as written after `any` at `at`, which cannot be `any`. `owner`
     /// is the interface that has the `reason`: `interface` itself, or one it inherits.
     CannotBeAny {
@@ -623,14 +629,17 @@ pub(crate) enum DiagnosticKind {
         needs: Option<(String, Span)>,
     },
     /// The enum `name`, declared at `at`, has a payload that can be 4 GiB or more
-    /// (`payload_limit`). A payload must be less than 4 GiB: that is the limit of the language for
-    /// every alignment, and a value of that size can never be on the stack. `instance` is
-    /// whether `name` is an instance of the generic enum declared at `at`. `holder` is the enum
-    /// of the prelude that holds `name` inline, when its payload is the one of 4 GiB or more.
-    /// `used` is the first expression that uses the instance, when `mono` knows it.
+    /// (`payload_limit`). Or the struct `name` can be 4 GiB or more, and `kind` says which. A
+    /// payload or a struct must be less than 4 GiB. That is the limit of the language for every
+    /// alignment, and a value of that size can never be on the stack. `instance` is whether `name`
+    /// is an instance of the generic enum declared at `at`. `holder` is the enum of the prelude
+    /// that holds `name` inline, when its payload is the one of 4 GiB or more. `used` is the first
+    /// expression that uses the instance, when `mono` knows it.
     PayloadTooLarge {
         name: String,
+        kind: payload_limit::Kind,
         instance: bool,
+        holds: payload_limit::Holds,
         holder: Option<String>,
         at: Span,
         used: Option<Span>,
@@ -923,6 +932,9 @@ pub(crate) enum DiagnosticKind {
         /// What the help says to unwrap.
         unwrap: UnwrapHelp,
     },
+    /// A write at `at`, from the end of a `?.`'s base to its field, that the `?.` on a struct
+    /// value leads to. `replace` is the base as written, when the help can name it.
+    ChainWriteOnStruct { at: Span, replace: Option<String> },
     /// The `kind` member `name`, at `at`, which `owner` does not have.
     NoMember {
         owner: String,
@@ -1008,8 +1020,8 @@ pub(crate) enum DiagnosticKind {
     },
     /// The first byte at `at` that is not UTF-8, which the text shown in its place replaces.
     InvalidUtf8 { at: Span },
-    /// An assignment to the `self` at `at`.
-    AssignToSelf { at: Span },
+    /// An assignment to the `self` at `at`, the `self` of a struct method when `struct_self`.
+    AssignToSelf { at: Span, struct_self: bool },
     /// An assignment to `name`, at `at`, which is a function.
     AssignToFunction { name: String, at: Span },
     /// A `let` that binds the `_` at `at`. The fix removes `remove`: the `mut` and the white
@@ -1085,6 +1097,16 @@ pub(crate) enum DiagnosticKind {
     /// The printed or interpolated optional at `at`, which may print `None`. `value` is its path
     /// as written, when it has one.
     PrintsOptional { value: Option<String>, at: Span },
+    /// The write at `at` to the local declared at `copy`, a copy of the place `place`, which
+    /// nothing reads; `help` names what the root of the place allows. A `place` that spans lines
+    /// or holds a comment is `None`, and the diagnostic names only the `root`.
+    WriteToCopy {
+        place: Option<String>,
+        root: String,
+        at: Span,
+        copy: Span,
+        help: String,
+    },
     /// The `todo` at `at`, which panics when it runs.
     TodoLeft { at: Span },
     /// A `todo` written as Rust's `todo!` or as `todo()`: `at` is the first extra token, and
@@ -1674,6 +1696,7 @@ pub(crate) enum ClashKind {
     Function,
     Constant,
     Class,
+    Struct,
     Enum,
     Interface,
     Alias,
@@ -1687,6 +1710,7 @@ impl ClashKind {
             ClashKind::Function => "function",
             ClashKind::Constant => "constant",
             ClashKind::Class => "class",
+            ClashKind::Struct => "struct",
             ClashKind::Enum => "enum",
             ClashKind::Interface => "interface",
             ClashKind::Alias => "type alias",
@@ -1880,6 +1904,7 @@ fn instances(n: usize) -> String {
 pub(crate) enum Definition {
     Function,
     Class,
+    Struct,
     Field,
     Method,
     Binding,
@@ -1905,6 +1930,7 @@ impl Definition {
         match self {
             Definition::Function => "function",
             Definition::Class => "class",
+            Definition::Struct => "struct",
             Definition::Field => "field",
             Definition::Method => "method",
             Definition::Binding => "binding",
@@ -1922,7 +1948,9 @@ impl Definition {
     fn unused_verb(self) -> &'static str {
         match self {
             Definition::Function | Definition::Method => "called",
-            Definition::Class | Definition::Enum | Definition::Variant => "built",
+            Definition::Class | Definition::Struct | Definition::Enum | Definition::Variant => {
+                "built"
+            }
             Definition::Field => "read",
             Definition::Constant
             | Definition::Binding
@@ -2023,6 +2051,7 @@ impl WideKind {
 #[derive(Clone, Copy)]
 pub(crate) enum NotInterface {
     Class,
+    Struct,
     Enum,
     BuiltIn,
     TypeParam,
@@ -2037,6 +2066,7 @@ impl NotInterface {
     fn named(self) -> &'static str {
         match self {
             NotInterface::Class => "a class",
+            NotInterface::Struct => "a struct",
             NotInterface::Enum => "an enum",
             NotInterface::BuiltIn => "a built-in type",
             NotInterface::TypeParam => "a type parameter",
@@ -2287,6 +2317,9 @@ pub(crate) enum UnwrapHelp {
     Object(String),
     /// Nothing: no `if let` of the optional gives a place that can be written.
     Nothing,
+    /// The optional struct value `base`, as written: an unwrap gives a copy, so the help says to
+    /// replace the value.
+    Replace(String),
     /// A `.` on an optional of an optional: `?.` takes one layer only, so the help peels the
     /// other layers first. `receiver` and `member` are as written; `layers` is the count of
     /// `?? None`.
@@ -2317,8 +2350,14 @@ fn unwrap_text(unwrap: UnwrapHelp, fix: bool) -> Option<String> {
             member,
             layers,
         } => Some(peel_text("extra", &receiver, &member, layers)),
+        UnwrapHelp::Replace(base) => Some(replace_text(&base)),
         UnwrapHelp::Nothing => None,
     }
+}
+
+/// The help that replaces the optional struct value `base`, as written.
+fn replace_text(base: &str) -> String {
+    format!("replace the value: `{base} = Some(...)`")
 }
 
 /// The help "peel the `which` layer first": `receiver` with `layers` of `?? None` around it, then
@@ -2709,6 +2748,7 @@ pub(crate) enum Owner {
     Class,
     Enum(String),
     Interface,
+    Struct,
 }
 
 /// What is wrong with a conformance.
@@ -3029,9 +3069,13 @@ pub(crate) enum Unbuilt {
         target: String,
         ty: Span,
     },
-    /// An enum, and the links that lead from it back to it: each holder (`D.Q` or `K.d`) and
-    /// the type it holds.
-    Chain(Vec<(String, String)>),
+    /// An enum or a struct, and the links that lead from it back to it: each holder (`D.Q` or
+    /// `K.d`) and the type it holds. `first_struct` is the first struct on the chain, which the
+    /// help names.
+    Chain {
+        links: Vec<(String, String)>,
+        first_struct: Option<String>,
+    },
 }
 
 /// What the report of a missing `mut` offers for the argument.
@@ -3138,6 +3182,19 @@ pub(crate) enum Immutable {
     Constant {
         declared: Span,
     },
+    /// The plain `self` of a struct method.
+    StructSelf,
+}
+
+/// What a write changes of its root.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Written {
+    /// The root itself: `t = v`.
+    Whole,
+    /// An element of the root: `t[i] = v`.
+    Element,
+    /// A part of the root, through a struct field: `t.n = v` or `t.i.xs[0] = v`.
+    Part,
 }
 impl From<DiagnosticKind> for Diagnostic {
     #[expect(
@@ -3150,12 +3207,16 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::AssignToImmutable {
                 name,
                 at,
-                element,
+                written,
                 cause,
             } => {
-                let what = if element { "an element of " } else { "" };
+                let what = match written {
+                    Written::Whole => "",
+                    Written::Element => "an element of ",
+                    Written::Part => "a part of ",
+                };
                 let d = Diagnostic::coded(code, at, format!("cannot assign to {what}`{name}`"));
-                immutable_cause(d, &name, element, &cause)
+                immutable_cause(d, &name, written != Written::Whole, &cause)
             }
             DiagnosticKind::PushToImmutable { name, at, cause } => {
                 let d = Diagnostic::coded(code, at, format!("cannot change `{name}`"))
@@ -3206,7 +3267,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d = Diagnostic::coded(
                     code,
                     at,
-                    "`{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`",
+                    "`{` must be on the same line as `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`",
                 );
                 match join {
                     Some(join) => d.with_fix(join_fix(
@@ -3496,6 +3557,13 @@ impl From<DiagnosticKind> for Diagnostic {
                         false,
                         "remove the `mut`",
                     ),
+                    // The body may still write through `self`, so no fix is exact.
+                    Owner::Struct => Diagnostic::coded(
+                        code,
+                        keyword,
+                        "a struct method cannot take `mut self` yet",
+                    )
+                    .with_help("take `self` and return the changed copy"),
                 }
             }
             DiagnosticKind::InterfaceBody { at, form } => {
@@ -3719,7 +3787,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     ),
                     CannotExtendForm::TypeParam => (
                         format!(
-                            "`extend` takes a class or enum, and `{written}` is a type parameter"
+                            "`extend` takes a class, struct or enum, and `{written}` is a type parameter"
                         ),
                         None,
                     ),
@@ -3732,7 +3800,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     ),
                     CannotExtendForm::Any => (
                         format!(
-                            "`extend` takes a class or enum, and `{written}` is an interface value"
+                            "`extend` takes a class, struct or enum, and `{written}` is an interface value"
                         ),
                         None,
                     ),
@@ -3839,37 +3907,52 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::PayloadTooLarge {
                 name,
+                kind,
                 instance,
+                holds,
                 holder,
                 at,
                 used,
             } => {
-                // The span is the declaration, which holds the other enums in an instance only.
+                let noun = kind.noun();
+                // The span is the declaration, which holds the other types in an instance only.
                 let this = if instance {
-                    "an instance of this enum"
+                    format!("an instance of this {noun}")
                 } else {
-                    "this enum"
+                    format!("this {noun}")
                 };
-                let (message, label) = match holder {
-                    Some(holder) => (
+                let (message, label) = match (holder, kind) {
+                    (Some(holder), _) => (
                         format!(
-                            "enum `{name}` can make the payload of `{holder}` {PAYLOAD_LIMIT_GIB} GiB or more"
+                            "{noun} `{name}` can make the payload of `{holder}` {PAYLOAD_LIMIT_GIB} GiB or more"
                         ),
-                        format!("`{holder}` holds {this} inline"),
+                        Some(format!("`{holder}` holds {this} inline")),
                     ),
-                    None => (
+                    (None, payload_limit::Kind::Enum) => (
                         format!("the payload of enum `{name}` can be {PAYLOAD_LIMIT_GIB} GiB or more"),
-                        format!("{this} holds other enums inline"),
+                        held_label(&this, holds, "other enums", "structs"),
+                    ),
+                    (None, payload_limit::Kind::Struct) => (
+                        format!("struct `{name}` can be {PAYLOAD_LIMIT_GIB} GiB or more"),
+                        held_label(&this, holds, "enums", "other structs"),
                     ),
                 };
-                let d = Diagnostic::coded(code, at, message).with_label(label);
+                let d = Diagnostic::coded(code, at, message);
+                let d = match label {
+                    Some(label) => d.with_label(label),
+                    None => d,
+                };
                 let d = match used {
                     Some(used) => d.with_secondary(used, "the instance is used here"),
                     None => d,
                 };
+                let whole = match kind {
+                    payload_limit::Kind::Enum => "payload",
+                    payload_limit::Kind::Struct => "struct",
+                };
                 d.with_help(format!(
-                    "a payload must be less than {PAYLOAD_LIMIT_GIB} GiB. Hold a part in a class or an array. \
-                     A class field adds the size of a pointer to the payload, and an array field adds \
+                    "a {whole} must be less than {PAYLOAD_LIMIT_GIB} GiB. Hold a part in a class or an array. \
+                     A class field adds the size of a pointer to the {whole}, and an array field adds \
                      the size of three pointers."
                 ))
             }
@@ -3947,7 +4030,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     )
                 },
             )
-            .with_help("hold an inner part in a field of a class or an enum"),
+            .with_help("hold an inner part in a field of a class, an enum or a struct"),
             DiagnosticKind::AnyForm { at, form } => match form {
                 AnyFormKind::Optional {
                     written,
@@ -4247,6 +4330,19 @@ impl From<DiagnosticKind> for Diagnostic {
             } => Diagnostic::coded(code, at, "this pattern can fail to match")
                 .with_label(format!("`{shown}` may not match"))
                 .with_help("add an `else` block that does not finish, or use `if let` or `match`"),
+            DiagnosticKind::StructFieldMut { keyword, remove } => {
+                Diagnostic::coded(code, keyword, "a field of a struct has no `mut`")
+                    .with_label("delete this word")
+                    .with_help("a `let mut` holder can change each field")
+                    .with_fix(Fix {
+                        message: "remove the `mut`".to_string(),
+                        safe: true,
+                        edits: vec![Edit {
+                            span: remove,
+                            replacement: String::new(),
+                        }],
+                    })
+            }
             DiagnosticKind::CannotBeAny {
                 interface,
                 owner,
@@ -4406,7 +4502,10 @@ impl From<DiagnosticKind> for Diagnostic {
                         replacement: "?".to_string(),
                     }],
                 }),
-                Unbuilt::Chain(links) => {
+                Unbuilt::Chain {
+                    links,
+                    first_struct,
+                } => {
                     let (shown, more) = cycle_shown(&links);
                     let mut parts: Vec<_> = (shown.iter())
                         .map(|(holder, held)| format!("`{holder}` holds a `{held}`"))
@@ -4415,8 +4514,15 @@ impl From<DiagnosticKind> for Diagnostic {
                         parts.push(format!("{more} more"));
                     }
                     let chain = parts.join(", and ");
-                    Diagnostic::coded(code, at, format!("no value of `{name}` can be built"))
-                        .with_label(chain)
+                    let d =
+                        Diagnostic::coded(code, at, format!("no value of `{name}` can be built"))
+                            .with_label(chain);
+                    match first_struct {
+                        Some(s) => d.with_help(format!(
+                            "a field of type `{s}?`, or an enum with a variant that holds no `{s}`, ends the chain"
+                        )),
+                        None => d,
+                    }
                 }
             },
             DiagnosticKind::NoMain => {
@@ -4450,7 +4556,7 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::UnknownType { name, at, form } => match form {
                 UnknownForm::Name { suggestion } => similar(
                     Diagnostic::coded(code, at, format!("cannot find type `{name}`")).with_help(
-                        "the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`",
+                        "the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums, structs and arrays such as `[i64]`",
                     ),
                     at,
                     suggestion,
@@ -5065,6 +5171,13 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
+            DiagnosticKind::ChainWriteOnStruct { at, replace } => {
+                let d = Diagnostic::coded(code, at, "`?.` cannot write a field of a struct value yet");
+                match replace {
+                    Some(base) => d.with_help(replace_text(&base)),
+                    None => d,
+                }
+            }
             DiagnosticKind::NoMember {
                 owner,
                 kind,
@@ -5324,14 +5437,17 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 format!("the type that `{ty}` names nests deeper than {limit} levels"),
             )
-            .with_help("hold an inner part in a field of a class or an enum"),
+            .with_help("hold an inner part in a field of a class, an enum or a struct"),
             DiagnosticKind::InvalidUtf8 { at } => {
                 Diagnostic::coded(code, at, "source is not valid UTF-8")
                     .with_help("save the file as UTF-8")
             }
-            DiagnosticKind::AssignToSelf { at } => {
-                Diagnostic::coded(code, at, "cannot assign to `self`")
-                    .with_help("an object is shared: `self` can already write every `mut` field")
+            DiagnosticKind::AssignToSelf { at, struct_self } => {
+                Diagnostic::coded(code, at, "cannot assign to `self`").with_help(if struct_self {
+                    STRUCT_SELF_HELP
+                } else {
+                    "an object is shared: `self` can already write every `mut` field"
+                })
             }
             DiagnosticKind::AssignToFunction { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` is a function, not a variable"))
@@ -5515,6 +5631,26 @@ impl From<DiagnosticKind> for Diagnostic {
                 .with_help(format!(
                     "use `if let`, give a default with `??`, or call {call} to write \"None\" on purpose"
                 ))
+            }
+            DiagnosticKind::WriteToCopy {
+                place,
+                root,
+                at,
+                copy,
+                help,
+            } => {
+                let (of, name) = match place {
+                    Some(place) => (format!("`{place}`"), place),
+                    None => (format!("a part of `{root}`"), root),
+                };
+                Diagnostic::coded(
+                    code,
+                    at,
+                    format!("this writes to a copy of {of}, and nothing reads the copy"),
+                )
+                .with_label(format!("`{name}` does not change"))
+                .with_secondary(copy, "a copy")
+                .with_help(help)
             }
             DiagnosticKind::TodoLeft { at } => {
                 Diagnostic::coded(code, at, "`todo` panics when it runs")
@@ -6710,6 +6846,23 @@ fn last_byte(spec: Span) -> Span {
     Span::new(spec.end() - 1, spec.end())
 }
 
+/// The E0160 label for `this`, which names the kinds it holds inline: `enums` and `structs` are
+/// their words. A type that holds neither gets no label.
+fn held_label(
+    this: &str,
+    holds: payload_limit::Holds,
+    enums: &str,
+    structs: &str,
+) -> Option<String> {
+    let held = match (holds.enums, holds.structs) {
+        (true, true) => format!("{enums} and {structs}"),
+        (true, false) => enums.to_string(),
+        (false, true) => structs.to_string(),
+        (false, false) => return None,
+    };
+    Some(format!("{this} holds {held} inline"))
+}
+
 fn unsafe_fix(message: &str, span: Span, replacement: &str) -> Fix {
     Fix {
         message: message.to_string(),
@@ -6759,8 +6912,53 @@ fn immutable_cause(d: Diagnostic, name: &str, element: bool, cause: &Immutable) 
             d.with_label("cannot assign")
         }
         .with_secondary(declared, "declared with `const` here"),
+        Immutable::StructSelf => d.with_help(STRUCT_SELF_HELP),
     }
 }
+
+/// The help of W0016 for a copy. The root `root` cannot change for the reason `cause` gives, or
+/// can change when there is none. `place` is the place that the copy holds, when it is more than
+/// the root: then the help says that the place cannot change. A `hidden` root has the name of the
+/// copy, so the copy hides it. Then a root that is a `let` or can change gets no advice that
+/// names it. A field and a constant give none: a class step is not a copy, and a constant of a
+/// struct or an array is E0085.
+pub(crate) fn copy_help(
+    cause: Option<&Immutable>,
+    root: &str,
+    place: Option<&str>,
+    hidden: bool,
+) -> Option<String> {
+    if hidden && matches!(cause, None | Some(Immutable::Let { .. })) {
+        return Some("delete the write".to_string());
+    }
+    let so =
+        |here: &str| place.map_or(String::new(), |p| format!(", so `{p}` cannot change{here}"));
+    Some(match cause {
+        None => "write to the place itself, not to the copy".to_string(),
+        Some(Immutable::Let { .. }) => format!(
+            "`{root}` is a `let`{}: delete the write, or make `{root}` a `let mut` and write to the place",
+            so("")
+        ),
+        Some(Immutable::Param { .. }) => format!(
+            "`{root}` is a plain parameter{}: delete the write, or return the changed copy",
+            so(" here")
+        ),
+        Some(Immutable::StructSelf) => format!(
+            "`self` cannot change in this method{}: delete the write, or return the changed copy",
+            so(" here")
+        ),
+        Some(Immutable::Unwrapped { keyword, .. }) => {
+            format!(
+                "`{root}` is bound by `{keyword}`{}: delete the write",
+                so(" here")
+            )
+        }
+        Some(Immutable::Field { .. } | Immutable::Constant { .. }) => return None,
+    })
+}
+
+/// The help of a write through the plain `self` of a struct method.
+const STRUCT_SELF_HELP: &str = "copy `self` into a `let mut` variable";
 
 /// The indefinite article before the type `ty`: "an" before a vowel letter, except the types
 /// `u8` and the like, which say "you".
@@ -6821,6 +7019,7 @@ fn mut_not_place(d: Diagnostic, name: &str, cause: &NotPlace) -> Diagnostic {
         NotPlace::Immutable(Immutable::Constant { declared }) => {
             d.with_secondary(declared, "declared with `const` here")
         }
+        NotPlace::Immutable(Immutable::StructSelf) => d.with_help(STRUCT_SELF_HELP),
     }
 }
 

@@ -308,6 +308,7 @@ impl Walk {
             Rvalue::Call { args: operands, .. }
             | Rvalue::DynCall { args: operands, .. }
             | Rvalue::New { args: operands, .. }
+            | Rvalue::Struct { args: operands, .. }
             | Rvalue::Variant { args: operands, .. }
             | Rvalue::ArrayLit(operands)
             | Rvalue::Interpolate {

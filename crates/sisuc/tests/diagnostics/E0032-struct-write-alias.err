@@ -1,0 +1,60 @@
+error[E0033]: cannot find binding `nope`
+  --> E0032-struct-write-alias.sisu:26:8
+   |
+26 |     mk(nope).n = "a"
+   |        ^^^^
+
+error[E0032]: expected `Id`, found `string`
+  --> E0032-struct-write-alias.sisu:26:18
+   |
+26 |     mk(nope).n = "a"
+   |                  ^^^
+
+error[E0021]: cannot assign to this expression
+  --> E0032-struct-write-alias.sisu:27:5
+   |
+27 |     mk(1).n = "a"
+   |     ^^^^^^^
+
+error[E0032]: expected `Id`, found `string`
+  --> E0032-struct-write-alias.sisu:27:15
+   |
+27 |     mk(1).n = "a"
+   |               ^^^
+
+error[E0062]: `?.` cannot write a field of a struct value yet
+  --> E0032-struct-write-alias.sisu:28:8
+   |
+28 |     u.t?.i.n = "a"
+   |        ^^^
+   |
+   = help: replace the value: `u.t = Some(...)`
+
+error[E0032]: expected `Id`, found `string`
+  --> E0032-struct-write-alias.sisu:28:16
+   |
+28 |     u.t?.i.n = "a"
+   |                ^^^
+
+error[E0062]: `?.` cannot write a field of a struct value yet
+  --> E0032-struct-write-alias.sisu:29:8
+   |
+29 |     u.t?.n = "a"
+   |        ^^^
+   |
+   = help: replace the value: `u.t = Some(...)`
+
+error[E0032]: expected `Id`, found `string`
+  --> E0032-struct-write-alias.sisu:29:14
+   |
+29 |     u.t?.n = "a"
+   |              ^^^
+
+error[E0062]: `?.` cannot write a field of a struct value yet
+  --> E0032-struct-write-alias.sisu:31:11
+   |
+31 |         .t?.n = 2
+   |           ^^^
+
+sisu: 9 errors
+sisu: for more on a code, run `sisu explain <code>`: E0021, E0032, E0033, E0062

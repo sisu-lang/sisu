@@ -17,11 +17,48 @@ mod writer;
 pub(crate) mod coverage;
 
 use arbitrary::Unstructured;
+use rustc_hash::FxHashSet;
 
 use scope::{Scope, Ty};
 use writer::Writer;
 
+use crate::diagnostic::Diagnostic;
+use crate::{ast, lexer, parser};
+
 pub(crate) use mistake::{Kind, Mistake};
+
+/// The warnings W0013 among `diagnostics` that name a field of a struct of `source`. A generated
+/// program reads each field of each struct, so the checks reject these. A class and a variant may
+/// still leave a field or a variant unused.
+pub(crate) fn unread_struct_fields<'d>(
+    source: &str,
+    diagnostics: &'d [Diagnostic],
+) -> Vec<&'d Diagnostic> {
+    let unread = |d: &&Diagnostic| d.code().as_str() == "W0013";
+    // A clean program, the usual case, is not lexed and parsed again.
+    if !diagnostics.iter().any(|d| unread(&d)) {
+        return Vec::new();
+    }
+    let Ok(lexed) = lexer::lex(source) else {
+        return Vec::new();
+    };
+    let program = parser::parse(lexed, false).program;
+    let fields: FxHashSet<usize> = (program.items.iter())
+        .filter_map(|item| match item {
+            ast::Item::Struct(s) => Some(&s.members),
+            // The fields of a class may still be unread.
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|member| match member {
+            ast::Member::Field(field) => Some(field.name.span.start()),
+            ast::Member::Method(_) => None,
+        })
+        .collect();
+    (diagnostics.iter())
+        .filter(|d| unread(d) && fields.contains(&d.span().start()))
+        .collect()
+}
 
 pub(crate) struct Generated {
     pub(crate) program: String,
@@ -603,5 +640,24 @@ impl Cost {
                 .expect("a call in `main` should pass a literal depth");
             sum.saturating_add(call.times.saturating_mul(costs[call.callee][depth]))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unread_struct_fields;
+
+    /// GIVEN a struct and a class, each with a field that no code reads. WHEN the checker warns
+    /// W0013 on both. THEN only the field of the struct is an unread struct field.
+    #[test]
+    fn unread_struct_fields_should_name_only_a_field_of_a_struct() {
+        let source = "struct S {\n    a: i64\n    b: i64\n}\n\nclass K {\n    c: i64\n    d: i64\n}\n\nfn main() {\n    print(S(a: 1, b: 2).a)\n    print(K(c: 3, d: 4).c)\n}\n";
+        let (_, diagnostics) = crate::front_end::checked(source);
+        let unread = unread_struct_fields(source, &diagnostics);
+        let found: Vec<(&str, &str)> = unread
+            .iter()
+            .map(|d| (d.code().as_str(), &source[d.span().range()]))
+            .collect();
+        assert_eq!(found, [("W0013", "b")]);
     }
 }

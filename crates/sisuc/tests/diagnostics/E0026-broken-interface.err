@@ -4,7 +4,7 @@ error[E0026]: `Eq` is a built-in interface
 1 | interface Eq
   |           ^^
 
-error[E0004]: `{` must be on the same line as `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
+error[E0004]: `{` must be on the same line as `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop`
  --> E0026-broken-interface.sisu:2:1
   |
 2 | {}

@@ -3,7 +3,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::any::{AnyJoin, SEED, is_target, widen};
-use super::array::optional_array;
+use super::array::must_unwrap;
 use super::enums::unwrapped;
 use super::expr::{fits, local};
 use super::generic::Ahead;
@@ -399,6 +399,8 @@ impl Checker<'_> {
                 } else {
                     BindingKind::Let
                 };
+                // The initializer names the root as it was before this `let`.
+                let copy = mutable.and_then(|_| self.copy_of(init_expr, name.name));
                 let local = self.declare(name, ty, kind, *mutable);
                 if let Some(binding) = self
                     .body
@@ -407,6 +409,7 @@ impl Checker<'_> {
                     .and_then(|s| s.get_mut(&name.name))
                 {
                     binding.shown = shown;
+                    binding.copy = copy;
                 }
                 if let (None, Some(uninferred)) = (ty, uninferred) {
                     self.body.uninferred.insert(local, uninferred);
@@ -819,7 +822,7 @@ impl Checker<'_> {
             Some((_, TypeKind::Optional(payload)))
                 if matches!(payload.kind(), TypeKind::Array(_)) =>
             {
-                (None, Some(optional_array(e, UnwrapHelp::It)))
+                (None, Some(must_unwrap(e, UnwrapHelp::It)))
             }
             Some((ty, _)) => {
                 let found = self.type_name(ty);
@@ -880,8 +883,9 @@ impl Checker<'_> {
         (Ok(header), Some(element))
     }
 
-    /// Whether `e` names a value that no code can change while a `for` over it runs: a local
-    /// without `mut`, or a field without `mut` of such a place (W0002 and ADR 0011).
+    /// Whether `e` names a value that no code can change while a `for` over it runs. A local
+    /// without `mut` is one. So is a field without `mut` of such a place (W0002 and ADR 0011). So
+    /// is a field of a struct in such a place: a struct has no field that can change alone.
     fn fixed_place(&self, e: &tir::Expr) -> bool {
         match &e.kind {
             ExprKind::Local(local) => !self.body.locals[local.0].mutable,
@@ -890,6 +894,7 @@ impl Checker<'_> {
                     if !self.classes[class.0].fields[*index].mutable)
                     && self.fixed_place(base)
             }
+            ExprKind::StructField { base, .. } => self.fixed_place(base),
             _ => false,
         }
     }
@@ -1175,6 +1180,10 @@ impl Checker<'_> {
             let span = at(id, |id| self.classes[id.0].name.span);
             return Some((ClashKind::Class, span));
         }
+        if let Some(id) = self.names.struct_id(name) {
+            let span = at(id, |id| self.structs[id.0].name.span);
+            return Some((ClashKind::Struct, span));
+        }
         if let Some(id) = self.names.enum_id(name) {
             let span = at(id, |id| self.enums[id.0].name.span);
             return Some((ClashKind::Enum, span));
@@ -1340,7 +1349,11 @@ impl Checker<'_> {
         if let Ok(checked) = &mut checked {
             self.discard_tail(body, checked);
             if let (true, Some((ty, _))) = (frame.widened, frame.first) {
-                checked.each_expr_mut(&mut |e| wrap_breaks(e, 0, ty, frame.crossed));
+                let mut widened = Vec::new();
+                checked.each_expr_mut(&mut |e| wrap_breaks(e, 0, ty, frame.crossed, &mut widened));
+                for got in widened {
+                    self.record_shown_any(got, ty);
+                }
             }
         }
         if let (Some(at), Some(valued)) = (frame.bare, frame.valued) {
@@ -1692,9 +1705,9 @@ impl Checker<'_> {
         } else {
             operands.iter().rposition(tir::Expr::exits)
         };
-        let first_counted = operands
-            .iter()
-            .position(|e| e.ty.may_be_counted(&self.lowered_enums));
+        let first_counted = operands.iter().position(|e| {
+            e.ty.may_be_counted(&self.lowered_enums, &self.lowered_structs)
+        });
         let Some(last_exit) = last_exit.filter(|&exit| first_counted.is_some_and(|c| c < exit))
         else {
             return (Vec::new(), operands);
@@ -1799,6 +1812,7 @@ impl Checker<'_> {
             hides_name: false,
             also: Vec::new(),
             shown: None,
+            copy: None,
         };
         if kind == BindingKind::Param
             && let Some(first) = scope.get_mut(&name.name)
@@ -1820,7 +1834,7 @@ impl Checker<'_> {
         }
         // Nothing can reassign the binding it replaces from here on.
         if let Some(old) = scope.insert(name.name, binding) {
-            self.retire(name.name, &old);
+            self.retire(name.name, old);
         }
         local
     }
@@ -1833,7 +1847,7 @@ impl Checker<'_> {
             .pop()
             .expect("a scope should be open while a block is checked");
         for (name, b) in scope {
-            self.retire(name, &b);
+            self.retire(name, b);
         }
     }
 
@@ -1841,7 +1855,7 @@ impl Checker<'_> {
     /// start with `_` and it is a function's or a method's, it waits for the pass (W0014). A
     /// parameter of a body with a `todo` does not wait. Otherwise a `let mut` that was never
     /// reassigned gets W0002, and so does a `mut` parameter, unless a requirement spells its `mut`.
-    fn retire(&mut self, name: Symbol, b: &Binding) {
+    fn retire(&mut self, name: Symbol, b: Binding) {
         let never = !b.reassigned && !b.loop_named;
         // The fix removes the `mut` and the white space up to the name, but not a comment.
         let remove = b.keyword.filter(|_| never).map(|k| {
@@ -1873,12 +1887,13 @@ impl Checker<'_> {
                 at: b.span,
                 fix,
                 remove,
+                copy: b.copy,
             });
             return;
         }
         let form = match remove {
             Some(remove) => Some(NeverReassignedForm::Let { remove }),
-            None if never => self.never_reassigned_param(b),
+            None if never => self.never_reassigned_param(&b),
             None => None,
         };
         if let Some(form) = form {
@@ -2072,6 +2087,10 @@ fn reread(e: &tir::Expr) -> tir::Expr {
             base: Box::new(reread(base)),
             index: *index,
         },
+        ExprKind::StructField { base, index } => ExprKind::StructField {
+            base: Box::new(reread(base)),
+            index: *index,
+        },
         _ => unreachable!("a fixed place should be a local or a field of one"),
     };
     tir::Expr::new(kind, e.ty, e.span)
@@ -2080,7 +2099,7 @@ fn reread(e: &tir::Expr) -> tir::Expr {
 /// Wraps into `ty` each value of another type, `never` aside, that a `break` in `e` gives the
 /// loop `depth` loops out from `e`: the `T` values of a loop that a `T?` value widened. It enters
 /// nested loops only when `crossed`: when a `break` in one targets that loop.
-fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
+fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool, widened: &mut Vec<Type>) {
     let nested = matches!(e.kind, ExprKind::Loop(_));
     if nested && !crossed {
         return;
@@ -2090,7 +2109,7 @@ fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
         super::WRAP_LOOPS.set(super::WRAP_LOOPS.get() + 1);
     }
     let inner = depth + usize::from(nested);
-    e.each_child_mut(&mut |child| wrap_breaks(child, inner, ty, crossed));
+    e.each_child_mut(&mut |child| wrap_breaks(child, inner, ty, crossed, widened));
     if let ExprKind::Break {
         depth: target,
         value: Some(value),
@@ -2101,6 +2120,7 @@ fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
     {
         let placeholder = tir::Expr::new(ExprKind::None, ty, value.span);
         let payload = std::mem::replace(&mut **value, placeholder);
+        widened.push(payload.ty);
         **value = widen(payload, ty);
         #[cfg(test)]
         if !crossed {

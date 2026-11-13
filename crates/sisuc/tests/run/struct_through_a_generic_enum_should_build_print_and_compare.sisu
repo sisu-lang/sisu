@@ -1,0 +1,21 @@
+// GIVEN `enum W<T> { A(x: T); N }` and `struct S { w: W<S>; k: i64 }`: the cycle goes through
+// the instance `W<S>`, whose variant `N` ends it
+// WHEN a value is built, copied, and the copy's field `k` is written
+// THEN each value prints with its own `k`, and the two compare unequal
+enum W<T> {
+    A(x: T)
+    N
+}
+
+struct S { w: W<S>; k: i64 }
+
+fn main() {
+    let s = S(w: W.A(x: S(w: W.N, k: 1)), k: 2)
+    let mut t = s
+    t.k = 5
+    print(s)        // S(w: A(x: S(w: N, k: 1)), k: 2)
+    print(t)        // S(w: A(x: S(w: N, k: 1)), k: 5)
+    print(s == t)   // false
+    t.k = 2
+    print(s == t)   // true
+}

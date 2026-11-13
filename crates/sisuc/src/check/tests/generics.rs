@@ -4040,6 +4040,11 @@ const PART_ROWS: &[PartialRow<'static>] = {
             &[(Mismatch, S)],
         ),
         (
+            "struct Sb<A, B> {\n    a: A\n    b: B\n}\nfn fix<A>(x: A) -> Sb<i64, A> { Sb(a: 1, b: x) }\nfn h<U, V>(c: V, b: Sb<U, V>) {}\n",
+            "h(true, fix(\"s\"))",
+            &[(Mismatch, S)],
+        ),
+        (
             "fn mk_array<A, B>(a: A, b: B) -> [Two<A, B>] { [] }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "h(true, mk_array(\"s\", 1))",
             &[(Mismatch, S)],

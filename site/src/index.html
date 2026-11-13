@@ -29,13 +29,13 @@ error: not a number: kymmenen</pre></figure>
         <p class="snip-note"><code>let mut copy = team</code> gives a copy. A write to <code>copy</code>, at any depth, never changes <code>team</code>. A <code>let</code> value never changes.</p>
         <p class="snip-note">There is no shared object that changes behind your back, and no borrow checker.</p></div>
       <div><figure class="code"><figcaption class="cap">team.sisu</figcaption><pre data-lang="sisu" data-mark="12">
-{{text programs/pending/team.sisu}}</pre></figure>
+{{text programs/run/team.sisu}}</pre></figure>
         <figure class="code"><figcaption class="cap">output</figcaption><pre data-lang="out">
 Ilse
 Aino</pre></figure></div>
     </div>
   </div></section>
-  <!-- source: site/programs/pending/team.sisu, docs/adr/0046-structs-replace-classes.md -->
+  <!-- source: site/programs/run/team.sisu, docs/adr/0046-structs-replace-classes.md -->
   <section class="s" aria-labelledby="h-errors"><div class="w">
     <div class="s-h"><h2 id="h-errors">The compiler shows the fix</h2><p>Each error has a stable code and points at the code that caused it. When the fix is clear, the error shows it. With <code>--format json</code>, each fix also says if it is safe to apply.</p></div>
     <div class="pairs">

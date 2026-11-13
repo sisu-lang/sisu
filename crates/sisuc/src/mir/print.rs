@@ -6,7 +6,7 @@ use super::{
     Block, BlockId, Const, Function, LocalId, Operand, Place, Program, Projection, Rvalue,
     Statement, Terminator,
 };
-use crate::tir;
+use crate::tir::{self, Type};
 
 /// `text`, with ` [calls]` after it when the statement may call a written method.
 fn flagged(text: String, calls: bool) -> String {
@@ -89,11 +89,18 @@ impl Printer<'_> {
         local_name(self.function, id)
     }
 
-    /// `o#2.1`, `a#1[i#2]`, `(e#3 as 1).0`, `(p#4 as some)`.
+    /// `o#2.1`, `a#1[i#2]`, `(e#3 as 1).0`, `(p#4 as some)`, `t#5.name`, `(t#5.next as box)`.
     fn place(&self, place: &Place) -> String {
         let mut text = self.local(place.local);
+        let mut ty = self.function.locals[place.local.0].ty;
         for projection in &place.projections {
+            let base = ty;
+            ty = projection.projected(self.tir, ty);
             match projection {
+                Projection::StructField { index } => {
+                    let name = self.tir.struct_field(base, *index);
+                    write!(text, ".{name}").expect("writing to a string should not fail");
+                }
                 Projection::Field { index, .. } => {
                     write!(text, ".{index}").expect("writing to a string should not fail");
                 }
@@ -105,6 +112,7 @@ impl Printer<'_> {
                     write!(text, "[{index}]").expect("writing to a string should not fail");
                 }
                 Projection::Some => text = format!("({text} as some)"),
+                Projection::Box => text = format!("({text} as box)"),
             }
         }
         text
@@ -147,6 +155,10 @@ impl Printer<'_> {
             Rvalue::New { class, args } => {
                 let name = &self.tir.classes[class.0].name;
                 format!("new {name}({})", self.list(args))
+            }
+            Rvalue::Struct { id, args } => {
+                let name = &self.tir.structs[id.0].name;
+                format!("struct {name}({})", self.list(args))
             }
             Rvalue::Variant {
                 id,
@@ -394,7 +406,7 @@ fn with_otherwise(text: String, otherwise: Option<BlockId>) -> String {
 /// A constant as `--emit tir` prints it.
 fn constant(c: &Const) -> String {
     match c {
-        Const::Int(n, ty) if *ty == tir::Type::U8 => format!("{n}u8"),
+        Const::Int(n, ty) if *ty == Type::U8 => format!("{n}u8"),
         Const::Int(n, _) => format!("{n}"),
         // Rust's shortest text, which spells NaN `NaN`; Sisu spells it `nan`.
         Const::Float(x) if x.is_nan() => "nan".to_owned(),

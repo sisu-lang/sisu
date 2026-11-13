@@ -15,6 +15,7 @@ mod math;
 mod rc;
 mod show;
 mod string;
+mod structs;
 pub(crate) mod units;
 
 #[cfg(test)]
@@ -45,9 +46,10 @@ use inkwell::values::{
 use inkwell::{AddressSpace, GlobalVisibility, IntPredicate, OptimizationLevel};
 
 use self::array::element_of;
-use self::enums::{Component, EnumLayout};
+use self::enums::{Component, EnumLayout, boxed_type};
 use self::layout::{ClassLayout, HeapBlock, Niche, tbaa_tag};
 use self::rc::Helper;
+use self::structs::StructLayout;
 use self::units::{Placement, Unit};
 use crate::Sanitizer;
 use crate::conformance::Written;
@@ -56,8 +58,8 @@ use crate::mir::{
 };
 use crate::source::{LineIndex, Span};
 use crate::tir::{
-    ClassId, EnumId, FuncId, InterfaceId, LocalId, Program, Stream, Type, TypeArgs, TypeKind,
-    UnaryOp,
+    ClassId, EnumId, FuncId, Inline, InterfaceId, LocalId, Program, Stream, StructId, Type,
+    TypeArgs, TypeKind, UnaryOp,
 };
 
 /// The `expect` message for a builder call: codegen positions the builder before it emits code.
@@ -175,6 +177,7 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             source,
             classes: Vec::new(),
             enums: Vec::new(),
+            structs: Vec::new(),
             functions: Vec::new(),
             slots: Vec::new(),
             outs: Vec::new(),
@@ -235,8 +238,8 @@ pub(crate) struct Analyses {
     unreflexive: Vec<bool>,
     /// The classes that hold each other in a loop; see `rc::class_cycles`.
     class_cycles: rc::ClassCycles,
-    /// For each enum, indexed by `EnumId`, its component when the component has boxes; see
-    /// `enums::components`.
+    /// For each enum and then each struct, indexed by `Inline::node`, its component when the
+    /// component has boxes; see `enums::components`.
     components: Vec<Option<Component>>,
     /// The interfaces of the table of each `any` type, as `mono` laid them out.
     any_layouts: FxHashMap<Type, Vec<(InterfaceId, TypeArgs)>>,
@@ -260,7 +263,7 @@ impl Analyses {
         Analyses {
             unreflexive: rc::reaching_unreflexive(program),
             class_cycles: rc::class_cycles(program),
-            components: enums::components(&program.enums),
+            components: enums::components(&program.enums, &program.structs),
             any_layouts: (program.any_layouts.iter())
                 .map(|layout| (layout.any, layout.interfaces.clone()))
                 .collect(),
@@ -373,6 +376,14 @@ fn enum_of(ty: Type) -> EnumId {
     id
 }
 
+/// The struct of a struct field projection's base, whose type is `ty`.
+fn struct_of(ty: Type) -> StructId {
+    let TypeKind::Struct(id, _) = ty.kind() else {
+        unreachable!("mir should project a struct field only out of a struct")
+    };
+    id
+}
+
 fn zeroext(context: &Context) -> Attribute {
     context.create_enum_attribute(Attribute::get_named_enum_kind_id("zeroext"), 0)
 }
@@ -450,6 +461,8 @@ struct Codegen<'ctx, 'src> {
     classes: Vec<ClassLayout<'ctx>>,
     /// The LLVM types of each enum, indexed by `EnumId`.
     enums: Vec<EnumLayout<'ctx>>,
+    /// The LLVM types of each struct, indexed by `StructId`.
+    structs: Vec<StructLayout<'ctx>>,
     /// Indexed by `FuncId`.
     functions: Vec<FunctionValue<'ctx>>,
     /// The current function's locals, indexed by `LocalId`: each one's `alloca` and its LLVM
@@ -923,16 +936,32 @@ impl<'ctx> Codegen<'ctx, '_> {
                 }
             }
             Statement::Take { dest, place } => {
-                // The `check` before it bounds-checked the place.
-                let (value, _) = self.read(place, false);
+                // The `check` before it bounds-checked the place, a field or an element, as of a
+                // `Store`. A boxed `F?` field gives its value and leaves its storage zero.
+                let (address, ty, tag, boxed) =
+                    self.located(place.local, &place.projections, false);
+                let value = if boxed {
+                    self.take_boxed(address, ty)
+                } else {
+                    self.load_place(ty, address, "load", tag)
+                };
                 self.store(self.slot(*dest).0, value);
             }
             Statement::Store { place, value } => {
                 let (value, _) = self.operand(value);
-                let (address, _, tag) = self.address(place.local, &place.projections, false);
-                // Lowering stores only into a field or an element; a local is assigned.
-                let tag = tag.expect("a store's place should end in a field or an element");
-                self.store_tagged(address, value, tag);
+                let (address, ty, tag, boxed) =
+                    self.located(place.local, &place.projections, false);
+                // The `Take` before it left a boxed `F?` field's storage zero.
+                if boxed {
+                    self.store_boxed(address, value, ty, None);
+                    return;
+                }
+                // Lowering stores only into a field or an element; a local is assigned. A field
+                // of a struct has no tag.
+                match tag {
+                    Some(tag) => self.store_tagged(address, value, tag),
+                    None => self.store(address, value),
+                }
             }
             Statement::Push { place, value, at } => {
                 let (value, _) = self.operand(value);
@@ -949,8 +978,12 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.release(self.load_local(*local), self.types[local.0]);
             }
             Statement::MakeUnique(place) => {
-                let (address, ty, _) = self.address(place.local, &place.projections, false);
-                self.unique(address, ty);
+                let (address, ty, _, boxed) = self.located(place.local, &place.projections, false);
+                if boxed {
+                    self.box_unique(address, ty);
+                } else {
+                    self.unique(address, ty);
+                }
             }
             Statement::Check(place) => {
                 let Some((Projection::Index { index, span }, array)) =
@@ -1067,6 +1100,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 return self.call_value(*func, &args);
             }
             Rvalue::New { class, args } => self.new_object(*class, &self.values(args)).into(),
+            Rvalue::Struct { id, args } => self.struct_value(*id, &self.values(args)),
             Rvalue::Variant {
                 id,
                 variant,
@@ -1188,24 +1222,22 @@ impl<'ctx> Codegen<'ctx, '_> {
             } => {
                 let (lhs, ty) = self.operand(lhs);
                 let (rhs, other) = self.operand(rhs);
-                // `x == None` on a counted optional tests whether `x` holds a value; it compares
-                // no payload, so it calls no `eq` helper, which a class has none of.
+                // `x == None` tests whether `x` holds a value. It compares no payload, so it
+                // calls no `eq` helper, which a class or a struct may have none of.
                 if let Some(side) = none {
                     let (value, held) = match side {
                         Side::Lhs => (rhs, other),
                         Side::Rhs => (lhs, ty),
                     };
-                    if held.is_counted(&self.program.enums) {
-                        let present = self.has_value(held, value, "present");
-                        return Some(if *negated {
-                            present.into()
-                        } else {
-                            self.builder
-                                .build_not(present, "none")
-                                .expect(POSITIONED)
-                                .into()
-                        });
-                    }
+                    let present = self.has_value(held, value, "present");
+                    return Some(if *negated {
+                        present.into()
+                    } else {
+                        self.builder
+                            .build_not(present, "none")
+                            .expect(POSITIONED)
+                            .into()
+                    });
                 }
                 self.equal_value(*negated, ty, lhs, rhs).into()
             }
@@ -1320,7 +1352,21 @@ impl<'ctx> Codegen<'ctx, '_> {
                 let (address, ty, _) = self.address(local, outer, checked);
                 let id = enum_of(ty);
                 let ty = self.program.enums[id.0].variants[variant].fields[field].ty;
-                (self.payload_value(address, id, variant, field), ty)
+                (
+                    self.payload_value(address, Inline::Enum(id), variant, field),
+                    ty,
+                )
+            }
+            // A field of a struct has no TBAA tag, and a boxed `F?` field has no address of a
+            // value: `boxed_value` reads its storage.
+            Some((Projection::StructField { .. }, _)) => {
+                let (address, ty, _, boxed) = self.located(local, projections, checked);
+                let value = if boxed {
+                    self.boxed_value(address, ty)
+                } else {
+                    self.load_place(ty, address, "load", None)
+                };
+                (value, ty)
             }
             Some((Projection::Some, outer)) => {
                 let (optional, ty) = self.read_at(local, outer, checked);
@@ -1329,10 +1375,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                 };
                 (self.optional_value(ty, optional, "some"), payload)
             }
-            Some((Projection::Field { .. } | Projection::Index { .. }, _)) => {
+            // A field or an element has a TBAA tag, and the value in a box has none.
+            Some((Projection::Field { .. } | Projection::Index { .. } | Projection::Box, _)) => {
                 let (address, ty, tag) = self.address(local, projections, checked);
-                let tag = tag.expect("a field or an element should have a TBAA tag");
-                (self.load_place(ty, address, "load", Some(tag)), ty)
+                (self.load_place(ty, address, "load", tag), ty)
             }
         }
     }
@@ -1383,7 +1429,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 Projection::Payload { variant, field } => {
                     let id = enum_of(ty);
                     let place;
-                    (place, boxed) = self.field_place(address, id, *variant, *field);
+                    (place, boxed) = self.field_place(address, Inline::Enum(id), *variant, *field);
                     (
                         place,
                         self.program.enums[id.0].variants[*variant].fields[*field].ty,
@@ -1408,6 +1454,19 @@ impl<'ctx> Codegen<'ctx, '_> {
                     let place;
                     (place, ty, boxed) = self.some_place(address, ty, boxed);
                     (place, ty, None)
+                }
+                // A struct field has no TBAA tag: an access with no tag may alias any other. A
+                // boxed field gives its storage, as `boxed` says, and a `Box` after it the value.
+                &Projection::StructField { index } => {
+                    let id = struct_of(ty);
+                    let field = &self.program.structs[id.0].fields[index];
+                    boxed = field.boxed;
+                    (self.struct_field_ptr(id, address, index), field.ty, None)
+                }
+                Projection::Box => {
+                    let pointer = self.load_pointer(address);
+                    boxed = false;
+                    (self.box_value(boxed_type(ty), pointer), ty, None)
                 }
             };
         }
@@ -1559,6 +1618,9 @@ impl<'ctx> Codegen<'ctx, '_> {
     fn store(&self, ptr: PointerValue<'ctx>, value: BasicValueEnum<'ctx>) {
         if let Some(ty) = self.memory_type(value) {
             self.copy_memory(ptr, value.into_pointer_value(), ty);
+            return;
+        }
+        if self.is_empty(value.get_type()) {
             return;
         }
         self.builder.build_store(ptr, value).expect(POSITIONED);

@@ -76,6 +76,7 @@ impl Site {
 pub(super) enum ItemKind {
     Function,
     Class,
+    Struct,
     Enum,
     Interface,
     Constant,
@@ -87,6 +88,7 @@ pub(super) enum ItemKind {
 pub(super) enum ItemId {
     Function(tir::FuncId),
     Class(tir::ClassId),
+    Struct(tir::StructId),
     Enum(tir::EnumId),
     Interface(tir::InterfaceId),
     /// A place in `Aliases::infos`.
@@ -141,6 +143,7 @@ pub(super) enum Resolved {
 pub(super) struct NameMaps {
     functions: FxHashMap<Symbol, Declared<tir::FuncId>>,
     classes: FxHashMap<Symbol, Declared<tir::ClassId>>,
+    structs: FxHashMap<Symbol, Declared<tir::StructId>>,
     enums: FxHashMap<Symbol, Declared<tir::EnumId>>,
     interfaces: FxHashMap<Symbol, Declared<tir::InterfaceId>>,
     constants: FxHashMap<Symbol, Declared<ConstantId>>,
@@ -162,6 +165,11 @@ impl NameMaps {
     /// Records `id` as the class of `name`.
     pub(super) fn add_class(&mut self, name: Symbol, id: tir::ClassId) {
         self.classes.insert(name, Declared::Known(id));
+    }
+
+    /// Records `id` as the struct of `name`.
+    pub(super) fn add_struct(&mut self, name: Symbol, id: tir::StructId) {
+        self.structs.insert(name, Declared::Known(id));
     }
 
     /// Records `id` as the enum of `name`.
@@ -198,6 +206,9 @@ impl NameMaps {
             Definition::Class => {
                 self.classes.insert(name, Declared::Poisoned(reported));
             }
+            Definition::Struct => {
+                self.structs.insert(name, Declared::Poisoned(reported));
+            }
             Definition::Interface => {
                 if !language {
                     self.interfaces.insert(name, Declared::Poisoned(reported));
@@ -224,6 +235,9 @@ impl NameMaps {
         }
         if let Some(class) = self.classes.get_mut(&name) {
             *class = Declared::Poisoned(reported);
+        }
+        if let Some(s) = self.structs.get_mut(&name) {
+            *s = Declared::Poisoned(reported);
         }
         if let Some(e) = self.enums.get_mut(&name) {
             *e = Declared::Poisoned(reported);
@@ -258,6 +272,11 @@ impl NameMaps {
         self.classes.get(&name).copied()
     }
 
+    /// What `name` stands for as a struct, if it is the name of one.
+    pub(super) fn struct_id(&self, name: Symbol) -> Option<Declared<tir::StructId>> {
+        self.structs.get(&name).copied()
+    }
+
     /// What `name` stands for as an enum, if it is the name of one.
     pub(super) fn enum_id(&self, name: Symbol) -> Option<Declared<tir::EnumId>> {
         self.enums.get(&name).copied()
@@ -286,6 +305,11 @@ impl NameMaps {
     /// The names of the classes, in no fixed order.
     pub(super) fn class_names(&self) -> impl Iterator<Item = Symbol> + '_ {
         self.classes.keys().copied()
+    }
+
+    /// The names of the structs, in no fixed order.
+    pub(super) fn struct_names(&self) -> impl Iterator<Item = Symbol> + '_ {
+        self.structs.keys().copied()
     }
 
     /// The names of the enums, in no fixed order.
@@ -332,6 +356,10 @@ impl Checker<'_> {
             (
                 poisoned(self.names.class(name).as_ref()).map(Some),
                 ItemKind::Class,
+            ),
+            (
+                poisoned(self.names.struct_id(name).as_ref()).map(Some),
+                ItemKind::Struct,
             ),
             (
                 poisoned(self.names.function(name).as_ref()).map(Some),
@@ -394,7 +422,7 @@ impl Checker<'_> {
     }
 
     /// The binding of `name` in the innermost open scope that has one.
-    fn binding(&self, name: Symbol) -> Option<&Binding> {
+    pub(super) fn binding(&self, name: Symbol) -> Option<&Binding> {
         #[cfg(test)]
         super::BINDING_STEPS.set(super::BINDING_STEPS.get() + 1);
         (self.body.scopes.iter().rev()).find_map(|scope| scope.get(&name))
@@ -481,6 +509,7 @@ impl Checker<'_> {
             return Resolved::AssocType;
         }
         let taken = self.names.class(name).is_some()
+            || self.names.struct_id(name).is_some()
             || self.names.enum_id(name).is_some()
             || self.names.function(name).is_some();
         if !taken && let Some(Declared::Known(id)) = self.names.interface(name) {
@@ -494,6 +523,9 @@ impl Checker<'_> {
         }
         if let Some(Declared::Known(id)) = self.names.class(name) {
             return Resolved::Item(ItemId::Class(id));
+        }
+        if let Some(Declared::Known(id)) = self.names.struct_id(name) {
+            return Resolved::Item(ItemId::Struct(id));
         }
         if let Some(Declared::Known(id)) = self.names.enum_id(name) {
             return Resolved::Item(ItemId::Enum(id));
@@ -528,6 +560,9 @@ impl Checker<'_> {
         }
         if let Some(Declared::Known(id)) = self.names.class(name) {
             return Resolved::Item(ItemId::Class(id));
+        }
+        if let Some(Declared::Known(id)) = self.names.struct_id(name) {
+            return Resolved::Item(ItemId::Struct(id));
         }
         if let Some(Declared::Known(id)) = self.names.function(name) {
             return Resolved::Item(ItemId::Function(id));
@@ -574,6 +609,9 @@ impl Checker<'_> {
         if let (Some(Declared::Poisoned(reported)), _) = declared {
             return Resolved::Poisoned(ItemKind::Class, Some(reported));
         }
+        if let Some(Declared::Poisoned(reported)) = self.names.struct_id(name) {
+            return Resolved::Poisoned(ItemKind::Struct, Some(reported));
+        }
         if let (_, Some(Declared::Poisoned(reported))) = declared {
             return Resolved::Poisoned(ItemKind::Enum, Some(reported));
         }
@@ -585,7 +623,8 @@ impl Checker<'_> {
             None => {}
         }
         // A class or an enum that took a language interface's name is the type.
-        let taken = declared.0.is_some() || declared.1.is_some();
+        let structure = self.names.struct_id(name);
+        let taken = declared.0.is_some() || declared.1.is_some() || structure.is_some();
         if let (false, Some(found)) = (taken, self.names.interface(name)) {
             return match (found, self.poison_kind(name)) {
                 (Declared::Known(id), None) => Resolved::Item(ItemId::Interface(id)),
@@ -602,6 +641,9 @@ impl Checker<'_> {
         }
         if let (Some(Declared::Known(id)), _) = declared {
             return Resolved::Item(ItemId::Class(id));
+        }
+        if let Some(Declared::Known(id)) = structure {
+            return Resolved::Item(ItemId::Struct(id));
         }
         if let (_, Some(Declared::Known(id))) = declared {
             return Resolved::Item(ItemId::Enum(id));
@@ -695,6 +737,9 @@ impl Checker<'_> {
         if let Some(Declared::Known(id)) = self.names.class(name) {
             return Resolved::Item(ItemId::Class(id));
         }
+        if let Some(Declared::Known(id)) = self.names.struct_id(name) {
+            return Resolved::Item(ItemId::Struct(id));
+        }
         if let Some(Declared::Known(id)) = self.names.function(name) {
             return Resolved::Item(ItemId::Function(id));
         }
@@ -735,7 +780,9 @@ impl Checker<'_> {
                     what: "an associated type",
                     at,
                 },
-                Resolved::Item(ItemId::Class(_) | ItemId::Enum(_) | ItemId::Alias(_))
+                Resolved::Item(
+                    ItemId::Class(_) | ItemId::Struct(_) | ItemId::Enum(_) | ItemId::Alias(_),
+                )
                 | Resolved::BuiltinType(_)
                 | Resolved::OptionType => DiagnosticKind::TypeAsValue {
                     name: text(),

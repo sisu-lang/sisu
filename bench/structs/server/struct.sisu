@@ -1,0 +1,142 @@
+// The same server with structs only. Sisu has no sockets and no threads yet, so requests are lines
+// of standard input, one after the other.
+// All state is in one `App`, and the main loop owns it. A handler gets it as a `mut` parameter, so
+// each signature says that the handler changes the state.
+
+struct Account {
+    name: string
+    balance: i64
+}
+
+struct Bank {
+    accounts: [Account]
+
+    fn find(self, name: string) -> i64? {
+        for i in 0..self.accounts.len() {
+            if self.accounts[i].name == name {
+                return i
+            }
+        }
+        None
+    }
+}
+
+struct Log {
+    lines: [string]
+
+    fn add(mut self, line: string) {
+        self.lines.push(line)
+    }
+}
+
+struct Metrics {
+    hits: i64
+    failures: i64
+}
+
+struct App {
+    bank: Bank
+    log: Log
+    metrics: Metrics
+}
+
+interface Handler {
+    fn verb(self) -> string
+    fn handle(self, mut app: App, words: [string]) -> string?
+}
+
+struct Deposit: Handler {
+    fn verb(self) -> string { "deposit" }
+
+    fn handle(self, mut app: App, words: [string]) -> string? {
+        if let i = app.bank.find(words[1]) {
+            let n = number(words[2])
+            app.bank.accounts[i].balance += n
+            app.log.add("deposit {app.bank.accounts[i].name} {n}")
+            return "ok {app.bank.accounts[i].balance}"
+        }
+        None
+    }
+}
+
+struct Transfer: Handler {
+    fn verb(self) -> string { "transfer" }
+
+    fn handle(self, mut app: App, words: [string]) -> string? {
+        if let from = app.bank.find(words[1]) {
+            if let to = app.bank.find(words[2]) {
+                let n = number(words[3])
+                if app.bank.accounts[from].balance < n {
+                    return None
+                }
+                app.bank.accounts[from].balance -= n
+                app.bank.accounts[to].balance += n
+                app.log.add("transfer {words[1]} {words[2]} {n}")
+                return "ok {app.bank.accounts[from].balance} {app.bank.accounts[to].balance}"
+            }
+        }
+        None
+    }
+}
+
+struct Balance: Handler {
+    fn verb(self) -> string { "balance" }
+
+    fn handle(self, mut app: App, words: [string]) -> string? {
+        if let i = app.bank.find(words[1]) {
+            return "{app.bank.accounts[i].balance}"
+        }
+        None
+    }
+}
+
+struct Stats: Handler {
+    fn verb(self) -> string { "stats" }
+
+    fn handle(self, mut app: App, words: [string]) -> string? {
+        "{app.metrics.hits} {app.metrics.failures} {app.log.lines.len()}"
+    }
+}
+
+struct Router {
+    handlers: [any Handler]
+
+    fn serve(self, mut app: App, line: string) -> string {
+        let words = line.words()
+        app.metrics.hits += 1
+        for h in self.handlers {
+            if h.verb() == words[0] {
+                if let reply = h.handle(mut app, words) {
+                    return reply
+                }
+                app.metrics.failures += 1
+                return "refused"
+            }
+        }
+        app.metrics.failures += 1
+        "unknown"
+    }
+}
+
+fn number(text: string) -> i64 {
+    let mut n = 0
+    for c in text.chars() {
+        n = n * 10 + i64(c) - 48
+    }
+    n
+}
+
+fn main() {
+    let mut app = App(
+        bank: Bank(accounts: []),
+        log: Log(lines: []),
+        metrics: Metrics(hits: 0, failures: 0)
+    )
+    for i in 0..100 {
+        app.bank.accounts.push(Account(name: "u{i}", balance: 1000))
+    }
+    let router = Router(handlers: [Deposit(), Transfer(), Balance(), Stats()])
+    while let line = read_line() {
+        print(router.serve(mut app, line))
+    }
+}

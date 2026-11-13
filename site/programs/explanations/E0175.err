@@ -1,0 +1,15 @@
+error[E0175]: a field of a struct has no `mut`
+ --> E0175.sisu:1:12
+  |
+1 | struct P { mut x: i64 }
+  |            ^^^ delete this word
+  |
+  = help: a `let mut` holder can change each field
+help: remove the `mut`
+  |
+1 - struct P { mut x: i64 }
+1 + struct P { x: i64 }
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0175

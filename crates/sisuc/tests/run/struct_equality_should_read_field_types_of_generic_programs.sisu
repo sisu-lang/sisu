@@ -1,0 +1,54 @@
+// GIVEN generic enums and classes that the program declares before its structs.
+// So the type ids of the checked program and the type ids after `mono` differ.
+// The structs hold an enum, an instance of a generic enum and a class with a written `eq`.
+// WHEN `main` compares two values of each struct.
+// THEN each struct compares its fields as in a program with no generic type.
+// AND a written `eq` that only a struct field reaches runs.
+enum Gn<T> {
+    V(t: T)
+    N
+}
+enum Ev {
+    X(n: i64)
+    Y
+}
+enum E<T> {
+    A(T)
+}
+class Bx<T> { v: T }
+class Tag { id: i64 }
+class C<T> { v: T }
+struct S1 { e: Ev }
+struct S2 { e: E<i64> }
+struct S3 { t: Tag }
+struct S4 { c: C<i64> }
+
+extend Tag: Eq {
+    fn eq(self, other: Tag) -> bool {
+        self.id % 10 == other.id % 10
+    }
+}
+
+extend C<i64>: Eq {
+    fn eq(self, other: C<i64>) -> bool {
+        self.v % 10 == other.v % 10
+    }
+}
+
+fn main() {
+    let g: Gn<i64> = Gn.V(t: 3)
+    let b = Bx(v: 2)
+    print(b.v)                                         // 2
+    print(g == Gn.V(t: 3))                             // true
+    let n: Gn<i64> = Gn.N
+    print(g == n)                                      // false
+    print(C(v: 3).v)                                   // 3
+    print(S1(e: Ev.X(n: 1)) == S1(e: Ev.X(n: 1)))      // true
+    print(S1(e: Ev.X(n: 1)) == S1(e: Ev.Y))            // false
+    print(S2(e: E.A(7)) == S2(e: E.A(7)))              // true
+    print(S2(e: E.A(7)) == S2(e: E.A(8)))              // false
+    print(S3(t: Tag(id: 1)) == S3(t: Tag(id: 11)))     // true: the written `eq` of `Tag` runs
+    print(S3(t: Tag(id: 1)) == S3(t: Tag(id: 2)))      // false
+    print(S4(c: C(v: 1)) == S4(c: C(v: 11)))           // true: the written `eq` of `C<i64>` runs
+    print(S4(c: C(v: 1)) == S4(c: C(v: 2)))            // false
+}

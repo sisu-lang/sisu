@@ -35,6 +35,10 @@ file = "classes"
 description = "Fields, mut fields, constructors, methods, self and object identity."
 
 [[page]]
+file = "structs"
+description = "Struct values, copies, what can change, generated == and print, and links that close a cycle."
+
+[[page]]
 file = "enums"
 description = "Enums, variants, match, every pattern form, guards, coverage, if let and while let."
 

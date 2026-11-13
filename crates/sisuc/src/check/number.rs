@@ -94,6 +94,10 @@ impl Checker<'_> {
     /// - `math` or `Math`, or `f64` in a call: the math idiom of another language, reported.
     ///
     /// `None` when `base` is no such name, or `member` is no constant or method of the idiom.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per kind of base, so the rules read in one place"
+    )]
     pub(super) fn type_path(
         &mut self,
         span: Span,
@@ -155,7 +159,9 @@ impl Checker<'_> {
             // The base is a value: the value check reports it.
             Resolved::Local { .. }
             | Resolved::Constant(_)
-            | Resolved::Item(ItemId::Class(_) | ItemId::Function(_) | ItemId::Interface(_)) => {
+            | Resolved::Item(
+                ItemId::Class(_) | ItemId::Struct(_) | ItemId::Function(_) | ItemId::Interface(_),
+            ) => {
                 return None;
             }
             _ => {}

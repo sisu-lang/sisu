@@ -1,0 +1,11 @@
+struct Account { balance: i64 }
+struct Holder { account: Account }
+
+fn main() {
+    let hs = [Holder(account: Account(balance: 1))]
+    for h in hs {
+        let mut a = h.account
+        a.balance = 2
+    }
+    print(hs[0].account.balance)
+}

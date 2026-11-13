@@ -1,0 +1,24 @@
+warning[W0002]: `bank` is never reassigned
+ --> W0016.sisu:5:13
+  |
+5 |     let mut bank = Bank(accounts: [Account(balance: 1)])
+  |             ^^^^
+  |
+help: declare it with `let`
+  |
+5 -     let mut bank = Bank(accounts: [Account(balance: 1)])
+5 +     let bank = Bank(accounts: [Account(balance: 1)])
+  |
+
+warning[W0016]: this writes to a copy of `bank.accounts[i]`, and nothing reads the copy
+ --> W0016.sisu:8:5
+  |
+7 |     let mut a = bank.accounts[i]
+  |             - a copy
+8 |     a.balance += 100
+  |     ^^^^^^^^^ `bank.accounts[i]` does not change
+  |
+  = help: write to the place itself, not to the copy
+
+sisu: 2 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0002, W0016

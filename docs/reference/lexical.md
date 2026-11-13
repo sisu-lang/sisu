@@ -97,7 +97,7 @@ These words are keywords. A keyword cannot be a name.
 
 | Keywords | |
 | --- | --- |
-| Declarations | `fn`, `class`, `enum`, `interface`, `extend`, `const`, `type`, `let`, `mut` |
+| Declarations | `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `const`, `type`, `let`, `mut` |
 | Control flow | `if`, `else`, `while`, `for`, `in`, `loop`, `match`, `break`, `continue`, `return` |
 | Values | `true`, `false`, `None`, `self` |
 | Other | `is`, `todo`, `_`, `Self` (a type) |
@@ -106,11 +106,11 @@ These words are keywords. A keyword cannot be a name.
 
 These words are reserved for a later version of Sisu. A reserved word cannot be a name or start an expression ([E0083](../diagnostics/E0083.md)).
 
-`as`, `extern`, `import`, `pub`, `record`, `test`, `weak`
+`as`, `extern`, `import`, `move`, `pub`, `test`, `weak`
 
 ```sisu
 fn main() {
-    let record = 1         // error[E0083]
+    let extern = 1         // error[E0083]
 }
 ```
 
@@ -167,7 +167,7 @@ fn main() {
 2
 ```
 
-A line break inside a bound list does not end a statement either. A bound list is the type-parameter list of a `fn`, `class`, `enum`, `interface` or `extend` header, or the bounds of a `type Item:`. The next line can start with a name, or with `,`, `:`, `&`, `>`, `]` or `?`.
+A line break inside a bound list does not end a statement either. A bound list is the type-parameter list of a `fn`, `class`, `struct`, `enum`, `interface` or `extend` header, or the bounds of a `type Item:`. The next line can start with a name, or with `,`, `:`, `&`, `>`, `]` or `?`.
 
 ```sisu
 class Pair<
@@ -231,7 +231,7 @@ fn main() {
 
 The other layout rules:
 
-- The `{` of a `fn`, `class`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop` is on the line of its header ([E0004](../diagnostics/E0004.md)).
+- The `{` of a `fn`, `class`, `struct`, `enum`, `interface`, `extend`, `if`, `else`, `match`, `while`, `for` or `loop` is on the line of its header ([E0004](../diagnostics/E0004.md)).
 - An `else` is on the line of the `}` before it: `} else {` ([E0006](../diagnostics/E0006.md)).
 - Inside `(` or `[`, a `[` cannot start a line after an expression ([E0005](../diagnostics/E0005.md)). Outside brackets, a `[` at the start of a line starts a new statement. It never indexes the line above.
 

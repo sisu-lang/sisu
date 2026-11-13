@@ -10,6 +10,7 @@ mod pairs;
 mod params;
 mod pattern;
 mod reuse;
+mod structs;
 
 /// A program whose `f` holds every kind of expression and statement lowering handles.
 pub(super) const EVERY_KIND: &str = "class O {\n    mut n: i64\n    mut s: string\n}\n\
@@ -203,7 +204,7 @@ impl Builder {
         self.function.locals.push(Local {
             name: Some(name.to_owned()),
             ty,
-            counted: ty.inline_enum().is_none() && ty.is_counted(&[]),
+            counted: ty.inline_type().is_none() && ty.is_counted(&[], &[]),
             scope: BlockId(0),
             token: false,
         });

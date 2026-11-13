@@ -182,6 +182,7 @@ impl Checker<'_> {
             ast::Item::Const(c) => Some(c),
             ast::Item::Function(_)
             | ast::Item::Class(_)
+            | ast::Item::Struct(_)
             | ast::Item::Enum(_)
             | ast::Item::Alias(_)
             | ast::Item::Interface(_)

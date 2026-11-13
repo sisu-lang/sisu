@@ -1,0 +1,13 @@
+struct Account { balance: i64 }
+struct Holder { account: Account }
+
+fn deposit(h: Holder) {
+    let mut a = h.account
+    a.balance = 2
+}
+
+fn main() {
+    let h = Holder(account: Account(balance: 1))
+    deposit(h)
+    print(h.account.balance)
+}

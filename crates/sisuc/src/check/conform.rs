@@ -136,8 +136,8 @@ impl Checker<'_> {
         let (inherited_found, gives_display) =
             self.listed_closures(&lists, &mut added, &mut pending);
         pending.extend(self.name_displays(&gives_display, &mut added));
-        // The choices of the associated types are recorded: an enum that grows through one is
-        // marked, before the first query.
+        // The choices of the associated types are recorded: an enum or a struct that grows through
+        // one is marked, before the first query.
         self.holds_assoc = self.field_assoc();
         let mut growing = self.growing_declarations();
         let enums = growing.split_off(self.classes.len());
@@ -276,7 +276,7 @@ impl Checker<'_> {
     /// names no interface.
     fn listed_conformances(&mut self, items: &[&ast::Item]) -> Vec<Listed> {
         let mut lists = Vec::new();
-        let (mut next_class, mut next_enum) = (0, 0);
+        let (mut next_class, mut next_struct, mut next_enum) = (0, 0, 0);
         for item in items {
             let (holder, params, conforms, assoc) = match item {
                 ast::Item::Class(class) => {
@@ -284,6 +284,12 @@ impl Checker<'_> {
                     next_class += 1;
                     let params = self.classes[id.0].type_params.clone();
                     (Holder::Class(id), params, &class.conforms, &class.assoc)
+                }
+                ast::Item::Struct(s) => {
+                    let id = tir::StructId(next_struct);
+                    next_struct += 1;
+                    let params = self.structs[id.0].type_params.clone();
+                    (Holder::Struct(id), params, &s.conforms, &s.assoc)
                 }
                 ast::Item::Enum(e) => {
                     let id = tir::EnumId(next_enum);
@@ -299,9 +305,10 @@ impl Checker<'_> {
             let args = own_args(&params);
             let receiver = Type::intern(match holder {
                 Holder::Class(id) => TypeKind::Class(id, args),
+                Holder::Struct(id) => TypeKind::Struct(id, args),
                 Holder::Enum(id) => TypeKind::Enum(id, args),
                 Holder::Array | Holder::I64 => {
-                    unreachable!("only the body of a class or an enum lists conformances")
+                    unreachable!("only the body of a class, a struct or an enum lists conformances")
                 }
             });
             self.body.self_type = SelfType::Known(receiver);
@@ -329,12 +336,16 @@ impl Checker<'_> {
                 let info = &self.classes[c.0];
                 (info.type_params.clone(), info.bounds.clone())
             }
+            Source::Body(Holder::Struct(s)) => {
+                let info = &self.structs[s.0];
+                (info.type_params.clone(), info.bounds.clone())
+            }
             Source::Body(Holder::Enum(e)) => {
                 let info = &self.enums[e.0];
                 (info.type_params.clone(), info.bounds.clone())
             }
             Source::Body(Holder::Array | Holder::I64) => {
-                unreachable!("only the body of a class or an enum lists conformances")
+                unreachable!("only the body of a class, a struct or an enum lists conformances")
             }
             Source::Block(b) => {
                 let ext = &self.extensions[b];
@@ -513,17 +524,21 @@ impl Checker<'_> {
     /// method of the requirement's name, and an `extend` block has no method at all. A broken
     /// method counts as one: its own error says what is wrong.
     fn is_derived(&self, interface: InterfaceId, target: Type, source: Source) -> bool {
-        let eq_of_enum = interface == self.lang.eq && matches!(target.kind(), TypeKind::Enum(..));
-        if !eq_of_enum && interface != self.lang.display {
+        let eq_of_value = interface == self.lang.eq
+            && matches!(target.kind(), TypeKind::Enum(..) | TypeKind::Struct(..));
+        if !eq_of_value && interface != self.lang.display {
             return false;
         }
         match source {
             Source::Body(holder) => {
                 let methods = match holder {
                     Holder::Class(c) => &self.classes[c.0].methods,
+                    Holder::Struct(s) => &self.structs[s.0].methods,
                     Holder::Enum(e) => &self.enums[e.0].methods,
                     Holder::Array | Holder::I64 => {
-                        unreachable!("only the body of a class or an enum lists conformances")
+                        unreachable!(
+                            "only the body of a class, a struct or an enum lists conformances"
+                        )
                     }
                 };
                 (self.interfaces[interface.0].requirements.iter())
@@ -554,6 +569,14 @@ impl Checker<'_> {
                 named.push((holder, ty, Source::Body(holder), func));
             }
         }
+        for (s, info) in self.structs.iter().enumerate() {
+            if let Some(&Declared::Known(func)) = info.methods.get(&name) {
+                let holder = Holder::Struct(tir::StructId(s));
+                let args = own_args(&info.type_params);
+                let ty = Type::intern(TypeKind::Struct(tir::StructId(s), args));
+                named.push((holder, ty, Source::Body(holder), func));
+            }
+        }
         for (e, info) in self.enums.iter().enumerate() {
             if let Some(&Declared::Known(func)) = info.methods.get(&name) {
                 let holder = Holder::Enum(tir::EnumId(e));
@@ -564,7 +587,10 @@ impl Checker<'_> {
         }
         for (block, ext) in self.extensions.iter().enumerate() {
             // A built-in type has `Display` from the compiler: its `to_string` is a plain method.
-            if !matches!(ext.holder, Holder::Class(_) | Holder::Enum(_)) {
+            if !matches!(
+                ext.holder,
+                Holder::Class(_) | Holder::Struct(_) | Holder::Enum(_)
+            ) {
                 continue;
             }
             if let (None, Some(&func)) = (ext.interface, ext.methods.get(&name)) {
@@ -648,9 +674,10 @@ impl Checker<'_> {
     fn written_method(&self, source: Source, name: Symbol) -> Option<Declared<tir::FuncId>> {
         match source {
             Source::Body(Holder::Class(c)) => self.classes[c.0].methods.get(&name).copied(),
+            Source::Body(Holder::Struct(s)) => self.structs[s.0].methods.get(&name).copied(),
             Source::Body(Holder::Enum(e)) => self.enums[e.0].methods.get(&name).copied(),
             Source::Body(Holder::Array | Holder::I64) => {
-                unreachable!("only the body of a class or an enum lists conformances")
+                unreachable!("only the body of a class, a struct or an enum lists conformances")
             }
             Source::Block(b) => {
                 let ext = &self.extensions[b];
@@ -781,7 +808,7 @@ impl Checker<'_> {
         if language != self.lang.eq {
             return None;
         }
-        if !matches!(p.target.kind(), TypeKind::Enum(..)) {
+        if !matches!(p.target.kind(), TypeKind::Enum(..) | TypeKind::Struct(..)) {
             return Some(Ungenerated::Never);
         }
         let leaf = self.derive_failure(p.interface, p.target, p.source)?;
@@ -805,9 +832,10 @@ impl Checker<'_> {
     fn choices(&self, source: Source) -> &Choices {
         match source {
             Source::Body(Holder::Class(c)) => &self.classes[c.0].assoc,
+            Source::Body(Holder::Struct(s)) => &self.structs[s.0].assoc,
             Source::Body(Holder::Enum(e)) => &self.enums[e.0].assoc,
             Source::Body(Holder::Array | Holder::I64) => {
-                unreachable!("only the body of a class or an enum lists conformances")
+                unreachable!("only the body of a class, a struct or an enum lists conformances")
             }
             Source::Block(b) => &self.extensions[b].assoc,
         }

@@ -24,7 +24,7 @@ use crate::source::Span;
 use crate::tir::{
     Align, AnyLayout, AnyTable, Arm, Block, ChoicePlace, Class, ClassId, CompareOp, Conformance,
     Conformances, Enum, EnumId, Expr, ExprKind, Field, FuncId, Function, InterfaceId, Local, Place,
-    Program, Stmt, Type, TypeArgs, TypeKind, head_of, layout_enums,
+    Program, Stmt, Struct, StructId, Type, TypeArgs, TypeKind, head_of, layout_types,
 };
 use crate::types::{Head, write_args, write_method, write_type};
 
@@ -114,9 +114,9 @@ fn prelude_method_of_outside_type(program: &Program) -> bool {
         let in_prelude = match head_of(conformance.target) {
             Some(Head::Class(id)) => id.0 >= prelude.classes,
             Some(Head::Enum(id)) => id.0 >= prelude.enums,
-            // `head_of` gives only a class or an enum, and `Conformances::add` admits only those
-            // targets. `false` leaves the fast path.
-            Some(Head::Interface(_) | Head::Assoc(..)) | None => false,
+            // The prelude declares no struct. `head_of` gives only a class, a struct or an enum,
+            // and `Conformances::add` admits only those targets. `false` leaves the fast path.
+            Some(Head::Struct(_) | Head::Interface(_) | Head::Assoc(..)) | None => false,
         };
         !in_prelude && conformance.methods.iter().any(|f| f.0 >= prelude.funcs)
     })
@@ -146,6 +146,18 @@ enum Work {
         decl: EnumId,
         args: TypeArgs,
     },
+    Struct {
+        id: StructId,
+        decl: StructId,
+        args: TypeArgs,
+    },
+}
+
+/// An output enum or struct that a type holds, whose first use `Mono` records.
+#[derive(Clone, Copy)]
+enum Held {
+    Enum(EnumId),
+    Struct(StructId),
 }
 
 struct Mono {
@@ -159,11 +171,14 @@ struct Mono {
     function_ids: FxHashMap<(FuncId, TypeArgs), FuncId>,
     class_ids: FxHashMap<(ClassId, TypeArgs), ClassId>,
     enum_ids: FxHashMap<(EnumId, TypeArgs), EnumId>,
+    struct_ids: FxHashMap<(StructId, TypeArgs), StructId>,
     /// The checked program's generic enums, at their ids.
     enum_decls: Vec<Option<Enum>>,
-    /// The output's type for each concrete checked type met so far, and the output enum that this
-    /// type holds, through arrays and optionals, if any: the enum whose use a hit notes.
-    types: FxHashMap<Type, (Type, Option<EnumId>)>,
+    /// The checked program's generic structs, at their ids.
+    struct_decls: Vec<Option<Struct>>,
+    /// The output's type for each concrete checked type met so far, and what the type holds: the
+    /// output enum or struct in it, through arrays and optionals, if any. A hit notes its use.
+    types: FxHashMap<Type, (Type, Option<Held>)>,
     /// The output's functions, each `None` until the worklist instantiates it.
     functions: Vec<Option<Function>>,
     /// The output, without its functions until the end: its classes name types as they arrive.
@@ -185,6 +200,9 @@ struct Mono {
     /// The field types of the checked program's classes, in its ids. The record walk of a `dbg`
     /// reads them, as the output's classes name the output's ids.
     input_fields: Vec<Vec<Type>>,
+    /// The field types of the checked program's structs, in its ids. The record walk reads them,
+    /// as `fields` of the output's structs name the output's ids.
+    input_structs: Vec<Vec<Type>>,
     /// The `(type, interface, dbg)` triples the record walk has entered, in the checked program's
     /// ids.
     walked: FxHashSet<(Type, InterfaceId, bool)>,
@@ -209,6 +227,8 @@ struct Mono {
     /// that only a local's type or a class field reaches has none until an expression meets
     /// its type. `payload_limit` reads it for the error of an instance that is too large.
     uses: Vec<Option<Span>>,
+    /// `uses` for the output structs, in their ids.
+    struct_uses: Vec<Option<Span>>,
     /// The span of the last item or expression of the user's source that `mono` lowered before
     /// `failed` held: the place that E0163 points at when an item of the prelude has the most
     /// instances.
@@ -227,6 +247,10 @@ impl Mono {
 
     /// `new`, with `run` stopping when the instances pass `limit`.
     fn with_limit(program: Program, limit: usize) -> Mono {
+        // `out` takes the structs, so their checked field types are kept first.
+        let input_structs = (program.structs.iter())
+            .map(|s| s.fields.iter().map(|f| f.ty).collect())
+            .collect();
         let mut mono = Mono {
             decls: Vec::with_capacity(program.functions.len()),
             class_decls: Vec::with_capacity(program.classes.len()),
@@ -234,6 +258,8 @@ impl Mono {
             class_ids: FxHashMap::default(),
             enum_ids: FxHashMap::default(),
             enum_decls: Vec::with_capacity(program.enums.len()),
+            struct_ids: FxHashMap::default(),
+            struct_decls: Vec::with_capacity(program.structs.len()),
             types: FxHashMap::default(),
             functions: Vec::new(),
             out: Program {
@@ -254,6 +280,7 @@ impl Mono {
                 .iter()
                 .map(|c| c.fields.iter().map(|f| f.ty).collect())
                 .collect(),
+            input_structs,
             decide: Decide::default(),
             walked: FxHashSet::default(),
             locals: Vec::new(),
@@ -264,6 +291,7 @@ impl Mono {
             entries: FxHashMap::default(),
             user_at: None,
             uses: Vec::new(),
+            struct_uses: Vec::new(),
             instances: 0,
             limit,
         };
@@ -300,6 +328,17 @@ impl Mono {
                 mono.enum_decls.push(Some(e));
             }
         }
+        for (i, s) in program.structs.into_iter().enumerate() {
+            if s.type_params.is_empty() {
+                let id = StructId(mono.out.structs.len());
+                mono.struct_ids.insert((StructId(i), TypeArgs::NONE), id);
+                mono.out.structs.push(s);
+                mono.struct_uses.push(None);
+                mono.struct_decls.push(None);
+            } else {
+                mono.struct_decls.push(Some(s));
+            }
+        }
         mono
     }
 
@@ -312,14 +351,16 @@ impl Mono {
             }
             return Err(vec![self.too_many_instances()]);
         }
-        layout_enums(&mut self.out.enums);
+        layout_types(&mut self.out.enums, &mut self.out.structs);
         debug_assert!(
-            payload_limit::measure(&self.out.enums)
+            payload_limit::measure(&self.out.enums, &self.out.structs)
                 .iter()
                 .all(Option::is_some),
-            "every enum should have a size bound after the layout: its types are final and the layout boxes each cycle"
+            "every enum and struct should have a size bound after the layout: its types are final and the layout boxes each cycle"
         );
-        let oversized = payload_limit::diagnostics(&self.out.enums, &self.uses);
+        // The nodes of `payload_limit` are the enums, then the structs.
+        let uses: Vec<_> = self.uses.iter().chain(&self.struct_uses).copied().collect();
+        let oversized = payload_limit::diagnostics(&self.out.enums, &self.out.structs, &uses);
         if !oversized.is_empty() {
             return Err(oversized);
         }
@@ -350,6 +391,14 @@ impl Mono {
             }
             self.out.enums[i].variants = variants;
         }
+        for i in 0..self.out.structs.len() {
+            self.note_item(self.out.structs[i].span);
+            let mut fields = mem::take(&mut self.out.structs[i].fields);
+            for payload in &mut fields {
+                payload.ty = self.output(payload.ty);
+            }
+            self.out.structs[i].fields = fields;
+        }
         for i in 0..self.functions.len() {
             let mut f = self.functions[i]
                 .take()
@@ -368,54 +417,72 @@ impl Mono {
             // An instance of the prelude's item has no span of the user's: it keeps the place that
             // reached it.
             self.user_at = from;
-            match work {
-                Work::Function {
-                    id,
-                    decl,
-                    args,
-                    name,
-                } => {
-                    let mut f = self.decls[decl.0]
-                        .clone()
-                        .expect("an instantiated function should be generic or the prelude's");
-                    self.note_item(f.span);
-                    f.name = name;
-                    f.type_params = Vec::new();
-                    f.owner_params = 0;
-                    self.function(&mut f, args.get());
-                    self.functions[id.0] = Some(f);
+            self.instance(work);
+        }
+    }
+
+    /// Lowers the instance that `work` names.
+    fn instance(&mut self, work: Work) {
+        match work {
+            Work::Function {
+                id,
+                decl,
+                args,
+                name,
+            } => {
+                let mut f = self.decls[decl.0]
+                    .clone()
+                    .expect("an instantiated function should be generic or the prelude's");
+                self.note_item(f.span);
+                f.name = name;
+                f.type_params = Vec::new();
+                f.owner_params = 0;
+                self.function(&mut f, args.get());
+                self.functions[id.0] = Some(f);
+            }
+            Work::Class { id, decl, args } => {
+                self.note_item(self.out.classes[id.0].span);
+                let fields = self.class_decls[decl.0]
+                    .as_ref()
+                    .expect("an instantiated class should be generic")
+                    .fields
+                    .iter()
+                    .map(|field| (field.ty, field.name.clone(), field.mutable))
+                    .collect::<Vec<_>>();
+                let fields = fields
+                    .into_iter()
+                    .map(|(ty, name, mutable)| Field {
+                        name,
+                        ty: self.ty(ty, args.get()),
+                        mutable,
+                    })
+                    .collect();
+                self.out.classes[id.0].fields = fields;
+            }
+            Work::Enum { id, decl, args } => {
+                self.note_item(self.out.enums[id.0].span);
+                let decl = self.enum_decls[decl.0]
+                    .as_ref()
+                    .expect("an instantiated enum should be generic");
+                let mut variants = decl.variants.clone();
+                for p in variants.iter_mut().flat_map(|v| &mut v.fields) {
+                    p.ty = self.ty(p.ty, args.get());
+                    p.boxed = false;
                 }
-                Work::Class { id, decl, args } => {
-                    self.note_item(self.out.classes[id.0].span);
-                    let fields = self.class_decls[decl.0]
-                        .as_ref()
-                        .expect("an instantiated class should be generic")
-                        .fields
-                        .iter()
-                        .map(|field| (field.ty, field.name.clone(), field.mutable))
-                        .collect::<Vec<_>>();
-                    let fields = fields
-                        .into_iter()
-                        .map(|(ty, name, mutable)| Field {
-                            name,
-                            ty: self.ty(ty, args.get()),
-                            mutable,
-                        })
-                        .collect();
-                    self.out.classes[id.0].fields = fields;
+                self.out.enums[id.0].variants = variants;
+            }
+            Work::Struct { id, decl, args } => {
+                self.note_item(self.out.structs[id.0].span);
+                let mut fields = self.struct_decls[decl.0]
+                    .as_ref()
+                    .expect("an instantiated struct should be generic")
+                    .fields
+                    .clone();
+                for p in &mut fields {
+                    p.ty = self.ty(p.ty, args.get());
+                    p.boxed = false;
                 }
-                Work::Enum { id, decl, args } => {
-                    self.note_item(self.out.enums[id.0].span);
-                    let decl = self.enum_decls[decl.0]
-                        .as_ref()
-                        .expect("an instantiated enum should be generic");
-                    let mut variants = decl.variants.clone();
-                    for p in variants.iter_mut().flat_map(|v| &mut v.fields) {
-                        p.ty = self.ty(p.ty, args.get());
-                        p.boxed = false;
-                    }
-                    self.out.enums[id.0].variants = variants;
-                }
+                self.out.structs[id.0].fields = fields;
             }
         }
     }
@@ -447,6 +514,10 @@ impl Mono {
         for &(decl, _) in self.enum_ids.keys() {
             enums[decl.0] += 1;
         }
+        let mut structs = vec![0; self.struct_decls.len()];
+        for &(decl, _) in self.struct_ids.keys() {
+            structs[decl.0] += 1;
+        }
         let mut functions = vec![0; self.decls.len()];
         for &(decl, _) in self.function_ids.keys() {
             functions[decl.0] += 1;
@@ -455,10 +526,13 @@ impl Mono {
             .filter_map(|(decl, n)| decl.as_ref().map(|d| (d.name.as_str(), d.span, n)));
         let enums = (self.enum_decls.iter().zip(enums))
             .filter_map(|(decl, n)| decl.as_ref().map(|d| (d.name.as_str(), d.span, n)));
+        let structs = (self.struct_decls.iter().zip(structs))
+            .filter_map(|(decl, n)| decl.as_ref().map(|d| (d.name.as_str(), d.span, n)));
         let functions = (self.decls.iter().zip(functions))
             .filter_map(|(decl, n)| decl.as_ref().map(|d| (d.name.as_str(), d.span, n)));
         let (name, at, count) = classes
             .chain(enums)
+            .chain(structs)
             .chain(functions)
             .filter(|&(_, _, n)| n > 0)
             .max_by_key(|&(_, _, n)| n)
@@ -555,8 +629,8 @@ impl Mono {
         TypeArgs::intern(&list)
     }
 
-    /// The output's type for the concrete checked type `ty`: each class and enum by its output
-    /// id, with no arguments. Reaching a class's instantiation puts it on the worklist.
+    /// The output's type for the concrete checked type `ty`: each class, enum and struct by its
+    /// output id, with no arguments. Reaching a class's instantiation puts it on the worklist.
     fn output(&mut self, ty: Type) -> Type {
         if let Some(&(done, held)) = self.types.get(&ty) {
             if let Some(id) = held {
@@ -573,7 +647,17 @@ impl Mono {
             ),
             TypeKind::Enum(id, args) => {
                 let id = self.enum_id(id, args);
-                (Type::intern(TypeKind::Enum(id, TypeArgs::NONE)), Some(id))
+                (
+                    Type::intern(TypeKind::Enum(id, TypeArgs::NONE)),
+                    Some(Held::Enum(id)),
+                )
+            }
+            TypeKind::Struct(id, args) => {
+                let id = self.struct_id(id, args);
+                (
+                    Type::intern(TypeKind::Struct(id, TypeArgs::NONE)),
+                    Some(Held::Struct(id)),
+                )
             }
             TypeKind::Any(interface, args) => {
                 // Meeting an `any` type is how its layout reaches the output.
@@ -720,9 +804,9 @@ impl Mono {
         entries
     }
 
-    /// The output enum that the type `ty` holds, through arrays and optionals, for a type that
-    /// `output` has made.
-    fn held_by(&self, ty: Type) -> Option<EnumId> {
+    /// The output enum or struct that the type `ty` holds, through arrays and optionals, for a
+    /// type that `output` has made.
+    fn held_by(&self, ty: Type) -> Option<Held> {
         self.types.get(&ty).and_then(|&(_, held)| held)
     }
 
@@ -777,11 +861,15 @@ impl Mono {
         out
     }
 
-    /// The declared name of the checked class or enum `head`.
+    /// The declared name of the checked class, struct or enum `head`.
     fn head(&self, head: Head) -> &str {
         match head {
             Head::Assoc(..) => unreachable!("mono should replace every associated type"),
             Head::Interface(id) => &self.out.interfaces[id.0].name,
+            Head::Struct(id) => match &self.struct_decls[id.0] {
+                Some(decl) => &decl.name,
+                None => &self.out.structs[self.struct_ids[&(id, TypeArgs::NONE)].0].name,
+            },
             Head::Class(id) => match &self.class_decls[id.0] {
                 Some(decl) => &decl.name,
                 None => &self.out.classes[self.class_ids[&(id, TypeArgs::NONE)].0].name,
@@ -823,9 +911,13 @@ impl Mono {
         done
     }
 
-    /// Records the expression that `expr` lowers as the first use of the output enum `id`.
-    fn note_use(&mut self, id: EnumId) {
-        let first = &mut self.uses[id.0];
+    /// Records the expression that `expr` lowers as the first use of the output enum or struct
+    /// `held`.
+    fn note_use(&mut self, held: Held) {
+        let first = match held {
+            Held::Enum(id) => &mut self.uses[id.0],
+            Held::Struct(id) => &mut self.struct_uses[id.0],
+        };
         if first.is_none() {
             *first = self.at;
         }
@@ -834,7 +926,7 @@ impl Mono {
     /// The output id of enum `id` with `args`, given and put on the worklist when first reached.
     fn enum_id(&mut self, id: EnumId, args: TypeArgs) -> EnumId {
         if let Some(&done) = self.enum_ids.get(&(id, args)) {
-            self.note_use(done);
+            self.note_use(Held::Enum(done));
             return done;
         }
         self.reach(args.get());
@@ -859,6 +951,41 @@ impl Mono {
         self.work.push_back((
             self.user_at,
             Work::Enum {
+                id: done,
+                decl: id,
+                args,
+            },
+        ));
+        done
+    }
+
+    /// The output id of struct `id` with `args`, given and put on the worklist when first reached.
+    fn struct_id(&mut self, id: StructId, args: TypeArgs) -> StructId {
+        if let Some(&done) = self.struct_ids.get(&(id, args)) {
+            return done;
+        }
+        self.reach(args.get());
+        let done = StructId(self.out.structs.len());
+        let decl = self.struct_decls[id.0]
+            .as_ref()
+            .expect("a struct reached with arguments should be generic");
+        let s = Struct {
+            name: self.type_instance_name(&decl.name, args.get(), done.0),
+            span: decl.span,
+            instance: true,
+            type_params: Vec::new(),
+            fields: Vec::new(),
+            counted: false,
+            cycle: None,
+            reaches: false,
+        };
+        self.out.structs.push(s);
+        self.struct_uses.push(self.at);
+        self.instances += 1;
+        self.struct_ids.insert((id, args), done);
+        self.work.push_back((
+            self.user_at,
+            Work::Struct {
                 id: done,
                 decl: id,
                 args,
@@ -947,7 +1074,7 @@ impl Mono {
                 self.place(base, args);
                 self.expr(index, args);
             }
-            Place::Some(base) => self.place(base, args),
+            Place::Some(base) | Place::StructField { base, .. } => self.place(base, args),
         }
     }
 
@@ -1180,6 +1307,15 @@ impl Mono {
                 *id = enum_id;
                 self.exprs(operands, args);
             }
+            K::Struct {
+                id, args: operands, ..
+            } => {
+                let TypeKind::Struct(struct_id, _) = ty.kind() else {
+                    panic!("the checker should type a struct construction as its struct")
+                };
+                *id = struct_id;
+                self.exprs(operands, args);
+            }
             K::ArrayLit(operands)
             | K::Math { operands, .. }
             | K::Interpolate {
@@ -1188,6 +1324,7 @@ impl Mono {
             | K::Compare { operands, .. } => self.exprs(operands, args),
             K::DynCall { .. } => unreachable!("the checker should make no call through a table"),
             K::Field { base: operand, .. }
+            | K::StructField { base: operand, .. }
             | K::ToAny(operand)
             | K::Wrap(operand)
             | K::Convert(operand)
@@ -1280,6 +1417,7 @@ impl Mono {
         let src = Source {
             conformances: &self.conformances,
             enums: self.input_payloads.as_slice(),
+            structs: self.input_structs.as_slice(),
             lang: self.out.lang,
             interfaces: self.out.interfaces.as_slice(),
         };
@@ -1289,7 +1427,10 @@ impl Mono {
     /// The method that a written conformance of `interface` runs for `ty`, as the call that the
     /// operator makes of it.
     fn dispatch(&mut self, ty: Type, interface: InterfaceId) -> Option<Dispatch> {
-        if !matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..)) {
+        if !matches!(
+            ty.kind(),
+            TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Struct(..)
+        ) {
             return None;
         }
         match self.holds(ty, interface) {
@@ -1339,8 +1480,10 @@ impl Mono {
             }
             #[cfg(test)]
             WALK_VISITS.set(WALK_VISITS.get() + 1);
-            if matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Enum(..))
-                && let Holds::Written(k, stands) = self.holds(ty, interface)
+            if matches!(
+                ty.kind(),
+                TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Struct(..)
+            ) && let Holds::Written(k, stands) = self.holds(ty, interface)
             {
                 self.record(ty, interface, k, stands);
                 continue;
@@ -1356,7 +1499,10 @@ impl Mono {
             }
             parts(
                 &self.conformances,
-                self.input_payloads.as_slice(),
+                (
+                    self.input_payloads.as_slice(),
+                    self.input_structs.as_slice(),
+                ),
                 ty,
                 |part| {
                     stack.push((part, dbg));
@@ -1481,7 +1627,9 @@ fn assert_concrete(program: &Program) {
 fn concrete(ty: Type) -> bool {
     match ty.kind() {
         TypeKind::Param(..) | TypeKind::Assoc(..) => false,
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) => args == TypeArgs::NONE,
+        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Struct(_, args) => {
+            args == TypeArgs::NONE
+        }
         TypeKind::Any(_, args) => args.get().iter().all(|&arg| concrete(arg)),
         TypeKind::Array(inner) | TypeKind::Optional(inner) => concrete(inner),
         TypeKind::I64
@@ -2069,6 +2217,39 @@ mod tests {
         assert_eq!(named("Two<Expr>").cycle, named("Expr").cycle);
         for name in ["Two<Expr>", "Opt2<E>", "Wrap2<F>", "Two<F>"] {
             assert!(named(name).counted, "{name}");
+        }
+    }
+
+    /// A struct field has a rank as a payload field has, so a box goes where it goes in an enum.
+    /// `Node<i64>.next` names its own struct through an optional. `S<i64>.e` and `E<i64>.A` name
+    /// each other, not themselves, so each gets a box, as `M<i64>.F` and `N2<i64>.K` do. `W<F>.v`
+    /// is `T` and `X.P` names `Box2` with no parameter, so the box goes on the enum that names the
+    /// struct. `G<i64>.p` names `G` inside an enum.
+    #[test]
+    fn the_box_should_go_on_the_declaring_struct() {
+        let printed = instantiated(
+            "struct Node<T> { v: T; next: Node<T>? }\n\
+             struct S<T> { e: E<T> }\nenum E<T> {\n    A(s: S<T>)\n    B\n}\n\
+             struct W<T> { v: T; tag: i64 }\nenum F {\n    A(w: W<F>)\n    B\n}\n\
+             struct Box2<T> { t: T }\nenum X {\n    L\n    P(Box2<X>)\n}\n\
+             enum Two<T> {\n    Both(T, T)\n}\nenum Wrap2<T> {\n    W(Two<T>)\n}\n\
+             struct G<T> { l: T; p: Wrap2<G<T>>? }\n\
+             fn main() {\n    let n = Node(v: 1, next: None)\n    let s: S<i64> = S(e: E.B)\n    \
+             let f = F.B\n    let x = X.L\n    let g = G(l: 1, p: None)\n}",
+        )
+        .to_string();
+        for part in [
+            "(struct Node<i64> (v i64) (next (box Node<i64>?)))",
+            "(struct S<i64> (e (box E<i64>)))",
+            "(enum E<i64> (A (box S<i64>)) B)",
+            "(struct W<F> (v F) (tag i64))",
+            "(enum F (A (box W<F>)) B)",
+            "(struct Box2<X> (t X))",
+            "(enum X L (P (box Box2<X>)))",
+            "(struct G<i64> (l i64) (p (box Wrap2<G<i64>>?)))",
+            "(enum Wrap2<G<i64>> (W Two<G<i64>>))",
+        ] {
+            assert!(printed.contains(part), "`{part}` in\n{printed}");
         }
     }
 
@@ -2815,6 +2996,28 @@ mod tests {
         );
     }
 
+    /// A struct instance has the label as an enum instance does. `P^30` is the type of the
+    /// `None`. In the second row, `W<P^29>` holds the instance of `P` that is over the limit. The
+    /// label then comes from the spread of the use of `W<P^29>`.
+    #[test]
+    fn instantiate_should_point_e0160_at_the_use_of_a_struct_instance() {
+        let nested = |levels: usize| format!("{}i64{}", "P<".repeat(levels), ">".repeat(levels));
+        let pair = "struct P<T> { a: T; b: T }\nstruct W<T> { p: T; n: i64 }\n";
+        for ty in [nested(30), format!("W<{}>", nested(29))] {
+            let src =
+                format!("{pair}fn main() {{\n    let x: {ty}? = None\n    print(x == None)\n}}\n");
+            let at = src.find("= None").expect("the source should hold the use") + 2;
+            assert_eq!(payload_uses(&src), [at], "{ty}");
+        }
+        // The type arguments of the call make the instance, before its argument has the type.
+        let src = format!(
+            "{pair}fn h<T>(x: T?) -> bool {{\n    x == None\n}}\nfn main() {{\n    print(h<{}>(None))\n}}\n",
+            nested(30)
+        );
+        let at = src.find("h<P").expect("the source should hold the use");
+        assert_eq!(payload_uses(&src), [at]);
+    }
+
     /// The type of `None` is an optional of the instance, and the type of `[]` an array of it.
     #[test]
     fn instantiate_should_point_e0160_at_an_expression_whose_type_is_an_optional_or_array() {
@@ -2873,6 +3076,26 @@ mod tests {
         );
     }
 
+    /// GIVEN a chain of 29 structs: `S0` holds two `i64`, and each `S{k}` holds two of the one
+    /// before it, so `S28` holds 2^32 bytes inline, and `main` binds an `S28?`
+    /// WHEN the front end runs on it
+    /// THEN the one error is E0160 at the name of `S28`, the first struct at the limit
+    #[test]
+    fn struct_above_the_limit_should_be_e0160() {
+        let mut src = String::from("struct S0 { a: i64; b: i64 }\n");
+        for k in 1..28 {
+            writeln!(src, "struct S{k} {{ a: S{}; b: S{} }}", k - 1, k - 1)
+                .expect("writing to a `String` should succeed");
+        }
+        let at = src.len() + "struct ".len();
+        src.push_str("struct S28 { a: S27; b: S27 }\n");
+        src.push_str("fn main() {\n    let x: S28? = None\n    let _ = x\n}\n");
+        assert_eq!(
+            front_end_reports(&src),
+            [(crate::diagnostic::Code::PayloadTooLarge, at)]
+        );
+    }
+
     /// `n` classes in a chain: `C{k}` holds `C{k-1}` twice, with `[T]` and `T?`, so `C{n}<i64>`
     /// makes 2^n - 1 instances in all.
     fn class_chain(n: usize) -> String {
@@ -2888,6 +3111,11 @@ mod tests {
         write!(src, "fn main() {{\n    let x: C{n}<i64>? = None\n}}\n")
             .expect("writing to a `String` should succeed");
         src
+    }
+
+    /// The same chain of generic structs.
+    fn struct_chain(n: usize) -> String {
+        class_chain(n).replace("class ", "struct ")
     }
 
     /// The same chain of generic enums.
@@ -2962,6 +3190,11 @@ mod tests {
     #[test]
     fn mono_should_report_e0163_at_the_first_class_of_a_chain_over_the_limit() {
         assert_chain_stops_at_its_first_item("class", &class_chain(6), "C1");
+    }
+
+    #[test]
+    fn mono_should_report_e0163_at_the_first_struct_of_a_chain_over_the_limit() {
+        assert_chain_stops_at_its_first_item("struct", &struct_chain(6), "C1");
     }
 
     #[test]

@@ -35,6 +35,11 @@ class Fox: Pet {
     fn tail(self) -> i64 { 1 }
 }
 class Rock {}
+struct Stone {}
+struct Point {
+    x: i64
+    y: i64
+}
 class P {
     v: i64
 }
@@ -84,6 +89,35 @@ class Sn {
     name: string?
 }
 fn sn() -> Sn? { None }
+class Pc {
+    fn push(self, x: i64) -> i64 { x }
+}
+struct Sc {
+    c: Pc
+}
+fn sc() -> Sc { Sc(c: Pc()) }
+fn osc() -> Sc? { None }
+struct Sm {
+    n: i64
+    c: Pc
+    fn get(self) -> i64 { self.n }
+    fn own(self) -> i64 { self.get() + self.c.push(1) }
+}
+fn sm() -> Sm { Sm(n: 1, c: Pc()) }
+fn osm() -> Sm? { None }
+fn sso() -> [Sm?] { [] }
+struct Sa {
+    n: i64
+}
+type Am = Sa
+struct Sxs {
+    n: i64
+    xs: [i64]
+}
+class Ocs {
+    mut s: Sxs
+}
+fn ocs() -> Ocs? { None }
 fn take<T>(mut x: T?) { x = None }
 fn take2<T>(mut x: T?, n: i64) { x = None }
 fn keep<T>(mut x: T?) -> T? { x }
@@ -110,6 +144,8 @@ enum Eb {
     A
 }
 extend Eb: Nope {}
+type Ae = Sa
+extend Ae {}
 fn failed<U: Missing, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?) {
     let mut mq: (any Pet)? = op
     {stmt}
@@ -198,6 +234,8 @@ mq
 (p)
 ((p))
 Rock()
+Stone()
+Point(x: 1, y: 2)
 []
 [[]]
 [None]
@@ -227,6 +265,22 @@ loop { if c { break 1 }; break "x" }
 # that is given an argument that does not conform.
 E2.V(missing, k)
 Alias(a: Rock())
+# A class with its own `push`, in a field of a struct value that is no place: `$.push(1)` and
+# `$?.push(1)` call that method, and a held report must not reach the write.
+sc().c
+osc()?.c
+# A struct method call on a value, on `self` (in `Sm.own`) and through `?.`, a struct alias
+# constructor, and an element of `[Sm?]` under a write.
+sm().get()
+sm().own()
+osm()?.get()
+Am(n: 1)
+{ let mut os = sso(); os[0]?.n = 1; os[0] }
+# A struct field of a class object that a `?.` takes out of an optional, and a field and an
+# element of that struct: a write, a `push` and a `mut` argument go through the class `?.`.
+ocs()?.s.n
+ocs()?.s.xs
+ocs()?.s.xs[0]
 
 [failed values]
 # A type parameter read: in the function whose bound failed, `u` is unknown.

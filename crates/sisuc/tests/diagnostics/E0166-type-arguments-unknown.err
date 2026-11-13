@@ -4,7 +4,7 @@ error[E0030]: cannot find type `Nope`
 11 |     rw<Nope>(x, 5)
    |        ^^^^
    |
-   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums and arrays such as `[i64]`
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums, structs and arrays such as `[i64]`
 
 error[E0166]: the parameter `x` of `rw` is `mut`, so its argument needs `mut`
   --> E0166-type-arguments-unknown.sisu:11:14

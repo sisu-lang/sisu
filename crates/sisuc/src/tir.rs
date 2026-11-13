@@ -32,6 +32,9 @@ pub(crate) struct FuncId(pub(crate) usize);
 pub(crate) struct ClassId(pub(crate) usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct StructId(pub(crate) usize);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct EnumId(pub(crate) usize);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -130,6 +133,8 @@ impl MathOp {
 pub(crate) struct Program {
     pub(crate) classes: Vec<Class>,
     pub(crate) enums: Vec<Enum>,
+    /// Indexed by `StructId`. The checker builds it, and `mono` copies it and lays it out again.
+    pub(crate) structs: Vec<Struct>,
     pub(crate) functions: Vec<Function>,
     /// Whether the checker recorded a type argument: a written one, or one a call inferred, or
     /// whether the user's file reaches a function, a class or an enum of the prelude: a call, a
@@ -237,7 +242,7 @@ pub(crate) struct Conformances {
 
 impl Conformances {
     /// Adds `conformance` to those of `interface`, and gives its index among them. Its target is
-    /// a class or an enum type.
+    /// a class, a struct or an enum type.
     pub(crate) fn add(&mut self, interface: InterfaceId, conformance: Conformance) -> usize {
         if self.list.len() <= interface.0 {
             self.list.resize_with(interface.0 + 1, Vec::new);
@@ -245,7 +250,7 @@ impl Conformances {
         let list = &mut self.list[interface.0];
         let index = list.len();
         let head = head_of(conformance.target)
-            .expect("the target of a conformance should be a class or an enum type");
+            .expect("the target of a conformance should be a class, a struct or an enum type");
         if conformance.type_params == 0 {
             self.exact
                 .entry((interface, conformance.target, conformance.args))
@@ -298,10 +303,11 @@ impl Conformances {
     }
 }
 
-/// The class or enum that `ty` is, if it is one.
+/// The class, struct or enum that `ty` is, if it is one.
 pub(crate) fn head_of(ty: Type) -> Option<Head> {
     match ty.kind() {
         TypeKind::Class(id, _) => Some(Head::Class(id)),
+        TypeKind::Struct(id, _) => Some(Head::Struct(id)),
         TypeKind::Enum(id, _) => Some(Head::Enum(id)),
         _ => None,
     }
@@ -324,6 +330,38 @@ pub(crate) struct Class {
     /// The names of its type parameters, in order; empty when it is not generic.
     pub(crate) type_params: Vec<String>,
     pub(crate) fields: Vec<Field>,
+}
+
+/// A struct: its fields, held inline, with no tag.
+#[derive(Debug)]
+pub(crate) struct Struct {
+    pub(crate) name: String,
+    /// Where the declaration names the struct. An instance of a generic struct has the span of
+    /// its declaration.
+    pub(crate) span: Span,
+    /// Whether it is an instance of a generic struct, which `mono` makes.
+    pub(crate) instance: bool,
+    /// The names of its type parameters, in order; empty when it is not generic.
+    pub(crate) type_params: Vec<String>,
+    /// Each field, in declaration order. Its `label` is the field's name.
+    pub(crate) fields: Vec<Payload>,
+    /// Whether a value has counted parts: its component has a box, or a field is of a counted
+    /// type (`layout_types`).
+    pub(crate) counted: bool,
+    /// The struct's strongly connected component of the holds-inline graph, when that component
+    /// has a boxed field, as for `Enum::cycle`.
+    pub(crate) cycle: Option<usize>,
+    /// The reach flag of the struct's component, by the rule of `Enum::reaches`.
+    pub(crate) reaches: bool,
+}
+
+impl Struct {
+    /// The name that `print` shows: the declared name, with no type arguments, as a
+    /// constructor writes it.
+    pub(crate) fn shown_name(&self) -> &str {
+        // `mono` names an instance `Name<args>`, and `<` cannot occur in a name.
+        self.name.split('<').next().unwrap_or(&self.name)
+    }
 }
 
 /// An enum: a tag and its variant's payload, held inline.
@@ -359,7 +397,7 @@ pub(crate) struct Variant {
 }
 
 /// A payload field. A `boxed` one is stored behind a counted pointer, since its enum, or the
-/// enum of its optional, holds the declaring enum inline (`layout_enums`).
+/// enum of its optional, holds the declaring enum inline (`layout_types`).
 #[derive(Clone, Debug)]
 pub(crate) struct Payload {
     pub(crate) ty: Type,
@@ -370,8 +408,8 @@ pub(crate) struct Payload {
     pub(crate) rank: Rank,
 }
 
-/// Which pass of `layout_enums` may box a payload field, from its declared type; kept through
-/// `mono`.
+/// Which pass of `layout_types` may box a payload field or a struct field, from its declared
+/// type; kept through `mono`. Each rule that names an enum holds for a struct too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Rank {
     /// It names no type parameter: `Two<Expr>` in `Expr`.
@@ -504,6 +542,11 @@ pub(crate) enum Place {
     Index {
         base: Box<Place>,
         index: Expr,
+    },
+    /// Field `index` of the struct in the place `base`.
+    StructField {
+        base: Box<Place>,
+        index: usize,
     },
     /// The value inside the optional that the place `base` stores: a `push` to it goes there
     /// when it holds one, and does nothing when it does not. Only a `Push` has one.
@@ -695,6 +738,16 @@ pub(crate) enum ExprKind {
     },
     /// Field `index` of the class `base` has.
     Field {
+        base: Box<Expr>,
+        index: usize,
+    },
+    /// A value of the struct `id`, holding `args` in declaration order.
+    Struct {
+        id: StructId,
+        args: Vec<Expr>,
+    },
+    /// Field `index` of the struct value `base`.
+    StructField {
         base: Box<Expr>,
         index: usize,
     },
@@ -905,17 +958,18 @@ pub(crate) enum PatternKind {
 }
 
 impl Type {
-    /// Whether a value of this type is an owned reference, or an enum with counted parts,
-    /// which codegen counts. `enums` are the program's.
-    pub(crate) fn is_counted(self, enums: &[Enum]) -> bool {
+    /// Whether a value of this type is an owned reference, or an enum or a struct with counted
+    /// parts, which codegen counts. `enums` and `structs` are the program's.
+    pub(crate) fn is_counted(self, enums: &[Enum], structs: &[Struct]) -> bool {
         match self.kind() {
             // An `any` is counted through its data pointer, an object or a box.
             TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) | TypeKind::Any(..) => true,
             TypeKind::Enum(id, _) => enums[id.0].counted,
+            TypeKind::Struct(id, _) => structs[id.0].counted,
             TypeKind::Optional(payload) => {
                 #[cfg(test)]
                 LAYOUT_STEPS.set(LAYOUT_STEPS.get() + 1);
-                payload.is_counted(enums)
+                payload.is_counted(enums, structs)
             }
             TypeKind::I64
             | TypeKind::U8
@@ -930,8 +984,8 @@ impl Type {
     }
 
     /// Whether a value of this type may be counted: it is, or a type argument may make it so.
-    pub(crate) fn may_be_counted(self, enums: &[Enum]) -> bool {
-        self.is_counted(enums) || self.has_param()
+    pub(crate) fn may_be_counted(self, enums: &[Enum], structs: &[Struct]) -> bool {
+        self.is_counted(enums, structs) || self.has_param()
     }
 
     /// This type with each `?` removed: `T` for `T`, `T?` and `T??`.
@@ -952,116 +1006,186 @@ impl Type {
         )
     }
 
-    /// The enum a payload field of this type holds inline unless boxed: `F`'s for `F` or `F?`.
-    /// These are the edges of the holds-inline graph.
-    pub(crate) fn inline_enum(self) -> Option<EnumId> {
+    /// The enum or struct that a field of this type holds inline unless boxed: `F` for `F` or
+    /// `F?`. These are the edges of the holds-inline graph.
+    pub(crate) fn inline_type(self) -> Option<Inline> {
         match self.kind() {
-            TypeKind::Enum(id, _) => Some(id),
-            TypeKind::Optional(payload) => payload.inline_enum(),
+            TypeKind::Enum(id, _) => Some(Inline::Enum(id)),
+            TypeKind::Struct(id, _) => Some(Inline::Struct(id)),
+            TypeKind::Optional(payload) => payload.inline_type(),
             _ => None,
         }
     }
 }
 
-/// Lays out `enums`, whose payload types are final: boxes each payload field that closes a
-/// cycle of the holds-inline graph, and sets each enum's `cycle`, `counted` and `reaches`. The
-/// box goes on the declaring enum's own field rather than one inside a generic type. There is a
-/// pass per `Rank`: `Plain`, `Own`, `Open`, `Late`, then `Assoc`. Each pass boxes its fields that
-/// are on a cycle of what the passes before it left unboxed. A cycle that `Plain` leaves holds an
-/// `Own`, `Open` or `Late` field, or an `Assoc` field. Take a cycle with no associated type.
-/// A generic field of one enum on it names the declaration of the next, so the names close a
-/// cycle of declarations. The choice of an associated type is a third source of enum names. It
-/// can name the enum that holds it: `Item = E<W<T>>` for `A(T.Item)` in `E`. Only a field that
-/// holds an associated type reads a choice. So a cycle that the earlier passes leave holds an
-/// `Assoc` field. The last pass boxes each `Assoc` field that stays on a cycle. A `Never` field
-/// is never boxed. The ranks read names only, so a type argument an enum never holds inline
-/// (unused, or only in an array or a class) still counts: with `enum Two<T, U> { Both(T, T) }`,
-/// `Wrap2<T>.W: Two<T, Wrap2<T>>` is `Own`, and `G<i64>` in `enum G<T> { P(Wrap2<G<T>>) }`
-/// boxes `Wrap2<G<i64>>.W` beside `G<i64>.P`, which alone would break the cycle. And a `Late`
-/// declaring field that names its cycle only through closed names can lose its box to an
-/// `Open` field inside the generic type: with `enum Wrap8<T> { W(P2<T, Y8<T>>) N }` and
-/// `enum Y8<T> { V(P2<T, Wrap8<i64>>) N }`, `G<T>.P: P2<T, Wrap8<G<i64>>>` is `Late`, so the
-/// `Open` pass boxes `Wrap8<G<i64>>.W` and leaves `G<i64>.P` inline. And a ring of two
-/// instances, `E3<P3<i64, bool>>` and `E3<P3<bool, i64>>` with `Item = E3<P3<B, A>>`, gets a
-/// box on each, where one box breaks the ring. Each of these places a box where it is not
-/// needed, and never leaves a cycle unboxed. Every member of a component with a box is on that
-/// cycle, and counted, though a member may hold its links inline.
-pub(crate) fn layout_enums(enums: &mut [Enum]) {
+/// A type that a field holds inline: an enum or a struct, a node of the holds-inline graph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Inline {
+    Enum(EnumId),
+    Struct(StructId),
+}
+
+impl Inline {
+    /// The node of this type in the holds-inline graph, which numbers the `enums` enums
+    /// first, then the structs.
+    pub(crate) fn node(self, enums: usize) -> usize {
+        match self {
+            Inline::Enum(id) => id.0,
+            Inline::Struct(id) => enums + id.0,
+        }
+    }
+
+    /// The enum, when this is one.
+    #[cfg(test)]
+    pub(crate) fn enum_id(self) -> Option<EnumId> {
+        match self {
+            Inline::Enum(id) => Some(id),
+            Inline::Struct(_) => None,
+        }
+    }
+}
+
+/// Lays out `enums` and `structs`, whose field types are final. It boxes each payload field that
+/// closes a cycle of the holds-inline graph. It sets each enum's `cycle`, `counted` and `reaches`
+/// and each struct's `cycle`, `counted` and `reaches`. The graph numbers the enums first, then
+/// the structs (`Inline::node`). A struct field has a `Rank` as a payload field has, and each
+/// rule below that names an enum holds for a struct too. The box goes on the declaring enum's
+/// own field rather than one inside a generic type. There is a pass per `Rank`: `Plain`, `Own`,
+/// `Open`, `Late`, then `Assoc`. Each pass boxes its fields that are on a cycle of what the passes
+/// before it left unboxed. A cycle that `Plain` leaves holds an `Own`, `Open` or `Late` field, or
+/// an `Assoc` field. Take a cycle with no associated type. A generic field of one enum on it names
+/// the declaration of the next, so the names close a cycle of declarations. The choice of an
+/// associated type is a third source of enum names. It can name the enum that holds it: `Item =
+/// E<W<T>>` for `A(T.Item)` in `E`. Only a field that holds an associated type reads a choice. So a
+/// cycle that the earlier passes leave holds an `Assoc` field. The last pass boxes each `Assoc`
+/// field that stays on a cycle. A `Never` field is never boxed. The ranks read names only, so a
+/// type argument an enum never holds inline (unused, or only in an array or a class) still counts:
+/// with `enum Two<T, U> { Both(T, T) }`, `Wrap2<T>.W: Two<T, Wrap2<T>>` is `Own`, and `G<i64>` in
+/// `enum G<T> { P(Wrap2<G<T>>) }` boxes `Wrap2<G<i64>>.W` beside `G<i64>.P`, which alone would
+/// break the cycle. And a `Late` declaring field that names its cycle only through closed names can
+/// lose its box to an `Open` field inside the generic type: with `enum Wrap8<T> { W(P2<T, Y8<T>>) N
+/// }` and `enum Y8<T> { V(P2<T, Wrap8<i64>>) N }`, `G<T>.P: P2<T, Wrap8<G<i64>>>` is `Late`, so the
+/// `Open` pass boxes `Wrap8<G<i64>>.W` and leaves `G<i64>.P` inline. And a ring of two instances,
+/// `E3<P3<i64, bool>>` and `E3<P3<bool, i64>>` with `Item = E3<P3<B, A>>`, gets a box on each,
+/// where one box breaks the ring. Each of these places a box where it is not needed, and never
+/// leaves a cycle unboxed. Every member of a component with a box is on that cycle, and counted,
+/// though a member may hold its links inline.
+pub(crate) fn layout_types(enums: &mut [Enum], structs: &mut [Struct]) {
+    let count = enums.len();
+    let edge = |p: &Payload| p.ty.inline_type().map(|held| held.node(count));
     // The holds-inline graph over the fields `keep` picks.
-    let held = |enums: &[Enum], keep: fn(&Payload) -> bool| -> Vec<Vec<usize>> {
-        (enums.iter())
-            .map(|e| {
+    let held =
+        |enums: &[Enum], structs: &[Struct], keep: fn(&Payload) -> bool| -> Vec<Vec<usize>> {
+            let enum_edges = enums.iter().map(|e| {
                 let fields = e.variants.iter().flat_map(|v| &v.fields);
-                (fields.filter(|p| keep(p)))
-                    .filter_map(|p| p.ty.inline_enum())
-                    .map(|id| id.0)
+                fields.filter(|p| keep(p)).filter_map(edge).collect()
+            });
+            let struct_edges = structs.iter().map(|s| {
+                s.fields
+                    .iter()
+                    .filter(|p| keep(p))
+                    .filter_map(edge)
                     .collect()
-            })
-            .collect()
-    };
-    let component = components(&held(enums, |_| true));
+            });
+            enum_edges.chain(struct_edges).collect()
+        };
+    let component = components(&held(enums, structs, |_| true));
+    let on_cycle =
+        |p: &Payload, node: usize| edge(p).is_some_and(|f| component[f] == component[node]);
     for (e, info) in enums.iter_mut().enumerate() {
         for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {
-            p.boxed = p.rank == Rank::Plain
-                && p.ty
-                    .inline_enum()
-                    .is_some_and(|f| component[f.0] == component[e]);
+            p.boxed = p.rank == Rank::Plain && on_cycle(p, e);
+        }
+    }
+    for (s, info) in structs.iter_mut().enumerate() {
+        for p in &mut info.fields {
+            p.boxed = p.rank == Rank::Plain && on_cycle(p, count + s);
         }
     }
     // A program with only `Plain` and `Never` fields skips the later passes' graphs.
-    let mut fields = enums
+    let enum_fields = enums
         .iter()
         .flat_map(|e| &e.variants)
         .flat_map(|v| &v.fields);
-    if fields.any(|p| matches!(p.rank, Rank::Own | Rank::Open | Rank::Late | Rank::Assoc)) {
+    let mut ranked = enum_fields.chain(structs.iter().flat_map(|s| &s.fields));
+    if ranked.any(|p| matches!(p.rank, Rank::Own | Rank::Open | Rank::Late | Rank::Assoc)) {
         for rank in [Rank::Own, Rank::Open, Rank::Late, Rank::Assoc] {
-            let remaining = components(&held(enums, |p| !p.boxed));
-            for (e, info) in enums.iter_mut().enumerate() {
-                for p in info.variants.iter_mut().flat_map(|v| &mut v.fields) {
-                    let on_cycle =
-                        p.ty.inline_enum()
-                            .is_some_and(|f| remaining[f.0] == remaining[e]);
-                    p.boxed |= p.rank == rank && on_cycle;
-                }
+            let remaining = components(&held(enums, structs, |p| !p.boxed));
+            let enum_fields = (enums.iter_mut().enumerate())
+                .flat_map(|(e, info)| info.variants.iter_mut().map(move |v| (e, v)))
+                .flat_map(|(e, v)| v.fields.iter_mut().map(move |p| (e, p)));
+            let struct_fields = (structs.iter_mut().enumerate())
+                .flat_map(|(s, info)| info.fields.iter_mut().map(move |p| (count + s, p)));
+            for (node, p) in enum_fields.chain(struct_fields) {
+                let on_cycle = edge(p).is_some_and(|f| remaining[f] == remaining[node]);
+                p.boxed |= p.rank == rank && on_cycle;
             }
         }
     }
-    let mut has_box = vec![false; enums.len()];
-    for (e, info) in enums.iter().enumerate() {
-        has_box[component[e]] |= info
-            .variants
-            .iter()
-            .flat_map(|v| &v.fields)
-            .any(|p| p.boxed);
+    let nodes = count + structs.len();
+    let mut has_box = vec![false; nodes];
+    for node in 0..nodes {
+        has_box[component[node]] |= node_fields(enums, structs, node).any(|p| p.boxed);
     }
-    // A component is numbered after every component it holds, and holds its own members only
-    // when it has a box, so counting in component order sees each other held enum counted.
-    let mut order: Vec<usize> = (0..enums.len()).collect();
-    order.sort_by_key(|&e| component[e]);
+    // A component is numbered after every component it holds. It holds its own members only
+    // when it has a box, so counting in component order sees each other held type counted.
+    let mut order: Vec<usize> = (0..nodes).collect();
+    order.sort_by_key(|&node| component[node]);
     // The reach flag of each component. The components a component holds are before it, so
     // their flags are final when it reads them. A type parameter sets the flag: it may be a class.
-    let mut reaches = vec![false; enums.len()];
-    for &e in &order {
-        let boxed = has_box[component[e]];
-        enums[e].cycle = boxed.then_some(component[e]);
-        let counted = boxed
-            || (enums[e].variants.iter().flat_map(|v| &v.fields))
-                .any(|p| p.ty.may_be_counted(enums));
-        enums[e].counted = counted;
-        let fields = enums[e].variants.iter().flat_map(|v| &v.fields);
-        let sets = fields
+    let mut reaches = vec![false; nodes];
+    for &node in &order {
+        let boxed = has_box[component[node]];
+        let counted =
+            boxed || node_fields(enums, structs, node).any(|p| p.ty.may_be_counted(enums, structs));
+        let sets = node_fields(enums, structs, node)
             .map(|p| p.ty.without_optionals())
-            .any(|ty| match ty.kind() {
-                TypeKind::String => false,
-                TypeKind::Enum(held, _) if component[held.0] == component[e] => false,
-                TypeKind::Enum(held, _) => reaches[component[held.0]],
-                _ => ty.may_be_counted(enums),
+            .any(|ty| match (ty.kind(), ty.inline_type()) {
+                (TypeKind::String, _) => false,
+                (_, Some(held)) if component[held.node(count)] == component[node] => false,
+                (_, Some(held)) => reaches[component[held.node(count)]],
+                _ => ty.may_be_counted(enums, structs),
             });
-        reaches[component[e]] |= sets;
+        reaches[component[node]] |= sets;
+        if node < count {
+            enums[node].cycle = boxed.then_some(component[node]);
+            enums[node].counted = counted;
+        } else {
+            structs[node - count].cycle = boxed.then_some(component[node]);
+            structs[node - count].counted = counted;
+        }
     }
     for (e, info) in enums.iter_mut().enumerate() {
         info.reaches = reaches[component[e]];
     }
+    for (s, info) in structs.iter_mut().enumerate() {
+        info.reaches = reaches[component[count + s]];
+    }
+}
+
+/// The nodes that node `node` of the holds-inline graph (`Inline::node`) holds inline: each
+/// unboxed field of an enum or a struct type, or of its optional.
+pub(crate) fn held_inline<'a>(
+    enums: &'a [Enum],
+    structs: &'a [Struct],
+    node: usize,
+) -> impl Iterator<Item = usize> + 'a {
+    (node_fields(enums, structs, node).filter(|p| !p.boxed))
+        .filter_map(|p| p.ty.inline_type().map(|held| held.node(enums.len())))
+}
+
+/// The fields of node `node` of the holds-inline graph of `layout_types`: the payload fields of
+/// an enum, or the fields of a struct.
+fn node_fields<'a>(
+    enums: &'a [Enum],
+    structs: &'a [Struct],
+    node: usize,
+) -> impl Iterator<Item = &'a Payload> {
+    let (variants, own): (&[Variant], &[Payload]) = match node.checked_sub(enums.len()) {
+        None => (&enums[node].variants, &[]),
+        Some(s) => (&[], &structs[s].fields),
+    };
+    variants.iter().flat_map(|v| &v.fields).chain(own)
 }
 
 impl ExprKind {
@@ -1082,6 +1206,7 @@ impl ExprKind {
             | ExprKind::InterfaceCall { args, .. }
             | ExprKind::DynCall { args, .. }
             | ExprKind::New { args, .. }
+            | ExprKind::Struct { args, .. }
             | ExprKind::Variant { args, .. } => args.iter().any(Expr::exits),
             ExprKind::Compare { operands, .. }
             | ExprKind::Math { operands, .. }
@@ -1090,6 +1215,7 @@ impl ExprKind {
                 parts: operands, ..
             } => operands.iter().any(Expr::exits),
             ExprKind::Field { base: operand, .. }
+            | ExprKind::StructField { base: operand, .. }
             | ExprKind::Len(operand)
             | ExprKind::Chars(operand)
             | ExprKind::Bytes(operand)
@@ -1178,12 +1304,14 @@ impl Expr {
             | ExprKind::InterfaceCall { args, .. }
             | ExprKind::DynCall { args, .. }
             | ExprKind::New { args, .. }
+            | ExprKind::Struct { args, .. }
             | ExprKind::Variant { args, .. }
             | ExprKind::Compare { operands: args, .. }
             | ExprKind::Math { operands: args, .. }
             | ExprKind::ArrayLit(args)
             | ExprKind::Interpolate { parts: args, .. } => args.iter_mut().for_each(f),
             ExprKind::Field { base: operand, .. }
+            | ExprKind::StructField { base: operand, .. }
             | ExprKind::Len(operand)
             | ExprKind::Chars(operand)
             | ExprKind::Bytes(operand)
@@ -1304,7 +1432,7 @@ impl Place {
                 base.each_expr_mut(f);
                 f(index);
             }
-            Place::Some(base) => base.each_expr_mut(f),
+            Place::Some(base) | Place::StructField { base, .. } => base.each_expr_mut(f),
         }
     }
 }
@@ -1337,7 +1465,7 @@ impl Place {
             Place::Local(_) => false,
             Place::Field { base, .. } => base.exits(),
             Place::Index { base, index } => base.exits() || index.exits(),
-            Place::Some(base) => base.exits(),
+            Place::Some(base) | Place::StructField { base, .. } => base.exits(),
         }
     }
 }
@@ -1386,12 +1514,14 @@ impl Expr {
             | K::InterfaceCall { args, .. }
             | K::DynCall { args, .. }
             | K::New { args, .. }
+            | K::Struct { args, .. }
             | K::Variant { args, .. }
             | K::ArrayLit(args)
             | K::Math { operands: args, .. }
             | K::Interpolate { parts: args, .. }
             | K::Compare { operands: args, .. } => args.iter().for_each(|a| a.exprs(out)),
             K::Field { base: e, .. }
+            | K::StructField { base: e, .. }
             | K::Wrap(e)
             | K::ToAny(e)
             | K::Convert(e)
@@ -1497,7 +1627,7 @@ impl Place {
                 base.exprs(out);
                 index.exprs(out);
             }
-            Place::Some(base) => base.exprs(out),
+            Place::Some(base) | Place::StructField { base, .. } => base.exprs(out),
         }
     }
 }
@@ -1517,6 +1647,7 @@ impl fmt::Display for Type {
             TypeKind::Param(name, _) => return write!(f, "{name}"),
             TypeKind::Assoc(base, _, _, k) => return write!(f, "{base}.assoc#{k}"),
             TypeKind::Class(id, _) => return write!(f, "class#{}", id.0),
+            TypeKind::Struct(id, _) => return write!(f, "struct#{}", id.0),
             TypeKind::Enum(id, _) => return write!(f, "enum#{}", id.0),
             TypeKind::Any(id, _) => return write!(f, "any#{}", id.0),
             TypeKind::Array(element) => return write!(f, "[{element}]"),
@@ -1663,6 +1794,15 @@ impl Printer<'_> {
                 self.list(f, format_args!("variant {}.{name}", e.name), args)
             }
             ExprKind::Field { base, index } => self.field(f, base, *index),
+            ExprKind::Struct { id, args } => {
+                let name = &self.program.structs[id.0].name;
+                self.list(f, format_args!("struct {name}"), args)
+            }
+            ExprKind::StructField { base, index } => {
+                f.write_str("(. ")?;
+                self.expr(f, base)?;
+                write!(f, " {})", self.program.struct_field(base.ty, *index))
+            }
             ExprKind::DynCall {
                 interface,
                 iargs,
@@ -1929,6 +2069,41 @@ impl Printer<'_> {
                 self.place(f, base)?;
                 f.write_str(")")
             }
+            Place::StructField { base, index } => {
+                f.write_str("(. ")?;
+                self.place(f, base)?;
+                write!(
+                    f,
+                    " {})",
+                    self.program.struct_field(self.place_type(base), *index)
+                )
+            }
+        }
+    }
+
+    /// The type of the value that `place` stores.
+    fn place_type(&self, place: &Place) -> Type {
+        let ty = match place {
+            Place::Local(local) => return self.function.locals[local.0].ty,
+            Place::Field { base, index } => {
+                let TypeKind::Class(class, args) = base.ty.kind() else {
+                    panic!("a field place should have a class base, not `{}`", base.ty)
+                };
+                return self.program.classes[class.0].fields[*index]
+                    .ty
+                    .subst(args.get());
+            }
+            Place::StructField { base, index } => {
+                let TypeKind::Struct(id, _) = self.place_type(base).kind() else {
+                    panic!("a struct field place should have a struct base")
+                };
+                return self.program.structs[id.0].fields[*index].ty;
+            }
+            Place::Index { base, .. } | Place::Some(base) => self.place_type(base),
+        };
+        match ty.kind() {
+            TypeKind::Array(inner) | TypeKind::Optional(inner) => inner,
+            _ => panic!("an element or a payload place should hold an array or an optional"),
         }
     }
 
@@ -2042,9 +2217,19 @@ impl Program {
         Some((name, cut))
     }
 
+    /// The name of field `index` of the struct type `ty`.
+    pub(crate) fn struct_field(&self, ty: Type, index: usize) -> &str {
+        let TypeKind::Struct(id, _) = ty.kind() else {
+            panic!("the checker should only emit a struct field on a struct, not `{ty}`")
+        };
+        (self.structs[id.0].fields[index].label.as_deref())
+            .expect("a struct field should have its name as its label")
+    }
+
     fn head(&self, head: Head) -> &str {
         match head {
             Head::Class(id) => &self.classes[id.0].name,
+            Head::Struct(id) => &self.structs[id.0].name,
             Head::Enum(id) => &self.enums[id.0].name,
             Head::Interface(id) => &self.interfaces[id.0].name,
             Head::Assoc(interface, k) => &self.interfaces[interface.0].assoc[k as usize],
@@ -2067,6 +2252,20 @@ impl fmt::Display for Program {
                 let keyword = if field.mutable { "mut " } else { "" };
                 let ty = self.type_name(field.ty);
                 write!(f, " ({keyword}{} {ty})", field.name)?;
+            }
+            f.write_str(")")?;
+            separator = "\n";
+        }
+        for s in &self.structs {
+            write!(f, "{separator}(struct {}", s.name)?;
+            for field in &s.fields {
+                let name = field.label.as_deref().unwrap_or_default();
+                let ty = self.type_name(field.ty);
+                if field.boxed {
+                    write!(f, " ({name} (box {ty}))")?;
+                } else {
+                    write!(f, " ({name} {ty})")?;
+                }
             }
             f.write_str(")")?;
             separator = "\n";

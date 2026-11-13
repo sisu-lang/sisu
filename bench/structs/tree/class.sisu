@@ -1,0 +1,121 @@
+// A directory tree with parent links, written with classes.
+// `weak` is not built yet, so this tree is a reference cycle and it leaks.
+
+class Dir {
+    mut name: string
+    mut size: i64
+    mut parent: Dir?
+    mut children: [Dir]
+
+    fn add(self, name: string, size: i64) -> Dir {
+        let child = Dir(name: name, size: size, parent: self, children: [])
+        self.children.push(child)
+        child
+    }
+
+    fn path(self) -> string {
+        if let up = self.parent {
+            return up.path() + "/" + self.name
+        }
+        self.name
+    }
+
+    fn total(self) -> i64 {
+        let mut sum = self.size
+        for c in self.children {
+            sum += c.total()
+        }
+        sum
+    }
+
+    fn is_inside(self, other: Dir) -> bool {
+        if self is other {
+            return true
+        }
+        if let up = self.parent {
+            return up.is_inside(other)
+        }
+        false
+    }
+
+    fn remove_child(self, child: Dir) {
+        let mut kept: [Dir] = []
+        for c in self.children {
+            if !(c is child) {
+                kept.push(c)
+            }
+        }
+        self.children = kept
+    }
+
+    fn move_to(self, target: Dir) -> bool {
+        if target.is_inside(self) {
+            return false
+        }
+        if let up = self.parent {
+            up.remove_child(self)
+        }
+        self.parent = target
+        target.children.push(self)
+        true
+    }
+}
+
+fn build(under: Dir, depth: i64, width: i64) {
+    if depth == 0 {
+        return
+    }
+    for i in 0..width {
+        build(under.add("d{i}", i + 1), depth - 1, width)
+    }
+}
+
+fn main() {
+    // The input is one line, the size of the work: a count of 1 is 8 subtrees under `big`.
+    let mut n = 0
+    for c in (read_line() ?? "").chars() {
+        n = n * 10 + i64(c) - 48
+    }
+    let root = Dir(name: "root", size: 1, parent: None, children: [])
+    let home = root.add("home", 10)
+    let etc = root.add("etc", 20)
+    let aino = home.add("aino", 30)
+    let docs = aino.add("docs", 40)
+    print(docs.path())
+    print(root.total())
+
+    docs.size += 5
+    docs.name = "papers"
+    print(docs.path())
+    print(root.total())
+
+    print(aino.move_to(etc))
+    print(docs.path())
+    print(home.total())
+    print(etc.total())
+    print(etc.move_to(docs))
+    print(root.total())
+
+    // The work to measure: a large tree, many walks to the root, many moves.
+    let big = root.add("big", 0)
+    for k in 0..8 * n {
+        build(big.add("d{k}", k % 8 + 1), 3, 8)
+    }
+    let mut sum = 0
+    for i in 0..200 * n {
+        let c = big.children[i % 8].children[i % 7].children[i % 5]
+        sum += c.path().chars().len()
+        c.size += 1
+        c.children[i % 3].size += i
+    }
+    for i in 0..2000 * n {
+        let from = big.children[i % 8].children[i % 7]
+        let to = big.children[(i + 1) % 8].children[i % 7]
+        if from.children.len() > 0 {
+            let _ = from.children[0].move_to(to)
+        }
+        sum += to.children.len()
+    }
+    print(sum)
+    print(big.total())
+}

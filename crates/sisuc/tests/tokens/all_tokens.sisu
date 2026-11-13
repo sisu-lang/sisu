@@ -21,8 +21,8 @@ class Names {
     enum E { }
 }
 
-// Reserved words: each one is `Reserved`, and `var` and `todo` are not.
-import pub record weak test extern as
+// Reserved words: each one is `Reserved`, and `var`, `todo` and `struct` are not.
+import pub move weak test extern as
 
 // Operators and punctuation: each one, by longest match.
 fn operators() {
@@ -233,10 +233,11 @@ fn separators() {
     t.;0.5
 }
 
-// A `;` between top-level items. After a `fn`, `class`, `enum`, `interface` or `extend` item
-// the `;` is redundant: the `}` ends the item.
+// A `;` between top-level items. After a `fn`, `class`, `struct`, `enum`, `interface` or
+// `extend` item the `;` is redundant: the `}` ends the item.
 fn first() {};fn main() {}
 class C { };class D { }
+struct S { };struct T { }
 enum E { };enum F { }
 // After a `const` the `;` separates it from the item after it.
 const X = 1; fn main() {}

@@ -1,0 +1,46 @@
+// GIVEN `struct Wrap { b: B; tag: string; xs: [string] }`, a class `B` whose written `to_string`
+// replaces the `Wrap` in its holder's `mut` field, and a `Wrap` that is in that field
+// WHEN `main` shows the field with `print`, an interpolation and `dbg`, and shows a copy as an
+// `any Display` and in an array
+// THEN each form writes the old value, then the field holds the new one; the shown copy is
+// released once, and Valgrind finds no leak and no read of a freed block
+class Hold { mut w: Wrap }
+class B { mut hold: Hold? }
+struct Wrap { b: B; tag: string; xs: [string] }
+
+extend B: Display {
+    fn to_string(self) -> string {
+        self.hold?.w = Wrap(b: B(hold: None), tag: "u", xs: [])
+        "bee"
+    }
+}
+
+fn holder() -> Hold {
+    let b = B(hold: None)
+    let h = Hold(w: Wrap(b: b, tag: "t" + "1", xs: ["a" + "b"]))
+    b.hold = h
+    h
+}
+
+fn main() {
+    let h = holder()
+    print(h.w)                       // Wrap(b: bee, tag: "t1", xs: ["ab"])
+    print(h.w.tag)                   // u
+
+    let k = holder()
+    let s = "[{k.w}]"
+    print(s)                         // [Wrap(b: bee, tag: "t1", xs: ["ab"])]
+    print(k.w.tag)                   // u
+
+    let g = holder()
+    let a: any Display = g.w
+    print(a)                         // Wrap(b: bee, tag: "t1", xs: ["ab"])
+    print(g.w.tag)                   // u
+    let all = [g.w, g.w]
+    print(all)                       // [Wrap(b: bee, tag: "u", xs: []), Wrap(b: bee, tag: "u", xs: [])]
+
+    let m = holder()
+    let d = dbg(m.w)
+    print(d.tag)                     // t1
+    print(m.w.tag)                   // u
+}

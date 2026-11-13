@@ -1,7 +1,7 @@
-error[E0083]: `record` is reserved for a later version of Sisu
+error[E0083]: `extern` is reserved for a later version of Sisu
  --> E0083.sisu:2:9
   |
-2 |     let record = 1
+2 |     let extern = 1
   |         ^^^^^^
 
 sisu: 1 error

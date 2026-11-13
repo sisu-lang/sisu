@@ -15,7 +15,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
   <section class="ph"><div class="w">
     <h1>How the compiler works</h1>
     <p class="lede"><code>sisu</code> compiles one Sisu source file into one native executable. It is a pipeline: each stage takes what the stage before it produced and hands on something closer to machine code.</p>
-    <p class="meta">From docs/architecture.md and the ADRs at commit 11e371d6 · x86-64 and ARM64 Linux, ARM64 macOS</p>
+    <p class="meta">From docs/architecture.md and the ADRs at commit 590a03e3 · x86-64 and ARM64 Linux, ARM64 macOS</p>
   </div></section>
   <!-- source: docs/architecture.md (intro), README.md (x86-64 and ARM64 Linux, ARM64 macOS) -->
 
@@ -76,7 +76,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
 
       <h3 id="mono">Mono</h3>
       <p class="files"><code>crates/sisuc/src/mono.rs</code></p>
-      <p>Monomorphization. Starting from the functions that are not generic, mono copies each generic function, class and enum once for each list of type arguments it reaches, and names the copy as a program writes it: <code>first&lt;i64&gt;</code>, <code>Stack&lt;string&gt;.peek</code>. A call through a bound, and an operator on a type parameter, becomes a call of the method that the type argument's conformance holds, so dispatch is static, and an associated type becomes the type its conformance chose. A call on an <code>any</code> value becomes a call through the table of the value, and each conversion to an <code>any</code> type makes mono reach the methods of that table. Then it lays out the enums again, because a copy can close a cycle that needs a box. It reports E0030 for a chain of associated types that the checker did not follow to its end, a loop or more than 128 choices, and then gives no program, so <code>sisu check</code> does not find such a chain. It also reports E0160 for an enum payload that can be 4 GiB or more, when the checker cannot measure it: an enum that holds an instance of a generic enum, or is one. It stops with E0163 when the program reaches more than 100,000 instances. MIR and codegen see only concrete types.</p>
+      <p>Monomorphization. Starting from the functions that are not generic, mono copies each generic function, class, struct and enum once for each list of type arguments it reaches, and names the copy as a program writes it: <code>first&lt;i64&gt;</code>, <code>Stack&lt;string&gt;.peek</code>. A call through a bound, and an operator on a type parameter, becomes a call of the method that the type argument's conformance holds, so dispatch is static, and an associated type becomes the type its conformance chose. A call on an <code>any</code> value becomes a call through the table of the value, and each conversion to an <code>any</code> type makes mono reach the methods of that table. Then it lays out the enums again, because a copy can close a cycle that needs a box. It reports E0030 for a chain of associated types that the checker did not follow to its end, a loop or more than 128 choices, and then gives no program, so <code>sisu check</code> does not find such a chain. It also reports E0160 for an enum payload that can be 4 GiB or more, when the checker cannot measure it: an enum that holds an instance of a generic enum, or is one. It stops with E0163 when the program reaches more than 100,000 instances. MIR and codegen see only concrete types.</p>
 
       <h3 id="mir">MIR</h3>
       <p class="files"><code>crates/sisuc/src/mir/</code></p>
@@ -91,6 +91,7 @@ How the Sisu compiler turns source text into a native executable, one stage at a
         <li>An array is one counted block: the count, the length, the capacity, then the elements. An array value is three words: the block, its first element and its length. A slice of an array is a value whose first element and length lie inside the block of its parent.</li>
         <li>A string is one counted block: the count, the length, the capacity, then the UTF-8 bytes. A string value is three words in the same way.</li>
         <li>An enum value has no heap block of its own: it is a tag and its variant's payload, held inline. A field that would make an enum contain itself goes behind a counted box.</li>
+        <li>A struct value has no heap block, tag or count either: it is its fields, held inline, and a copy copies them. A field that would make a struct contain itself goes behind a counted box, as an enum's does.</li>
         <li>A value over 256 bytes, such as a large enum, stays in memory: codegen holds a pointer to a stack slot and copies it with <code>memcpy</code>. A function takes such a value as a pointer, and writes such a result to a pointer that its caller gives.</li>
         <li>An <code>any</code> value is two pointers: the data and a table of methods. A class object is its own data. Any other value goes into a counted box that every copy of the <code>any</code> value shares.</li>
       </ul>

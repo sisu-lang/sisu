@@ -1,0 +1,10 @@
+struct Account { balance: i64 }
+struct Bank { accounts: [Account] }
+
+fn main() {
+    let mut bank = Bank(accounts: [Account(balance: 1)])
+    let i = 0
+    let mut a = bank.accounts[i]
+    a.balance += 100
+    print(bank.accounts[i].balance)
+}

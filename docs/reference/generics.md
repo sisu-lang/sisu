@@ -19,11 +19,11 @@ fn main() {
 }
 ```
 
-`first` works for an array whose elements have a type that a type argument can be ([Type arguments](#type-arguments)). A function, a class and an enum can be generic. This page also tells what a generic body can do with a value of a type parameter, and which features are in development.
+`first` works for an array whose elements have a type that a type argument can be ([Type arguments](#type-arguments)). A function, a class, a struct and an enum can be generic. This page also tells what a generic body can do with a value of a type parameter, and which features are in development.
 
 ## Type parameters
 
-The type parameters of a declaration are names between `<` and `>` after the name of the declaration. A function, a class or an enum can have them.
+The type parameters of a declaration are names between `<` and `>` after the name of the declaration. A function, a class, a struct or an enum can have them.
 
 ```sisu
 class Pair<A, B> {
@@ -63,7 +63,7 @@ fn main() {
 **Rules**
 
 - A type parameter can be the type of a parameter, a field, a payload, a return value or a binding.
-- A method of a generic class or enum can use the type parameters of its type.
+- A method of a generic class, struct or enum can use the type parameters of its type.
 - A method can add type parameters of its own, such as `C` in `with_second`.
 - Two type parameters of one declaration cannot have the same name. A method cannot reuse a name from its type. [E0034](../diagnostics/E0034.md)
 - A type parameter cannot take a reserved name, such as `i64` or `Option`. [E0026](../diagnostics/E0026.md)
@@ -83,7 +83,7 @@ fn main() {}
 
 ## Type arguments
 
-A type argument is a type between `<` and `>` after the name of a generic class or enum. It can be any type that a value can have, such as `i64`, `[string]` or another generic type.
+A type argument is a type between `<` and `>` after the name of a generic class, struct or enum. It can be any type that a value can have, such as `i64`, `[string]` or another generic type.
 
 ```sisu
 class Box<T> {
@@ -105,7 +105,7 @@ fn main() {
 **Rules**
 
 - A type gives one type argument for each type parameter. `Box` alone and `Box<i64, i64>` are errors. [E0137](../diagnostics/E0137.md)
-- A class, an enum or a function that is not generic takes no type arguments. [E0137](../diagnostics/E0137.md)
+- A class, a struct, an enum or a function that is not generic takes no type arguments. [E0137](../diagnostics/E0137.md)
 - The type arguments of a variant go on its enum: `Tree<i64>.Node(...)`, not `Tree.Node<i64>(...)`. [E0137](../diagnostics/E0137.md)
 - A type argument can be an optional, such as `i64?` in `Box<i64?>`.
 - A type argument cannot be `unit` or `never`. `unit` is the type of a call that gives no value, such as `print(1)`. [E0138](../diagnostics/E0138.md)
@@ -319,7 +319,7 @@ The sections [Bounds](#bounds) and [Interfaces](#interfaces) tell how a generic 
 
 ## Growing type arguments
 
-A generic function, class or enum cannot use itself with a type argument that grows, directly or through other declarations. `nest([x], n - 1)` in `nest<T>` calls `nest` with `[T]` for `T`, and then with `[[T]]`, without end. This is an error ([E0140](../diagnostics/E0140.md)).
+A generic function, class, struct or enum cannot use itself with a type argument that grows, directly or through other declarations. `nest([x], n - 1)` in `nest<T>` calls `nest` with `[T]` for `T`, and then with `[[T]]`, without end. This is an error ([E0140](../diagnostics/E0140.md)).
 
 ```sisu
 fn nest<T>(x: T, n: i64) {
@@ -394,7 +394,7 @@ fn main() {
 
 ## Interfaces
 
-An *interface* lists the methods that a type must have. A class or an enum names its interfaces after its name. A method in an interface has `self` and no body.
+An *interface* lists the methods that a type must have. A class, a struct or an enum names its interfaces after its name. A method in an interface has `self` and no body.
 
 ```sisu
 interface Shape {
@@ -425,7 +425,7 @@ fn main() {
 **Rules**
 
 - A type that names an interface has each method of it, with the same signature. A missing method is an error.
-- A class or an enum lists its interfaces after `:`, with `,` between them: `class Tree: Display, Eq`. A bound joins interfaces with `&`: `T: Shape & Ord`.
+- A class, a struct or an enum lists its interfaces after `:`, with `,` between them: `class Tree: Display, Eq`. A bound joins interfaces with `&`: `T: Shape & Ord`.
 - A type conforms to an interface with the same type arguments at most once.
 - `Self` in an interface is the type that conforms to it, as in `fn eq(self, other: Self) -> bool`.
 - An interface can require other interfaces: `interface Shape: Display`. A type that conforms to `Shape` conforms to `Display` too.
@@ -612,6 +612,7 @@ fn main() {
 - A class has no `==` and no `<` until it names `Eq` or `Ord`. `a is b` compares two objects by identity.
 - A value that holds a class, such as an array of objects, has `==` only when the class conforms to `Eq`.
 - An enum has `==` when all its payloads have it. It has `<` only when it names `Ord`.
+- A struct has `==` when all its fields have it. It has `<` only when it names `Ord`.
 - `i64`, `u8`, `char` and `string` have `Eq` and `Ord` with no declaration.
 - `f64` has `Eq` and `Ord` with the rules of IEEE 754. `nan` is not equal to `nan`, also in generic code.
 
@@ -644,14 +645,14 @@ fn main() {
 - Its name must differ from the name of each function, class, enum, interface and constant. [E0034](../diagnostics/E0034.md)
 - Its name cannot be the name of a built-in type. [E0026](../diagnostics/E0026.md)
 - An alias can have type parameters, such as `Pairs<T>`. They take no bounds.
-- An alias cannot refer to itself, directly or through another alias. A class or an enum can hold itself. [E0161](../diagnostics/E0161.md)
+- An alias cannot refer to itself, directly or through another alias. A class, a struct or an enum can hold itself. [E0161](../diagnostics/E0161.md)
 - An alias cannot name an interface. [E0147](../diagnostics/E0147.md)
 
 **Using an alias**
 
 - An alias is the type that it names, also inside type arguments: a `Stack<Grid>` is a `Stack<[[char?]]>`.
 - A use gives every type argument: `Pairs` alone is an error. [E0137](../diagnostics/E0137.md)
-- An alias of a class or an enum makes values as the type does. For `type B<T> = Box<T>`, `B<i64>(value: 1)` writes the type arguments. Without them, the arguments and the context give them, as for a generic call.
+- An alias of a class, a struct or an enum makes values as the type does. For `type B<T> = Box<T>`, `B<i64>(value: 1)` writes the type arguments. Without them, the arguments and the context give them, as for a generic call.
 - An alias of a number type converts values and has the constants of the type, as `Meters(4)` and `Meters.pi` show.
 - An alias of an optional type has its `Some` and `None`.
 - The pattern `Alias.Variant(x)` holds the type arguments that the alias fixes.

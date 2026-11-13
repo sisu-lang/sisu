@@ -1,0 +1,58 @@
+error[E0027]: no value of `S` can be built
+ --> E0027-generic-struct.sisu:1:8
+  |
+1 | struct S<T> {
+  |        ^ `S.next` holds a `S<T>`
+  |
+  = help: a field of type `S<T>?`, or an enum with a variant that holds no `S<T>`, ends the chain
+
+error[E0027]: no value of `E` can be built
+ --> E0027-generic-struct.sisu:5:6
+  |
+5 | enum E<T> {
+  |      ^ `E.A` holds a `R<T>`, and `R.e` holds a `E<T>`
+  |
+  = help: a field of type `R<T>?`, or an enum with a variant that holds no `R<T>`, ends the chain
+
+error[E0027]: no value of `Tree` can be built
+  --> E0027-generic-struct.sisu:13:8
+   |
+13 | struct Tree<T> {
+   |        ^^^^ `Tree.root` holds a `Node<T>`, and `Node.kids` holds a `Tree<T>`
+   |
+   = help: a field of type `Tree<U>?`, or an enum with a variant that holds no `Tree<U>`, ends the chain
+
+error[E0027]: no value of `G` can be built
+  --> E0027-generic-struct.sisu:22:8
+   |
+22 | struct G<T> {
+   |        ^ `G.r` holds a `H`, and `H.g` holds a `G<i64>`
+   |
+   = help: a field of type `G<i64>?`, or an enum with a variant that holds no `G<i64>`, ends the chain
+
+error[E0027]: no value of `Fixed` can be built
+  --> E0027-generic-struct.sisu:30:8
+   |
+30 | struct Fixed<T> {
+   |        ^^^^^ `Fixed.next` holds a `Fixed<i64>`
+   |
+   = help: a field of type `Fixed<i64>?`, or an enum with a variant that holds no `Fixed<i64>`, ends the chain
+
+error[E0027]: no value of `Nest` can be built
+  --> E0027-generic-struct.sisu:34:8
+   |
+34 | struct Nest<T> {
+   |        ^^^^ `Nest.next` holds a `Nest<[T]>`
+   |
+   = help: a field of type `Nest<[T]>?`, or an enum with a variant that holds no `Nest<[T]>`, ends the chain
+
+error[E0027]: no value of `P` can be built
+  --> E0027-generic-struct.sisu:38:8
+   |
+38 | struct P<A, B> {
+   |        ^ `P.q` holds a `Q<B>`, and `Q.p` holds a `P<B, B>`
+   |
+   = help: a field of type `P<X, X>?`, or an enum with a variant that holds no `P<X, X>`, ends the chain
+
+sisu: 7 errors
+sisu: for more on a code, run `sisu explain <code>`: E0027

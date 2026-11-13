@@ -1,0 +1,75 @@
+// GIVEN `struct S { e: E }`, `enum E { A(p: P); B }`, `struct P { n: i64 }` and `struct Rock {}`.
+// In this order, the layout of `S` needs the layout of `E`, which needs the layout of `P`.
+// WHEN recursive functions take and give these values, with a depth that LLVM cannot know.
+// The values are a struct, a struct in an enum payload, an element of `[P?]`, a `P?` and a `Rock`.
+// THEN each prints the fields that it computes, and `-O2` keeps each call
+// o2-calls: main grow 1
+// o2-calls: main wrap 1
+// o2-calls: main pick 1
+// o2-calls: main rocks 1
+struct S { e: E }
+enum E {
+    A(p: P)
+    B
+}
+struct P { n: i64 }
+struct Rock {}
+
+// A struct as a parameter and a result.
+fn grow(p: P, depth: i64) -> P {
+    if depth == 0 {
+        return p
+    }
+    let q = grow(P(n: p.n + 1), depth - 1)
+    P(n: q.n * 3 + depth)
+}
+
+// A struct in an enum payload, in a struct.
+fn wrap(s: S, depth: i64) -> S {
+    if depth == 0 {
+        return s
+    }
+    let inner = wrap(s, depth - 1)
+    match inner.e {
+        E.A(p) => S(e: E.A(p: P(n: p.n * 3 + depth)))
+        E.B => S(e: E.B)
+    }
+}
+
+fn shown(s: S) -> i64 {
+    match s.e {
+        E.A(p) => p.n
+        E.B => 0
+    }
+}
+
+// An element of `[P?]`, and a `P?` as a result.
+fn pick(xs: [P?], depth: i64) -> P? {
+    if depth == 0 {
+        return xs[0]
+    }
+    let o = pick(xs, depth - 1)
+    P(n: (o?.n ?? 0) * 3 + depth)
+}
+
+// `Rock`, which has no fields, as a parameter and a result.
+fn rocks(r: Rock, depth: i64) -> Rock {
+    if depth == 0 {
+        print("rock")
+        return r
+    }
+    let q = rocks(r, depth - 1)
+    print(depth)
+    q
+}
+
+fn main() {
+    let depth = (read_line() ?? "").len() + 1  // 1: standard input is empty
+    let xs: [P?] = [P(n: 1), None]
+    print(grow(P(n: 10), depth).n)   // 34: 11 * 3 + 1
+    print(shown(wrap(S(e: E.A(p: P(n: 5))), depth)))  // 16: 5 * 3 + 1
+    print(pick(xs, depth)?.n ?? 0)   // 4: 1 * 3 + 1
+    let r = rocks(Rock(), depth)     // rock, then 1, from inside `rocks`
+    let _ = r
+    print(shown(S(e: E.B)))          // 0
+}

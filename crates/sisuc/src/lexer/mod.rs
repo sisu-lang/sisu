@@ -54,6 +54,7 @@ pub(crate) enum TokenKind {
     Break,
     Continue,
     Class,
+    Struct,
     Const,
     Enum,
     Interface,
@@ -160,6 +161,7 @@ impl TokenKind {
             TokenKind::Break => "Break",
             TokenKind::Continue => "Continue",
             TokenKind::Class => "Class",
+            TokenKind::Struct => "Struct",
             TokenKind::Const => "Const",
             TokenKind::Enum => "Enum",
             TokenKind::Interface => "Interface",
@@ -244,6 +246,7 @@ impl TokenKind {
             TokenKind::Break => "break",
             TokenKind::Continue => "continue",
             TokenKind::Class => "class",
+            TokenKind::Struct => "struct",
             TokenKind::Const => "const",
             TokenKind::Enum => "enum",
             TokenKind::Interface => "interface",
@@ -560,7 +563,7 @@ fn judge(
 ) -> Judgement {
     use TokenKind::{
         Class, Const, Dot, Else, Enum, Extend, Fn, Gt, Interface, LBrace, Newline, QuestionDot,
-        QuestionQuestion, RBrace, Type,
+        QuestionQuestion, RBrace, Struct, Type,
     };
     let (i, end) = (run.start, run.end);
     let (prev, next) = (i.checked_sub(1).map(|p| &tokens[p]), tokens.get(end));
@@ -600,7 +603,7 @@ fn judge(
         || (between_items
             && matches!(
                 next,
-                Some(Fn | Class | Enum | Interface | Extend | Type | Const)
+                Some(Fn | Class | Struct | Enum | Interface | Extend | Type | Const)
             ))
     {
         Judgement::Redundant
@@ -804,6 +807,7 @@ impl Statements {
                 t.kind,
                 TokenKind::Fn
                     | TokenKind::Class
+                    | TokenKind::Struct
                     | TokenKind::Enum
                     | TokenKind::Interface
                     | TokenKind::Extend
@@ -984,6 +988,7 @@ impl Brackets {
         match kind {
             TokenKind::Fn
             | TokenKind::Class
+            | TokenKind::Struct
             | TokenKind::Enum
             | TokenKind::Interface
             | TokenKind::Extend
@@ -1459,6 +1464,7 @@ fn is_header(t: &Token) -> bool {
         t.kind,
         TokenKind::Fn
             | TokenKind::Class
+            | TokenKind::Struct
             | TokenKind::Enum
             | TokenKind::Interface
             | TokenKind::Extend
@@ -1644,8 +1650,9 @@ pub(crate) fn keyword(text: &str) -> Option<TokenKind> {
         "var" => TokenKind::Var,
         "import" => TokenKind::Reserved("import"),
         "pub" => TokenKind::Reserved("pub"),
-        "record" => TokenKind::Reserved("record"),
         "type" => TokenKind::Type,
+        "struct" => TokenKind::Struct,
+        "move" => TokenKind::Reserved("move"),
         "weak" => TokenKind::Reserved("weak"),
         "test" => TokenKind::Reserved("test"),
         "todo" => TokenKind::Todo,
@@ -1846,7 +1853,7 @@ mod tests {
     #[test]
     fn reserved_words_should_lex_as_reserved_tokens() {
         use TokenKind::{Eof, Reserved};
-        let words = ["import", "pub", "record", "weak", "test", "extern", "as"];
+        let words = ["import", "pub", "move", "weak", "test", "extern", "as"];
         let mut expected: Vec<_> = words.iter().map(|w| Reserved(w)).collect();
         expected.extend([
             ident("matches"),
@@ -1960,11 +1967,12 @@ mod tests {
             TokenKind::QuestionQuestion => 77,
             TokenKind::Newline => 78,
             TokenKind::Eof => 79,
+            TokenKind::Struct => 80,
         }
     }
 
     /// How many kinds `slot` has.
-    const KINDS: usize = 80;
+    const KINDS: usize = 81;
 
     /// The file that the check of `selfhost/lexer.sisu` lexes holds a token of each kind and each
     /// reserved word, so that the check sees every one. The reserved words are listed by hand, as
@@ -1983,7 +1991,7 @@ mod tests {
             missing.is_empty(),
             "all_tokens.sisu has no token of the kinds at these places of `slot`: {missing:?}"
         );
-        for word in ["import", "pub", "record", "weak", "test", "extern", "as"] {
+        for word in ["import", "pub", "move", "weak", "test", "extern", "as"] {
             assert!(
                 tokens.iter().any(|t| t.kind == TokenKind::Reserved(word)),
                 "all_tokens.sisu has no reserved word `{word}`"
@@ -3773,6 +3781,7 @@ mod tests {
             // A blank first line puts the newline before the header at byte 0.
             ("\nfn main()\n{\n}\n", (10, 11), (3, 1)),
             ("class A\n{\n}", (7, 8), (2, 1)),
+            ("struct A\n{\n}", (8, 9), (2, 1)),
             ("enum A\n{\n}", (6, 7), (2, 1)),
             ("interface Shape\n{}", (15, 16), (2, 1)),
             ("extend C\n{}", (8, 9), (2, 1)),
@@ -4005,6 +4014,9 @@ mod tests {
             // after one is redundant. After a `const`, a `;` separates.
             ("fn f() {};interface I {}", vec![Gone(1, 10)]),
             ("fn f() {};extend C {}", vec![Gone(1, 10)]),
+            // `struct` ends at its `}` too.
+            ("fn f() {};struct S {}", vec![Gone(1, 10)]),
+            ("struct S {}; fn main() {}", vec![Gone(1, 12)]),
             (
                 "const A = 1\ninterface I {}; fn main() {}",
                 vec![Gone(2, 15)],
@@ -4824,6 +4836,7 @@ mod tests {
                 "fn f<T: A & B & C>(x: T) {}",
             ),
             ("class C<T: A\n    & B> {}", "class C<T: A & B> {}"),
+            ("struct S<T: A\n    & B> {}", "struct S<T: A & B> {}"),
             ("enum E<T: A\n    & B> {}", "enum E<T: A & B> {}"),
             ("interface I<T: A\n    & B> {}", "interface I<T: A & B> {}"),
             ("extend<T: A\n    & B> K<T> {}", "extend<T: A & B> K<T> {}"),

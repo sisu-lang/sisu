@@ -3,6 +3,7 @@
 //! rules of the `cases` harness.
 
 use std::ffi::{OsStr, OsString};
+use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::ExitStatusExt;
@@ -109,6 +110,9 @@ const SMALL_STACK: &[&str] = &[
     "anyshow",
     "dbgarray",
     "deepshapes",
+    "structorder",
+    "structchain",
+    "mixedcycle",
 ];
 
 /// GIVEN the `tests/programs` directory
@@ -371,6 +375,8 @@ const REFERENCES: &[(&str, &str)] = &[
     ("slice_search", "slice_search_ref"),
     // `Some(xs[1..3])` allocates what `Some(xs)` does: `Some` is not a trim point.
     ("slice_some", "slice_some_ref"),
+    // An array of structs grows as an array of `i64`s does: each struct is inline, in no box.
+    ("struct_array_growth", "struct_array_growth_ref"),
 ];
 
 /// GIVEN a program and its reference program, each with an `iterations()` loop
@@ -1119,6 +1125,44 @@ fn chains_of_every_shape_should_print_and_compare_in_a_small_stack() {
     let nested = "N([[".repeat(LINKS) + "N([])" + &"]])".repeat(LINKS);
     let expected = format!("{nested}\ntrue\n500005\ntrue\n800004\ntrue\n500003\n");
     assert_small_stack_prints_at_both("deepshapes", &expected);
+}
+
+/// GIVEN `struct Node { v: i64; next: Node? }` and a list of 1 000 000 nodes built in a loop
+/// WHEN the list leaves its scope under a 256 KiB stack, with and without `-O2`, and with
+/// `--rc-checks`
+/// THEN it prints `done`, exits 0 and leaves no live object
+#[test]
+fn struct_chain_should_free_in_a_small_stack() {
+    assert_small_stack_prints_at_both("structchain", "done\n");
+    assert_small_stack_checks_at_both("structchain", "done\n");
+}
+
+/// GIVEN `struct S { e: E }` with `enum E { A(s: S); B }` and two equal values of 100 000 levels
+/// WHEN they are compared, one is printed, and both leave their scope under a 256 KiB stack, with
+/// and without `-O2`, and with `--rc-checks`
+/// THEN it prints `true`, the value and `done`, exits 0 and leaves no live object
+#[test]
+fn mixed_cycle_should_compare_print_and_free_in_a_small_stack() {
+    const LEVELS: usize = 100_000;
+    let text = "S(e: A(s: ".repeat(LEVELS) + "S(e: B)" + &"))".repeat(LEVELS);
+    let expected = format!("true\n{text}\ndone\n");
+    assert_small_stack_prints_at_both("mixedcycle", &expected);
+    assert_small_stack_checks_at_both("mixedcycle", &expected);
+}
+
+/// GIVEN the `structorder` program, with a loop over a struct field of a class and an element.
+/// The loop copies the struct, writes its field, and copies it again.
+/// WHEN it runs, built with `-O2` and without
+/// THEN each first copy has the old value and each second copy has the new one. So no tag lets
+/// LLVM move the store past a load.
+#[test]
+fn struct_path_should_keep_its_order_at_o2() {
+    let mut expected = String::new();
+    for i in 1..4 {
+        writeln!(expected, "{}\n{i}\n{}\n{}", i - 1, (i - 1) * 10, i * 10)
+            .expect("writing to a `String` should succeed");
+    }
+    assert_small_stack_prints_at_both("structorder", &expected);
 }
 
 /// Runs `<name>.sisu` at `-O2` under the small stack and checks that it exits 0 and prints

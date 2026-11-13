@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 use rustc_hash::FxHashMap;
 
 use super::*;
-use crate::mir::lower::{ARM_STEPS, LOCAL_OF_READS, MENTION_PROBES, Mentions, WALKED};
+use crate::mir::lower::{ARM_STEPS, LOCAL_OF_READS, MENTION_PROBES, Mentions, PATH_COPIES, WALKED};
 use crate::mir::print::EXAMINED;
 
 /// Calls run in source order, and an `i64` is returned by a read, not moved.
@@ -404,6 +404,60 @@ fn interpolation_parts_should_lower_in_linear_steps() {
             [50, 100, 150].map(|k| steps(source(k)));
         assert_near_linear_for(&format!("{shape}, local_of reads: "), reads, reads2, reads3);
         assert_subquadratic_for(&format!("{shape}, mention probes: "), probes, probes2);
+    }
+}
+
+/// GIVEN a chain of `k + 1` structs, each holding the one before, and arrays in the first
+/// WHEN `main` writes an element of an array through all the fields, for `k` of 16, 32 and 64
+/// AND `main` writes an element of an array of arrays, and a field of the last struct
+/// THEN a write copies the place at each element level only, and a copy costs its projections
+/// AND the copies of one element level are `2k + 3` projections, of two levels `4k + 8`, and of
+/// a field none
+#[test]
+fn write_path_should_copy_its_place_at_each_element_level_only() {
+    let chain = |k: usize, tail: &str| {
+        let mut structs = String::from(
+            "struct L0 {
+    xs: [i64]
+    ys: [[i64]]
+    n: i64
+}
+",
+        );
+        let mut value = String::from("L0(xs: [1], ys: [[1]], n: 2)");
+        for i in 1..=k {
+            writeln!(structs, "struct L{i} {{\n    p: L{}\n}}", i - 1)
+                .expect("a string takes a write");
+            value = format!("L{i}(p: {value})");
+        }
+        let path = ".p".repeat(k);
+        format!(
+            "{structs}fn main() {{\n    let mut s = {value}\n    s{path}{tail}\n    print(s)\n}}"
+        )
+    };
+    // The counter is the thread's, and a program this deep needs the stack of the compiler.
+    let copies = |src: String| {
+        crate::on_compiler_stack(|| {
+            let program = checked(&src);
+            PATH_COPIES.set(0);
+            drop(lowered_of(&program));
+            PATH_COPIES.get()
+        })
+    };
+    for k in [16, 32, 64] {
+        // The array's place before the index has `k + 1` projections (`k` links and the field),
+        // and the checked place `k + 2`. A second level copies a place of `k + 2` and `k + 3`.
+        assert_eq!(
+            copies(chain(k, ".xs[0] = 3")),
+            2 * k + 3,
+            "element, k = {k}"
+        );
+        assert_eq!(
+            copies(chain(k, ".ys[0][0] = 3")),
+            4 * k + 8,
+            "two levels, k = {k}"
+        );
+        assert_eq!(copies(chain(k, ".n = 3")), 0, "field, k = {k}");
     }
 }
 

@@ -11,8 +11,8 @@ use crate::ast::{
     AliasDecl, Align, Applied, Arg, Arm, AssocChoice, AssocType, BinaryOp, Block, Bound, Broken,
     BrokenKind, Class, CompareOp, Const, Enum, Expr, ExprKind, Extend, FieldDecl, ForSource,
     FormatSpec, Function, Ident, Interface, Item, Literal, Member, MutSelf, Param, Part, Pattern,
-    PatternKind, PayloadField, Program, Range as RangeExpr, Requirement, Stmt, StmtKind, TypeExpr,
-    TypeKind, TypeParam, UnaryOp, Variant,
+    PatternKind, PayloadField, Program, Range as RangeExpr, Requirement, Stmt, StmtKind, Struct,
+    TypeExpr, TypeKind, TypeParam, UnaryOp, Variant,
 };
 use crate::diagnostic::{
     self, AnyFormKind, BuiltIn, ClashForm, ColonBound, Diagnostic, DiagnosticKind, ElseOf,
@@ -75,6 +75,7 @@ pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
         labels: Vec::new(),
         loops: Vec::new(),
         prelude,
+        struct_self: false,
     }
     .program()
 }
@@ -613,6 +614,10 @@ enum LetHead {
     Qualified,
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a separate state of the parse"
+)]
 struct Parser<'a> {
     /// The text the token spans index.
     source: Source<'a>,
@@ -650,6 +655,9 @@ struct Parser<'a> {
     loops: Vec<LoopPart>,
     /// Whether this is the prelude, which may declare a variant `None`.
     prelude: bool,
+    /// Whether the parser reads the body of a struct, whose methods take a `self` that cannot
+    /// change.
+    struct_self: bool,
     /// `tokens`, or once a type-argument list takes the `>` of a `>=` (a split), the tokens before
     /// it. `peek` reads it with the bounds check it needs anyway, so only a split pays for one.
     window: &'a [Token],
@@ -1371,6 +1379,9 @@ impl<'a> Parser<'a> {
             TokenKind::Class => self.with_methods(end, |p, errors, methods| {
                 p.class_body(errors, methods).map(Item::Class)
             }),
+            TokenKind::Struct => self.with_methods(end, |p, errors, methods| {
+                p.struct_body(errors, methods).map(Item::Struct)
+            }),
             TokenKind::Enum => self.with_methods(end, |p, errors, methods| {
                 p.enum_body(errors, methods).map(Item::Enum)
             }),
@@ -1385,7 +1396,9 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Type => self.checked(end, |p| Ok((Item::Alias(p.alias(end)?), Vec::new()))),
             _ => self.checked(end, |p| {
-                Err(p.expected("`fn`, `class`, `enum`, `interface`, `extend`, `const` or `type`"))
+                Err(p.expected(
+                    "`fn`, `class`, `struct`, `enum`, `interface`, `extend`, `const` or `type`",
+                ))
             }),
         }
     }
@@ -1398,6 +1411,7 @@ impl<'a> Parser<'a> {
         let kind = match self.tokens[start].kind {
             TokenKind::Fn => BrokenKind::Function,
             TokenKind::Class => BrokenKind::Class,
+            TokenKind::Struct => BrokenKind::Struct,
             TokenKind::Enum => BrokenKind::Enum,
             TokenKind::Const => BrokenKind::Constant,
             TokenKind::Type => BrokenKind::Alias,
@@ -1484,16 +1498,17 @@ impl<'a> Parser<'a> {
         unreachable!("the tokens should end with `Eof`")
     }
 
-    /// Whether token `i` is `fn`, `class`, `const`, `enum`, `interface` or `extend` and the first
-    /// token on its line. These words only start an item or a member, so one at the start of a
-    /// line starts the next one, also when a token that cannot end a line, such as `+`, leaves no
-    /// `Newline` before it.
+    /// Whether token `i` is `fn`, `class`, `struct`, `const`, `type`, `enum`, `interface` or
+    /// `extend` and the first token on its line. These words only start an item or a member. So
+    /// one at the start of a line starts the next one. This is true also when a token that cannot
+    /// end a line, such as `+`, leaves no `Newline` before it.
     fn starts_item_line(&self, i: usize) -> bool {
         let (before, after) = (self.tokens[i - 1].span.end(), self.tokens[i].span.start());
         matches!(
             self.tokens[i].kind,
             TokenKind::Fn
                 | TokenKind::Class
+                | TokenKind::Struct
                 | TokenKind::Const
                 | TokenKind::Type
                 | TokenKind::Enum
@@ -1646,23 +1661,15 @@ impl<'a> Parser<'a> {
         errors: &mut Vec<Diagnostic>,
         methods: &mut Vec<Range<usize>>,
     ) -> Result<Class, Diagnostic> {
-        self.expect(&TokenKind::Class)?;
-        let name = self.name("a class name")?;
-        let type_params = self.type_params()?;
-        let conforms = self.interface_list()?;
-        self.expect(&TokenKind::LBrace)?;
-        let mut members = Vec::new();
-        let mut assoc = Vec::new();
-        // Only a class that lists an interface may choose an associated type.
-        let chooses = !conforms.is_empty();
-        let broken_methods = self.member_lines(errors, methods, |p, end| {
-            match p.checked(end, |p| p.class_line(chooses))? {
-                ClassLine::Member(member) => members.push(member),
-                ClassLine::Assoc(choice) => assoc.push(choice),
-            }
-            Ok(())
-        })?;
-        self.bump();
+        let Struct {
+            name,
+            type_params,
+            conforms,
+            assoc,
+            members,
+            broken_methods,
+            ..
+        } = self.type_body(errors, methods, &TokenKind::Class, "a class name")?;
         Ok(Class {
             name,
             type_params,
@@ -1673,15 +1680,70 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// A class member or, when `chooses`, the choice of an associated type, and the end of its
-    /// line.
-    fn class_line(&mut self, chooses: bool) -> Result<ClassLine, Diagnostic> {
+    /// The struct itself, as `class_body` reads a class. A `mut` field is E0175 (`member`).
+    fn struct_body(
+        &mut self,
+        errors: &mut Vec<Diagnostic>,
+        methods: &mut Vec<Range<usize>>,
+    ) -> Result<Struct, Diagnostic> {
+        self.type_body(errors, methods, &TokenKind::Struct, "a struct name")
+    }
+
+    /// The body of a class or a struct, which start with `word` and then a name that `what`
+    /// describes. The two share it, so it gives an `ast::Struct`, the one with a keyword: a class
+    /// drops the keyword.
+    fn type_body(
+        &mut self,
+        errors: &mut Vec<Diagnostic>,
+        methods: &mut Vec<Range<usize>>,
+        word: &TokenKind,
+        what: &str,
+    ) -> Result<Struct, Diagnostic> {
+        let keyword = self.expect(word)?.span;
+        let name = self.name(what)?;
+        let type_params = self.type_params()?;
+        let conforms = self.interface_list()?;
+        self.expect(&TokenKind::LBrace)?;
+        let mut members = Vec::new();
+        let mut assoc = Vec::new();
+        // Only a type that lists an interface may choose an associated type.
+        let chooses = !conforms.is_empty();
+        let owner = if *word == TokenKind::Struct {
+            Owner::Struct
+        } else {
+            Owner::Class
+        };
+        let outer = mem::replace(&mut self.struct_self, matches!(owner, Owner::Struct));
+        let broken_methods = self.member_lines(errors, methods, |p, end| {
+            match p.checked(end, |p| p.class_line(chooses, &owner))? {
+                ClassLine::Member(member) => members.push(member),
+                ClassLine::Assoc(choice) => assoc.push(choice),
+            }
+            Ok(())
+        });
+        self.struct_self = outer;
+        let broken_methods = broken_methods?;
+        self.bump();
+        Ok(Struct {
+            keyword,
+            name,
+            type_params,
+            conforms,
+            assoc,
+            members,
+            broken_methods,
+        })
+    }
+
+    /// A member of a class or a struct, whose methods `owner` owns, and the end of its line. When
+    /// `chooses`, it can also be the choice of an associated type.
+    fn class_line(&mut self, chooses: bool, owner: &Owner) -> Result<ClassLine, Diagnostic> {
         if chooses && self.at(&TokenKind::Type) {
             let choice = self.assoc_choice()?;
             self.line_end()?;
             return Ok(ClassLine::Assoc(choice));
         }
-        self.member_line().map(ClassLine::Member)
+        self.member_line(owner).map(ClassLine::Member)
     }
 
     /// `type Item = i64`, in a class, an enum or an `extend` block.
@@ -1714,9 +1776,9 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    /// A class member, and the end of its line.
-    fn member_line(&mut self) -> Result<Member, Diagnostic> {
-        let member = self.member()?;
+    /// A member whose methods `owner` owns, and the end of its line.
+    fn member_line(&mut self, owner: &Owner) -> Result<Member, Diagnostic> {
+        let member = self.member(owner)?;
         if matches!(member, Member::Field(_)) && self.at(&TokenKind::Comma) {
             return Err(self.member_comma(diagnostic::Member::Field));
         }
@@ -1748,11 +1810,25 @@ impl<'a> Parser<'a> {
         .into()
     }
 
-    fn member(&mut self) -> Result<Member, Diagnostic> {
+    fn member(&mut self, owner: &Owner) -> Result<Member, Diagnostic> {
         match self.peek().kind {
             TokenKind::Ident(_) | TokenKind::Underscore | TokenKind::Mut => {
-                let mutable = self.eat(&TokenKind::Mut).is_some();
+                let word = self.eat(&TokenKind::Mut).map(|token| token.span);
                 let name = self.name("a field name")?;
+                // A struct field with `mut` parses with `mutable` false, so the checker sees a
+                // valid struct, and the parser goes on after the error.
+                let mutable = match (word, owner) {
+                    (Some(keyword), Owner::Struct) => {
+                        let remove = Span::new(
+                            keyword.start(),
+                            self.removal_end(keyword.end(), name.span.start()),
+                        );
+                        self.recovered
+                            .push(DiagnosticKind::StructFieldMut { keyword, remove }.into());
+                        false
+                    }
+                    (word, _) => word.is_some(),
+                };
                 self.expect(&TokenKind::Colon)?;
                 Ok(Member::Field(FieldDecl {
                     mutable,
@@ -1770,7 +1846,7 @@ impl<'a> Parser<'a> {
                 field: true,
             }
             .into()),
-            TokenKind::Fn => Ok(Member::Method(self.method(Receiver::Of(&Owner::Class))?)),
+            TokenKind::Fn => Ok(Member::Method(self.method(Receiver::Of(owner))?)),
             _ => Err(self.expected("a field or `fn`")),
         }
     }
@@ -1948,6 +2024,7 @@ impl<'a> Parser<'a> {
             labels: Vec::new(),
             loops: Vec::new(),
             prelude: self.prelude,
+            struct_self: self.struct_self,
             window: self.tokens,
             halves: self.halves,
             halved: None,
@@ -2191,7 +2268,8 @@ impl<'a> Parser<'a> {
             | TokenKind::Var => {
                 // A field that is itself wrong gets its own error.
                 let start = self.peek().span;
-                self.member()?;
+                // Its token is no `fn`, so no method takes the owner.
+                self.member(&Owner::Class)?;
                 return Err(DiagnosticKind::InterfaceBody {
                     at: start.to(self.last_span()),
                     form: InterfaceBodyForm::Field,
@@ -3996,7 +4074,11 @@ impl<'a> Parser<'a> {
             _ => return Ok(StmtKind::Expr(target)),
         };
         if matches!(target.kind, ExprKind::SelfValue) {
-            return Err(DiagnosticKind::AssignToSelf { at: target.span }.into());
+            return Err(DiagnosticKind::AssignToSelf {
+                at: target.span,
+                struct_self: self.struct_self,
+            }
+            .into());
         }
         if !is_place(&target) && !is_range_target(&target) {
             return Err(DiagnosticKind::AssignToExpression {
@@ -7432,6 +7514,7 @@ mod tests {
             labels: Vec::new(),
             loops: Vec::new(),
             prelude: false,
+            struct_self: false,
             window: &lexed.tokens,
             halves: &OnceCell::new(),
             halved: None,
@@ -10428,7 +10511,7 @@ mod tests {
         // One row per place that wants a name or an expression.
         for (src, line, col) in [
             ("fn main() {\n    let weak = 1\n}", 2, 9),
-            ("class C {\n    record: i64\n}", 2, 5),
+            ("class C {\n    move: i64\n}", 2, 5),
             ("fn main() {\n    print(p.weak)\n}", 2, 13),
             ("import x", 1, 1),
         ] {
@@ -10856,6 +10939,19 @@ mod tests {
         }
     }
 
+    /// GIVEN `struct P { mut x: i64 }`
+    /// WHEN it is parsed
+    /// THEN the one diagnostic is E0175 at 1:12, and its safe fix gives `struct P { x: i64 }`
+    #[test]
+    fn struct_field_with_mut_should_report_its_word_and_a_safe_fix() {
+        let src = "struct P { mut x: i64 }";
+        let d = parse_diagnostic(src);
+        assert_eq!(d.code(), Code::StructFieldMut);
+        assert_eq!(line_col(src, d.span().start()), (1, 12));
+        assert_eq!(apply_fix(src, &d), "struct P { x: i64 }");
+        assert!(fix_edits(&d).is_some_and(|(safe, _)| safe));
+    }
+
     #[test]
     fn mut_self_outside_the_receiver_position() {
         assert_eq!(parse_err("fn f(mut self) {}"), (Code::SelfNotFirst, 1, 10));
@@ -11059,6 +11155,27 @@ mod tests {
             }
             items => panic!("expected class D alone, found {items:?}"),
         }
+    }
+
+    /// GIVEN a struct with a `mut` field and a struct with a syntax error
+    /// WHEN the parser reads them
+    /// THEN the first is a struct item that keeps its `struct` keyword and reads the field as
+    /// not mutable. The second keeps its name as a broken struct
+    #[test]
+    fn struct_items_should_parse_like_classes() {
+        let parsed = parsed("struct   P { mut x: i64 }\nstruct Q {\n    y i64\n}\n");
+        assert_eq!(parsed.program.to_string(), "(struct P (x i64))");
+        let [Item::Struct(p)] = parsed.program.items.as_slice() else {
+            panic!("expected struct P alone, found {:?}", parsed.program.items);
+        };
+        assert_eq!(p.keyword, Span::new(0, 6));
+        let [Broken { name, kind }] = parsed.program.broken.as_slice() else {
+            panic!(
+                "expected one broken item, found {:?}",
+                parsed.program.broken
+            );
+        };
+        assert_eq!((name.name.as_str(), *kind), ("Q", BrokenKind::Struct));
     }
 
     #[test]

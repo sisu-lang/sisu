@@ -1,0 +1,4 @@
+true
+false
+false
+Node(v: 1, next: Node(v: 2, next: Node(v: 3, next: None)))

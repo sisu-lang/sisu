@@ -59,7 +59,10 @@ use rustc_hash::FxHashMap;
 
 use crate::conformance::Written;
 use crate::source::Span;
-use crate::tir::{self, BinaryOp, ClassId, CompareOp, EnumId, Format, FuncId, MathOp, Stream};
+use crate::tir::TypeKind;
+use crate::tir::{
+    self, BinaryOp, ClassId, CompareOp, EnumId, Format, FuncId, MathOp, Stream, StructId,
+};
 pub(crate) use crate::tir::{LocalId, Type, UnaryOp};
 
 mod certify;
@@ -214,16 +217,49 @@ pub(crate) enum Projection {
     /// The payload of an optional that holds one; anywhere in a path, after a `TestPresent`
     /// that proved the optional holds one, or as the last projection of `IfPresent`'s binding.
     Some,
+    /// A field of a struct, which the struct holds inline, or a box of it when the field closes a
+    /// cycle (`tir::Payload::boxed`).
+    StructField {
+        index: usize,
+    },
+    /// The value in the box of a boxed struct field of a type that is not optional: it comes
+    /// right after that `StructField`. A boxed optional field has none: its slot is the box.
+    Box,
 }
 
 impl Projection {
-    /// Whether nothing a call or a write does can replace or free what the projection reaches
-    /// while its root lives: a field that is not `mut` cannot be replaced nor written through
-    /// (E0001), and a payload or a present optional's value is fixed with its container.
+    /// The type that the projection reaches from a value of type `ty` of `program`.
+    pub(crate) fn projected(&self, program: &tir::Program, ty: Type) -> Type {
+        match (self, ty.kind()) {
+            (Projection::Field { index, .. }, TypeKind::Class(class, _)) => {
+                program.classes[class.0].fields[*index].ty
+            }
+            (Projection::Payload { variant, field }, TypeKind::Enum(id, _)) => {
+                program.enums[id.0].variants[*variant].fields[*field].ty
+            }
+            (Projection::Index { .. }, TypeKind::Array(element)) => element,
+            (Projection::Some, TypeKind::Optional(payload)) => payload,
+            (Projection::StructField { index }, TypeKind::Struct(id, _)) => {
+                program.structs[id.0].fields[*index].ty
+            }
+            (Projection::Box, _) => ty,
+            _ => unreachable!("lowering should project only a value of the projection's kind"),
+        }
+    }
+
+    /// Whether nothing a call or a write does can replace or free what the projection reaches while
+    /// its root lives. A field that is not `mut` cannot be replaced nor written through (E0001). A
+    /// payload or a present optional's value is fixed with its container. A struct field is stable
+    /// because a write through a struct path is a write of its root local. So condition 3 of
+    /// `pairs` stops the pair, and the certifier's kills end the borrow. A struct's box is
+    /// stable for the same reason.
     pub(crate) const fn stable(&self) -> bool {
         match self {
             Projection::Field { mutable, .. } => !*mutable,
-            Projection::Payload { .. } | Projection::Some => true,
+            Projection::Payload { .. }
+            | Projection::Some
+            | Projection::StructField { .. }
+            | Projection::Box => true,
             Projection::Index { .. } => false,
         }
     }
@@ -288,6 +324,11 @@ pub(crate) enum Rvalue {
     },
     New {
         class: ClassId,
+        args: Vec<Operand>,
+    },
+    /// A struct value, which consumes its fields as a `New` does.
+    Struct {
+        id: StructId,
         args: Vec<Operand>,
     },
     /// `reuse` holds one entry per field: `Some(tok)` at a boxed `F` field builds its box into
@@ -453,6 +494,7 @@ impl Rvalue {
             | Rvalue::Borrow(_)
             | Rvalue::Unwrap(_)
             | Rvalue::New { .. }
+            | Rvalue::Struct { .. }
             | Rvalue::Variant { .. }
             | Rvalue::ArrayLit(_)
             | Rvalue::ArrayFill { .. }

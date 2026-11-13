@@ -1,0 +1,184 @@
+// GIVEN `N`, a struct of 32 `i64` fields, and `W`, a struct of 33.
+// `N` has 256 bytes, so LLVM takes it as one value. `W` has 264, so it stays in memory (ADR 0048).
+// WHEN each is an argument, a result, a `T?`, a local, an element of an array and a field of
+// another struct
+// THEN each row prints its first and last fields, so a lost word fails it. The row that
+// replaces a wide field in a later argument prints the old value in the callee.
+struct N {
+    a0: i64
+    a1: i64
+    a2: i64
+    a3: i64
+    a4: i64
+    a5: i64
+    a6: i64
+    a7: i64
+    a8: i64
+    a9: i64
+    a10: i64
+    a11: i64
+    a12: i64
+    a13: i64
+    a14: i64
+    a15: i64
+    a16: i64
+    a17: i64
+    a18: i64
+    a19: i64
+    a20: i64
+    a21: i64
+    a22: i64
+    a23: i64
+    a24: i64
+    a25: i64
+    a26: i64
+    a27: i64
+    a28: i64
+    a29: i64
+    a30: i64
+    a31: i64
+}
+struct W {
+    b0: i64
+    b1: i64
+    b2: i64
+    b3: i64
+    b4: i64
+    b5: i64
+    b6: i64
+    b7: i64
+    b8: i64
+    b9: i64
+    b10: i64
+    b11: i64
+    b12: i64
+    b13: i64
+    b14: i64
+    b15: i64
+    b16: i64
+    b17: i64
+    b18: i64
+    b19: i64
+    b20: i64
+    b21: i64
+    b22: i64
+    b23: i64
+    b24: i64
+    b25: i64
+    b26: i64
+    b27: i64
+    b28: i64
+    b29: i64
+    b30: i64
+    b31: i64
+    b32: i64
+}
+struct HN { n: N; k: i64 }
+struct HW { w: W; k: i64 }
+
+fn n(k: i64) -> N {
+    N(a0: k, a1: k + 1, a2: k + 2, a3: k + 3, a4: k + 4, a5: k + 5, a6: k + 6, a7: k + 7, a8: k + 8, a9: k + 9, a10: k + 10, a11: k + 11, a12: k + 12, a13: k + 13, a14: k + 14, a15: k + 15, a16: k + 16, a17: k + 17, a18: k + 18, a19: k + 19, a20: k + 20, a21: k + 21, a22: k + 22, a23: k + 23, a24: k + 24, a25: k + 25, a26: k + 26, a27: k + 27, a28: k + 28, a29: k + 29, a30: k + 30, a31: k + 31)
+}
+
+fn optional_n(k: i64) -> N? {
+    if k > 0 {
+        return n(k)
+    }
+    None
+}
+
+// Takes the `N` that `rows_n` builds from 1.
+fn argument_n(x: N) {
+    print(x.a0)                      // 1
+    print(x.a31)                     // 32
+}
+
+fn w(k: i64) -> W {
+    W(b0: k, b1: k + 1, b2: k + 2, b3: k + 3, b4: k + 4, b5: k + 5, b6: k + 6, b7: k + 7, b8: k + 8, b9: k + 9, b10: k + 10, b11: k + 11, b12: k + 12, b13: k + 13, b14: k + 14, b15: k + 15, b16: k + 16, b17: k + 17, b18: k + 18, b19: k + 19, b20: k + 20, b21: k + 21, b22: k + 22, b23: k + 23, b24: k + 24, b25: k + 25, b26: k + 26, b27: k + 27, b28: k + 28, b29: k + 29, b30: k + 30, b31: k + 31, b32: k + 32)
+}
+
+fn optional_w(k: i64) -> W? {
+    if k > 0 {
+        return w(k)
+    }
+    None
+}
+
+// Takes the `W` that `rows_w` builds from 1001.
+fn argument_w(x: W) {
+    print(x.b0)                      // 1001
+    print(x.b32)                     // 1033
+}
+
+// Prints the `W` that `t.w` held before the second argument replaced it.
+fn later(x: W, k: i64) {
+    print(x.b0)                      // 2001
+    print(x.b32)                     // 2033
+    print(k)                         // 1
+}
+
+fn rows_n() {
+    argument_n(n(1))
+    let r = n(2)
+    print(r.a0)                      // 2
+    print(r.a31)                     // 33
+    let o = optional_n(3)
+    print(o?.a0 ?? 0)                // 3
+    print(o?.a31 ?? 0)               // 34
+    let none = optional_n(0)
+    print(none?.a31 ?? 0)            // 0
+    let mut l = n(4)
+    l.a31 = 99
+    print(l.a0)                      // 4
+    print(l.a31)                     // 99
+    let xs = [n(5), n(6)]
+    print(xs[1].a0)                  // 6
+    print(xs[1].a31)                 // 37
+    let h = HN(n: n(7), k: 1)
+    print(h.n.a0)                    // 7
+    print(h.n.a31)                   // 38
+}
+
+fn rows_w() {
+    argument_w(w(1001))
+    let r = w(1002)
+    print(r.b0)                      // 1002
+    print(r.b32)                     // 1034
+    let o = optional_w(1003)
+    print(o?.b0 ?? 0)                // 1003
+    print(o?.b32 ?? 0)               // 1035
+    let none = optional_w(0)
+    print(none?.b32 ?? 0)            // 0
+    let mut l = w(1004)
+    l.b32 = 99
+    print(l.b0)                      // 1004
+    print(l.b32)                     // 99
+    let xs = [w(1005), w(1006)]
+    print(xs[1].b0)                  // 1006
+    print(xs[1].b32)                 // 1038
+    let h = HW(w: w(1007), k: 1)
+    print(h.w.b0)                    // 1007
+    print(h.w.b32)                   // 1039
+}
+
+fn replaced_in_a_later_argument() {
+    let mut t = HW(w: w(2001), k: 0)
+    later(t.w, {
+        t.w = w(3001)
+        1
+    })
+    print(t.w.b0)                    // 3001
+    print(t.w.b32)                   // 3033
+}
+
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(h: HN, g: HW) {
+    print(h)
+    print(g)
+}
+
+fn main() {
+    rows_n()
+    rows_w()
+    replaced_in_a_later_argument()
+}

@@ -1,0 +1,94 @@
+// GIVEN `struct Node { v: i64; next: Node? }`, `struct A { b: B }` with
+// `struct B { a: A?; n: i64; xs: [i64] }`, and `struct N { next: N?? }`: each field on the
+// cycle is a box
+// WHEN each block reads a boxed field whole, or writes it whole, after a copy of the value
+// THEN the block prints the value it read or wrote, and the copy keeps the old value
+struct Node { v: i64; next: Node? }
+struct A { b: B }
+struct B { a: A?; n: i64; xs: [i64] }
+struct N { next: N?? }
+
+fn next_none() {
+    let mut n = Node(v: 1, next: Some(Node(v: 2, next: None)))
+    let c = n
+    n.next = None
+    print(n)                         // Node(v: 1, next: None)
+    print(c)                         // Node(v: 1, next: Node(v: 2, next: None))
+}
+
+fn next_read() {
+    let n = Node(v: 1, next: Some(Node(v: 2, next: None)))
+    let z = n.next
+    if let Some(z) = z {
+        print(z)                     // Node(v: 2, next: None)
+    }
+    print(n)                         // Node(v: 1, next: Node(v: 2, next: None))
+}
+
+fn next_some() {
+    let mut n = Node(v: 1, next: None)
+    let c = n
+    n.next = Some(Node(v: 3, next: None))
+    print(n)                         // Node(v: 1, next: Node(v: 3, next: None))
+    print(c)                         // Node(v: 1, next: None)
+}
+
+fn b_whole() {
+    let x = A(b: B(a: None, n: 1, xs: [1]))
+    let mut y = x
+    y.b = B(a: None, n: 2, xs: [])
+    print(x)                         // A(b: B(a: None, n: 1, xs: [1]))
+    print(y)                         // A(b: B(a: None, n: 2, xs: []))
+}
+
+fn b_read() {
+    let x = A(b: B(a: None, n: 1, xs: [1]))
+    let y = x
+    let z = y.b
+    print(z)                         // B(a: None, n: 1, xs: [1])
+    print(y)                         // A(b: B(a: None, n: 1, xs: [1]))
+}
+
+fn b_a_none() {
+    let x = A(b: B(a: Some(A(b: B(a: None, n: 2, xs: [2]))), n: 1, xs: [1]))
+    let mut y = x
+    y.b.a = None
+    print(x)                         // A(b: B(a: A(b: B(a: None, n: 2, xs: [2])), n: 1, xs: [1]))
+    print(y)                         // A(b: B(a: None, n: 1, xs: [1]))
+}
+
+fn twice_none() {
+    let mut n = N(next: Some(Some(N(next: None))))
+    let c = n
+    n.next = None
+    print(n)                         // N(next: None)
+    print(c)                         // N(next: N(next: None))
+}
+
+fn twice_some_none() {
+    let mut n = N(next: Some(Some(N(next: None))))
+    let c = n
+    n.next = Some(None)
+    print(n)                         // N(next: Some(None))
+    print(c)                         // N(next: N(next: None))
+}
+
+fn twice_value() {
+    let mut n = N(next: Some(None))
+    let c = n
+    n.next = Some(Some(N(next: None)))
+    print(n)                         // N(next: N(next: None))
+    print(c)                         // N(next: Some(None))
+}
+
+fn main() {
+    next_none()
+    next_read()
+    next_some()
+    b_whole()
+    b_read()
+    b_a_none()
+    twice_none()
+    twice_some_none()
+    twice_value()
+}

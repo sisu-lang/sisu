@@ -1,0 +1,24 @@
+// GIVEN `struct A { b: B }` and `struct B { a: A?; n: i64; xs: [i64] }`, so the field `b` is a
+// box, `fn add(mut a: [i64], b: i64)` that pushes `b`, `let x = A(b: B(a: None, n: 1, xs: [1]))`
+// and `let mut y = x`
+// WHEN `main` calls `add(mut y.b.xs, 9)`
+// THEN `y.b.xs` gets the push through the box and the array, and the copy `x.b.xs` stays `[1]`
+struct A { b: B }
+struct B { a: A?; n: i64; xs: [i64] }
+
+fn add(mut a: [i64], b: i64) {
+    a.push(b)
+}
+
+// Nothing calls this function. Its generated `print` reads each field, so no field is W0013.
+fn _show(b: B) {
+    print(b)
+}
+
+fn main() {
+    let x = A(b: B(a: None, n: 1, xs: [1]))
+    let mut y = x
+    add(mut y.b.xs, 9)
+    print(x.b.xs)                    // [1]
+    print(y.b.xs)                    // [1, 9]
+}

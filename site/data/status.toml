@@ -32,6 +32,11 @@ state = "works"
 notes = [["ADR 0029", "docs/adr/0029-parameters-are-borrowed-unless-consumed.md"], ["Roadmap: classes and optionals", "docs/roadmap.md"]]
 
 [[area.feature]]
+text = "Structs: values with fields that are copied, and one rule for what can change"
+state = "works"
+notes = [["ADR 0046", "docs/adr/0046-structs-replace-classes.md"], ["Reference: structs", "docs/reference/structs.md"]]
+
+[[area.feature]]
 text = "Optionals instead of null"
 state = "works"
 notes = [["Roadmap: classes and optionals", "docs/roadmap.md"]]
@@ -127,7 +132,7 @@ state = "planned"
 notes = [["ADR 0043", "docs/adr/0043-mut-parameters-copy-in-and-out.md"]]
 
 [[area.feature]]
-text = "Structs, named arguments and default arguments"
+text = "Named arguments and default arguments"
 state = "planned"
 notes = [["Roadmap: proposed next steps", "docs/roadmap.md"], ["ADR 0020", "docs/adr/0020-labels-belong-to-the-declaration.md"]]
 

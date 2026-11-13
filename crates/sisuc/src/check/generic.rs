@@ -12,6 +12,7 @@ use super::any;
 use super::array::innermost;
 use super::expr::{bare_hole, dbg_argument, literal_type, option_written, read_jump};
 use super::interface::{Bounds, Required};
+use super::member::FieldOwner;
 use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
 use super::names::{self, ItemId, Resolved};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
@@ -55,6 +56,9 @@ fn meets_in(ty: Type, want: Type, seen: &mut WalkMemo<(Type, Type), bool>) -> bo
         (TypeKind::Class(a, p), TypeKind::Class(b, v)) if a == b => {
             iter::zip(p.get(), v.get()).all(|(&p, &v)| meets_in(p, v, seen))
         }
+        (TypeKind::Struct(a, p), TypeKind::Struct(b, v)) if a == b => {
+            iter::zip(p.get(), v.get()).all(|(&p, &v)| meets_in(p, v, seen))
+        }
         (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => {
             iter::zip(p.get(), v.get()).all(|(&p, &v)| meets_in(p, v, seen))
         }
@@ -75,6 +79,7 @@ fn meets_in(ty: Type, want: Type, seen: &mut WalkMemo<(Type, Type), bool>) -> bo
             | TypeKind::Optional(_)
             | TypeKind::Class(..)
             | TypeKind::Enum(..)
+            | TypeKind::Struct(..)
             | TypeKind::Param(..)
             | TypeKind::Assoc(..)
             | TypeKind::Any(..),
@@ -152,7 +157,10 @@ fn mark_params(ty: Type, named: &mut [bool], seen: &mut WalkMemo<Type, ()>) {
     }
     match ty.kind() {
         TypeKind::Array(inner) | TypeKind::Optional(inner) => mark_params(inner, named, seen),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+        TypeKind::Class(_, args)
+        | TypeKind::Struct(_, args)
+        | TypeKind::Enum(_, args)
+        | TypeKind::Any(_, args) => {
             for &arg in args.get() {
                 mark_params(arg, named, seen);
             }
@@ -197,7 +205,10 @@ fn names_outside_in(ty: Type, param: usize, seen: &mut WalkMemo<Type, ()>) -> bo
     }
     let names = match ty.kind() {
         TypeKind::Array(inner) | TypeKind::Optional(inner) => names_outside_in(inner, param, seen),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+        TypeKind::Class(_, args)
+        | TypeKind::Struct(_, args)
+        | TypeKind::Enum(_, args)
+        | TypeKind::Any(_, args) => {
             (args.get().iter()).any(|&arg| names_outside_in(arg, param, seen))
         }
         TypeKind::Assoc(..) => false,
@@ -237,7 +248,10 @@ fn mark_by_assoc(
         TypeKind::Array(t) | TypeKind::Optional(t) => {
             mark_by_assoc(t, under, inside, outside, seen);
         }
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+        TypeKind::Class(_, args)
+        | TypeKind::Struct(_, args)
+        | TypeKind::Enum(_, args)
+        | TypeKind::Any(_, args) => {
             for &arg in args.get() {
                 mark_by_assoc(arg, under, inside, outside, seen);
             }
@@ -437,7 +451,10 @@ fn unbound_params(outer: &Bindings, ty: Type, on: &mut FxHashSet<usize>, seen: &
         TypeKind::Array(inner) | TypeKind::Optional(inner) => {
             unbound_params(outer, inner, on, seen);
         }
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+        TypeKind::Class(_, args)
+        | TypeKind::Struct(_, args)
+        | TypeKind::Enum(_, args)
+        | TypeKind::Any(_, args) => {
             for &arg in args.get() {
                 unbound_params(outer, arg, on, seen);
             }
@@ -478,7 +495,10 @@ fn names_unbound(unbound: &[bool], built: Type, seen: &mut WalkMemo<Type, bool>)
     }
     let names = match built.kind() {
         TypeKind::Array(inner) | TypeKind::Optional(inner) => names_unbound(unbound, inner, seen),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+        TypeKind::Class(_, args)
+        | TypeKind::Struct(_, args)
+        | TypeKind::Enum(_, args)
+        | TypeKind::Any(_, args) => {
             (args.get().iter()).any(|&arg| names_unbound(unbound, arg, seen))
         }
         // An associated type binds nothing (see `Bindings::bind`).
@@ -565,6 +585,9 @@ fn needed_walk(
         (TypeKind::Class(a, bs), TypeKind::Class(c, qs)) if a == c => {
             needed_all(outer, unbound, bs, qs, on, seen)
         }
+        (TypeKind::Struct(a, bs), TypeKind::Struct(c, qs)) if a == c => {
+            needed_all(outer, unbound, bs, qs, on, seen)
+        }
         (TypeKind::Enum(a, bs), TypeKind::Enum(c, qs)) if a == c => {
             needed_all(outer, unbound, bs, qs, on, seen)
         }
@@ -584,6 +607,7 @@ fn needed_walk(
             | TypeKind::Optional(_)
             | TypeKind::Class(..)
             | TypeKind::Enum(..)
+            | TypeKind::Struct(..)
             | TypeKind::Any(..),
             _,
         ) => false,
@@ -905,7 +929,10 @@ fn holds_param(ty: Type, param: Type, seen: &mut WalkMemo<Type, ()>) -> bool {
     }
     let holds = match ty.kind() {
         TypeKind::Array(t) => t == param || holds_param(t, param, seen),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+        TypeKind::Class(_, args)
+        | TypeKind::Struct(_, args)
+        | TypeKind::Enum(_, args)
+        | TypeKind::Any(_, args) => {
             (args.get().iter()).any(|&arg| arg == param || holds_param(arg, param, seen))
         }
         TypeKind::I64
@@ -953,7 +980,10 @@ fn names_marked_in(
     let names = match ty.kind() {
         TypeKind::Array(inner) => names_marked_in(inner, marked, optionals, seen),
         TypeKind::Optional(inner) => optionals && names_marked_in(inner, marked, optionals, seen),
-        TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+        TypeKind::Class(_, args)
+        | TypeKind::Struct(_, args)
+        | TypeKind::Enum(_, args)
+        | TypeKind::Any(_, args) => {
             (args.get().iter()).any(|&arg| names_marked_in(arg, marked, optionals, seen))
         }
         TypeKind::Assoc(..) => false,
@@ -1044,12 +1074,12 @@ fn is_hole(ty: Type) -> bool {
     ty == *HOLE || ty == *REJECTED
 }
 
-/// Whether `kind` is of a class, an enum or an `any` type, which can hold the same type in more
-/// than one of its arguments: a walk over it can use a `WalkMemo`.
+/// Whether `kind` is of a class, a struct, an enum or an `any` type. Such a type can hold the same
+/// type in more than one of its arguments, so a walk over it can use a `WalkMemo`.
 fn has_type_args(kind: TypeKind) -> bool {
     matches!(
         kind,
-        TypeKind::Class(..) | TypeKind::Enum(..) | TypeKind::Any(..)
+        TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..) | TypeKind::Any(..)
     )
 }
 
@@ -1193,7 +1223,10 @@ impl Bindings {
                     TypeKind::Array(p) | TypeKind::Optional(p) => {
                         self.bind(p, value);
                     }
-                    TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => {
+                    TypeKind::Class(_, args)
+                    | TypeKind::Struct(_, args)
+                    | TypeKind::Enum(_, args)
+                    | TypeKind::Any(_, args) => {
                         for &p in args.get() {
                             self.bind(p, value);
                         }
@@ -1218,6 +1251,7 @@ impl Bindings {
                 self.bind(p, value)
             }
             (TypeKind::Class(a, p), TypeKind::Class(b, v)) if a == b => self.bind_all(p, v),
+            (TypeKind::Struct(a, p), TypeKind::Struct(b, v)) if a == b => self.bind_all(p, v),
             (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => self.bind_all(p, v),
             (TypeKind::Any(a, p), TypeKind::Any(b, v)) if a == b => self.bind_all(p, v),
             // An associated type binds nothing: the type it stands for is known once its base is
@@ -1236,6 +1270,7 @@ impl Bindings {
                 | TypeKind::Optional(_)
                 | TypeKind::Class(..)
                 | TypeKind::Enum(..)
+                | TypeKind::Struct(..)
                 | TypeKind::Any(..),
                 _,
             ) => false,
@@ -1283,6 +1318,7 @@ impl Bindings {
             (TypeKind::Array(p), TypeKind::Array(v))
             | (TypeKind::Optional(p), TypeKind::Optional(v)) => self.hint_in(p, v, how),
             (TypeKind::Class(a, p), TypeKind::Class(b, v)) if a == b => self.hint_all(p, v, how),
+            (TypeKind::Struct(a, p), TypeKind::Struct(b, v)) if a == b => self.hint_all(p, v, how),
             (TypeKind::Enum(a, p), TypeKind::Enum(b, v)) if a == b => self.hint_all(p, v, how),
             (TypeKind::Any(a, p), TypeKind::Any(b, v)) if a == b => self.hint_all(p, v, how),
             (
@@ -1298,6 +1334,7 @@ impl Bindings {
                 | TypeKind::Optional(_)
                 | TypeKind::Class(..)
                 | TypeKind::Enum(..)
+                | TypeKind::Struct(..)
                 | TypeKind::Assoc(..)
                 | TypeKind::Any(..),
                 _,
@@ -1405,7 +1442,10 @@ impl Bindings {
         }
         let unknown = match ty.kind() {
             TypeKind::Array(inner) | TypeKind::Optional(inner) => self.unknown_in(inner, seen),
-            TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Any(_, args) => args
+            TypeKind::Class(_, args)
+            | TypeKind::Struct(_, args)
+            | TypeKind::Enum(_, args)
+            | TypeKind::Any(_, args) => args
                 .get()
                 .iter()
                 .find_map(|&arg| self.unknown_in(arg, seen)),
@@ -1504,6 +1544,9 @@ impl Bindings {
             TypeKind::Optional(payload) => Type::optional(self.resolve(payload, unbound, seen)?),
             TypeKind::Class(id, args) => {
                 Type::intern(TypeKind::Class(id, self.resolve_all(args, unbound, seen)?))
+            }
+            TypeKind::Struct(id, args) => {
+                Type::intern(TypeKind::Struct(id, self.resolve_all(args, unbound, seen)?))
             }
             TypeKind::Enum(id, args) => {
                 Type::intern(TypeKind::Enum(id, self.resolve_all(args, unbound, seen)?))
@@ -3474,6 +3517,7 @@ impl Checker<'_> {
             (TypeKind::Array(_), TypeKind::Array(_)) => return None,
             (TypeKind::Array(_), _) => Expected::Array,
             (TypeKind::Class(a, _), TypeKind::Class(b, _)) if a == b => return None,
+            (TypeKind::Struct(a, _), TypeKind::Struct(b, _)) if a == b => return None,
             (TypeKind::Enum(a, _), TypeKind::Enum(b, _)) if a == b => return None,
             (TypeKind::Class(id, _), _) => Expected::Named(self.head(Head::Class(id)).to_string()),
             (TypeKind::Enum(id, _), _) => Expected::Named(self.head(Head::Enum(id)).to_string()),
@@ -4347,7 +4391,7 @@ impl Checker<'_> {
             return CallShape::default();
         };
         match ty.kind() {
-            TypeKind::Class(..) | TypeKind::Enum(..) => {}
+            TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..) => {}
             TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => {
                 return self.bound_shape(ty, method, args);
             }
@@ -4433,7 +4477,7 @@ impl Checker<'_> {
             TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => {
                 self.required(ty, method.name).len() > 1
             }
-            TypeKind::Class(..) | TypeKind::Enum(..) => {
+            TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..) => {
                 if self.applicable_method(ty, method.name).is_some() {
                     return false;
                 }
@@ -4555,6 +4599,10 @@ impl Checker<'_> {
 
     /// The shape of a call of `name` with `args` that calls a generic function, constructs a
     /// generic class, or builds `Some`, `Ok` or `Err`, or calls `dbg`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per kind of callee, so the shapes read in one place"
+    )]
     fn generic_callee(&mut self, name: Symbol, args: &[ast::Arg]) -> CallShape {
         // `dbg<T>(x: T) -> T`: its type is its argument's, so it waits when that argument waits;
         // its parameter names `T`, so it is not `open`. One argument is the shape, with or
@@ -4575,16 +4623,25 @@ impl Checker<'_> {
                 ..CallShape::default()
             };
         }
-        match (self.names.class(name), self.names.function(name)) {
-            (Some(Declared::Known(class)), _) => {
-                let info = &self.classes[class.0];
+        let holder = match (self.names.struct_id(name), self.names.class(name)) {
+            (Some(Declared::Known(id)), _) => Some(FieldOwner::Struct(id)),
+            (_, Some(Declared::Known(class))) => Some(FieldOwner::Class(class)),
+            _ => None,
+        };
+        match (holder, self.names.function(name)) {
+            (Some(owner), _) => {
+                let info = self.owner_info(owner);
                 let shaped = fits(info.fields.iter().map(|f| (f.ty, Some(f.name.name))), args);
                 let open = if shaped {
                     open_params(info.fields.iter().map(|f| f.ty), &info.type_params, 0)
                 } else {
                     Vec::new()
                 };
-                let built = Type::intern(TypeKind::Class(class, own_args(&info.type_params)));
+                let own = own_args(&info.type_params);
+                let built = Type::intern(match owner {
+                    FieldOwner::Class(class) => TypeKind::Class(class, own),
+                    FieldOwner::Struct(id) => TypeKind::Struct(id, own),
+                });
                 CallShape {
                     generic: !info.type_params.is_empty(),
                     shaped,
@@ -4810,6 +4867,7 @@ impl Checker<'_> {
             && matches!(name.as_str(), "unit" | "never")
             && self.body.type_param(name).is_none()
             && self.names.class(name).is_none()
+            && self.names.struct_id(name).is_none()
             && self.names.enum_id(name).is_none()
             && self.names.alias(name).is_none()
         {
@@ -4888,6 +4946,7 @@ impl Checker<'_> {
         arg.optional == 0
             && built_in_type(n.as_str()).is_none()
             && self.names.class(n).is_none()
+            && self.names.struct_id(n).is_none()
             && self.names.enum_id(n).is_none()
             && self.names.alias(n).is_none()
             && self.body.type_param(n).is_none()
@@ -4940,10 +4999,12 @@ impl Checker<'_> {
             self.names.class(n),
             self.names.function(n),
             self.names.enum_id(n),
+            self.names.struct_id(n),
         ) {
             (Some(Declared::Known(id)), ..) => Some(self.classes[id.0].type_params.len()),
-            (_, Some(Declared::Known(id)), _) => Some(self.signatures[id.0].type_params.len()),
-            (.., Some(Declared::Known(id))) => Some(self.enums[id.0].type_params.len()),
+            (_, Some(Declared::Known(id)), ..) => Some(self.signatures[id.0].type_params.len()),
+            (.., Some(Declared::Known(id)), _) => Some(self.enums[id.0].type_params.len()),
+            (.., Some(Declared::Known(id))) => Some(self.structs[id.0].type_params.len()),
             _ => None,
         };
         match params {
@@ -5028,6 +5089,7 @@ impl Checker<'_> {
         let ty = innermost(type_of(receiver)?);
         let field = match ty.kind() {
             TypeKind::Class(id, _) => self.classes[id.0].field(method.name).is_some(),
+            TypeKind::Struct(id, _) => self.structs[id.0].field(method.name).is_some(),
             TypeKind::Enum(..) => false,
             // A built-in's list is reported once its method is found.
             _ => return None,

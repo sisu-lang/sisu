@@ -1,0 +1,32 @@
+// GIVEN `type Id = i64` and struct fields `n: Id`
+// WHEN a string goes into such a field through a failed base, a temporary and `?.`
+// THEN each E0032 names `Id`, next to the true error of the place
+// AND a place that spans two lines (31:11) gets no help that holds its text
+type Id = i64
+
+struct In {
+    n: Id
+}
+
+struct T {
+    n: Id
+    i: In
+}
+
+struct U {
+    t: T?
+}
+
+fn mk(n: i64) -> T {
+    T(n: n, i: In(n: n))
+}
+
+fn main() {
+    let mut u = U(t: None)
+    mk(nope).n = "a"
+    mk(1).n = "a"
+    u.t?.i.n = "a"
+    u.t?.n = "a"
+    u
+        .t?.n = 2
+}

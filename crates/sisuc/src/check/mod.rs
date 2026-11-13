@@ -32,6 +32,7 @@ mod recursion;
 mod reports;
 mod stmt;
 mod string;
+mod structs;
 mod unused_names;
 
 use std::borrow::Cow;
@@ -193,9 +194,42 @@ type CheckedBlock = Result<tir::Block, Poisoned>;
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Holder {
     Class(tir::ClassId),
+    Struct(tir::StructId),
     Enum(tir::EnumId),
     Array,
     I64,
+}
+
+/// The parts of a class or a struct declaration that pass 2 reads.
+#[derive(Clone, Copy)]
+struct HolderDecl<'a> {
+    name: &'a ast::Ident,
+    type_params: &'a [ast::TypeParam],
+    assoc: &'a [ast::AssocChoice],
+    members: &'a [ast::Member],
+    broken_methods: &'a [ast::Ident],
+}
+
+impl<'a> HolderDecl<'a> {
+    fn of_class(class: &'a ast::Class) -> Self {
+        Self {
+            name: &class.name,
+            type_params: &class.type_params,
+            assoc: &class.assoc,
+            members: &class.members,
+            broken_methods: &class.broken_methods,
+        }
+    }
+
+    fn of_struct(s: &'a ast::Struct) -> Self {
+        Self {
+            name: &s.name,
+            type_params: &s.type_params,
+            assoc: &s.assoc,
+            members: &s.members,
+            broken_methods: &s.broken_methods,
+        }
+    }
 }
 
 /// The type parameters of a declaration with the bounds of each.
@@ -255,6 +289,7 @@ enum Declared<T> {
 fn item_name(item: &ast::Item) -> Option<&ast::Ident> {
     match item {
         ast::Item::Class(class) => Some(&class.name),
+        ast::Item::Struct(s) => Some(&s.name),
         ast::Item::Function(f) => Some(&f.name),
         ast::Item::Enum(e) => Some(&e.name),
         ast::Item::Const(c) => Some(&c.name),
@@ -269,6 +304,7 @@ fn broken_definition(kind: ast::BrokenKind) -> Option<Definition> {
     match kind {
         ast::BrokenKind::Function => Some(Definition::Function),
         ast::BrokenKind::Class => Some(Definition::Class),
+        ast::BrokenKind::Struct => Some(Definition::Struct),
         ast::BrokenKind::Interface => Some(Definition::Interface),
         ast::BrokenKind::Enum => Some(Definition::Enum),
         ast::BrokenKind::Constant => Some(Definition::Constant),
@@ -378,6 +414,8 @@ struct Binding {
     also: Vec<Span>,
     /// The type of the annotation as written, when it names an alias.
     shown: Option<Rc<str>>,
+    /// For a `let mut` that copies a place: what W0016 needs of its uses.
+    copy: Option<unused_names::Copied>,
 }
 
 /// Which part of a loop the code being checked is in.
@@ -548,6 +586,13 @@ impl<'src> Source<'src> {
         self.holding(range.start).slice(range)
     }
 
+    /// Whether `span` holds no line break, which a string literal cannot hold. A comment inside
+    /// it would end at one, so it holds no comment either, and fits inside `{}`.
+    fn one_line(&self, span: Span) -> bool {
+        let next = self.breaks.partition_point(|&b| b < span.start());
+        self.breaks.get(next).is_none_or(|&b| b >= span.end())
+    }
+
     /// The text from offset `from` to the end of the text that holds it.
     fn rest(&self, from: usize) -> &'src str {
         self.holding(from).rest(from)
@@ -586,6 +631,9 @@ thread_local! {
     /// How many calls written `.push` have read a place of a type that is no array, on this
     /// thread.
     pub(crate) static OWN_PUSH_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many steps of a struct path `try_unread`, `is_path`, `read_pushed`, `struct_walk` and
+    /// `first_safe` have walked on this thread.
+    pub(super) static PATH_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `pushed_value` has been called on this thread.
     pub(crate) static PUSHED_VALUES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many type parameter names have been indexed or looked up on this thread.
@@ -669,6 +717,8 @@ struct Checker<'src> {
     signatures: Vec<Signature>,
     /// Indexed by `ClassId`, so a duplicate class has fields and methods of its own.
     classes: Vec<ClassInfo>,
+    /// Indexed by `StructId`, so a duplicate struct has fields and methods of its own.
+    structs: Vec<ClassInfo>,
     /// Indexed by `EnumId`, so a duplicate enum has variants of its own.
     enums: Vec<EnumInfo>,
     /// Indexed by `InterfaceId`, so a duplicate interface has requirements of its own.
@@ -771,11 +821,12 @@ struct Checker<'src> {
     lang: tir::LangInterfaces,
     /// The state of the root query of `conforms` that is open, if one is.
     open: conformance::Open,
-    /// By class and then enum, whether the declaration has the never-built error.
+    /// By class, then enum, then struct, whether the declaration has the never-built error.
     unbuilt: Vec<bool>,
-    /// By `EnumId`, whether the enum grows (`enum Nest<T> { End\n Next(Nest<[T]>) }`, E0140) or
-    /// no value can be built of it (the never-built error): the generated rule answers `true`
-    /// for it with no part query, so its own error is its only diagnostic.
+    /// By `EnumId`, and then by `StructId` after the enums, whether the enum or struct grows
+    /// (`enum Nest<T> { End\n Next(Nest<[T]>) }`, E0140) or cannot be built (the never-built
+    /// error). The generated rule answers `true` for it with no part query, so its own error is
+    /// its only diagnostic.
     marked: Vec<bool>,
     /// By `ClassId`, whether the class grows (`class Nest<T> { next: Nest<[T]>? }`, E0140). A
     /// query still expands it, but a query that is too deep at it gets no second report.
@@ -790,6 +841,8 @@ struct Checker<'src> {
     /// The enums as `tir` holds them, with their boxes and countedness; bodies are checked
     /// after they are lowered.
     lowered_enums: Vec<tir::Enum>,
+    /// The structs, lowered with the enums.
+    lowered_structs: Vec<tir::Struct>,
     /// While a field's or payload's type resolves, the class and enum types in it and where each
     /// is written; `None` otherwise.
     written: Option<Vec<(Type, Span)>>,
@@ -818,6 +871,10 @@ struct Checker<'src> {
     /// Each `dbg` call: the body that holds it, if any, the type of its operand, and its span.
     /// W0013 reads them: `dbg` shows a field, and that is not a read.
     dbg_shown: Vec<(Option<Owner>, Type, Span)>,
+    /// Each place where generated code shows a value of a type with `Display` or `Eq`: the body
+    /// that holds it, if any, the type, and the interface. W0013 reads them: a struct that is
+    /// shown has each of its fields read.
+    read_shown: Vec<(Option<Owner>, Type, tir::InterfaceId)>,
     /// How many classes, enums and functions the user's items declare.
     prelude: tir::ItemCounts,
     /// By the span of an expression, how the program wrote it when the typed tree does not say
@@ -893,6 +950,10 @@ impl SelfType {
 #[expect(
     clippy::zero_sized_map_values,
     reason = "the map holds the proof of a report for each key, and a set cannot hold it"
+)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is a separate fact of one body, and no two of them make a state"
 )]
 struct Body {
     /// The function, method or constant whose body this is; `None` for none, such as a signature.
@@ -990,6 +1051,10 @@ struct Body {
     /// Whether an index follows the expression being checked in its chain (field bases, method
     /// receivers, indexed bases). A `?.` that fixes a `.` there leads to an index on an optional.
     indexed: bool,
+    /// The span and the change of the write whose chain holds the expression being checked: its
+    /// field bases and indexed bases up to the written place. A `?.` on a struct value there
+    /// leads to a write that part 1 cannot make.
+    write_chain: Option<(Span, place::Change)>,
     /// The initializer of the `let` being checked, and what that `let` writes before its type
     /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
     /// `None` or `[]`.
@@ -1007,6 +1072,9 @@ struct Body {
     writes: u32,
     /// `writes` at the last write rooted at `self`; 0 for none.
     self_written: u32,
+    /// For a method of an `extend` with `mut self`, which has its E0018: its body may change
+    /// `self`, so no E0001 follows that error.
+    self_mut: bool,
     /// How many `break`, `continue`, `return`, `panic` and `todo` the body has checked.
     exits: u32,
     /// How many W0005 (a comparison with `f64.nan`) the body has reported.
@@ -1116,6 +1184,7 @@ fn parser_marked(program: &ast::Program, items: &[&ast::Item]) -> bool {
     !program.broken.is_empty()
         || items.iter().any(|item| match item {
             ast::Item::Class(class) => !class.broken_methods.is_empty(),
+            ast::Item::Struct(s) => !s.broken_methods.is_empty(),
             ast::Item::Enum(e) => !e.broken_methods.is_empty(),
             ast::Item::Extend(extend) => !extend.broken_methods.is_empty(),
             // The checker reads no requirement that an interface lost to a syntax error: a call of
@@ -1151,8 +1220,8 @@ pub(crate) fn check<'src>(
         .collect();
     let declared = checker.declare_items(&items, program.items.len(), &program.broken);
     checker.fold_constants(&items);
-    checker.lowered_enums = checker.lower_enums();
-    for d in payload_limit::diagnostics(&checker.lowered_enums, &[]) {
+    (checker.lowered_enums, checker.lowered_structs) = checker.lower_types();
+    for d in payload_limit::diagnostics(&checker.lowered_enums, &checker.lowered_structs, &[]) {
         checker.diagnostics.error(d);
     }
     checker.holds_table = checker.holds_table();
@@ -1201,7 +1270,6 @@ pub(crate) fn check<'src>(
         })
         .collect();
     diagnostics.extend(warnings);
-    diagnostics.sort_by_key(order);
     let failed = diagnostics.iter().any(|d| d.severity() == Severity::Error);
     // A use in a failed expression may not be recorded, so an error stops the pass. Only the
     // parser sees an item that fails to parse.
@@ -1212,7 +1280,7 @@ pub(crate) fn check<'src>(
     }
     diagnostics.sort_by_key(order);
     let interfaces = checker.lowered_interfaces();
-    let enums = checker.lowered_enums;
+    let (enums, structs) = (checker.lowered_enums, checker.lowered_structs);
     let (instantiates, prelude, lang) = (checker.instantiates, checker.prelude, checker.lang);
     let (conformances, choice_ats) = (checker.conformances, checker.choice_ats);
     let program = functions
@@ -1222,6 +1290,7 @@ pub(crate) fn check<'src>(
         .filter(|_| !failed)
         .map(|(functions, classes)| tir::Program {
             classes,
+            structs,
             enums,
             functions,
             instantiates,
@@ -1361,6 +1430,7 @@ impl<'src> Checker<'src> {
             prelude_functions: FxHashSet::default(),
             signatures: Vec::new(),
             classes: Vec::new(),
+            structs: Vec::new(),
             enums: Vec::new(),
             interfaces: Vec::new(),
             meets: FxHashMap::default(),
@@ -1404,6 +1474,7 @@ impl<'src> Checker<'src> {
             holds_assoc: false,
             failed_block: None,
             lowered_enums: Vec::new(),
+            lowered_structs: Vec::new(),
             spellings: FxHashMap::default(),
             written: None,
             const_infos: Vec::new(),
@@ -1417,6 +1488,7 @@ impl<'src> Checker<'src> {
             pending: Vec::new(),
             instantiates: false,
             dbg_shown: Vec::new(),
+            read_shown: Vec::new(),
             prelude: tir::ItemCounts::default(),
         }
     }
@@ -1481,6 +1553,7 @@ impl Checker<'_> {
         // types are recorded, which a growth through an associated type needs.
         let cyclic = self.never_constructed();
         self.unbuilt = self.never_built(&cyclic);
+        // The enums, then the structs.
         self.marked = self.unbuilt[self.classes.len()..].to_vec();
         self.growing_classes = vec![false; self.classes.len()];
         self.read_declared_bounds();
@@ -1596,6 +1669,9 @@ impl Checker<'_> {
                         .iter()
                         .filter(|m| matches!(m, ast::Member::Method(_)))
                         .count();
+                }
+                ast::Item::Struct(s) => {
+                    next_function += self.collect_struct(s, &mut first, &mut rejected);
                 }
                 ast::Item::Function(f) => {
                     if !self.built_in(&f.name)
@@ -1889,6 +1965,7 @@ impl Checker<'_> {
         let mut declared = Vec::new();
         let mut next_class = 0;
         let mut next_enum = 0;
+        let mut next_struct = 0;
         for item in items {
             let class = match item {
                 ast::Item::Function(f) => {
@@ -1906,89 +1983,140 @@ impl Checker<'_> {
                     self.extend_signatures(extend, &mut declared);
                     continue;
                 }
+                ast::Item::Struct(s) => {
+                    let id = tir::StructId(next_struct);
+                    next_struct += 1;
+                    let decl = HolderDecl::of_struct(s);
+                    self.holder_signatures(Holder::Struct(id), decl, &mut declared);
+                    continue;
+                }
                 ast::Item::Const(_) | ast::Item::Alias(_) | ast::Item::Interface(_) => continue,
             };
             let id = tir::ClassId(next_class);
             next_class += 1;
-            let owner = self.classes[id.0].type_params.clone();
-            let receiver = Type::intern(TypeKind::Class(id, own_args(&owner)));
-            self.body.self_type = SelfType::Known(receiver);
-            self.body.set_type_params(&owner);
-            let bounds = self.declare_bounds(0, Vec::new(), &class.type_params);
-            if self.classes[id.0].bounded {
-                self.classes[id.0].bounds = bounds;
-            }
-            // The choices come before the fields and the signatures, which may name them.
-            self.classes[id.0].assoc = self.declare_choices(&class.assoc, class.name.name.as_str());
-            self.body.set_type_params(&[]);
-            let mut first = FxHashMap::default();
-            let mut scoped = false;
-            for member in &class.members {
-                match member {
-                    ast::Member::Field(field) => {
-                        // The class's parameters stay in scope from one field to the next, and a
-                        // method takes them out.
-                        if !scoped {
-                            self.body.set_type_params(&owner);
-                            self.body.set_bounds(0, self.classes[id.0].bounds.clone());
-                            scoped = true;
-                        }
-                        let from = self.queued();
-                        let FieldType { ty, inner, shown } =
-                            self.resolve_field(&field.ty, owner.is_empty());
-                        let queued = from..self.queued();
-                        if self.first_definition(
-                            &mut first,
-                            Definition::Field,
-                            Some(class.name.name.as_str()),
-                            &field.name,
-                        ) {
-                            self.keep_at(queued, Slot::Field(id, self.classes[id.0].fields.len()));
-                            // `names_to_string_field` reads this flag, not the fields.
-                            if field.name.name.as_str() == "to_string" {
-                                self.classes[id.0].names_to_string = true;
-                            }
-                            self.classes[id.0].add_field(FieldInfo {
-                                name: field.name.clone(),
-                                ty_span: field.ty.span,
-                                inner,
-                                ty,
-                                shown,
-                                mutable: field.mutable,
-                            });
-                        }
-                    }
-                    ast::Member::Method(method) => {
-                        scoped = false;
-                        let func = tir::FuncId(self.signatures.len());
-                        if self.first_definition(
-                            &mut first,
-                            Definition::Method,
-                            Some(class.name.name.as_str()),
-                            &method.name,
-                        ) {
-                            self.classes[id.0]
-                                .methods
-                                .insert(method.name.name, Declared::Known(func));
-                        }
-                        let name = format!("{}.{}", class.name.name, method.name.name);
-                        let bounds = self.classes[id.0].bounds.clone();
-                        self.signature(method, name, &class.type_params, bounds);
-                        declared.push((method, SelfType::Known(receiver)));
-                    }
-                }
-            }
-            self.body.set_type_params(&[]);
-            for method in &class.broken_methods {
-                let reported = self.proof(method.span); // proof: parser mark
-                self.classes[id.0]
-                    .methods
-                    .insert(method.name, Declared::Poisoned(reported));
-            }
-            self.body.self_type = SelfType::Absent;
-            self.body.assoc = Rc::default();
+            self.holder_signatures(
+                Holder::Class(id),
+                HolderDecl::of_class(class),
+                &mut declared,
+            );
         }
         declared
+    }
+
+    /// Pass 2 for the class or struct `holder`, declared as `decl`: its bounds, its choices, its
+    /// fields and the signatures of its methods, which go to `declared` with `self`'s type. Its
+    /// fields and methods share a namespace.
+    fn holder_signatures<'a>(
+        &mut self,
+        holder: Holder,
+        decl: HolderDecl<'a>,
+        declared: &mut Vec<(&'a ast::Function, SelfType)>,
+    ) {
+        let owner_name = decl.name.name.as_str();
+        let owner = self.holder_info(holder).type_params.clone();
+        let receiver = Type::intern(match holder {
+            Holder::Class(id) => TypeKind::Class(id, own_args(&owner)),
+            Holder::Struct(id) => TypeKind::Struct(id, own_args(&owner)),
+            Holder::Enum(_) | Holder::Array | Holder::I64 => {
+                unreachable!("`collect_signatures` should pass only a class or a struct")
+            }
+        });
+        self.body.self_type = SelfType::Known(receiver);
+        self.body.set_type_params(&owner);
+        let bounds = self.declare_bounds(0, Vec::new(), decl.type_params);
+        if self.holder_info(holder).bounded {
+            self.holder_info(holder).bounds = bounds;
+        }
+        // The choices come before the fields and the signatures, which may name them.
+        self.holder_info(holder).assoc = self.declare_choices(decl.assoc, owner_name);
+        self.body.set_type_params(&[]);
+        let mut first = FxHashMap::default();
+        let mut scoped = false;
+        for member in decl.members {
+            match member {
+                ast::Member::Field(field) => {
+                    // The parameters stay in scope from one field to the next, and a method takes
+                    // them out.
+                    if !scoped {
+                        self.body.set_type_params(&owner);
+                        let bounds = self.holder_info(holder).bounds.clone();
+                        self.body.set_bounds(0, bounds);
+                        scoped = true;
+                    }
+                    let from = self.queued();
+                    let FieldType { ty, inner, shown } =
+                        self.resolve_field(&field.ty, owner.is_empty());
+                    let queued = from..self.queued();
+                    if self.first_definition(
+                        &mut first,
+                        Definition::Field,
+                        Some(owner_name),
+                        &field.name,
+                    ) {
+                        let at = self.holder_info(holder).fields.len();
+                        let slot = match holder {
+                            Holder::Struct(id) => Slot::StructField(id, at),
+                            Holder::Class(id) => Slot::Field(id, at),
+                            Holder::Enum(_) | Holder::Array | Holder::I64 => {
+                                unreachable!(
+                                    "`collect_signatures` should pass only a class or a struct"
+                                )
+                            }
+                        };
+                        self.keep_at(queued, slot);
+                        let info = self.holder_info(holder);
+                        // `names_to_string_field` reads this flag, not the fields.
+                        if field.name.name.as_str() == "to_string" {
+                            info.names_to_string = true;
+                        }
+                        info.add_field(FieldInfo {
+                            name: field.name.clone(),
+                            ty_span: field.ty.span,
+                            inner,
+                            ty,
+                            shown,
+                            // A struct field changes as its holder does.
+                            mutable: field.mutable && matches!(holder, Holder::Class(_)),
+                        });
+                    }
+                }
+                ast::Member::Method(method) => {
+                    scoped = false;
+                    let func = tir::FuncId(self.signatures.len());
+                    if self.first_definition(
+                        &mut first,
+                        Definition::Method,
+                        Some(owner_name),
+                        &method.name,
+                    ) {
+                        (self.holder_info(holder).methods)
+                            .insert(method.name.name, Declared::Known(func));
+                    }
+                    let name = format!("{owner_name}.{}", method.name.name);
+                    let bounds = self.holder_info(holder).bounds.clone();
+                    self.signature(method, name, decl.type_params, bounds);
+                    declared.push((method, SelfType::Known(receiver)));
+                }
+            }
+        }
+        self.body.set_type_params(&[]);
+        for method in decl.broken_methods {
+            let reported = self.proof(method.span); // proof: parser mark
+            (self.holder_info(holder).methods).insert(method.name, Declared::Poisoned(reported));
+        }
+        self.body.self_type = SelfType::Absent;
+        self.body.assoc = Rc::default();
+    }
+
+    /// The table entry of the class or struct `holder`.
+    pub(super) fn holder_info(&mut self, holder: Holder) -> &mut ClassInfo {
+        match holder {
+            Holder::Class(id) => &mut self.classes[id.0],
+            Holder::Struct(id) => &mut self.structs[id.0],
+            Holder::Enum(_) | Holder::Array | Holder::I64 => {
+                unreachable!("`collect_signatures` should pass only a class or a struct")
+            }
+        }
     }
 
     /// `f`'s signature, named `name`, where `owner` are the type parameters of a method's class
@@ -2254,6 +2382,17 @@ impl Checker<'_> {
                 self.bounded(self.classes[id.0].bounded, ty, args)
                     .then_some(ty)
             }
+            Resolved::Item(ItemId::Struct(id)) => {
+                let list = if args.is_empty() && self.structs[id.0].type_params.is_empty() {
+                    TypeArgs::NONE
+                } else {
+                    let declared = self.structs[id.0].type_params.clone();
+                    self.type_args(&ident(), &declared, args, angles).ok()?
+                };
+                let ty = Type::intern(TypeKind::Struct(id, list));
+                self.bounded(self.structs[id.0].bounded, ty, args)
+                    .then_some(ty)
+            }
             Resolved::Item(ItemId::Enum(id)) => {
                 self.reaches_prelude(id.0 >= self.prelude.enums, ident().span);
                 let list = if args.is_empty() && self.enums[id.0].type_params.is_empty() {
@@ -2349,6 +2488,7 @@ impl Checker<'_> {
             ret,
             ret_shown,
             self_type: owner.map_or(SelfType::Absent, SelfType::Known),
+            self_mut: f.mut_self.is_some(),
             ..Body::default()
         };
         fresh.set_type_params(&sig.type_params);
@@ -2469,14 +2609,16 @@ impl Checker<'_> {
     fn owner_bounds(&self, owner: Option<Type>) -> Vec<Bounds> {
         match owner.map(Type::kind) {
             Some(TypeKind::Class(id, _)) => self.classes[id.0].bounds.clone(),
+            Some(TypeKind::Struct(id, _)) => self.structs[id.0].bounds.clone(),
             Some(TypeKind::Enum(id, _)) => self.enums[id.0].bounds.clone(),
             _ => Vec::new(),
         }
     }
 
-    /// The classes, as candidates for a name.
+    /// The classes and the structs, as candidates for a name.
     fn class_names(&self) -> impl Iterator<Item = (&str, Definition)> {
-        (self.names.class_names()).map(|class| (class.as_str(), Definition::Class))
+        let classes = (self.names.class_names()).map(|class| (class.as_str(), Definition::Class));
+        classes.chain((self.names.struct_names()).map(|s| (s.as_str(), Definition::Struct)))
     }
 
     /// The variant `name`, at `span`, written without its enum: `None` when a binding or an item
@@ -2488,6 +2630,7 @@ impl Checker<'_> {
             .iter()
             .any(|scope| scope.contains_key(&name))
             || self.names.class(name).is_some()
+            || self.names.struct_id(name).is_some()
             || self.names.function(name).is_some()
             || self.names.enum_id(name).is_some()
             || self.names.interface(name).is_some()
@@ -2603,6 +2746,7 @@ impl Checker<'_> {
     fn head(&self, head: Head) -> &'static str {
         match head {
             Head::Class(id) => self.classes[id.0].name.name.as_str(),
+            Head::Struct(id) => self.structs[id.0].name.name.as_str(),
             Head::Enum(id) => self.enums[id.0].name.name.as_str(),
             Head::Interface(id) => self.interfaces[id.0].name.name.as_str(),
             Head::Assoc(interface, k) => self.interfaces[interface.0].assoc[k as usize]

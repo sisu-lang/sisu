@@ -92,11 +92,13 @@ impl Walk {
             | ExprKind::InterfaceCall { args, .. }
             | ExprKind::DynCall { args, .. }
             | ExprKind::New { args, .. }
+            | ExprKind::Struct { args, .. }
             | ExprKind::Variant { args, .. }
             | ExprKind::Math { operands: args, .. }
             | ExprKind::ArrayLit(args)
             | ExprKind::Interpolate { parts: args, .. } => self.all(args, open, calls),
             ExprKind::Field { base: operand, .. }
+            | ExprKind::StructField { base: operand, .. }
             | ExprKind::Wrap(operand)
             | ExprKind::ToAny(operand)
             | ExprKind::Convert(operand)
@@ -272,7 +274,9 @@ impl Walk {
                 let base = self.place(base, open, calls);
                 base.then(self.walk(index, open && !base.recurses, calls))
             }
-            tir::Place::Some(base) => self.place(base, open, calls),
+            tir::Place::Some(base) | tir::Place::StructField { base, .. } => {
+                self.place(base, open, calls)
+            }
         }
     }
 }

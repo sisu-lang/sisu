@@ -36,7 +36,7 @@ error[E0155]: `string` is a built-in type; only the prelude extends it
 40 | extend string {
    |        ^^^^^^
 
-error[E0155]: `extend` takes a class or enum, and `T` is a type parameter
+error[E0155]: `extend` takes a class, struct or enum, and `T` is a type parameter
   --> E0062-member-ambiguous-on-payload.sisu:43:11
    |
 43 | extend<T> T {

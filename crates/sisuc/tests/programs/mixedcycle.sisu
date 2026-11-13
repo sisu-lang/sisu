@@ -1,0 +1,25 @@
+// Two equal chains of 100 000 levels through `S` and `E`, which hold each other. They are
+// compared with `==`, printed and dropped under a 256 KiB stack. `==`, `print` and the drop step from `S` to
+// `E` and back in one frame; one that recursed needs a frame per level and overflows that stack.
+// The output is `true`, then `S(e: A(s: ` 100 000 times, `S(e: B)` and 100 000 `))`, then
+// `done`.
+struct S { e: E }
+
+enum E {
+    A(s: S)
+    B
+}
+
+fn main() {
+    let mut a = S(e: E.B)
+    let mut b = S(e: E.B)
+    let mut i = 0
+    while i < 100_000 {
+        a = S(e: E.A(s: a))
+        b = S(e: E.A(s: b))
+        i += 1
+    }
+    print(a == b)
+    print(a)
+    print("done")
+}

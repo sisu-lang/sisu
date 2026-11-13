@@ -744,7 +744,7 @@ must pass seven properties. Each one has the name of its check:
      removed. The error is E0053 at the call.
    - `declaration`: a local with a use is declared with another name. There is
      one E0033 at each use.
-   - `duplicate`: a top-level function, class, enum, interface, constant or type
+   - `duplicate`: a top-level function, class, struct, enum, interface, constant or type
      alias is written again before itself. The error is E0034 at the name of
      the original, which is now the second definition. No control holds this
      kind: a use of a name that is defined twice gets no checks, so the other
@@ -1417,7 +1417,9 @@ error[E0032]: expected `bool`, found `i64`
  --> bad.sisu:2:19
   |
 2 |     let x: bool = 1
-  |                   ^
+  |            ----   ^
+  |            |
+  |            declared as `bool` here
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

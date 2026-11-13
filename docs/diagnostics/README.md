@@ -163,12 +163,12 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0152](E0152.md) | error | conformance that a type does not meet |
 | [E0153](E0153.md) | error | second conformance to an interface |
 | [E0154](E0154.md) | error | type that does not conform to an interface that is needed |
-| [E0155](E0155.md) | error | `extend` of a type that is not a class or an enum |
+| [E0155](E0155.md) | error | `extend` of a type that is not a class, a struct or an enum |
 | [E0156](E0156.md) | error | call or type that more than one conformance answers |
 | [E0157](E0157.md) | error | bound that gives too many interfaces |
 | [E0158](E0158.md) | error | only classes conform to `AnyObject` |
 | [E0159](E0159.md) | error | operator on a type that has none |
-| [E0160](E0160.md) | error | enum payload that is too large |
+| [E0160](E0160.md) | error | enum payload or struct that is too large |
 | [E0161](E0161.md) | error | type alias that refers to itself |
 | [E0162](E0162.md) | error | type that holds too many distinct types |
 | [E0163](E0163.md) | error | generic items with too many instances |
@@ -183,6 +183,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0172](E0172.md) | error | `else` block of a `let ... else` that can finish |
 | [E0173](E0173.md) | error | value of a `let ... else` that ends in `}` |
 | [E0174](E0174.md) | error | `let` pattern with no `else` |
+| [E0175](E0175.md) | error | `mut` on a field of a struct |
 | [W0001](W0001.md) | warning | unreachable code |
 | [W0002](W0002.md) | warning | variable that is never reassigned |
 | [W0003](W0003.md) | warning | `todo` left in the program |
@@ -194,10 +195,11 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [W0009](W0009.md) | warning | `while` with the condition `true` |
 | [W0010](W0010.md) | warning | function that calls itself on every path |
 | [W0011](W0011.md) | warning | `while` condition that nothing in the loop changes |
-| [W0012](W0012.md) | warning | function, method, class, enum, interface, `extend` block or constant that no live code uses |
+| [W0012](W0012.md) | warning | function, method, class, enum, struct, interface, `extend` block or constant that no live code uses |
 | [W0013](W0013.md) | warning | field that no live code reads, or variant that no live code builds |
 | [W0014](W0014.md) | warning | local or parameter that nothing reads |
 | [W0015](W0015.md) | warning | optional that `print` or an interpolation may write as `None` |
+| [W0016](W0016.md) | warning | write to a copy that nothing reads |
 
 ## Explanations
 

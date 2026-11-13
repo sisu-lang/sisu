@@ -67,9 +67,24 @@ before milestone 9.
   `Expr.Num(2)` builds a value, an enum has methods and compares with `==`,
   and a recursive enum such as `Add(Expr, Expr)` works with no annotation,
   its recursive fields stored behind counted boxes; enum values never change
-- generic functions, classes, enums and methods, such as
-  `fn first<T>(xs: [T]) -> T?`, `class Stack<T>` and `enum Tree<T>`, with
-  type arguments inferred from the arguments and the expected type, or
+- structs, declared with `struct`. A struct value holds its fields inline. It is
+  copied when it is bound, passed, stored or returned
+  ([ADR 0046](adr/0046-structs-replace-classes.md)). A struct has fields with no
+  `mut`, methods with plain `self`, type parameters, a conformance list and
+  `extend`. `Point(x: 1, y: 2)` builds one. The compiler writes `==` and `print`
+  when each field has them. One rule decides what can change. A write, or a `mut`
+  argument, needs a root that is a `let mut` or a `mut` parameter (`E0001`,
+  `E0169`). It can go any depth: through a field, a field of a field, or an
+  element of an array in a field. A field that names the struct through an
+  optional or an enum closes a cycle, and holds a box. A struct that no value can
+  be built of is `E0027`. A struct over 256 bytes stays in memory
+  ([ADR 0048](adr/0048-a-large-value-stays-in-memory.md)). A `let mut` that
+  copies a place and is then only written to warns (`W0016`). `mut self` and
+  writes through `?.` on a struct value wait for later parts of the work.
+  Classes work beside structs until they go
+- generic functions, classes, structs, enums and methods, such as
+  `fn first<T>(xs: [T]) -> T?`, `class Stack<T>` and `enum Tree<T>`. The
+  type arguments come from the arguments and the expected type, or are
   written out (`first<i64>([])`, `Stack<string>(top: None)`); a generic body
   is checked once, at its definition, and compiled once for each list of type
   arguments the program reaches. A type parameter takes bounds that name
@@ -82,10 +97,10 @@ before milestone 9.
 - interfaces: `interface Shape { fn area(self) -> f64 }` lists method
   signatures with no body, associated types (`type Item`), type parameters
   and inherited interfaces (`interface Solid: Named`), and `Self` is the
-  conforming type. A class or an enum conforms in its declaration
-  (`class Circle: Shape`, with the methods in its body) or in an `extend`
-  block (`extend Celsius: Convert<Fahrenheit> { ... }`, one interface for each
-  block); `extend<T> Stack<T>` and `extend Stack<i64>` add methods to some
+  conforming type. A class, a struct or an enum conforms in its declaration,
+  as in `class Circle: Shape` with the methods in its body. It can also
+  conform in an `extend` block, one interface for each block
+  (`extend Celsius: Convert<Fahrenheit> { ... }`); `extend<T> Stack<T>` and `extend Stack<i64>` add methods to some
   instantiations, and a plain `extend T { ... }` adds methods that follow no
   interface. Generic code calls the methods of its bounds, and `S.Item` names
   an associated type through a bound. A call through a bound is static: `mono`
@@ -113,19 +128,20 @@ before milestone 9.
   errors (`E0165`)
 - type aliases, `type Grid = [[char?]]` and `type Pairs<T> = [[T]]`: another
   name for a type, so a `Grid` is a `[[char?]]` everywhere, inside type
-  arguments too. An alias of a class or an enum builds values as the type does
-  (`P(x: 1.0, y: 2.0)`, `E.Num(1)`), and an alias of a number type converts. An
-  alias that refers to itself is an error (`E0161`), and so is a type that
-  nests past 256 levels (`E0071`) or holds more than 100,000 distinct types
-  (`E0162`). The checker replaces each alias, so no later stage sees one
+  arguments too. An alias of a class, a struct or an enum builds values as the
+  type does: `P(x: 1.0, y: 2.0)`, `E.Num(1)`. An alias of a number type
+  converts. An alias that refers to itself is an error (`E0161`). So is a type
+  that nests past 256 levels (`E0071`) or holds more than 100,000 distinct
+  types (`E0162`). The checker replaces each alias, so no later stage
+  sees one
 - the prelude's interfaces `Display`, `Eq`, `Ord` and `AnyObject`. `print`,
   interpolation and `to_string()` use `Display`, and every type that can be a
   type argument has one: a class prints its name, or the text of its own
   `to_string`. `==` and `!=` use `Eq`, and `<`, `<=`, `>` and `>=` use `Ord`.
   The compiler writes the conformances of numbers, strings, arrays,
-  optionals and enums, and a program writes those of a class. A type that has
-  no `==` or `<` is an error (`E0159`), and only a class conforms to
-  `AnyObject` (`E0158`); `a is b` on a `T: AnyObject` tests identity. Printing
+  optionals, enums and structs, and a program writes those of a class. A type
+  that has no `==` or `<` is an error (`E0159`). Only a class conforms to
+  `AnyObject` (`E0158`), and `a is b` on a `T: AnyObject` tests identity. Printing
   an optional at the top level warns (`W0015`), and `.to_string()` does not
   ([ADR 0036](adr/0036-every-type-prints-and-printing-an-optional-warns.md))
 - `dbg(x)`, which writes `file:line:column: source = value` to standard error
@@ -555,7 +571,7 @@ Each item is cheap when its milestone lands and expensive to retrofit:
 
 | Milestone | Add | Why |
 | --- | --- | --- |
-| 4 | Reserve the keywords that later milestones bring: `import` and `pub` (planned for milestone 2, it did not land), `enum`, `match`, `record`, `type`, `weak`, `const`, `test` and `todo`. Landed in milestone 4, stage 1 (`E0083`); it also reserves `echo`, `interface`, `extern` and `as`, and `const` became a keyword with top-level constants. Milestone 8 released `echo` for an ordinary name, when `dbg` took its place, and made `type` a keyword for type aliases | A program that names a variable `match` would break when that keyword lands |
+| 4 | Reserve the keywords that later milestones bring: `import` and `pub` (planned for milestone 2, it did not land), `enum`, `match`, `record`, `type`, `weak`, `const`, `test` and `todo`. Landed in milestone 4, stage 1 (`E0083`); it also reserves `echo`, `interface`, `extern` and `as`, and `const` became a keyword with top-level constants. Milestone 8 released `echo` for an ordinary name, when `dbg` took its place, and made `type` a keyword for type aliases. Milestone 9 part 1 freed `record` and reserved `struct` and `move` in its place | A program that names a variable `match` would break when that keyword lands |
 | 4 | `let mut` replaces `var`; a class field is bare, set once by the constructor, or `mut` (ADR 0011). `var` stays reserved, so using it is error `E0013`, "there is no `var` in Sisu", with the help "Sisu declares a variable with `let mut`" (on a field, "a field that can change is marked `mut`"). | Every program and test changes, so it is cheapest before strings and enums add more code |
 | 4 | Top-level `const NAME = expr`, where `expr` uses only literals, operators and other constants; the checker folds it to a value. Planned for milestone 3, it did not land. | Named limits, such as a sieve size, without global variables |
 | 4 | String interpolation `"x = {x}"`. `print(x)` and `"{x}"` go through one internal operation per type that turns a value into text. Milestone 8's `Display` interface replaces that operation, so neither is rewritten. | The biggest single win for real programs |

@@ -1,0 +1,10 @@
+error[E0152]: `N` does not meet `Ord`
+ --> E0152-struct-ord.sisu:4:11
+  |
+4 | struct N: Ord { n: i64 }
+  |           ^^^ `N` gets no generated `Ord`
+  |
+  = help: fn less(self, other: Self) -> bool
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0152

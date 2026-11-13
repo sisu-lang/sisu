@@ -1,0 +1,12 @@
+warning[W0016]: this writes to a copy of `h.account`, and nothing reads the copy
+ --> W0016-for.sisu:8:9
+  |
+7 |         let mut a = h.account
+  |                 - a copy
+8 |         a.balance = 2
+  |         ^^^^^^^^^ `h.account` does not change
+  |
+  = help: `h` is bound by `for`, so `h.account` cannot change here: delete the write
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0016

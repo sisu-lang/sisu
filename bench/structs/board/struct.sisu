@@ -1,0 +1,563 @@
+// A task board with structs only. Commands come from standard input, one per line. Two panels change
+// the same tasks, both use one search cache, and a run-time list of observers follows each change.
+// All of this lives in one `App`, because no two parts can hold the same value.
+
+struct Slot<T> {
+    value: T?
+    generation: i64
+}
+
+struct Id {
+    index: i64
+    generation: i64
+
+    fn same(self, other: Id) -> bool {
+        self.index == other.index && self.generation == other.generation
+    }
+}
+
+struct Arena<T> {
+    slots: [Slot<T>]
+    free: [i64]
+    free_len: i64
+
+    fn add(mut self, value: T) -> Id {
+        if self.free_len > 0 {
+            self.free_len -= 1
+            let i = self.free[self.free_len]
+            self.slots[i].value = Some(value)
+            return Id(index: i, generation: self.slots[i].generation)
+        }
+        self.slots.push(Slot(value: Some(value), generation: 0))
+        Id(index: self.slots.len() - 1, generation: 0)
+    }
+
+    fn live(self, id: Id) -> bool {
+        id.index < self.slots.len() && self.slots[id.index].generation == id.generation
+    }
+
+    fn get(self, id: Id) -> T? {
+        if !self.live(id) {
+            return None
+        }
+        self.slots[id.index].value
+    }
+
+    fn set(mut self, id: Id, value: T) {
+        if self.live(id) {
+            self.slots[id.index].value = Some(value)
+        }
+    }
+
+    fn remove(mut self, id: Id) {
+        if !self.live(id) {
+            return
+        }
+        self.slots[id.index].value = None
+        self.slots[id.index].generation += 1
+        if self.free_len == self.free.len() {
+            self.free.push(id.index)
+        } else {
+            self.free[self.free_len] = id.index
+        }
+        self.free_len += 1
+    }
+}
+
+struct Task {
+    title: string
+    done: bool
+    tags: [string]
+}
+
+struct Board {
+    tasks: Arena<Task>
+    order: [Id]
+
+    fn at(self, n: i64) -> Id? {
+        if n < 0 || n >= self.order.len() {
+            return None
+        }
+        self.order[n]
+    }
+
+    fn drop_from_order(mut self, id: Id) {
+        let mut kept: [Id] = []
+        for other in self.order {
+            if !other.same(id) {
+                kept.push(other)
+            }
+        }
+        self.order = kept
+    }
+}
+
+enum Event {
+    Added(Id)
+    Finished(Id)
+    Renamed(Id)
+    Tagged(Id, string)
+    Removed(Id)
+    Undone
+}
+
+struct CacheEntry {
+    word: string
+    hits: i64
+}
+
+struct Cache {
+    entries: [CacheEntry]
+    found: i64
+    missed: i64
+
+    fn clear(mut self) {
+        self.entries = []
+    }
+}
+
+struct IndexEntry {
+    word: string
+    ids: [Id]
+}
+
+struct SearchIndex {
+    entries: [IndexEntry]
+
+    fn add(mut self, word: string, id: Id) {
+        for i in 0..self.entries.len() {
+            if self.entries[i].word == word {
+                self.entries[i].ids.push(id)
+                return
+            }
+        }
+        self.entries.push(IndexEntry(word: word, ids: [id]))
+    }
+
+    // Counts the mentions: a task that had this word twice counts twice.
+    fn mentions(self, board: Board, word: string) -> i64 {
+        for entry in self.entries {
+            if entry.word == word {
+                let mut hits = 0
+                for id in entry.ids {
+                    if let task = board.tasks.get(id) {
+                        if has_word(task.title, word) {
+                            hits += 1
+                        }
+                    }
+                }
+                return hits
+            }
+        }
+        0
+    }
+}
+
+struct Status {
+    open: i64
+    finished: i64
+}
+
+// One value holds the whole program state: an observer in a list cannot change itself in place.
+struct App {
+    board: Board
+    cache: Cache
+    index: SearchIndex
+    status: Status
+    log: [string]
+    queue: [Event]
+    observers: [any Observer]
+    watches: [i64]
+    history: [Board]
+    history_at: i64
+    history_len: i64
+    history_cap: i64
+}
+
+fn emit(mut app: App, ev: Event) {
+    app.queue.push(ev)
+}
+
+// An observer can emit an event. That event goes last in the queue, after this one has reached
+// every observer.
+fn drain(mut app: App) {
+    let mut at = 0
+    while at < app.queue.len() {
+        let ev = app.queue[at]
+        at += 1
+        for o in app.observers {
+            o.on(mut app, ev)
+        }
+    }
+    app.queue = []
+}
+
+fn remember(mut app: App) {
+    if app.history_cap == 0 {
+        return
+    }
+    if app.history.len() < app.history_cap {
+        app.history.push(app.board)
+    } else {
+        app.history[app.history_at] = app.board
+    }
+    app.history_at = (app.history_at + 1) % app.history_cap
+    if app.history_len < app.history_cap {
+        app.history_len += 1
+    }
+}
+
+fn undo(mut app: App) -> bool {
+    if app.history_len == 0 {
+        return false
+    }
+    app.history_at = (app.history_at + app.history_cap - 1) % app.history_cap
+    app.history_len -= 1
+    app.board = app.history[app.history_at]
+    emit(mut app, Event.Undone)
+    drain(mut app)
+    true
+}
+
+// The cache is written on a read, so a function that only wants an answer must say `mut app`.
+fn search(mut app: App, word: string) -> i64 {
+    for entry in app.cache.entries {
+        if entry.word == word {
+            app.cache.found += 1
+            return entry.hits
+        }
+    }
+    let hits = app.index.mentions(app.board, word)
+    app.cache.missed += 1
+    app.cache.entries.push(CacheEntry(word: word, hits: hits))
+    hits
+}
+
+fn finish(mut app: App, id: Id) -> bool {
+    if let task = app.board.tasks.get(id) {
+        if task.done {
+            return false
+        }
+        let mut changed = task
+        changed.done = true
+        app.board.tasks.set(id, changed)
+        emit(mut app, Event.Finished(id))
+        return true
+    }
+    false
+}
+
+interface Observer {
+    fn on(self, mut app: App, ev: Event)
+}
+
+struct StatusBar: Observer {
+    fn on(self, mut app: App, ev: Event) {
+        match ev {
+            Added(_) => app.status.open += 1
+            Finished(_) => {
+                app.status.open -= 1
+                app.status.finished += 1
+            }
+            Removed(_) | Undone => app.status = counted(app.board)
+            Renamed(_) | Tagged(_, _) => {}
+        }
+    }
+}
+
+fn counted(board: Board) -> Status {
+    let mut status = Status(open: 0, finished: 0)
+    for id in board.order {
+        if let task = board.tasks.get(id) {
+            if task.done {
+                status.finished += 1
+            } else {
+                status.open += 1
+            }
+        }
+    }
+    status
+}
+
+struct Indexer: Observer {
+    fn on(self, mut app: App, ev: Event) {
+        match ev {
+            Added(id) | Renamed(id) => {
+                if let task = app.board.tasks.get(id) {
+                    for word in words(task.title) {
+                        app.index.add(word, id)
+                    }
+                }
+                app.cache.clear()
+            }
+            Removed(_) | Finished(_) | Tagged(_, _) => app.cache.clear()
+            Undone => {
+                let mut fresh = SearchIndex(entries: [])
+                for id in app.board.order {
+                    if let task = app.board.tasks.get(id) {
+                        for word in words(task.title) {
+                            fresh.add(word, id)
+                        }
+                    }
+                }
+                app.index = fresh
+                app.cache.clear()
+            }
+        }
+    }
+}
+
+struct AuditLog: Observer {
+    fn on(self, mut app: App, ev: Event) {
+        match ev {
+            Added(id) => app.log.push("added {id.index}")
+            Finished(id) => app.log.push("finished {id.index}")
+            Renamed(id) => app.log.push("renamed {id.index}")
+            Tagged(id, tag) => app.log.push("tagged {id.index} {tag}")
+            Removed(id) => app.log.push("removed {id.index}")
+            Undone => app.log.push("undone")
+        }
+    }
+}
+
+// A rule that changes the model: a task tagged "auto" finishes, and that fires one more event.
+struct AutoClose: Observer {
+    fn on(self, mut app: App, ev: Event) {
+        match ev {
+            Tagged(id, tag) => {
+                if tag == "auto" {
+                    finish(mut app, id)
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+// Added at run time. Its count lives in `app.watches`, at `slot`.
+struct Watch: Observer {
+    word: string
+    slot: i64
+
+    fn on(self, mut app: App, ev: Event) {
+        match ev {
+            Added(id) | Renamed(id) => {
+                if let task = app.board.tasks.get(id) {
+                    if has_word(task.title, self.word) {
+                        app.watches[self.slot] += 1
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+struct ListPanel {
+    added: i64
+
+    fn add(mut self, mut app: App, title: string) -> string {
+        remember(mut app)
+        let id = app.board.tasks.add(Task(title: title, done: false, tags: []))
+        app.board.order.push(id)
+        self.added += 1
+        emit(mut app, Event.Added(id))
+        drain(mut app)
+        "added {app.board.order.len() - 1}"
+    }
+
+    fn finish_at(self, mut app: App, n: i64) -> string {
+        if let id = app.board.at(n) {
+            remember(mut app)
+            if finish(mut app, id) {
+                drain(mut app)
+                return "finished"
+            }
+            return "already"
+        }
+        "no such"
+    }
+
+    fn remove_at(self, mut app: App, n: i64) -> string {
+        if let id = app.board.at(n) {
+            remember(mut app)
+            app.board.tasks.remove(id)
+            app.board.drop_from_order(id)
+            emit(mut app, Event.Removed(id))
+            drain(mut app)
+            return "removed"
+        }
+        "no such"
+    }
+
+    fn find(self, mut app: App, word: string) -> string {
+        "list {search(mut app, word)}"
+    }
+}
+
+struct DetailPanel {
+    selected: Id?
+
+    fn select(mut self, app: App, n: i64) -> string {
+        self.selected = app.board.at(n)
+        if self.selected == None {
+            return "no such"
+        }
+        "selected"
+    }
+
+    fn rename(self, mut app: App, title: string) -> string {
+        if let id = self.selected {
+            if let task = app.board.tasks.get(id) {
+                remember(mut app)
+                let mut changed = task
+                changed.title = title
+                app.board.tasks.set(id, changed)
+                emit(mut app, Event.Renamed(id))
+                drain(mut app)
+                return "renamed"
+            }
+            return "gone"
+        }
+        "none selected"
+    }
+
+    fn tag(self, mut app: App, tag: string) -> string {
+        if let id = self.selected {
+            if let task = app.board.tasks.get(id) {
+                remember(mut app)
+                let mut changed = task
+                changed.tags.push(tag)
+                app.board.tasks.set(id, changed)
+                emit(mut app, Event.Tagged(id, tag))
+                drain(mut app)
+                return "tagged"
+            }
+            return "gone"
+        }
+        "none selected"
+    }
+
+    fn related(self, mut app: App) -> string {
+        if let id = self.selected {
+            if let task = app.board.tasks.get(id) {
+                let mut sum = 0
+                for word in words(task.title) {
+                    sum += search(mut app, word)
+                }
+                return "detail {sum}"
+            }
+            return "gone"
+        }
+        "none selected"
+    }
+}
+
+fn watch(mut app: App, word: string) -> string {
+    app.watches.push(0)
+    app.observers.push(Watch(word: word, slot: app.watches.len() - 1))
+    "watching {app.watches.len()}"
+}
+
+fn show(app: App) -> string {
+    let mut seen = 0
+    for w in app.watches {
+        seen += w
+    }
+    "open {app.status.open} finished {app.status.finished} log {app.log.len()} cache {app.cache.found} {app.cache.missed} watched {seen}"
+}
+
+fn words(line: string) -> [string] {
+    let mut out: [string] = []
+    let mut word = ""
+    for c in line.chars() {
+        if c == ' ' {
+            if word.len() > 0 {
+                out.push(word)
+                word = ""
+            }
+        } else {
+            word += "{c}"
+        }
+    }
+    if word.len() > 0 {
+        out.push(word)
+    }
+    out
+}
+
+fn has_word(line: string, word: string) -> bool {
+    for w in words(line) {
+        if w == word {
+            return true
+        }
+    }
+    false
+}
+
+fn number(text: string) -> i64 {
+    let mut n = 0
+    for c in text.chars() {
+        n = n * 10 + i64(c) - i64('0')
+    }
+    n
+}
+
+fn rest(w: [string]) -> string {
+    let mut out = ""
+    for i in 1..w.len() {
+        if i > 1 {
+            out += " "
+        }
+        out += w[i]
+    }
+    out
+}
+
+fn main() {
+    let first = words(read_line() ?? "history 0")
+    let observers: [any Observer] = [StatusBar(), Indexer(), AuditLog(), AutoClose()]
+    let mut app = App(
+        board: Board(tasks: Arena(slots: [], free: [], free_len: 0), order: []),
+        cache: Cache(entries: [], found: 0, missed: 0),
+        index: SearchIndex(entries: []),
+        status: Status(open: 0, finished: 0),
+        log: [],
+        queue: [],
+        observers: observers,
+        watches: [],
+        history: [],
+        history_at: 0,
+        history_len: 0,
+        history_cap: number(first[1]))
+    let mut list = ListPanel(added: 0)
+    let mut detail = DetailPanel(selected: None)
+    while let line = read_line() {
+        let w = words(line)
+        let verb = w[0]
+        if verb == "add" {
+            print(list.add(mut app, rest(w)))
+        } else if verb == "done" {
+            print(list.finish_at(mut app, number(w[1])))
+        } else if verb == "del" {
+            print(list.remove_at(mut app, number(w[1])))
+        } else if verb == "find" {
+            print(list.find(mut app, w[1]))
+        } else if verb == "select" {
+            print(detail.select(app, number(w[1])))
+        } else if verb == "rename" {
+            print(detail.rename(mut app, rest(w)))
+        } else if verb == "tag" {
+            print(detail.tag(mut app, w[1]))
+        } else if verb == "related" {
+            print(detail.related(mut app))
+        } else if verb == "watch" {
+            print(watch(mut app, w[1]))
+        } else if verb == "undo" {
+            print(undo(mut app))
+        } else if verb == "show" {
+            print(show(app))
+        }
+    }
+    print(show(app))
+}

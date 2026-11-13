@@ -1,0 +1,27 @@
+// GIVEN `class C { mut s: S; mut k: C? }` and `fn f(mut a: i64, mut c: C)`, which changes both
+// WHEN `f(mut c.s.n, mut c)` runs, while `d` holds the old object
+// THEN `c` is the new object, `d.s.n` is 2 from the store-back, and the old `c.k` is kept
+struct S {
+    n: i64
+}
+
+class C {
+    mut s: S
+    mut k: C?
+}
+
+fn f(mut a: i64, mut c: C) {
+    a += 1
+    c = C(s: S(n: 100), k: None)
+}
+
+fn main() {
+    let mut c = C(s: S(n: 1), k: None)
+    let mut d = c
+    c.k = C(s: S(n: 5), k: None)
+    f(mut c.s.n, mut c)
+    print(c.s.n)
+    print(d.s.n)
+    d = c
+    print(d.k == None)
+}

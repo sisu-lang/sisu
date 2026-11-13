@@ -683,6 +683,11 @@ class ScalingTest(unittest.TestCase):
             ("mutable locals", 250),
             ("nested array ==", 5),
             ("failed bounds", 64),
+            ("struct fields", 50),
+            ("struct paths", 24),
+            ("struct writes", 100),
+            ("struct ==", 50),
+            ("never built", 16),
         ]
         self.assertEqual([(name, n) for name, (n, _) in sc.SHAPES.items()], sizes)
 
@@ -748,6 +753,11 @@ class ScalingTest(unittest.TestCase):
             "mutable locals": (lambda t: min(t.count("let mut"), t.count("+= 1")), 0),
             "nested array ==": (lambda t: depth(line(t, "let a"), "[", "]"), 0),
             "failed bounds": (lambda t: min(t.count("type U"), t.count("C<i64>")), 0),
+            "struct fields": (lambda t: t.count("total += w.f"), 0),
+            "struct paths": (lambda t: t.count("struct Level"), 1),
+            "struct writes": (lambda t: t.count("t.i.xs.push"), 1),
+            "struct ==": (lambda t: t.count("\n    f"), 0),
+            "never built": (lambda t: t.count("class C"), 0),
         }
         self.assertEqual(list(parts), list(sc.SHAPES))
         for name, (_, make) in sc.SHAPES.items():
@@ -903,7 +913,8 @@ class ScalingTest(unittest.TestCase):
         """GIVEN the known list
         WHEN each row is read
         THEN its case is a shape, or a shape of O2_SHAPES with ` -O2`
-        AND its stage is a stage that the case judges, and its issue is a positive integer
+        AND its stage is a stage that the case judges
+        AND its issue is a positive integer, or the path of the register
         AND each shape of O2_SHAPES is a shape
         """
         self.assertLessEqual(set(sc.O2_SHAPES), set(sc.SHAPES))
@@ -914,8 +925,10 @@ class ScalingTest(unittest.TestCase):
                     self.assertIn(stage, sc.O2_STAGES)
                 self.assertIn(shape.removesuffix(sc.O2_SUFFIX), sc.SHAPES)
                 self.assertIn(stage, [name for name, _ in sc.STAGES])
-                self.assertIsInstance(issue, int)
-                self.assertGreater(issue, 0)
+                if isinstance(issue, str):
+                    self.assertEqual(issue, "docs/register.md")
+                else:
+                    self.assertGreater(issue, 0)
 
     def test_judge_should_keep_each_boundary_of_the_rule(self) -> None:
         """GIVEN check growths on each side of each number of the rule
