@@ -1,0 +1,68 @@
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:10:16
+   |
+10 |         E.P(x, ..) => print(x)
+   |                ^^
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:17:18
+   |
+17 |         E.P { x, .. } => print(x)
+   |                  ^^
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:24:13
+   |
+24 |         E.P(..) => print(1)
+   |             ^^
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:31:13
+   |
+31 |         E.P(.., y) => print(y)
+   |             ^^
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:38:18
+   |
+38 |         E.R(Some(..)) => print(1)
+   |                  ^^
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:44:17
+   |
+44 |     if let Some(..) = o { }
+   |                 ^^
+
+error[E0011]: expected a pattern, found `..`
+  --> E0011-rest-pattern.sisu:48:16
+   |
+48 |     let E.P(x, ..) = e else { return }
+   |                ^^
+
+error[E0011]: a range pattern needs a start and an end
+  --> E0011-rest-pattern.sisu:53:16
+   |
+53 |         E.P(x, ..=) => print(x)
+   |                ^^^
+   |
+   = help: write `start..=end`
+
+error[E0011]: a range pattern needs a start and an end
+  --> E0011-rest-pattern.sisu:60:16
+   |
+60 |         E.P(x, ..n) => print(x)
+   |                ^^^
+   |
+   = help: write `start..n`
+
+error[E0011]: a range pattern needs a start and an end
+  --> E0011-rest-pattern.sisu:67:9
+   |
+67 |         .. => print(1)
+   |         ^^
+   |
+   = help: write `start..end`
+
+sisu: 10 errors
+sisu: for more on a code, run `sisu explain <code>`: E0011

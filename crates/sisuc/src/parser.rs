@@ -9173,7 +9173,7 @@ mod tests {
     )]
     fn case_with_no_pattern_after_it_should_not_lose_the_arm() {
         // (arm, the one diagnostic with its position or none, fixes, the code of the fixed source)
-        let rows: [(&str, Option<(Code, (usize, usize))>, usize, Option<Code>); 17] = [
+        let rows: [(&str, Option<(Code, (usize, usize))>, usize, Option<Code>); 24] = [
             (
                 "case\n        | x => print(1)",
                 Some((Code::ArmSplit, (4, 9))),
@@ -9208,6 +9208,45 @@ mod tests {
             ),
             (
                 "case let\n        | x => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                0,
+                None,
+            ),
+            // A token that can follow no pattern in an arm: `case` is no binding, and removing it
+            // leaves no pattern.
+            (
+                "case (x, y) => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                0,
+                None,
+            ),
+            (
+                "case(x) => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                0,
+                None,
+            ),
+            (
+                "case [x] => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                0,
+                None,
+            ),
+            (
+                "case 1.5 => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                0,
+                None,
+            ),
+            (
+                "case { x } => print(1)",
+                Some((Code::MatchIdiom, (3, 9))),
+                0,
+                None,
+            ),
+            ("case: print(1)", Some((Code::MatchIdiom, (3, 9))), 0, None),
+            (
+                "case\n        (x) => print(1)",
                 Some((Code::MatchIdiom, (3, 9))),
                 0,
                 None,
