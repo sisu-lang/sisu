@@ -218,6 +218,18 @@ class Report(unittest.TestCase):
         self.assertEqual([t.split(": ")[0] for t in touching], ["a.rs:4:30-4:36", "a.rs:5:5-5:9"])
         self.assertEqual([t.split(": ")[0] for t in other], ["a.rs:3:30-3:36"])
 
+    def test_a_panic_or_an_assert_in_a_string_should_not_move_a_region_out_of_the_list(
+        self,
+    ) -> None:
+        exp = export(func("f", [(1, 1, 9, 1, 1), (3, 5, 3, 30, 0), (4, 5, 4, 30, 0)]))
+        lines = {3: '    if a { f("panic!(x)") }', 4: '    if a { f("assert!(x)") }'}
+        lc = lcov(**{"a.rs": {3: 1, 4: 1}})
+        _, touching, other = sections(
+            run(exp, lc, diff(start=3, count=2), read=lambda _p, n: lines[n])
+        )
+        self.assertEqual([t.split(": ")[0] for t in touching], ["a.rs:3:5-3:30", "a.rs:4:5-4:30"])
+        self.assertEqual(other, ["(none)"])
+
     def test_changed_lines_coverage_counts_only_instrumented_lines(self) -> None:
         out = run(export(), lcov(**{"a.rs": {1: 1, 2: 1, 3: 0}}), diff(start=1, count=4))
         self.assertIn("changed lines 66.7% (2 of 3).", out.splitlines()[0])
@@ -399,6 +411,7 @@ class BranchNoise(unittest.TestCase):
             "#[cfg(test)]",
             "mod tests {",
             '    const S: &str = r#"{ "a": {"#;',
+            '    const R: &str = r#""}""#;',
             "    const C: char = '{';",
             "    const Q: char = '\\'';",
             "    fn f<'a>(x: &'a str) { if b {} }",
@@ -406,7 +419,7 @@ class BranchNoise(unittest.TestCase):
             "}",
             "fn k() { if d {} }",
         )
-        self.assertEqual(listed(*lines, branches=[6, 9]), [9])
+        self.assertEqual(listed(*lines, branches=[7, 10]), [10])
 
     def test_a_comment_after_an_assert_should_not_hide_the_next_line(self) -> None:
         lines = ("debug_assert!(n > 0); // why", "if n > 1 {", "}")
@@ -417,17 +430,25 @@ class BranchNoise(unittest.TestCase):
         self.assertEqual(listed(*lines, branches=[2]), [2])
 
     def test_a_comment_that_names_an_invariant_should_not_hide_its_own_line(self) -> None:
-        lines = ("if a { // not unreachable!(x)", "}", "let Some(z) = y else { // x", "    return;")
-        self.assertEqual(listed(*lines, branches=[1, 3]), [1, 3])
+        lines = (
+            "if a { // not unreachable!(x)",
+            "}",
+            "let Some(z) = y else { // x",
+            "    return;",
+            "let Some(x) = y else {",
+            "    return; // not panic!(x)",
+        )
+        self.assertEqual(listed(*lines, branches=[1, 3, 5]), [1, 3, 5])
 
     def test_comments_inside_a_multiline_assert_should_not_end_the_walk(self) -> None:
         lines = (
             "assert!( // why",
             "    a, // and why",
+            "    // why",
             "    if b { 1 } else { 2 }, // more",
             ");",
         )
-        self.assertEqual(listed(*lines, branches=[3]), [])
+        self.assertEqual(listed(*lines, branches=[4]), [])
 
     def test_a_blank_line_should_end_the_walk_back_from_an_assert(self) -> None:
         lines = ("assert!(a,", "", "if b {", "}")
