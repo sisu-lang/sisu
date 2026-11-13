@@ -177,6 +177,7 @@ fn main() {
 - A `mut` argument is a place with a root that can change, as a write is. On any other place, it is an error. [E0169](../diagnostics/E0169.md)
 - A write that stays inside a value that is only a temporary is an error, as `g()[0] = 3` is: nothing could read the change. [E0021](../diagnostics/E0021.md)
 - A write whose path crosses a class object keeps the rule of the class: the `mut` field of the object decides.
+- A write through a struct goes into the value that the struct has when the write occurs. So when an index replaces the struct, the write goes into the new value. A write through a class goes into the object that the path found first ([Assignment](statements.md#assignment)).
 
 ```sisu
 struct Cell {

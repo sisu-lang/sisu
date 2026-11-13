@@ -227,6 +227,7 @@ An assignment `place = value` stores a value in a place. These are the places:
 
 - a binding of a `let mut`, or a `mut` parameter ([`mut` parameters](functions.md#mut-parameters))
 - a `mut` field of an object ([Classes](classes.md#fields))
+- a field of a struct in one of these places, such as `p.x` or `t.leader.name` ([Structs](structs.md#what-can-change))
 - an element of an array in one of these places, such as `xs[i]` or `grid[i][j]` ([Arrays](arrays.md#indexes))
 
 The object of a field can come from any expression, a call too, because a class is shared. So `p().hits = 5` writes to the object that `p` returns, and `p().v[0] = 9` is valid when `v` is a `mut` array field. An element of an array that a call returns is not a place, because an array is a value: `q()[0] = 2` is an error ([E0021](../diagnostics/E0021.md)).
@@ -276,6 +277,33 @@ fn main() {
 
 ```stderr
 sisu: panic at example.sisu:8:8: index 5 out of bounds for length 2
+```
+
+When the index of an element changes the place, the path decides where the value goes. Through a struct, the program writes into the new value of the struct. Through a class, it writes into the object that it found before it calculated the index.
+
+```sisu
+struct P {
+    xs: [i64]
+}
+
+class Q {
+    mut xs: [i64]
+}
+
+class C {
+    mut p: P
+    mut q: Q
+}
+
+fn main() {
+    let c = C(p: P(xs: [1]), q: Q(xs: [1]))
+    c.p.xs[{ c.p = P(xs: [9]); 0 }] = 5
+    print(c.p.xs[0])             // 5
+    let old = c.q
+    c.q.xs[{ c.q = Q(xs: [9]); 0 }] = 5
+    print(old.xs[0])             // 5
+    print(c.q.xs[0])             // 9
+}
 ```
 
 ### Compound assignment
