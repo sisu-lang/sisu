@@ -88,13 +88,21 @@ class OpenPr(unittest.TestCase):
         self.assertIn("body.md", result.stdout)
         self.assertFalse(self.log.exists())
 
-    def test_a_detached_head_should_fail_and_ask_for_a_branch(self) -> None:
+    def test_a_body_that_is_not_utf_8_should_fail_with_its_reason(self) -> None:
+        self.body.write_bytes(b"\xff\xfe")
+        result = self.open_pr()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("open_pr: FAIL:", result.stdout)
+        self.assertIn("utf-8", result.stdout)
+        self.assertFalse(self.log.exists())
+
+    def test_a_detached_head_should_fail_and_name_the_checkout(self) -> None:
         git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
         subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "one"], check=True, env=ENV)
         subprocess.run([*git, "switch", "-q", "--detach"], check=True, env=ENV)
         result = self.open_pr()
         self.assertEqual(result.returncode, 1)
-        self.assertIn("open_pr: FAIL: no branch is checked out", result.stdout)
+        self.assertIn("open_pr: FAIL: cannot read the branch of", result.stdout)
         self.assertFalse(self.log.exists())
 
 

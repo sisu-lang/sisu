@@ -75,8 +75,12 @@ fi
 case ${1:-} in
 --replay | --tmin) input=$(realpath "${2:?$1 needs an input}") ;;
 --against)
-    if (($# < 3)) || [[ ! -f $3 ]]; then
+    if (($# < 3)); then
         echo "$usage" >&2
+        exit 2
+    fi
+    if [[ ! -f $3 ]]; then
+        echo "scripts/fuzz.sh: no input file: $3" >&2
         exit 2
     fi
     ref=$2

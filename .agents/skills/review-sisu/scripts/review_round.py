@@ -114,7 +114,8 @@ def unnumbered(name: str) -> str:
 def stem_of(value: str, run: Path, round_number: int) -> str:
     """Return the STEM of `value`: a stem as it is, or the stem of a path such as RUN/sol.md.
 
-    A path must name the report of RUN for this round, or the script stops.
+    A path must name the report of RUN for this round, or the script stops. A stem must not end
+    in -<digits>, because that is the round number of a report path.
     """
     if not value.endswith(".md"):
         return value

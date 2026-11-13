@@ -683,12 +683,13 @@ class GapsCheck(unittest.TestCase):
 
 
 # The fake cargo of --against. In an export under target/against, `cargo fuzz run` exits with
-# $FAKE_THERE and `cargo fuzz build` with $FAKE_BUILD_THERE; in the checkout, the run exits with
-# $FAKE_HERE. Each run writes its directory and $SISU_RUNTIME to $FAKE_SEEN.
+# $FAKE_THERE and `cargo fuzz build` with $FAKE_BUILD_THERE; in the checkout, they exit with
+# $FAKE_HERE and $FAKE_BUILD_HERE. Each run writes its directory and $SISU_RUNTIME to $FAKE_SEEN.
 AGAINST_CARGO = """#!/usr/bin/env bash
 there=false
 [[ $PWD == */target/against/* ]] && there=true
 if [[ $1 == fuzz && $2 == build && $there == true ]]; then exit "${FAKE_BUILD_THERE:-0}"; fi
+if [[ $1 == fuzz && $2 == build ]]; then exit "${FAKE_BUILD_HERE:-0}"; fi
 [[ $1 == fuzz && $2 == run ]] || exit 0
 echo "$PWD ${SISU_RUNTIME:-none}" >>"$FAKE_SEEN"
 if [[ $there == true ]]; then exit "${FAKE_THERE:-0}"; fi
@@ -725,18 +726,18 @@ class FuzzAgainst(unittest.TestCase):
     def against(
         self, here: int, there: int, *, target: str = "front_end", build_there: int = 0
     ) -> subprocess.CompletedProcess[str]:
-        env = dict(
-            self.env,
-            FAKE_HERE=str(here),
-            FAKE_THERE=str(there),
-            FAKE_BUILD_THERE=str(build_there),
+        self.env.update(
+            FAKE_HERE=str(here), FAKE_THERE=str(there), FAKE_BUILD_THERE=str(build_there)
         )
+        return self.fuzz("--target", target, "--against", "trunk", str(self.input))
+
+    def fuzz(self, *args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["bash", "scripts/fuzz.sh", "--target", target, "--against", "trunk", str(self.input)],
+            ["bash", "scripts/fuzz.sh", *args],
             cwd=self.repo,
             capture_output=True,
             text=True,
-            env=env,
+            env=self.env,
             timeout=60,
             check=False,
         )
@@ -767,9 +768,28 @@ class FuzzAgainst(unittest.TestCase):
         self.assertNotIn("brought", run.stdout)
         self.assertEqual(len(self.runs()), 1)
 
-    def test_a_missing_input_should_exit_2_before_a_replay(self) -> None:
+    def test_a_failed_build_in_the_checkout_should_exit_2_before_a_replay(self) -> None:
+        self.env["FAKE_BUILD_HERE"] = "101"
+        run = self.against(77, 77)
+        self.assertEqual(run.returncode, 2, run.stdout + run.stderr)
+        self.assertNotIn("fails in this checkout", run.stdout)
+        self.assertFalse(self.seen.exists())
+
+    def test_a_missing_input_should_exit_2_before_a_replay_and_name_the_file(self) -> None:
         self.input.unlink()
         run = self.against(77, 77)
+        self.assertEqual(run.returncode, 2, run.stdout + run.stderr)
+        self.assertIn(f"no input file: {self.input}", run.stderr)
+        self.assertFalse(self.seen.exists())
+
+    def test_no_input_argument_should_exit_2_with_the_usage(self) -> None:
+        run = self.fuzz("--against", "trunk")
+        self.assertEqual(run.returncode, 2, run.stdout + run.stderr)
+        self.assertIn("usage:", run.stderr)
+        self.assertFalse(self.seen.exists())
+
+    def test_an_unknown_commit_should_exit_2_before_a_replay(self) -> None:
+        run = self.fuzz("--against", "no-such-ref", str(self.input))
         self.assertEqual(run.returncode, 2, run.stdout + run.stderr)
         self.assertFalse(self.seen.exists())
 

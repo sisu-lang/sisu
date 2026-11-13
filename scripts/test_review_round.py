@@ -269,6 +269,14 @@ class ReviewRound(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("opus-2.md", result.stdout)
 
+    def test_verify_should_stop_on_the_path_of_another_round(self) -> None:
+        self.script("prepare", "main..main")
+        (self.run_dir / "opus.md").write_text(REPORT)
+        (self.run_dir / "opus-2.md").write_text(REPORT)
+        result = self.script("verify", "--report", str(self.run_dir / "opus-2.md"))
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("is not the report of round 1", result.stderr)
+
     def test_verify_should_fail_on_a_report_without_a_model_line(self) -> None:
         self.script("prepare", "main..main")
         (self.run_dir / "opus.md").write_text("Verdict: approve\n")
@@ -424,10 +432,10 @@ class SaveReport(unittest.TestCase):
         lines = [json.dumps(entry, ensure_ascii=False) for entry in entries]
         (self.agents / "agent-abc.jsonl").write_text("\n".join(lines) + "\n\n", encoding="utf-8")
 
-    def save(self, *args: str) -> subprocess.CompletedProcess[str]:
+    def save(self, *args: str, stem: str = "opus") -> subprocess.CompletedProcess[str]:
         transcripts = ["--transcripts", str(self.root / "projects")]
         return subprocess.run(
-            ["python3", SCRIPT, "save-report", self.root, "opus", *args, *transcripts],
+            ["python3", SCRIPT, "save-report", self.root, stem, *args, *transcripts],
             capture_output=True,
             text=True,
             check=False,
@@ -444,6 +452,19 @@ class SaveReport(unittest.TestCase):
         result = self.save("--agent", "abc", "--round", "2")
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual((self.root / "opus-2.md").read_text(), "Verdict: x\n")
+
+    def test_save_report_should_take_the_path_of_the_report_as_its_stem(self) -> None:
+        self.transcript({"type": "text", "text": "Verdict: x"})
+        result = self.save("--agent", "abc", "--round", "2", stem=str(self.root / "opus-2.md"))
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual((self.root / "opus-2.md").read_text(), "Verdict: x\n")
+
+    def test_save_report_should_stop_on_the_path_of_another_round(self) -> None:
+        self.transcript({"type": "text", "text": "Verdict: x"})
+        result = self.save("--agent", "abc", stem=str(self.root / "opus-2.md"))
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("is not the report of round 1", result.stderr)
+        self.assertEqual(list(self.root.glob("*.md")), [])
 
     def test_save_report_should_keep_a_line_separator_in_the_reply(self) -> None:
         reply = "Verdict: x\u2028two\u0085three\n"
