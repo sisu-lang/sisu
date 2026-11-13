@@ -59,7 +59,7 @@ To work through the open GitHub issues, use the `solve-issues` skill. It picks a
 
 ### Reviews
 
-To have another model review a spec, a plan or a diff, use the `review-sisu` skill. This includes the review of each task in a subagent-driven plan: use the brief of `review-sisu`, not the task-reviewer template of that plan skill. It holds the review brief, the reviewers to launch, and how to rule on their findings.
+To have another model review a spec, a plan or a diff, use the `review-sisu` skill. This includes the review of each task in a subagent-driven plan: use the brief of `review-sisu`, not the task-reviewer template of that plan skill. The `review-sisu` skill holds the review brief, the reviewers to launch, and how to rule on their findings.
 
 ### Docs
 

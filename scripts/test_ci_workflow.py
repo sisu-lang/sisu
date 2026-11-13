@@ -61,6 +61,16 @@ class CiTestJobTests(unittest.TestCase):
             self.assertEqual(len(found), 1, script)
             self.assertEqual(found[0].get("if"), condition, script)
 
+    def test_the_report_upload_should_run_with_the_report_steps_and_never_fail_the_job(
+        self,
+    ) -> None:
+        job = steps(self.job("test"))
+        upload = [s for s in job if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
+        slow = [s for s in job if any("scripts/slow_tests.py" in line for line in run_lines(s))]
+        self.assertEqual((len(upload), len(slow)), (1, 1))
+        self.assertEqual(upload[0].get("if"), slow[0].get("if"))
+        self.assertEqual(upload[0].get("continue-on-error"), "true")
+
 
 if __name__ == "__main__":
     unittest.main()
