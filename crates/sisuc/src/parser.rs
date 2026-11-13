@@ -70,7 +70,7 @@ pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
         breaks: &breaks,
         recovered: Vec::new(),
         header: false,
-        pattern_place: PatternPlace::Arm,
+        pattern_site: PatternSite::Arm,
         warnings,
         labels: Vec::new(),
         loops: Vec::new(),
@@ -602,9 +602,9 @@ enum RangeOp {
     Foreign { at: Span, lt: Option<Span> },
 }
 
-/// Where a pattern stands, which says what can end it.
+/// Where a pattern stands, its site, which says what can end it.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum PatternPlace {
+enum PatternSite {
     /// The pattern of a match arm.
     Arm,
     /// The pattern of a `let`, an `if let` or a `while let`.
@@ -651,8 +651,8 @@ struct Parser<'a> {
     header: bool,
     /// Where the pattern being read stands. It says which tokens can end the pattern
     /// (`pattern_ends`). Each pattern sets it again, so a pattern in an interpolation does not
-    /// take the place of the pattern around it.
-    pattern_place: PatternPlace,
+    /// take the site of the pattern around it.
+    pattern_site: PatternSite,
     /// The lexer's warnings, which `program` reports whether or not their item is broken.
     warnings: Vec<Diagnostic>,
     /// The loop labels open around the next token, innermost last: from each one's `name:` to the
@@ -2027,7 +2027,7 @@ impl<'a> Parser<'a> {
             breaks: self.breaks,
             recovered: Vec::new(),
             header: false,
-            pattern_place: PatternPlace::Arm,
+            pattern_site: PatternSite::Arm,
             warnings: Vec::new(),
             labels: Vec::new(),
             loops: Vec::new(),
@@ -2984,18 +2984,18 @@ impl<'a> Parser<'a> {
         }
         let base = self.depth;
         let mut reach = base;
-        let pattern = self.child(base, &mut reach, |p| p.pattern_in(PatternPlace::Let))?;
+        let pattern = self.child(base, &mut reach, |p| p.pattern_in(PatternSite::Let))?;
         self.expect(&TokenKind::Eq)?;
         let value = self.child(base, &mut reach, |p| p.headed(true, Self::expr))?;
         self.depth = reach;
         Ok(Some((pattern, value)))
     }
 
-    /// A pattern at `place`: see `pattern`. The place before it comes back after.
-    fn pattern_in(&mut self, place: PatternPlace) -> Result<Pattern, Diagnostic> {
-        let outer = mem::replace(&mut self.pattern_place, place);
+    /// A pattern at `site`: see `pattern`. The site before it comes back after.
+    fn pattern_in(&mut self, site: PatternSite) -> Result<Pattern, Diagnostic> {
+        let outer = mem::replace(&mut self.pattern_site, site);
         let pattern = self.pattern();
-        self.pattern_place = outer;
+        self.pattern_site = outer;
         pattern
     }
 
@@ -3003,7 +3003,7 @@ impl<'a> Parser<'a> {
     /// before the `|` are skipped: the lexer drops them in `( )` but keeps them in `{ }`, and
     /// no `|` can start a statement.
     fn pipe_follows(&mut self) -> bool {
-        if self.pattern_place == PatternPlace::Sub && self.peek().is_line_break() {
+        if self.pattern_site == PatternSite::Sub && self.peek().is_line_break() {
             let at = self.after_line_breaks(self.pos);
             if self.tokens[at].kind == TokenKind::Pipe {
                 while self.pos < at {
@@ -3058,7 +3058,8 @@ impl<'a> Parser<'a> {
         .into())
     }
 
-    /// Whether a pattern can start with the token `kind`, which `single` reads.
+    /// Whether a pattern can start with the token `kind`, which `single` reads. The list must
+    /// match the tokens that start a pattern in `single`.
     fn starts_pattern(kind: &TokenKind) -> bool {
         matches!(
             kind,
@@ -3242,16 +3243,16 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    /// Whether a pattern can end before the token at index `at`, in its place:
+    /// Whether a pattern can end before the token at index `at`, at its site:
     ///
-    /// | Place | The next token | A line break, then |
+    /// | Site | The next token | A line break, then |
     /// | --- | --- | --- |
     /// | a sub-pattern | `,` `)` `}` `|` | `,` `}` `|` |
     /// | a match arm | `=>` `->` `if` `|` | `=>` `|` |
     /// | a `let`, `if let` or `while let` | `=` `:` `|` | none |
     ///
     /// The tokens after a line break are those that cannot start a statement. An `if` after a
-    /// line break starts a statement, so it is no end. The place of an outer pattern does not
+    /// line break starts a statement, so it is no end. The site of an outer pattern does not
     /// count in a sub-pattern.
     fn pattern_ends(&self, at: usize) -> bool {
         let kind = &self.tokens[at].kind;
@@ -3261,16 +3262,16 @@ impl<'a> Parser<'a> {
         } else {
             kind
         };
-        match self.pattern_place {
-            PatternPlace::Sub => {
+        match self.pattern_site {
+            PatternSite::Sub => {
                 matches!(next, TokenKind::Comma | TokenKind::RBrace | TokenKind::Pipe)
                     || (!line_break && next == &TokenKind::RParen)
             }
-            PatternPlace::Arm => {
+            PatternSite::Arm => {
                 matches!(next, TokenKind::FatArrow | TokenKind::Pipe)
                     || (!line_break && matches!(next, TokenKind::Arrow | TokenKind::If))
             }
-            PatternPlace::Let => {
+            PatternSite::Let => {
                 !line_break && matches!(next, TokenKind::Eq | TokenKind::Colon | TokenKind::Pipe)
             }
         }
@@ -3390,13 +3391,21 @@ impl<'a> Parser<'a> {
     /// The error for a range pattern with no start, at its operator `..` or `..=` at the next
     /// token. The end is read when one is there. The caller reports it.
     fn range_without_start(&mut self) -> Diagnostic {
-        let dots = self.peek().span;
+        let token = self.peek();
+        let dots = token.span;
         let Some(op) = self.range_op() else {
             unreachable!("the next token should be a range operator")
         };
         let end = self.range_bound().ok().map(|(_, span)| span);
         if let RangeOp::Foreign { at, lt } = op {
             return self.foreign_range(at, lt, None, end, false);
+        }
+        // Rust writes a rest pattern as a bare `..` in a sub-pattern: no range is meant there.
+        if matches!(op, RangeOp::Exclusive)
+            && end.is_none()
+            && self.pattern_site == PatternSite::Sub
+        {
+            return self.expected_at(token, "a pattern");
         }
         let at = end.map_or(dots, |end| dots.to(end));
         self.range_bound_missing(None, op, end, at)
@@ -3555,7 +3564,7 @@ impl<'a> Parser<'a> {
             if let Some(label) = self.pattern_label() {
                 labels.push(label);
             }
-            fields.push(self.child(base, reach, |p| p.pattern_in(PatternPlace::Sub))?);
+            fields.push(self.child(base, reach, |p| p.pattern_in(PatternSite::Sub))?);
             // A line break can end a sub-pattern in a `{ }` list, before its `,` or `}`.
             while self.peek().is_line_break() {
                 self.bump();
@@ -3746,11 +3755,16 @@ impl<'a> Parser<'a> {
                     subject = &self.tokens[at + 1 + usize::from(with_let)];
                 }
                 // `case` is Swift's idiom only when a pattern follows. A `;` ends the arm, so it
-                // keeps the fix. Else `case` is a binding, except that a `let` after it is no
-                // binding, and removing it leaves no pattern.
+                // keeps the fix. Else `case` is a binding, but only before a token that follows a
+                // pattern in an arm: `=>`, `|`, `if` or `->`. A `let` after it is no binding.
+                // With no binding and no pattern, removing `case` leaves no pattern, so no fix.
                 let ends = matches!(subject.kind, TokenKind::Newline | TokenKind::Semicolon);
                 let pattern = ends || Self::starts_pattern(&subject.kind);
-                if !pattern && !with_let {
+                let binding = matches!(
+                    subject.kind,
+                    TokenKind::FatArrow | TokenKind::Pipe | TokenKind::If | TokenKind::Arrow
+                );
+                if binding && !with_let {
                     return None;
                 }
                 (
@@ -3812,7 +3826,7 @@ impl<'a> Parser<'a> {
         if let Some(error) = self.arm_idiom() {
             return Err(error);
         }
-        let pattern = self.child(base, &mut reach, |p| p.pattern_in(PatternPlace::Arm))?;
+        let pattern = self.child(base, &mut reach, |p| p.pattern_in(PatternSite::Arm))?;
         self.arm_split(&[TokenKind::Pipe, TokenKind::FatArrow, TokenKind::If])?;
         let guard = if self.eat(&TokenKind::If).is_some() {
             let guard = self.child(base, &mut reach, Self::expr)?;
@@ -4036,7 +4050,7 @@ impl<'a> Parser<'a> {
         mutable: Option<Span>,
     ) -> Result<StmtKind, Diagnostic> {
         let first = self.pos;
-        let pattern = self.child(base, &mut reach, |p| p.pattern_in(PatternPlace::Let))?;
+        let pattern = self.child(base, &mut reach, |p| p.pattern_in(PatternSite::Let))?;
         let qualified = matches!(
             &pattern.kind,
             PatternKind::Variant {
@@ -7649,7 +7663,7 @@ mod tests {
             breaks: &lexed.breaks,
             recovered: Vec::new(),
             header: false,
-            pattern_place: PatternPlace::Arm,
+            pattern_site: PatternSite::Arm,
             warnings: Vec::new(),
             labels: Vec::new(),
             loops: Vec::new(),
@@ -8478,9 +8492,9 @@ mod tests {
         );
     }
 
-    /// GIVEN a name followed by `{ ... }` in each place where a pattern stands
+    /// GIVEN a name followed by `{ ... }` at each site where a pattern stands
     /// WHEN the parser reads it
-    /// THEN it reports the braced pattern (E0123) only when a pattern of that place can end at the
+    /// THEN it reports the braced pattern (E0123) only when a pattern of that site can end at the
     /// `}` that closes the `{`: in a `let`, `if let` or `while let`, `=`, `:` or `|`; in a match
     /// arm, `=>`, `->`, `if` or `|`, or a line break and then `=>` or `|`; in a sub-pattern, `,`,
     /// `)`, `}` or `|`, or a line break and then `,`, `}` or `|`
@@ -8489,7 +8503,7 @@ mod tests {
     #[test]
     #[expect(
         clippy::too_many_lines,
-        reason = "one row per place and token, so the table reads in one place"
+        reason = "one row per site and token, so the table reads in one place"
     )]
     fn a_braced_name_should_be_a_pattern_only_when_a_pattern_can_end_at_its_brace() {
         // (statement, code, line, column of the error)
@@ -8546,12 +8560,12 @@ mod tests {
             ),
             // After a sub-pattern in a sub-pattern, the outer one is still a sub-pattern.
             (in_arm("Some(S(x) | R { w }) => 1"), Code::PatternForm, 3, 23),
-            // After a sub-pattern, the arm is the place again: `|` and then the braced name.
+            // After a sub-pattern, the arm is the site again: `|` and then the braced name.
             (in_arm("E.P(x, y) | a { } => 1"), Code::PatternForm, 3, 23),
             // An `if` after a line break starts a statement, not a guard.
             ("    let a { }\n    if true { }".into(), Code::Expected, 2, 11),
-            // A token ends a pattern only in its own place. `=>`, `->` and `if` end the pattern
-            // of an arm. `=` and `:` end the pattern of a `let`. The place of an outer pattern
+            // A token ends a pattern only at its own site. `=>`, `->` and `if` end the pattern
+            // of an arm. `=` and `:` end the pattern of a `let`. The site of an outer pattern
             // does not count in a sub-pattern or in an interpolation.
             ("    if let a { } if true { }".into(), Code::Expected, 2, 14),
             ("    if let a { } -> 1".into(), Code::Expected, 2, 14),
@@ -9069,7 +9083,7 @@ mod tests {
         // An arm that is not a sub-pattern keeps its split.
         let src = in_main(&in_arm("1\n        | 2 => 1"));
         assert_eq!(parse_diagnostic(&src).code(), Code::ArmSplit, "{src}");
-        // After a sub-pattern, the arm is the place again, so the split arm stays.
+        // After a sub-pattern, the arm is the site again, so the split arm stays.
         let src = in_main(&in_arm("E.P(x, y)\n        | E.Q => 1"));
         assert_eq!(parse_diagnostic(&src).code(), Code::ArmSplit, "{src}");
     }
@@ -9168,7 +9182,8 @@ mod tests {
     /// GIVEN a `case` and then a token that starts no pattern, with or without a line break
     /// AND a `case` and then a `let` first
     /// WHEN the parser reads the arm
-    /// THEN `case` is a binding, or (E0122) it has a fix only when a pattern follows it
+    /// THEN `case` is a binding only before `=>`, `|`, `if` or `->`
+    /// AND else it is E0122, which has a fix only when a pattern follows it
     /// AND a fix that is there gives a source that parses
     #[test]
     #[expect(
@@ -10464,7 +10479,7 @@ mod tests {
         );
     }
 
-    /// GIVEN a range pattern with one bound, a literal or a name, in each place that has patterns
+    /// GIVEN a range pattern with one bound, a literal or a name, at each site that has patterns
     /// WHEN the parser reads it
     /// THEN it reports one error (E0011) over the operator and the bound, with no fix
     /// AND a range whose end is no bound keeps its error, and a foreign operator is E0132

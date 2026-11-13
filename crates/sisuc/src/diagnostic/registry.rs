@@ -1331,9 +1331,9 @@ pub(crate) enum DiagnosticKind {
     /// A range written another language's way, reported at `at`: its operator, or the first
     /// negative bound of a colon slice that has one.
     ForeignRange { form: ForeignRange, at: Span },
-    /// The range pattern at `at`, which has one bound only. `start` and `end` are the bounds as
-    /// written, and `None` for the one that is missing; `inclusive` is whether the operator is
-    /// `..=`.
+    /// The range pattern at `at`, which has one bound or none (`..` alone). `start` and `end` are
+    /// the bounds as written, and `None` for each one that is missing; `inclusive` is whether the
+    /// operator is `..=`.
     RangeBoundMissing {
         start: Option<String>,
         inclusive: bool,
