@@ -6875,6 +6875,22 @@ mod tests {
         );
     }
 
+    /// A language rule has no place to point at, so a conformance error shows it as its label.
+    #[test]
+    fn a_conformance_error_should_label_a_rule_that_has_no_span() {
+        let d: Diagnostic = DiagnosticKind::NotConform {
+            ty: "i64".to_owned(),
+            interface: "Shape".to_owned(),
+            at: Span::new(0, 1),
+            form: NotConformForm::Any {
+                origin: Some(MismatchOrigin::Condition),
+            },
+        }
+        .into();
+        assert!(d.label().is_some());
+        assert_eq!(d.secondary(), []);
+    }
+
     #[test]
     fn instances_should_write_the_singular_for_one() {
         assert_eq!(instances(0), "0 instances");

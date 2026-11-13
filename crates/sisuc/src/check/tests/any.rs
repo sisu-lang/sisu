@@ -2535,6 +2535,14 @@ fn label_rows() -> Vec<LabelRow<'static>> {
             vec![(9, 18, "s", element)],
         ),
         (
+            "a loop that the sibling of an `if` hints, which has no label yet",
+            sh(&format!(
+                "class D {{}}\nclass K: Sh {{ fn n(self) -> i64 {{ 1 }} }}\n{WITH_CS}    let _a = if c {{ s }} else {{ loop {{ if c {{ break D() }}; break K() }} }}\n}}"
+            )),
+            (10, 52, "D()"),
+            vec![],
+        ),
+        (
             "a hinted array in a branch, which has no label yet",
             sh(&format!(
                 "class D {{}}\n{WITH_CS}    let _a = if c {{ [s] }} else {{ [1] }}\n}}"
