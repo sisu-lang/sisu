@@ -392,7 +392,7 @@ impl Diagnostic {
             Renderer::plain()
         };
         let text = renderer.render(&groups);
-        // The styled form writes its spaces inside the styles, so only the plain form has any.
+        // Only the plain form is trimmed. The styled form stays as the renderer writes it.
         let text = if color {
             text
         } else {
@@ -795,7 +795,7 @@ error[E0011]: expected `=`, found end of line
     }
 
     #[test]
-    fn styled_render_should_keep_the_spaces_inside_the_styles() {
+    fn styled_render_should_keep_its_trailing_spaces() {
         let d = blank_with(fix(&[(between(BLANK, "let", "    \n}"), "let n = 0")]));
         let text = d.render("t.sisu", BLANK, &LineIndex::new(BLANK), true);
         assert!(text.contains("\u{1b}[91m-     \u{1b}[0m"), "{text:?}");
