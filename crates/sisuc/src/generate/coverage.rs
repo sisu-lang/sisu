@@ -758,6 +758,9 @@ struct Walk {
     /// Over the programs walked: whether a requirement that takes `mut self` is met by a method
     /// that takes `mut self`, and by one that takes plain `self`.
     mut_self_met: [bool; 2],
+    /// The methods of the typed tree that take `mut self`, by `FuncId`: a method whose first
+    /// parameter, `self`, can change.
+    mut_self_funcs: FxHashSet<usize>,
     /// Over the programs walked: the kinds of place that the receiver of a `mut self` call was.
     mut_self_places: FxHashSet<&'static str>,
     /// The id of the prelude's `Result` in the typed tree.
@@ -2582,6 +2585,12 @@ impl Walk {
         if !again.is_empty() {
             self.mark("reach: a generic interface has two conformances on one type");
         }
+        self.mut_self_funcs = (program.functions.iter().enumerate())
+            .filter(|(_, f)| {
+                f.owner.is_some() && f.params.first().is_some_and(|&p| f.locals[p.0].mutable)
+            })
+            .map(|(i, _)| i)
+            .collect();
         self.generic_blocks = (program.functions.iter().enumerate())
             .filter(|(_, f)| f.owner_params > 0 && f.name.contains('<'))
             .map(|(i, _)| i)
@@ -3465,12 +3474,16 @@ impl Walk {
         }
     }
 
-    /// Marks a call whose receiver is its first `mut` part, which is a `mut self` call: through a
-    /// bound when it calls a requirement, and by the kind of place its receiver is. The call reads
-    /// the temporary of the part where the receiver stands.
+    /// Marks a `mut self` call: a call of a method that takes `mut self`, or of a requirement,
+    /// whose receiver is its first `mut` part. The key of a bound is for a requirement, and the
+    /// others are for the kind of place that the receiver is. The call reads the temporary of the
+    /// part where the receiver stands. A call of a function with a `mut` first parameter, such as
+    /// `exchange`, has the same shape, and is none of these.
     fn mut_self_call(&mut self, call: &tir::Expr, muts: &[tir::MutArg]) {
         let (args, through_bound) = match &call.kind {
-            tir::ExprKind::Call { args, .. } => (args, false),
+            tir::ExprKind::Call { func, args, .. } if self.mut_self_funcs.contains(&func.0) => {
+                (args, false)
+            }
             tir::ExprKind::InterfaceCall { args, .. } => (args, true),
             _ => return,
         };
@@ -3493,7 +3506,8 @@ impl Walk {
             tir::ExprKind::Index { base, .. } if held(base) => "an element of a field",
             tir::ExprKind::Index { .. } => "an element",
             tir::ExprKind::Field { .. } | tir::ExprKind::StructField { .. } => "a field",
-            _ => "a local",
+            tir::ExprKind::Local(_) => "a local",
+            _ => return,
         });
         if self.mut_self_places.len() == 4 {
             self.mark(

@@ -201,7 +201,7 @@ impl Gen<'_> {
                     kind: Kind::Element,
                     root,
                     ty: (**element).clone(),
-                    size: var.elem,
+                    size: Self::element_size(element, var.elem),
                     bound: var.base,
                     len: 0,
                     room: 0,
@@ -263,17 +263,19 @@ impl Gen<'_> {
         for path in self.struct_paths() {
             let field = path.field(&self.scope);
             let (ty, cap) = (field.ty.clone(), field.cap);
-            // An element of an array of values with no size: the size of the array is its length.
+            // An element of an array of values with no size, or of structs, which have one size
+            // each: the size of the array does not change when an element is replaced.
             if let Ty::Array(element) = &ty
-                && !element.sized()
+                && (!element.sized() || matches!(**element, Ty::Struct { .. }))
                 && !self.scope.contains_class(element)
             {
+                let size = Self::element_size(element, 0);
                 places.push(Place {
                     kind: Kind::PathElement(path.clone()),
                     root: path.root,
                     ty: (**element).clone(),
-                    size: 0,
-                    bound: 0,
+                    size,
+                    bound: size,
                     len: 0,
                     room: 0,
                     grow: 0,
@@ -293,6 +295,17 @@ impl Gen<'_> {
             });
         }
         places
+    }
+
+    /// The most size of an element of an array of `element`s. A struct value has one size, its
+    /// floor. So an element of structs holds that much, and replacing one keeps the size of the
+    /// array. `reached` is the size that the array's own bookkeeping gives.
+    fn element_size(element: &Ty, reached: u64) -> u64 {
+        if matches!(element, Ty::Struct { .. }) {
+            element.floor()
+        } else {
+            reached
+        }
     }
 
     /// What each `mut` parameter of the function `callee` takes. The receiver of a method that
@@ -453,6 +466,7 @@ impl Gen<'_> {
             }
             self.deep_element_local(callee);
             self.class_field_local(callee);
+            self.struct_array_local(callee);
             // The calls before it may have taken the budget that a call at depth 0 needs.
             let fits = self.cost.times() <= self.budget;
             if fits && placeable(&self.mut_wants(callee), &self.mut_places(), &[]) {
@@ -507,6 +521,36 @@ impl Gen<'_> {
             self.w.line();
             self.cost.statement();
             self.statement(|g| g.let_typed(ty, false));
+        }
+    }
+
+    /// For a method that takes `mut self`: a local of a struct that holds an array of its
+    /// receiver's type, if no local has such an array yet. So the call may name an element of
+    /// the array, as in `mut a.g[i]`.
+    fn struct_array_local(&mut self, callee: usize) {
+        let func = &self.scope.funcs[callee];
+        let (Some(_), Some(owner @ Ty::Struct { .. })) = (func.mut_self, func.owner.clone()) else {
+            return;
+        };
+        let held = (self.mut_places().iter())
+            .any(|p| matches!(&p.kind, Kind::PathElement(_)) && p.ty == owner);
+        if held {
+            return;
+        }
+        let holds = |g: &Self, id: usize| {
+            let mut paths = Vec::new();
+            g.field_paths(0, false, &mut vec![(id, 0)], &mut paths);
+            paths.iter().any(
+                |path| matches!(&path.field(&g.scope).ty, Ty::Array(e) if *e.as_ref() == owner),
+            )
+        };
+        let found = (0..self.scope.structs.len())
+            .find(|&id| self.scope.structs[id].cycle.is_none() && holds(self, id));
+        if let Some(id) = found {
+            let ty = self.scope.struct_ty(id);
+            self.w.line();
+            self.cost.statement();
+            self.statement(|g| g.let_typed(ty, true));
         }
     }
 
