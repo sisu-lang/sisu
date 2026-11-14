@@ -4677,7 +4677,7 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::UnknownType { name, at, form } => match form {
                 UnknownForm::Name { suggestion } => similar(
                     Diagnostic::coded(code, at, format!("cannot find type `{name}`")).with_help(
-                        "the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums, structs and arrays such as `[i64]`",
+                        "the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`",
                     ),
                     at,
                     suggestion,

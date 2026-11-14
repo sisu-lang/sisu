@@ -1,0 +1,8 @@
+error[E0032]: expected `i64`, `u8`, `f64`, `char`, `string` or `unit`, found `unit?`
+ --> E0032-ordered-optional-unit.sisu:8:13
+  |
+8 |     let a = x < g()
+  |             ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

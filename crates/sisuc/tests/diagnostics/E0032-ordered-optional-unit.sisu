@@ -1,0 +1,9 @@
+// GIVEN a `unit?` value and a function `g` that returns `unit`
+// WHEN the program orders the `unit?` value with `<`
+// THEN E0032 lists the types that `<` takes, `unit` among them
+fn g() {}
+
+fn main() {
+    let x = Some(g())
+    let a = x < g()
+}

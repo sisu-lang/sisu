@@ -822,9 +822,12 @@ impl Checker<'_> {
     }
 
     /// "expected `takes`, found `got`" at `at`: the types an operator takes, `got` not among them.
+    /// A comparison also takes `unit`, which `units_compared` checks apart from the others.
     pub(super) fn takes_mismatch(&self, at: Span, takes: &[Type], got: Type) -> Diagnostic {
+        let unit = (takes == Operator::Compare.takes()).then_some(Type::UNIT);
+        let listed = takes.iter().copied().chain(unit);
         DiagnosticKind::Mismatch {
-            want: Expected::Types(takes.iter().map(|&ty| self.type_name(ty)).collect()),
+            want: Expected::Types(listed.map(|ty| self.type_name(ty)).collect()),
             got: self.type_name(got),
             at,
             origin: None,

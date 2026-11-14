@@ -964,9 +964,16 @@ pub(super) fn valueless(e: &tir::Expr) -> Option<Span> {
 }
 
 /// The name of the function that `e` calls, when `e` is a call: the note of E0043 and E0031 says
-/// that it returns `unit`. The caller knows that `e` has type `unit`.
+/// that it returns `unit`. The caller knows that `e` has type `unit`. `dbg` returns its argument,
+/// so the note names the call in the argument, if there is one.
 pub(super) fn unit_call(e: &ast::Expr) -> Option<String> {
     match &e.kind {
+        ExprKind::Call { callee, args, .. } if callee.name.as_str() == "dbg" => {
+            match args.as_slice() {
+                [arg] => unit_call(&arg.value),
+                _ => Some(callee.name.to_string()),
+            }
+        }
         ExprKind::Call { callee, .. } => Some(callee.name.to_string()),
         ExprKind::MethodCall { method, .. } => Some(method.name.to_string()),
         // No call: the note names no function.
