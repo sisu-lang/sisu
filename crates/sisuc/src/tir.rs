@@ -898,6 +898,7 @@ pub(crate) enum ExprKind {
     MutCall {
         call: Box<Expr>,
         muts: Vec<MutArg>,
+        /// One statement per part, in the order of `muts`.
         back: Block,
     },
 }

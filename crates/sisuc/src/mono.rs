@@ -1437,6 +1437,11 @@ impl Mono {
         if !receiver || self.first_mut[func.0] {
             return;
         }
+        debug_assert_eq!(
+            back.stmts.len(),
+            muts.len(),
+            "the store-back should hold one statement per part"
+        );
         let part = muts.remove(0);
         back.stmts.remove(0);
         let mut stmts: Vec<Stmt> = (part.keep.into_iter())
@@ -1592,12 +1597,12 @@ impl Mono {
     }
 }
 
-/// The expression `expr` holds, which moves out; a placeholder stays, which `mono` overwrites.
 /// Whether the first parameter of `f` is `mut`: for a method, whether it takes `mut self`.
 fn first_mut(f: &Function) -> bool {
     f.params.first().is_some_and(|p| f.locals[p.0].mutable)
 }
 
+/// The expression `expr` holds, which moves out; a placeholder stays, which `mono` overwrites.
 fn hole(expr: &mut Expr) -> Expr {
     let span = expr.span;
     mem::replace(expr, Expr::new(ExprKind::None, Type::UNIT, span))
