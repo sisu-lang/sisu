@@ -1,0 +1,16 @@
+error[E0011]: a `let ... else` takes no type
+ --> E0011-let-else-type-blank-line.sisu:2:10
+  |
+2 |     let w: i64 = o
+  |          ^^^^^
+  |
+help: remove the type, and move `else` after the value
+  |
+2 -     let w: i64 = o
+3 -
+4 -     else { return }
+2 +     let w = o else { return }
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0011

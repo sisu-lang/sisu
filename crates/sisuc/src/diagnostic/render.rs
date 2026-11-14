@@ -709,7 +709,53 @@ error[E0011]: expected `=`, found end of line
             let snippet = Snippet::source(source).path(path).patches(patches);
             groups.push(Level::HELP.secondary_title(fix.message()).element(snippet));
         }
-        Renderer::plain().render(&groups)
+        // What plain `render` does to the text: no line ends in a space.
+        Renderer::plain()
+            .render(&groups)
+            .split('\n')
+            .map(|line| line.trim_end_matches(' '))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// A source whose line 2 ends in spaces and whose line 3 holds four spaces only.
+    const BLANK: &str = "fn main() {\n    let n = 0   \n    \n}\n";
+
+    /// An error at the `n` of `BLANK` with `fix` as its only fix.
+    fn blank_with(fix: Fix) -> Diagnostic {
+        error(Span::new(20, 21), "m").with_fix(fix)
+    }
+
+    #[test]
+    fn plain_render_should_end_no_line_with_a_space() {
+        let removed = blank_with(fix(&[(between(BLANK, "let", "    \n}"), "let n = 0")]));
+        let added = blank_with(fix(&[(Span::new(29, 29), "    \n")]));
+        for (d, marker) in [(removed, "3 -"), (added, "3 +")] {
+            let text = d.render("t.sisu", BLANK, &LineIndex::new(BLANK), false);
+            assert!(
+                text.lines().all(|l| !l.ends_with(' ')),
+                "a line ends in a space in {text}"
+            );
+            assert!(text.lines().any(|l| l == marker), "{marker} in {text}");
+            assert!(
+                text.lines().any(|l| l == "2 |     let n = 0"),
+                "the source line in {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn styled_render_should_keep_the_spaces_inside_the_styles() {
+        let d = blank_with(fix(&[(between(BLANK, "let", "    \n}"), "let n = 0")]));
+        let text = d.render("t.sisu", BLANK, &LineIndex::new(BLANK), true);
+        assert!(text.contains("\u{1b}[91m-     \u{1b}[0m"), "{text:?}");
+    }
+
+    #[test]
+    #[should_panic(expected = "reads as a header")]
+    fn render_should_reject_a_text_line_that_reads_as_a_header() {
+        let d = assign().with_note("a\n --> x.sisu:1:1");
+        d.render("t.sisu", ASSIGN, &LineIndex::new(ASSIGN), false);
     }
 
     /// The span of `from`'s first occurrence in `source` through the end of `to`'s.
