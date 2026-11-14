@@ -293,7 +293,7 @@ impl Checker<'_> {
                             unwrap_some_object(block, ty);
                             self.any_block(block, ty, source.span, Origin::None);
                         } else {
-                            wrap_block(block, ty);
+                            wrap_block(block, ty, source.span);
                         }
                     }
                 }

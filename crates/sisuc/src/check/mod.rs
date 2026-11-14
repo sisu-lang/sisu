@@ -2581,7 +2581,7 @@ impl Checker<'_> {
                 && let TypeKind::Optional(payload) = want.kind()
                 && block_type(&body) == Some(payload)
             {
-                wrap_block(&mut body, want);
+                wrap_block(&mut body, want, value_span(&f.body));
             }
             c.pop_scope();
             // The value's mismatch is reported once the body is gone, so a misfit is taken now.
@@ -2944,15 +2944,16 @@ fn wrap(e: tir::Expr, ty: Type) -> tir::Expr {
     tir::Expr::new(tir::ExprKind::Wrap(Box::new(e)), ty, span)
 }
 
-/// Makes a block of type `T` one of the optional `ty` by wrapping its value.
-fn wrap_block(block: &mut CheckedBlock, ty: Type) {
+/// Makes a block of type `T` one of the optional `ty` by wrapping its value. A block with no value
+/// is a `unit`: it gets a `unit` at `span` as its value first, as `with_unit` gives one.
+fn wrap_block(block: &mut CheckedBlock, ty: Type, span: Span) {
     match block {
         Ok(block) => {
-            let value = block
-                .value
-                .take()
-                .expect("a block checked as a value type should end in its value");
-            block.value = Some(Box::new(wrap(*value, ty)));
+            let value = (block.value.take()).map_or_else(
+                || tir::Expr::new(tir::ExprKind::Unit, Type::UNIT, span),
+                |value| *value,
+            );
+            block.value = Some(Box::new(wrap(value, ty)));
             block.ty = ty;
         }
         Err(poisoned) => poisoned.ty = Some(ty),
