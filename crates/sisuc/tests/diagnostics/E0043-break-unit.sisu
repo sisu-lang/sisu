@@ -1,5 +1,5 @@
 fn main() {
-    let x = loop {
+    let x: i64 = loop {
         break print(1)
     }
 }

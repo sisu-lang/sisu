@@ -6,7 +6,8 @@ use super::generic::{Site, mismatch_poison};
 use super::names::{self, Resolved};
 use super::reports::Reported;
 use super::{
-    Checked, Checker, Expectation, Origin, Poisoned, SelfType, Uninferred, payload, type_of, wrap,
+    Checked, Checker, Expectation, Origin, Poisoned, SelfType, Uninferred, as_optional, payload,
+    type_of, wrap,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
@@ -408,23 +409,124 @@ impl Checker<'_> {
             .map_or(span, |(_, at)| at)
     }
 
-    /// An expression whose value is used: not `unit` or `never`.
+    /// An expression whose value is used: not `never`, and not `unit` where a value of another
+    /// type is expected, nor an `if` without an `else` whose branch has a value.
     pub(super) fn value(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
         let checked = read_jump(self.expr(e, expected));
         match type_of(&checked) {
-            Some(ty @ (Type::UNIT | Type::NEVER)) => {
+            Some(Type::NEVER) => {
                 let at = self.never_at(e.span);
-                Err(Poisoned::untyped(self.no_value(at, ty)))
+                Err(Poisoned::untyped(self.no_value(at, Type::NEVER, None)))
             }
-            _ => checked,
+            Some(ty) if self.unit_unwanted(e, ty, expected) => {
+                Err(Poisoned::untyped(self.no_value(e.span, ty, unit_call(e))))
+            }
+            _ => Self::with_unit(Self::optional_unit(e, checked)),
         }
     }
 
-    /// Reports a value of `ty`, `unit` or `never`, used at `at`.
-    pub(super) fn no_value(&mut self, at: Span, ty: Type) -> Reported {
+    /// `checked`, the value of `e`, or E0043 when it is a `unit`: the context takes no `unit`, and
+    /// has no expected type for `value` to hold `e` to.
+    pub(super) fn refuse_unit(&mut self, e: &ast::Expr, checked: Checked) -> Checked {
+        if type_of(&checked) == Some(Type::UNIT) {
+            return Err(Poisoned::untyped(self.no_value(
+                e.span,
+                Type::UNIT,
+                unit_call(e),
+            )));
+        }
+        checked
+    }
+
+    /// `checked`, the value of an expression that is used. A block with no tail gets a `unit` as
+    /// its value. A `loop` that a bare `break` ends gets a block around it, which holds one.
+    fn with_unit(checked: Checked) -> Checked {
+        let Ok(mut done) = checked else {
+            return checked;
+        };
+        if done.ty != Type::UNIT {
+            return Ok(done);
+        }
+        let unit = |span| Box::new(tir::Expr::new(tir::ExprKind::Unit, Type::UNIT, span));
+        match &mut done.kind {
+            tir::ExprKind::Block(block) if block.value.is_none() => {
+                block.value = Some(unit(done.span));
+            }
+            tir::ExprKind::Loop(_) => {
+                let span = done.span;
+                let block = tir::Block {
+                    stmts: vec![tir::Stmt::Expr(done)],
+                    value: Some(unit(span)),
+                    ty: Type::UNIT,
+                };
+                done = tir::Expr::new(tir::ExprKind::Block(block), Type::UNIT, span);
+            }
+            _ => {}
+        }
+        Ok(done)
+    }
+
+    /// `checked`, the value of `e`. A safe call of a method with no value is a statement that
+    /// does nothing for `None`. Once its value is used, it is a `unit?`.
+    fn optional_unit(e: &ast::Expr, checked: Checked) -> Checked {
+        let used = match checked {
+            Ok(tir::Expr {
+                kind:
+                    tir::ExprKind::IfSome {
+                        bind,
+                        scrutinee,
+                        then_block:
+                            tir::Block {
+                                stmts,
+                                value: Some(value),
+                                ..
+                            },
+                        else_block: Some(tir::Block { value: None, .. }),
+                    },
+                ty: Type::UNIT,
+                span,
+                ..
+            }) if matches!(e.kind, ExprKind::MethodCall { safe: true, .. }) => {
+                let ty = as_optional(Type::UNIT);
+                let wrapped = tir::Expr::new(tir::ExprKind::Wrap(value), ty, span);
+                let none = tir::Expr::new(tir::ExprKind::None, ty, span);
+                let block = |stmts, value| tir::Block {
+                    stmts,
+                    value: Some(Box::new(value)),
+                    ty,
+                };
+                tir::Expr::new(
+                    tir::ExprKind::IfSome {
+                        bind,
+                        scrutinee,
+                        then_block: block(stmts, wrapped),
+                        else_block: Some(block(Vec::new(), none)),
+                    },
+                    ty,
+                    span,
+                )
+            }
+            other => return other,
+        };
+        Ok(used)
+    }
+
+    /// Whether `e`, of type `ty`, is a `unit` that its context cannot take: the context expects
+    /// another type, or `e` is an `if` without an `else` whose branch has a value, which has no
+    /// value at all. A `unit` fits `unit`, `unit?` and a type parameter of a call.
+    pub(super) fn unit_unwanted(&self, e: &ast::Expr, ty: Type, expected: Expectation) -> bool {
+        ty == Type::UNIT
+            && (self.body.valueless.contains(&e.span)
+                || expected.ty().is_some_and(|want| !takes_unit(want)))
+    }
+
+    /// Reports a value of `ty`, `unit` or `never`, used at `at`. `unit_call` is the function that
+    /// the expression calls, when that call returns `unit`.
+    pub(super) fn no_value(&mut self, at: Span, ty: Type, unit_call: Option<String>) -> Reported {
         self.error(DiagnosticKind::NoValue {
             at,
             never: ty == Type::NEVER,
+            unit_call,
         })
     }
 
@@ -804,6 +906,26 @@ pub(super) fn if_some(
         ty,
         span,
     )
+}
+
+/// Whether a context that wants `want` takes a `unit`: it wants `unit` or an optional `unit`, or
+/// a type parameter, which a call's own parameters and its holes are.
+pub(super) fn takes_unit(want: Type) -> bool {
+    match want.kind() {
+        TypeKind::Unit | TypeKind::Param(..) => true,
+        TypeKind::Optional(payload) => takes_unit(payload),
+        _ => false,
+    }
+}
+
+/// The name of the function that `e` calls, when `e` is a call: the note of E0043 and E0031 says
+/// that it returns `unit`. The caller knows that `e` has type `unit`.
+pub(super) fn unit_call(e: &ast::Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::Call { callee, .. } => Some(callee.name.to_string()),
+        ExprKind::MethodCall { method, .. } => Some(method.name.to_string()),
+        _ => None,
+    }
 }
 
 /// Whether a branch of type `ty` fits the expected `want`: as is, or as its payload.

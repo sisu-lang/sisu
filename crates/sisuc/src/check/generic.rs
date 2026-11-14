@@ -10,7 +10,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::alias::{Through, Via};
 use super::any;
 use super::array::innermost;
-use super::expr::{bare_hole, dbg_argument, literal_type, option_written, read_jump};
+use super::expr::{
+    bare_hole, dbg_argument, literal_type, option_written, read_jump, takes_unit, unit_call,
+};
 use super::interface::{Bounds, Required};
 use super::member::FieldOwner;
 use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
@@ -2540,13 +2542,24 @@ impl Checker<'_> {
         self.sweep_waiting(&mut call, sig, args, &ranks, &fit);
         for (i, ty, at) in std::mem::take(&mut call.last) {
             let param = sig.params[i];
+            // A `unit` binds a parameter that is a bare type parameter, and fits one that
+            // another `unit` bound; it is no value for a parameter of another shape.
+            let takes = ty == Type::NEVER || param.is_some_and(takes_unit);
             if let Some(param) = param
+                && takes
                 && self.known_in(&call, param).is_none()
                 && self.bind_param(&mut call, param, ty, at)
             {
                 continue;
             }
-            let reported = self.no_value(at, ty);
+            if ty == Type::UNIT
+                && param
+                    .and_then(|p| self.known_in(&call, p))
+                    .is_some_and(takes_unit)
+            {
+                continue;
+            }
+            let reported = self.no_value(at, ty, unit_call(&args[i].value));
             call.slots[i] = Some(Err(Poisoned::untyped(reported)));
         }
         let broken = poison_broken_params(&mut call.bindings, sig.declared);
@@ -3663,7 +3676,7 @@ impl Checker<'_> {
                 slots[i] = Some(match type_of(&checked) {
                     Some(ty @ (Type::UNIT | Type::NEVER)) => {
                         let at = self.never_at(e.span);
-                        Err(Poisoned::untyped(self.no_value(at, ty)))
+                        Err(Poisoned::untyped(self.no_value(at, ty, unit_call(e))))
                     }
                     _ => checked,
                 });
@@ -3716,7 +3729,7 @@ impl Checker<'_> {
                         failure(call).unwrap_or_else(|| self.proof(at)), // proof: quiet reader
                     );
                 }
-            } else if matches!(ty, Type::UNIT | Type::NEVER) {
+            } else if ty == Type::NEVER {
                 call.failed = Some(self.error(DiagnosticKind::TypeArgument {
                     ty: self.type_name(ty),
                     at,
@@ -4860,11 +4873,11 @@ impl Checker<'_> {
         });
     }
 
-    /// The type of the type argument `arg`: `Err`, reported, for `unit` or `never`, which no
-    /// type parameter takes, and for a type that is `Error`.
+    /// The type of the type argument `arg`: `Err`, reported, for `never`, which no type
+    /// parameter takes, and for a type that is `Error`.
     fn type_argument(&mut self, arg: &ast::TypeExpr) -> Result<Type, Reported> {
         if let ast::TypeKind::Name(name) = arg.kind
-            && matches!(name.as_str(), "unit" | "never")
+            && name.as_str() == "never"
             && self.body.type_param(name).is_none()
             && self.names.class(name).is_none()
             && self.names.struct_id(name).is_none()

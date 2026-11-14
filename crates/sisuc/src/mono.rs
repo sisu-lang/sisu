@@ -1193,6 +1193,7 @@ impl Mono {
             | K::Char(_)
             | K::Str(_)
             | K::None
+            | K::Unit
             | K::Local(_)
             | K::ReadLine
             | K::Break { value: None, .. }

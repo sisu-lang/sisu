@@ -92,15 +92,16 @@ fn interpolation_spills() {
     );
 }
 
-/// A part with no value is reported at the part; one whose type is unknown reports nothing more.
-/// Every other type interpolates (`interpolation_should_take_every_type`), an optional with a
-/// warning (`printing_an_optional_should_warn_only_at_the_top_level`).
+/// A `unit` part prints. A part with no value is reported at the part; one whose type is unknown
+/// reports nothing more. Every other type interpolates (`interpolation_should_take_every_type`),
+/// an optional with a warning (`printing_an_optional_should_warn_only_at_the_top_level`).
 #[test]
-fn interpolating_a_unit_should_report_the_part() {
+fn interpolating_a_unit_should_print_it() {
     let params = "xs: [i64], m: [i64]?, n: i64?, p: P";
+    clean(&with_items(&body(params, "print(\"a{print(1)}\")")));
     codes(
-        &with_items(&body(params, "print(\"a{print(1)}\")")),
-        &[(Code::CannotInterpolate, (2, 14))],
+        &with_items(&body(params, "print(\"a{if true { 1 }}\")")),
+        &[(Code::NoValue, (2, 14))],
     );
     codes(
         &with_items(&body(params, "print(\"a{nope}\")")),
@@ -299,8 +300,8 @@ fn format_spec_should_default_its_alignment_by_type_and_take_a_precision_for_an_
     // A part that is already reported gets no precision error.
     let params = "xs: [i64]?, n: i64";
     codes(
-        &body(params, "print(\"{print(1):.2}\")"),
-        &[(Code::CannotInterpolate, (2, 13))],
+        &body(params, "print(\"{if true { 1 }:.2}\")"),
+        &[(Code::NoValue, (2, 13))],
     );
     codes(
         &body(params, "print(\"{nope:.2}\")"),
@@ -653,11 +654,8 @@ fn a_join_with_a_failed_operand_should_be_typed_only_by_a_string_left() {
     // An operand that failed but kept its type, `string`, leaves the join a `string`, so a
     // `char` beside it is still reported.
     codes(
-        &body(params, "print(s + \"{print(1)}\" + c)"),
-        &[
-            (Code::CannotInterpolate, (2, 17)),
-            (Code::Mismatch, (2, 30)),
-        ],
+        &body(params, "print(s + \"{if true { 1 }}\" + c)"),
+        &[(Code::NoValue, (2, 17)), (Code::Mismatch, (2, 35))],
     );
     // A value appended to a field that already failed is not the join's mistake.
     codes(
@@ -970,7 +968,7 @@ fn a_never_part_of_a_literal_as_an_argument_should_be_underlined_at_the_part() {
         ),
         (r#"let b = id(["a{return 1}b"])"#, &[(V, "return 1")]),
         (r#"pick(["a{return 1}b"], ["c"])"#, &[(V, "return 1")]),
-        ("let b = id(print(1))", &[(T, "print(1)")]),
+        ("let b = id(print(1))", &[]),
         ("pick(print(1), 2)", &[(V, "print(1)")]),
         (r#"print("p{return 1}q")"#, &[(P, "return 1")]),
         (r#"eprint("p{return 1}q")"#, &[(P, "return 1")]),

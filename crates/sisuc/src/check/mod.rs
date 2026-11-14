@@ -1111,6 +1111,10 @@ struct Body {
     /// The span of each `Some` that gave an error: it is never `None`, whatever type the error
     /// gives it, so printing it gets no W0015 (`warn_if_optional`).
     failed_some_spans: FxHashSet<Span>,
+    /// The span of each `if` or `if let` without an `else` whose branch has a value: the whole
+    /// has no value, and `value` reports it where a value is used (E0043). Without such a branch
+    /// the whole is a `unit`.
+    valueless: FxHashSet<Span>,
     /// The span of each argument value that is written with `mut`, or is at a `mut` parameter of
     /// a callee that the call knows. `expr` checks such a value as the base of an index
     /// (`indexed`). The `?.` fix of an E0062 in it leads to a path that is no place (E0170).
@@ -2601,6 +2605,7 @@ impl Checker<'_> {
                         function: f.name.name.to_string(),
                         want: self.type_name(want),
                         at: Span::new(end - 1, end),
+                        unit_call: tail(&f.body).and_then(expr::unit_call),
                     }
                     .into()
                 } else {
@@ -2854,6 +2859,7 @@ pub(crate) fn built_in_type(name: &str) -> Option<Type> {
         "bool" => Some(Type::BOOL),
         "char" => Some(Type::CHAR),
         "string" => Some(Type::STRING),
+        "unit" => Some(Type::UNIT),
         _ => None,
     }
 }

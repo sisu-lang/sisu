@@ -2,7 +2,7 @@ class Cell<T> {
     value: T
 }
 
-fn size(c: Cell<unit>) -> i64 {
+fn size(c: Cell<never>) -> i64 {
     0
 }
 

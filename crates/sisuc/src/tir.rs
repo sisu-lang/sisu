@@ -707,6 +707,9 @@ pub(crate) enum ExprKind {
     /// A string literal, decoded.
     Str(String),
     None,
+    /// The value of type `unit` of a block with no tail, and of a `loop` that a bare `break` ends,
+    /// where its value is used.
+    Unit,
     Local(LocalId),
     Call {
         func: FuncId,
@@ -1199,6 +1202,7 @@ impl ExprKind {
             | ExprKind::Char(_)
             | ExprKind::Str(_)
             | ExprKind::None
+            | ExprKind::Unit
             | ExprKind::ReadLine
             | ExprKind::Local(_) => false,
             ExprKind::Break { .. } | ExprKind::Continue { .. } | ExprKind::Return(_) => true,
@@ -1295,6 +1299,7 @@ impl Expr {
             | ExprKind::Char(_)
             | ExprKind::Str(_)
             | ExprKind::None
+            | ExprKind::Unit
             | ExprKind::ReadLine
             | ExprKind::Local(_)
             | ExprKind::Continue { .. }
@@ -1505,6 +1510,7 @@ impl Expr {
             | K::Char(_)
             | K::Str(_)
             | K::None
+            | K::Unit
             | K::Local(_)
             | K::ReadLine
             | K::Break { value: None, .. }
@@ -1757,6 +1763,7 @@ impl Printer<'_> {
             ExprKind::Char(c) => write!(f, "{c:?}"),
             ExprKind::Str(s) => write!(f, "{s:?}"),
             ExprKind::None => f.write_str("None"),
+            ExprKind::Unit => f.write_str("()"),
             ExprKind::Local(id) => self.local(f, *id),
             ExprKind::Call { func, types, args } => {
                 let callee = &self.program.functions[func.0];

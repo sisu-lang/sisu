@@ -79,6 +79,7 @@ impl Walk {
             | ExprKind::Char(_)
             | ExprKind::Str(_)
             | ExprKind::None
+            | ExprKind::Unit
             | ExprKind::Local(_)
             | ExprKind::ReadLine => Flow::PASS,
             ExprKind::Call { func, args, .. } if *func == self.id => {

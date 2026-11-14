@@ -542,13 +542,13 @@ fn push_should_report_a_receiver_that_is_no_place() {
     ]);
 }
 
-/// The value of a `push` is `unit`, so a use of it is E0043.
+/// The value of a `push` is `unit`, which a `let` may bind.
 #[test]
-fn push_should_have_no_value() {
+fn push_should_give_a_unit() {
     push_rows(&[(
         "value of the call",
         "fn main() {\n    let mut xs = [1]\n    let r = xs.push(1)\n}",
-        vec![(Code::NoValue, (3, 13))],
+        vec![],
     )]);
 }
 
@@ -648,7 +648,7 @@ fn push_should_report_a_mistake_through_a_safe_access() {
         (
             "value of the call",
             "fn main() {\n    let mut xs: [i64]? = [1]\n    let r = xs?.push(1)\n}",
-            vec![(Code::NoValue, (3, 13))],
+            vec![],
         ),
         (
             "argument of the wrong type",
@@ -702,7 +702,7 @@ fn push_should_write_its_place_whatever_else_it_gets_wrong() {
         (
             "argument of a generic call",
             "fn f<T>(x: T) {}\nfn main() {\n    let mut xs = [1]\n    f(xs.push(1))\n    print(xs)\n}",
-            vec![(Code::TypeArgument, (4, 7))],
+            vec![],
         ),
         (
             "element as the argument of a generic call",

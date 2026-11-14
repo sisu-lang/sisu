@@ -146,7 +146,7 @@ const MEANINGS: [Meaning; 24] = [
     Meaning { name: "Option", shape: "fn f() { U }", spelled: Some("Option"), declaration: &[],
         codes: ["E0105", "E0105", "E0137", "E0026", "E0118", "E0118", "E0105", "E0118"] },
     Meaning { name: "print", shape: "fn f() { U }", spelled: Some("print"), declaration: &[],
-        codes: ["E0105", "E0043", "E0030", "ok", "E0105", "E0105", "E0043,E0137", "E0105,E0137"] },
+        codes: ["E0105", "ok", "E0030", "ok", "E0105", "E0105", "E0137", "E0105,E0137"] },
     Meaning { name: "Some", shape: "fn f() { U }", spelled: Some("Some"), declaration: &[],
         codes: ["E0119", "ok", "E0030", "E0026", "E0119", "E0119", "ok", "E0119"] },
     Meaning { name: "Ok", shape: "fn f() { U }", spelled: Some("Ok"), declaration: &[],
@@ -808,109 +808,109 @@ fn the_type_args_of_a_poisoned_name_should_keep_their_errors() {
 }
 
 /// GIVEN a generic alias, class, enum or interface that a program declares twice, or writes broken
-/// AND a use that writes `unit` or `never` as its type argument
+/// AND a use that writes `never` as its type argument
 /// WHEN `sisu check` runs on it, at a type or a bound
 /// THEN the error is E0138, as for a name that is intact
 /// AND a type parameter, class, enum or alias of that name is a type argument, with no E0138.
 #[test]
-fn a_unit_or_never_type_arg_of_a_poisoned_name_should_give_e0138() {
+fn a_never_type_arg_of_a_poisoned_name_should_give_e0138() {
     let mut rows = Vec::new();
-    for t in ["unit", "never"] {
-        let poisoned = [
-            (
-                "alias, type",
-                format!("type N<T> = [T]\ntype N<T> = [T]\nfn g(x: N<{t}>) {{}}"),
-                "E0034 2:6",
-                "E0138 3:11",
-            ),
-            (
-                "class, type",
-                format!("class N<T> {{}}\nclass N<T> {{}}\nfn g(x: N<{t}>) {{}}"),
-                "E0034 2:7",
-                "E0138 3:11",
-            ),
-            (
-                "enum, type",
-                format!("enum N<T> {{ A }}\nenum N<T> {{ B }}\nfn g(x: N<{t}>) {{}}"),
-                "E0034 2:6",
-                "E0138 3:11",
-            ),
-            (
-                "interface, type",
-                format!("interface N<T> {{}}\ninterface N<T> {{}}\nfn g(x: N<{t}>) {{}}"),
-                "E0034 2:11",
-                "E0138 3:11",
-            ),
-            (
-                "interface, bound",
-                format!("interface N<T> {{}}\ninterface N<T> {{}}\nfn g<U: N<{t}>>(x: U) {{}}"),
-                "E0034 2:11",
-                "E0138 3:11",
-            ),
-            (
-                "class, bound",
-                format!("class N<T> {{}}\nclass N<T> {{}}\nfn g<U: N<{t}>>(x: U) {{}}"),
-                "E0034 2:7",
-                "E0138 3:11",
-            ),
-            (
-                "broken class, type",
-                format!("class N<T>\n{{}}\nfn g(x: N<{t}>) {{}}"),
-                "E0004 2:1",
-                "E0138 3:11",
-            ),
-            (
-                "class, second argument",
-                format!("class N<T, U> {{}}\nclass N<T, U> {{}}\nfn g(x: N<i64, {t}>) {{}}"),
-                "E0034 2:7",
-                "E0138 3:16",
-            ),
-        ];
-        for (name, src, first, second) in poisoned {
-            rows.push(row(
-                &format!("{name}, {t}"),
-                &format!("{src}\nfn main() {{}}"),
-                &[first, second],
-            ));
-        }
-        let controls = [
-            (
-                "class named",
-                format!("class {t} {{}}\nclass N<T> {{}}\nclass N<T> {{}}\nfn g(x: N<{t}>) {{}}"),
-                "E0034 3:7",
-            ),
-            (
-                "enum named",
-                format!("enum {t} {{ A }}\nclass N<T> {{}}\nclass N<T> {{}}\nfn g(x: N<{t}>) {{}}"),
-                "E0034 3:7",
-            ),
-            (
-                "alias named",
-                format!("type {t} = i64\nclass N<T> {{}}\nclass N<T> {{}}\nfn g(x: N<{t}>) {{}}"),
-                "E0034 3:7",
-            ),
-            (
-                "type parameter named",
-                format!("class N<T> {{}}\nclass N<T> {{}}\nfn g<{t}>(x: N<{t}>) {{}}"),
-                "E0034 2:7",
-            ),
-        ];
-        for (name, src, error) in controls {
-            rows.push(row(
-                &format!("{name} {t} (control)"),
-                &format!("{src}\nfn main() {{}}"),
-                &[error],
-            ));
-        }
+    let t = "never";
+    let poisoned = [
+        (
+            "alias, type",
+            format!("type N<T> = [T]\ntype N<T> = [T]\nfn g(x: N<{t}>) {{}}"),
+            "E0034 2:6",
+            "E0138 3:11",
+        ),
+        (
+            "class, type",
+            format!("class N<T> {{}}\nclass N<T> {{}}\nfn g(x: N<{t}>) {{}}"),
+            "E0034 2:7",
+            "E0138 3:11",
+        ),
+        (
+            "enum, type",
+            format!("enum N<T> {{ A }}\nenum N<T> {{ B }}\nfn g(x: N<{t}>) {{}}"),
+            "E0034 2:6",
+            "E0138 3:11",
+        ),
+        (
+            "interface, type",
+            format!("interface N<T> {{}}\ninterface N<T> {{}}\nfn g(x: N<{t}>) {{}}"),
+            "E0034 2:11",
+            "E0138 3:11",
+        ),
+        (
+            "interface, bound",
+            format!("interface N<T> {{}}\ninterface N<T> {{}}\nfn g<U: N<{t}>>(x: U) {{}}"),
+            "E0034 2:11",
+            "E0138 3:11",
+        ),
+        (
+            "class, bound",
+            format!("class N<T> {{}}\nclass N<T> {{}}\nfn g<U: N<{t}>>(x: U) {{}}"),
+            "E0034 2:7",
+            "E0138 3:11",
+        ),
+        (
+            "broken class, type",
+            format!("class N<T>\n{{}}\nfn g(x: N<{t}>) {{}}"),
+            "E0004 2:1",
+            "E0138 3:11",
+        ),
+        (
+            "class, second argument",
+            format!("class N<T, U> {{}}\nclass N<T, U> {{}}\nfn g(x: N<i64, {t}>) {{}}"),
+            "E0034 2:7",
+            "E0138 3:16",
+        ),
+    ];
+    for (name, src, first, second) in poisoned {
+        rows.push(row(
+            &format!("{name}, {t}"),
+            &format!("{src}\nfn main() {{}}"),
+            &[first, second],
+        ));
     }
+    let controls = [
+        (
+            "class named",
+            format!("class {t} {{}}\nclass N<T> {{}}\nclass N<T> {{}}\nfn g(x: N<{t}>) {{}}"),
+            "E0034 3:7",
+        ),
+        (
+            "enum named",
+            format!("enum {t} {{ A }}\nclass N<T> {{}}\nclass N<T> {{}}\nfn g(x: N<{t}>) {{}}"),
+            "E0034 3:7",
+        ),
+        (
+            "alias named",
+            format!("type {t} = i64\nclass N<T> {{}}\nclass N<T> {{}}\nfn g(x: N<{t}>) {{}}"),
+            "E0034 3:7",
+        ),
+        (
+            "type parameter named",
+            format!("class N<T> {{}}\nclass N<T> {{}}\nfn g<{t}>(x: N<{t}>) {{}}"),
+            "E0034 2:7",
+        ),
+    ];
+    for (name, src, error) in controls {
+        rows.push(row(
+            &format!("{name} {t} (control)"),
+            &format!("{src}\nfn main() {{}}"),
+            &[error],
+        ));
+    }
+
     rows.push(row(
-        "array of unit (control)",
-        "class N<T> {}\nclass N<T> {}\nfn g(x: N<[unit]>) {}\nfn main() {}",
+        "array of never (control)",
+        "class N<T> {}\nclass N<T> {}\nfn g(x: N<[never]>) {}\nfn main() {}",
         &["E0034 2:7", "E0030 3:12"],
     ));
     rows.push(row(
-        "applied unit (control)",
-        "class M<T> {}\nclass N<T> {}\nclass N<T> {}\nfn g(x: N<M<unit>>) {}\nfn main() {}",
+        "applied never (control)",
+        "class M<T> {}\nclass N<T> {}\nclass N<T> {}\nfn g(x: N<M<never>>) {}\nfn main() {}",
         &["E0034 3:7", "E0138 4:13"],
     ));
     assert_rows(&rows);

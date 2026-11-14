@@ -1,8 +1,10 @@
 error[E0043]: expression has no value
- --> E0043.sisu:6:13
+ --> E0043.sisu:6:18
   |
-6 |     let x = greet()
-  |             ^^^^^^^
+6 |     let x: i64 = greet()
+  |                  ^^^^^^^
+  |
+  = note: `greet` returns `unit`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0043

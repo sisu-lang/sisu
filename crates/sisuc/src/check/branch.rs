@@ -1,7 +1,7 @@
 //! Branches: `if`, `if let` and the join of branch types.
 
 use super::any::{AnyJoin, SEED, is_target};
-use super::expr::fits;
+use super::expr::{fits, unit_call};
 use super::generic::{Ahead, Rank, Ranked};
 use super::pattern::{LetPattern, arm_key};
 use super::reports::Reported;
@@ -52,6 +52,7 @@ impl Checker<'_> {
             |_| None,
             |c, expected| c.block(then_block, expected),
         );
+        self.note_valueless(span, else_block, &then);
         let part = (cond.as_ref().err())
             .or_else(|| then.as_ref().err())
             .or_else(|| other.as_ref().and_then(|other| other.as_ref().err()))
@@ -102,6 +103,7 @@ impl Checker<'_> {
             });
         let bound = checked.expect("`branches` should check the first block, which sets it");
         let ty = ty?;
+        self.note_valueless(span, else_block, &then);
         let kind = match (scrutinee, then, other.transpose(), bound) {
             (Ok(scrutinee), Ok(then_block), Ok(else_block), LetPattern::Some { bind }) => {
                 tir::ExprKind::IfSome {
@@ -134,6 +136,17 @@ impl Checker<'_> {
             }
         };
         Ok(tir::Expr::new(kind, ty, span))
+    }
+
+    /// Records the `if` at `span` as valueless. It has no `else`, and its `then` block has a
+    /// value that is not `unit` or `never`, as in `if c { 1 }`. Such an `if` is a statement.
+    /// E0043 reports it where a value is used (see `value`).
+    fn note_valueless(&mut self, span: Span, else_block: Option<&ast::Block>, then: &CheckedBlock) {
+        if else_block.is_none()
+            && block_type(then).is_some_and(|ty| !matches!(ty, Type::UNIT | Type::NEVER))
+        {
+            self.body.valueless.insert(span);
+        }
     }
 
     /// The blocks of an `if` or `if let`, `then` checking the first, and their type:
@@ -232,14 +245,14 @@ impl Checker<'_> {
             // until then. An `any` branch widens the anchor, which only the hints read.
             match (block_type(&block), anchor) {
                 (Some(Type::NEVER), _) => {}
-                (Some(t), None | Some(None | Some(Type::UNIT))) => {
+                (Some(t), None | Some(None)) => {
                     anchor = Some(Some(t));
                     origin = Origin::Branch {
                         at: sources[i].span,
                         ty: t,
                     };
                 }
-                (Some(t), Some(Some(a))) if t != a && t != Type::UNIT => {
+                (Some(t), Some(Some(a))) if t != a => {
                     if let Some(wider) = self.any_join(a, t) {
                         anchor = Some(Some(wider));
                         origin = Origin::None;
@@ -402,11 +415,7 @@ impl Checker<'_> {
             AnyJoin::Leaves {
                 member: (i, Type::UNIT),
                 ..
-            } => DiagnosticKind::NoValue {
-                at: sources[i].span,
-                never: false,
-            }
-            .into(),
+            } => sources[i].no_value().into(),
             AnyJoin::Leaves {
                 ty,
                 giver,
@@ -468,16 +477,8 @@ impl Checker<'_> {
             self.leaves_any(at, tail, want, got, origin)
         };
         match expected.ty() {
-            _ if first_ty == Type::UNIT => DiagnosticKind::NoValue {
-                at: sources[first].span,
-                never: false,
-            }
-            .into(),
-            _ if other_ty == Type::UNIT => DiagnosticKind::NoValue {
-                at: sources[other].span,
-                never: false,
-            }
-            .into(),
+            _ if first_ty == Type::UNIT => sources[first].no_value().into(),
+            _ if other_ty == Type::UNIT => sources[other].no_value().into(),
             Some(want) if fits(want, first_ty) => report(other, want, other_ty, expected.origin()),
             Some(want) => report(first, want, first_ty, expected.origin()),
             None => report(other, first_ty, other_ty, given),
@@ -500,8 +501,7 @@ impl Checker<'_> {
         }
         // A branch with no value is the mistake first, as in `join_mismatch`.
         if let Some(&(i, _)) = members.iter().find(|&&(_, t)| t == Type::UNIT) {
-            let at = sources[i].span;
-            return Some(DiagnosticKind::NoValue { at, never: false }.into());
+            return Some(sources[i].no_value().into());
         }
         for &(i, t) in members {
             if !fits(want, t) && !self.converts_to_any(t, want) {
@@ -581,6 +581,15 @@ impl Branch<'_> {
     /// waits and makes no optional by itself.
     fn exact(&self) -> bool {
         self.rank == Rank::Waits && !self.optional
+    }
+
+    /// The E0043 of the branch, whose value is a `unit` where the others have another type.
+    fn no_value(&self) -> DiagnosticKind {
+        DiagnosticKind::NoValue {
+            at: self.span,
+            never: false,
+            unit_call: self.tail.and_then(unit_call),
+        }
     }
 }
 
@@ -735,12 +744,12 @@ type Pair = ((usize, Type), (usize, Type));
 
 /// What one branch of an `if` expects after the other, of type `ty`, when the `if` expects
 /// nothing: `ty` made optional, unless it is one or the branch is `exact`; `Error` after
-/// `Error`; nothing after `unit` or `never`. A type that the branches before give is a hint, not
+/// `Error`; nothing after `never`. A type that the branches before give is a hint, not
 /// an expected type. The hint comes from `origin`.
 fn after_branch(ty: Option<Type>, exact: bool, origin: Origin) -> Expectation {
     match ty {
         None => Expectation::Poisoned,
-        Some(Type::UNIT | Type::NEVER) => Expectation::None,
+        Some(Type::NEVER) => Expectation::None,
         Some(ty) => Expectation::Hint {
             want: if exact { ty } else { as_optional(ty) },
             siblings: ty,

@@ -476,22 +476,20 @@ fn main() {
 
 ## unit
 
-`unit` is the type of an expression that gives no value, such as a call of `print`. A program cannot write the name `unit` yet: `-> unit` is an error ([E0030](../diagnostics/E0030.md)).
+`unit` is the type of an expression that gives no value, such as a call of `print`. `unit` is an ordinary type: a program writes its name, and it can be a type argument, such as `[unit]`, `unit?` and `Stack<unit>`.
 
 ```sisu
 fn main() {
-    print(print("x"))                // error[E0059]
-    print(print("a") == 1)           // error[E0043]
+    let x: i64 = print("x")          // error[E0043]
+    let y: i64 = 1 + print("a")      // error[E0043]
 }
 ```
 
 **Rules**
 
-- `unit` cannot be a type argument, such as `[unit]`, `unit?` and `Stack<unit>`, as the rule in [Type arguments](generics.md#type-arguments) says.
 - `unit` has no literal. A `unit` value comes from a call, such as `print(...)`.
-- `unit` has no `Display`, no `Eq` and no `Ord`.
-- A `unit` value cannot be printed. [E0059](../diagnostics/E0059.md)
-- A `unit` value cannot be compared.
+- `unit` has a `Display`, which writes `()`, and an `Eq` and an `Ord`, under which all `unit` values are equal.
+- A `unit` value fits only where `unit` or a type parameter is expected. Where another type is expected, it is an error. [E0043](../diagnostics/E0043.md)
 
 ## Conversions
 

@@ -212,7 +212,7 @@ fn a_break_after_a_failed_break_should_wait_for_the_next_run() {
         ),
         (
             "call that gives no value",
-            "let a = loop { if c { break nothing() }; break None }",
+            "let a = loop { if c { break if c { 1 } }; break None }",
             vec![(NoValue, (6, 33))],
         ),
         (
@@ -570,7 +570,7 @@ fn a_typed_poisoned_break_value_should_join_with_the_other_breaks() {
         (
             "a call that gives no value",
             "fn u(x: i64) {}\nfn main() {\n    let a = loop { break u() }\n    print(a)\n}\n".into(),
-            vec![(ArgumentCount, (3, 26)), (NoValue, (3, 26))],
+            vec![(ArgumentCount, (3, 26))],
         ),
     ];
     error_rows(&rows);
@@ -636,7 +636,7 @@ fn a_condition_that_is_not_bool_should_keep_the_join_of_the_branches() {
         ),
         (
             "if condition without else",
-            "fn main() {\n    let x = if 1 { print(2) }\n    print(x)\n}".into(),
+            "fn main() {\n    let x = if 1 { 2 }\n    print(x)\n}".into(),
             vec![(NoValue, (2, 13)), (Mismatch, (2, 16))],
         ),
         (

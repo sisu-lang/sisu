@@ -252,8 +252,8 @@ fn b2_list_unknown_type() {
 fn b3_list_count_method() {
     let _s: string = B(v: 1).g<i64, bool>()
 }
-fn b4_list_unit() {
-    let _s: string = B(v: 1).g<unit>()
+fn b4_list_never() {
+    let _s: string = B(v: 1).g<never>()
 }
 fn b5_list_unknown_type_function() {
     let _s: string = h2<Nope>(1, 2)
@@ -282,8 +282,8 @@ fn c5_panic_label() {
 fn c6_todo_label() {
     let _s: string = todo(n: "x")
 }
-fn c7_print_no_value() {
-    let _s: string = print(u())
+fn c7_print_failed_argument() {
+    let _s: string = print(nope)
 }
 fn d1_class_missing_field() {
     let _s: string = B<i64>()

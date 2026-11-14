@@ -1,7 +1,7 @@
 //! Operators: arithmetic, comparison, equality, `is` and `??`.
 
 use super::any::{is_target, widen};
-use super::expr::{fits, if_some, literal_type, local, operator, path, typed};
+use super::expr::{fits, if_some, literal_type, local, operator, path, typed, unit_call};
 use super::generic::{Rank, mismatched};
 use super::interface::Operation;
 use super::reports::{Held, Reported};
@@ -365,6 +365,12 @@ impl Checker<'_> {
                 Expectation::None
             };
             let checked = self.value(operands[k], hint);
+            // No number operator takes a `unit`, and the first operand has no expected type.
+            let checked = if arithmetic {
+                self.refuse_unit(operands[k], checked)
+            } else {
+                checked
+            };
             let ty = type_of(&checked).map(|ty| match payload(ty) {
                 Type::CHAR if !arithmetic => Type::CHAR,
                 Type::STRING if operator != Operator::Arithmetic => Type::STRING,
@@ -1110,15 +1116,15 @@ impl Checker<'_> {
     }
 
     /// The right side of `??`, checked against `expected`: a value, or one that never finishes,
-    /// but not `unit`. A value that kept its E0050 (see `Poisoned::kept`) is the fault, so the
-    /// right side still has the type of the left side's value.
+    /// but not a `unit` where `expected` is another type. A value that kept its E0050 (see
+    /// `Poisoned::kept`) is the fault, so the right side still has the type of the left side's
+    /// value.
     fn fallback(&mut self, rhs: &ast::Expr, expected: Expectation) -> Checked {
         let checked = self.expr(rhs, expected);
-        if type_of(&checked) == Some(Type::UNIT) {
-            let reported = self.error(DiagnosticKind::NoValue {
-                at: rhs.span,
-                never: false,
-            });
+        if let Some(ty) = type_of(&checked)
+            && self.unit_unwanted(rhs, ty, expected)
+        {
+            let reported = self.no_value(rhs.span, ty, unit_call(rhs));
             return Err(Poisoned::untyped(reported));
         }
         if let Err(failed) = &checked

@@ -864,10 +864,10 @@ fn a_loop_with_a_break_should_give_its_branch_a_type() {
     assert!(error_codes(&src).is_empty(), "{src}");
 }
 
-/// The `None` has no type to take, so its branch fails, and the `if` has no type: the spec row
-/// `if`, `match` (a branch). So the `loop`, whose `break` gives no value, adds no E0043.
+/// A `loop` whose `break` gives no value is a `unit`, so the `None` beside it is a `unit?`: the
+/// `if` checks clean.
 #[test]
-fn a_none_beside_a_loop_with_no_value_should_report_only_the_none() {
+fn a_none_beside_a_loop_with_no_value_should_join_to_an_optional_unit() {
     super::with_prelude();
     for statement in [
         "let _ = if c { None } else { loop { break } }",
@@ -875,7 +875,7 @@ fn a_none_beside_a_loop_with_no_value_should_report_only_the_none() {
     ] {
         let src = with_exit_body(statement);
         let found = errors(&src, &diags(&src));
-        assert_eq!(found, [(Code::CannotInfer, (7, 20))], "{statement}");
+        assert_eq!(found, [], "{statement}");
     }
 }
 

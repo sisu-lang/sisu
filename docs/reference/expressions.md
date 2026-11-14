@@ -379,6 +379,6 @@ An expression that has no value cannot be used as a value: as the value of a `le
 
 ```sisu
 fn main() {
-    let x = print(1)             // error[E0043]
+    let x: i64 = print(1)        // error[E0043]
 }
 ```

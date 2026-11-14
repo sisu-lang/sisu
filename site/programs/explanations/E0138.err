@@ -1,8 +1,8 @@
-error[E0138]: `unit` cannot be a type argument
+error[E0138]: `never` cannot be a type argument
  --> E0138.sisu:6:17
   |
-6 |     let c: Cell<unit>? = None
-  |                 ^^^^
+6 |     let c: Cell<never>? = None
+  |                 ^^^^^
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0138

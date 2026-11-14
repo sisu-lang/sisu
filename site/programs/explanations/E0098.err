@@ -1,8 +1,0 @@
-error[E0098]: cannot interpolate `unit`
- --> E0098.sisu:6:19
-  |
-6 |     print("Hello {greet()}")
-  |                   ^^^^^^^
-
-sisu: 1 error
-sisu: for more on a code, run `sisu explain <code>`: E0098

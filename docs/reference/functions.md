@@ -354,7 +354,7 @@ fn main() {
 
 ### A call without a value
 
-A function without a return type has the return type `unit`. A call of it gives no value to print or to compare ([unit](types.md#unit)).
+A function without a return type has the return type `unit`. A call of it gives a `unit` value, which fits only where `unit` is expected ([unit](types.md#unit)).
 
 ```sisu
 fn log(text: string) {
@@ -362,7 +362,7 @@ fn log(text: string) {
 }
 
 fn main() {
-    print(log("hi") == 1)             // error[E0043]
+    let n: i64 = log("hi")            // error[E0043]
 }
 ```
 

@@ -61,9 +61,9 @@ impl Checker<'_> {
     }
 
     /// A string literal with interpolations. Each part is checked with no expected type, so that
-    /// a `unit` one is reported here, and must be of a type that has a `Display`, which is every
-    /// type but `unit`; an optional warns. A part that never finishes makes the
-    /// whole never finish.
+    /// a part with no value is reported here. A part must have a type with a `Display`, which is
+    /// every type but `never`. An optional warns. A part that never finishes makes the whole
+    /// never finish.
     pub(super) fn interpolate(&mut self, span: Span, parts: &[ast::Part]) -> Checked {
         let mut ty = Type::STRING;
         let mut checked = Vec::with_capacity(parts.len());
@@ -80,9 +80,11 @@ impl Checker<'_> {
         ) in parts.iter().enumerate()
         {
             let value = self.expr(part, Expectation::None);
-            // Every type interpolates but `unit`; an optional warns.
+            // Every type interpolates but `never`; an optional warns. An `if` without an `else`
+            // whose branch has a value has no value to write.
             match type_of(&value).map(Type::kind) {
-                Some(TypeKind::Unit) => {}
+                Some(TypeKind::Unit) if self.unit_unwanted(part, Type::UNIT, Expectation::None) => {
+                }
                 Some(TypeKind::Never) => {
                     if ty != Type::NEVER {
                         // A part that is a never literal gives the part inside it.
@@ -116,11 +118,7 @@ impl Checker<'_> {
                     continue;
                 }
             }
-            let found = type_of(&value).expect("a part reported here should have a type");
-            let reported = self.error(DiagnosticKind::CannotInterpolate {
-                ty: self.type_name(found),
-                at: part.span,
-            });
+            let reported = self.no_value(part.span, Type::UNIT, None);
             checked.push(Err(Poisoned::untyped(reported)));
         }
         if let Some(at) = never_at {

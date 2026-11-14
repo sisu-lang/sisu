@@ -190,12 +190,10 @@ crates/sisuc/src/check/tests/mod.rs::assigning_to_a_function_names_it
 crates/sisuc/src/check/tests/mod.rs::assigning_to_a_missing_binding_suggests_the_closest
 crates/sisuc/src/check/tests/mod.rs::bad_return_value_still_warns_about_dead_code
 crates/sisuc/src/check/tests/mod.rs::bare_name_is_not_a_field
-crates/sisuc/src/check/tests/mod.rs::bind_unit
 crates/sisuc/src/check/tests/mod.rs::block_after_return_is_never
 crates/sisuc/src/check/tests/mod.rs::block_ending_in_never
 crates/sisuc/src/check/tests/mod.rs::block_joins_never
 crates/sisuc/src/check/tests/mod.rs::block_scope_ends
-crates/sisuc/src/check/tests/mod.rs::block_value_and_type
 crates/sisuc/src/check/tests/mod.rs::body_value_type
 crates/sisuc/src/check/tests/mod.rs::body_without_value
 crates/sisuc/src/check/tests/mod.rs::break_in_a_value_makes_endless_loop_unit
@@ -240,7 +238,6 @@ crates/sisuc/src/check/tests/mod.rs::duplicate_member_of_the_same_kind
 crates/sisuc/src/check/tests/mod.rs::each_label_on_a_call_is_reported
 crates/sisuc/src/check/tests/mod.rs::equal_none_on_non_optional
 crates/sisuc/src/check/tests/mod.rs::equal_two_classes
-crates/sisuc/src/check/tests/mod.rs::equal_unit
 crates/sisuc/src/check/tests/mod.rs::equal_wraps_the_plain_side
 crates/sisuc/src/check/tests/mod.rs::error_branches_without_mismatch_keep_the_rule_type
 crates/sisuc/src/check/tests/mod.rs::every_error_in_one_run
@@ -359,7 +356,6 @@ crates/sisuc/src/check/tests/mod.rs::no_spill_with_only_scalars_before_the_exit
 crates/sisuc/src/check/tests/mod.rs::no_spill_without_earlier_reference
 crates/sisuc/src/check/tests/mod.rs::no_spill_without_exit
 crates/sisuc/src/check/tests/mod.rs::no_suggestion_when_nothing_is_close
-crates/sisuc/src/check/tests/mod.rs::none_beside_unit_or_never_needs_a_type
 crates/sisuc/src/check/tests/mod.rs::none_equals_none
 crates/sisuc/src/check/tests/mod.rs::none_for_non_optional
 crates/sisuc/src/check/tests/mod.rs::none_from_every_source
@@ -409,9 +405,6 @@ crates/sisuc/src/check/tests/mod.rs::suggestions_keep_to_their_kind
 crates/sisuc/src/check/tests/mod.rs::todo_in_endless_loop
 crates/sisuc/src/check/tests/mod.rs::trailing_expression_is_the_block_value
 crates/sisuc/src/check/tests/mod.rs::two_assignments_offer_the_same_edit
-crates/sisuc/src/check/tests/mod.rs::unit_argument
-crates/sisuc/src/check/tests/mod.rs::unit_branch_says_no_value
-crates/sisuc/src/check/tests/mod.rs::unit_operand
 crates/sisuc/src/check/tests/mod.rs::unknown_call_arguments_are_still_checked
 crates/sisuc/src/check/tests/mod.rs::unknown_field
 crates/sisuc/src/check/tests/mod.rs::unknown_field_type_poisons
@@ -498,7 +491,6 @@ crates/sisuc/src/check/tests/places.rs::lowers_element_writes
 crates/sisuc/src/check/tests/places.rs::recognises_appends
 crates/sisuc/src/check/tests/places.rs::same_place_through_fields_and_elements
 crates/sisuc/src/check/tests/places.rs::spills_an_element_write
-crates/sisuc/src/check/tests/prelude.rs::coalesce_unit_is_not_a_value
 crates/sisuc/src/check/tests/prelude.rs::eprint_lowers
 crates/sisuc/src/check/tests/prelude.rs::panic_argument_count
 crates/sisuc/src/check/tests/prelude.rs::panic_in_parentheses

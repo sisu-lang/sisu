@@ -152,7 +152,6 @@ codes! {
     BraceInString = "E0095",
     EmptyInterpolation = "E0096",
     CommentInInterpolation = "E0097",
-    CannotInterpolate = "E0098",
     TodoForm = "E0099",
     ConversionInConstant = "E0100",
     FloatNeedsDigits = "E0101",
@@ -266,6 +265,10 @@ pub(crate) const RETIRED: &[(&str, &str)] = &[
     (
         "E0060",
         include_str!("../../../../docs/diagnostics/E0060.md"),
+    ),
+    (
+        "E0098",
+        include_str!("../../../../docs/diagnostics/E0098.md"),
     ),
 ];
 
@@ -698,10 +701,13 @@ pub(crate) enum DiagnosticKind {
         form: UnknownForm,
     },
     /// The function `function`, whose body, ending at `at`, has no value of type `want`.
+    /// `unit_call` is the function that the body's last expression calls, when that call returns
+    /// `unit`.
     BodyHasNoValue {
         function: String,
         want: String,
         at: Span,
+        unit_call: Option<String>,
     },
     /// A value of type `got`, at `at`, where `want` is expected; `fix` is the
     /// rewrite that would fit. `origin` is where the expected type came from, if the report
@@ -758,9 +764,15 @@ pub(crate) enum DiagnosticKind {
     SelfOutsideMethod { at: Span },
     /// A unary `-` at `at` on a `u8`.
     NegatedU8 { at: Span },
-    /// An expression at `at` that has no value: it is `unit`, or, with `never`, it never
-    /// finishes.
-    NoValue { at: Span, never: bool },
+    /// An expression at `at` that has no value where a value of another type is used: it is
+    /// `unit`, an `if` without an `else` whose branch has a value, or, with `never`, it never
+    /// finishes. `unit_call` is the function that the expression calls, when that call returns
+    /// `unit`.
+    NoValue {
+        at: Span,
+        never: bool,
+        unit_call: Option<String>,
+    },
     /// The first bare `break` at `at` of a `loop` whose first `break` with a value whose type is
     /// not `never` is at `valued`.
     BareBreak { at: Span, valued: Span },
@@ -910,13 +922,8 @@ pub(crate) enum DiagnosticKind {
         owner: String,
         at: Span,
     },
-    /// A call of `function` (`print` or `eprint`) at `at` with no argument or several, or one that
-    /// returns nothing.
-    PrintArgument {
-        function: &'static str,
-        problem: PrintProblem,
-        at: Span,
-    },
+    /// A call of `function` (`print`, `eprint` or `dbg`) at `at` with no argument or several.
+    PrintArgument { function: &'static str, at: Span },
     /// The argument at `at` of a call of `function`, which never finishes.
     PrintNever { function: &'static str, at: Span },
     /// The optional at `at` that a member, an index or a `for` uses as a value. `value` is its
@@ -1095,8 +1102,6 @@ pub(crate) enum DiagnosticKind {
     EmptyInterpolation { at: Span },
     /// The `//` at `at`, inside an interpolation.
     CommentInInterpolation { at: Span },
-    /// The interpolated value at `at`, of type `ty`, which interpolation cannot write as text.
-    CannotInterpolate { ty: String, at: Span },
     /// The printed or interpolated optional at `at`, which may print `None`. `value` is its path
     /// as written, when it has one.
     PrintsOptional { value: Option<String>, at: Span },
@@ -1677,14 +1682,6 @@ pub(crate) enum ArgumentsForm {
     Value { compare: Option<String> },
     /// A variant of a generic enum, which takes its enum's: `instead` writes them on the enum.
     Variant { instead: Option<String> },
-}
-
-/// What is wrong with the argument of a `print` or `eprint` call.
-pub(crate) enum PrintProblem {
-    /// The call has no argument or several.
-    Count,
-    /// The argument has no value: it is a call that returns nothing.
-    NoValue,
 }
 
 /// What made a tree pass the nesting limit.
@@ -4741,10 +4738,18 @@ impl From<DiagnosticKind> for Diagnostic {
                 )
                 .with_help("write one of the bounds that wait for each other without an associated type"),
             },
-            DiagnosticKind::BodyHasNoValue { function, want, at } => Diagnostic::coded(
-                code,
+            DiagnosticKind::BodyHasNoValue {
+                function,
+                want,
                 at,
-                format!("function `{function}` must return `{want}`, but its body has no value"),
+                unit_call,
+            } => with_unit_note(
+                Diagnostic::coded(
+                    code,
+                    at,
+                    format!("function `{function}` must return `{want}`, but its body has no value"),
+                ),
+                unit_call,
             ),
             DiagnosticKind::Mismatch {
                 want,
@@ -4946,12 +4951,16 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::NegatedU8 { at } => {
                 Diagnostic::coded(code, at, "`u8` cannot be negative")
             }
-            DiagnosticKind::NoValue { at, never } => {
+            DiagnosticKind::NoValue {
+                at,
+                never,
+                unit_call,
+            } => {
                 let d = Diagnostic::coded(code, at, "expression has no value");
                 if never {
                     d.with_label("never finishes")
                 } else {
-                    d
+                    with_unit_note(d, unit_call)
                 }
             }
             DiagnosticKind::BareBreak { at, valued } => Diagnostic::coded(
@@ -5229,18 +5238,9 @@ impl From<DiagnosticKind> for Diagnostic {
                 at,
                 format!("`{name}` is a field of `{owner}`, not a method"),
             ),
-            DiagnosticKind::PrintArgument {
-                function,
-                problem,
-                at,
-            } => Diagnostic::coded(
-                code,
-                at,
-                match problem {
-                    PrintProblem::Count => format!("`{function}` takes one value"),
-                    PrintProblem::NoValue => format!("the argument of `{function}` has no value"),
-                },
-            ),
+            DiagnosticKind::PrintArgument { function, at } => {
+                Diagnostic::coded(code, at, format!("`{function}` takes one value"))
+            }
             DiagnosticKind::PrintNever { function, at } => Diagnostic::coded(
                 code,
                 at,
@@ -5741,9 +5741,6 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::CommentInInterpolation { at } => {
                 Diagnostic::coded(code, at, "a comment cannot appear inside an interpolation")
-            }
-            DiagnosticKind::CannotInterpolate { ty, at } => {
-                Diagnostic::coded(code, at, format!("cannot interpolate `{ty}`"))
             }
             DiagnosticKind::PrintsOptional { value, at } => {
                 let (subject, call) = match value {
@@ -6912,6 +6909,15 @@ fn field_order(fields: &[String]) -> String {
 /// A value as a message names it: its `path` in backticks, or "this value" when it has none.
 fn named(path: Option<String>) -> String {
     path.map_or_else(|| "this value".to_string(), |path| format!("`{path}`"))
+}
+
+/// `d`, with the note that the function `unit_call` returns `unit`, when a call of it is the
+/// expression that has no value.
+fn with_unit_note(d: Diagnostic, unit_call: Option<String>) -> Diagnostic {
+    match unit_call {
+        Some(function) => d.with_note(format!("`{function}` returns `unit`")),
+        None => d,
+    }
 }
 
 /// The fix that replaces the gap of `join` with a space: `message`, or `unsafe_message` when `join`

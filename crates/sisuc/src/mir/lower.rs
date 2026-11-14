@@ -918,6 +918,8 @@ impl<'a> Lowering<'a> {
     )]
     fn into(&mut self, e: &Expr, dest: Option<LocalId>) -> Lowered {
         let value = match &e.kind {
+            // A `unit` has no value to hold, as a call that returns `unit` has none.
+            ExprKind::Unit => return Some(None),
             ExprKind::Int(_)
             | ExprKind::Float(_)
             | ExprKind::Bool(_)
@@ -1750,6 +1752,7 @@ fn leaves_locals(expr: &Expr) -> bool {
         | ExprKind::Char(_)
         | ExprKind::Str(_)
         | ExprKind::None
+        | ExprKind::Unit
         | ExprKind::Call { .. }
         | ExprKind::InterfaceCall { .. }
         | ExprKind::DynCall { .. }
@@ -1940,6 +1943,7 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
         | ExprKind::Char(_)
         | ExprKind::Str(_)
         | ExprKind::None
+        | ExprKind::Unit
         | ExprKind::ReadLine
         | ExprKind::Break { value: None, .. }
         | ExprKind::Continue { .. }

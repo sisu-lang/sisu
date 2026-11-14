@@ -99,7 +99,7 @@ fn type_arguments_that_do_not_fit_a_type_should_be_reported() {
         ("fn f(s: Stack) {}", arguments((1, 9))),
         ("fn f(s: Stack<i64, i64>) {}", arguments((1, 14))),
         ("fn f(p: Point<i64>) {}", arguments((1, 14))),
-        ("fn f(s: Stack<unit>) {}", argument.clone()),
+        ("fn f(s: Stack<unit>) {}", vec![]),
         ("fn f(s: Stack<never>) {}", argument),
         ("fn f(s: Stack<Zz>) {}", vec![(Code::UnknownType, (1, 15))]),
         ("fn f(w: Wrap) {}\nenum Wrap<T> { W(T) }", arguments((1, 9))),
@@ -2870,10 +2870,8 @@ fn generic_arguments_that_do_not_check_should_report_as_other_arguments() {
             "fn g() {\n    let x = id(Wrap.W([]))\n}".into(),
             vec![(Code::CannotInfer, (2, 13))],
         ),
-        (
-            "fn g() {\n    let x = id({ let y = 1 })\n}".into(),
-            vec![(Code::TypeArgument, (2, 16))],
-        ),
+        // A block with no tail is a `unit`, which binds `T`.
+        ("fn g() {\n    let x = id({ let y = 1 })\n}".into(), vec![]),
         (
             "fn bad<T>(x: T, y: Nope) {}\nfn g() {\n    bad(1, 2)\n}".into(),
             vec![(Code::UnknownType, (1, 20))],

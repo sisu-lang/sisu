@@ -248,6 +248,8 @@ error[E0043]: expression has no value
     |
 160 |     let _s: string = print(1, 2)
     |                      ^^^^^^^^^^^
+    |
+    = note: `print` returns `unit`
 
 error[E0053]: `panic` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:163:22
@@ -338,6 +340,8 @@ error[E0043]: expression has no value
     |
 182 |     let _s: string = xs.push(1, 2)
     |                      ^^^^^^^^^^^^^
+    |
+    = note: `push` returns `unit`
 
 error[E0053]: `string.get` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:185:22
@@ -606,14 +610,14 @@ error[E0137]: `g` takes 1 type argument, but 2 were given
 error[E0053]: `B<i64>.g` takes 1 argument, found 0
    --> E0032-failed-call-result.sisu:256:22
     |
-256 |     let _s: string = B(v: 1).g<unit>()
-    |                      ^^^^^^^^^^^^^^^^^
+256 |     let _s: string = B(v: 1).g<never>()
+    |                      ^^^^^^^^^^^^^^^^^^
 
-error[E0138]: `unit` cannot be a type argument
+error[E0138]: `never` cannot be a type argument
    --> E0032-failed-call-result.sisu:256:32
     |
-256 |     let _s: string = B(v: 1).g<unit>()
-    |                                ^^^^
+256 |     let _s: string = B(v: 1).g<never>()
+    |                                ^^^^^
 
 error[E0053]: `h2` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:259:22
@@ -721,6 +725,8 @@ error[E0043]: expression has no value
     |
 277 |     let _s: string = print(n: 1)
     |                      ^^^^^^^^^^^
+    |
+    = note: `print` returns `unit`
 
 error[E0055]: this call takes no labels on its arguments
    --> E0032-failed-call-result.sisu:277:28
@@ -767,14 +773,16 @@ error[E0055]: this call takes no labels on its arguments
 error[E0043]: expression has no value
    --> E0032-failed-call-result.sisu:286:22
     |
-286 |     let _s: string = print(u())
-    |                      ^^^^^^^^^^
+286 |     let _s: string = print(nope)
+    |                      ^^^^^^^^^^^
+    |
+    = note: `print` returns `unit`
 
-error[E0059]: the argument of `print` has no value
+error[E0033]: cannot find binding `nope`
    --> E0032-failed-call-result.sisu:286:28
     |
-286 |     let _s: string = print(u())
-    |                            ^^^
+286 |     let _s: string = print(nope)
+    |                            ^^^^
 
 error[E0056]: missing field `v`
    --> E0032-failed-call-result.sisu:289:22

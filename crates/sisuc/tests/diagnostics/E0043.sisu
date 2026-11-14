@@ -3,6 +3,6 @@ fn greet() {
 }
 
 fn main() {
-    let x = greet()
+    let x: i64 = greet()
     print(x)
 }

@@ -47,6 +47,10 @@ const SEED_LEN: usize = 4_096;
 /// What no generated program holds, and why.
 const EXCLUDED: &[(&str, &str)] = &[
     (
+        "tir::ExprKind::Unit",
+        "a `unit` value has no layout until milestone 12 gives it one",
+    ),
+    (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
     ),
@@ -2985,6 +2989,7 @@ impl Walk {
             tir::ExprKind::Char(_) => self.mark("tir::ExprKind::Char"),
             tir::ExprKind::Str(_) => self.mark("tir::ExprKind::Str"),
             tir::ExprKind::None => self.mark("tir::ExprKind::None"),
+            tir::ExprKind::Unit => self.mark("tir::ExprKind::Unit"),
             tir::ExprKind::Local(_) => self.mark("tir::ExprKind::Local"),
             tir::ExprKind::Call { func, types, args } => {
                 self.mark("tir::ExprKind::Call");
@@ -8920,6 +8925,7 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Char(_)
             | tir::ExprKind::Str(_)
             | tir::ExprKind::None
+            | tir::ExprKind::Unit
             | tir::ExprKind::ReadLine
             | tir::ExprKind::Break { value: None, .. }
             | tir::ExprKind::Continue { .. } => {}
@@ -9058,7 +9064,8 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Bool(_)
             | tir::ExprKind::Char(_)
             | tir::ExprKind::Str(_)
-            | tir::ExprKind::None => true,
+            | tir::ExprKind::None
+            | tir::ExprKind::Unit => true,
             tir::ExprKind::Local(local) => reads || !self.locals[local.0].mutable,
             tir::ExprKind::Field { base, .. } | tir::ExprKind::StructField { base, .. } => {
                 reads && self.pure(base, reads)

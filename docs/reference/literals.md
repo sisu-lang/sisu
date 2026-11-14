@@ -293,7 +293,7 @@ fn main() {
 
 **The type of the expression**
 
-- The value of the expression can have any type except `unit` and `never`. [E0098](../diagnostics/E0098.md)
+- The value of the expression can have any type except `never`. A `unit` value writes `()`.
 - The text of an array, an object or an enum is in [Text of other types](strings.md#text-of-other-types).
 - An optional builds with a warning, because the text can be `None`. [W0015](../diagnostics/W0015.md)
 

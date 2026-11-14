@@ -317,7 +317,7 @@ fn a_count_error_should_not_type_a_call_whose_written_list_fails() {
             ),
             (
                 "b4",
-                "let s: string = B(v: 1).g<unit>()",
+                "let s: string = B(v: 1).g<never>()",
                 &[(ArgumentCount, CALL), (TypeArgument, CALL + 10)],
             ),
             (
@@ -373,8 +373,8 @@ fn a_built_in_call_with_a_label_or_argument_error_should_keep_its_result_type() 
             ),
             (
                 "c7",
-                "let s: string = print(u())",
-                &[(NoValue, CALL), (PrintArgument, CALL + 6)],
+                "let s: string = print(nope)",
+                &[(NoValue, CALL), (BindingNotFound, CALL + 6)],
             ),
             (
                 "c8",

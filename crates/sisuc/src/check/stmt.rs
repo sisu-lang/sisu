@@ -5,7 +5,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::any::{AnyJoin, SEED, is_target, widen};
 use super::array::must_unwrap;
 use super::enums::unwrapped;
-use super::expr::{fits, local};
+use super::expr::{fits, local, unit_call};
 use super::generic::Ahead;
 use super::pattern::LetPattern;
 use super::prelude::PRELUDE;
@@ -64,6 +64,13 @@ impl Default for BlockSoFar {
 // shortcut: past the cap the warnings offer no fix; store one fix per statement and share it if
 // long `match` statements need fixes.
 const SHARED_FIX_SITES: usize = 8;
+
+/// Whether an unused value of type `ty` gets no W0004: `unit` and `never`, and `unit?`, which
+/// `o?.notify()` makes as a statement.
+fn is_silent(ty: Type) -> bool {
+    matches!(ty, Type::UNIT | Type::NEVER)
+        || matches!(ty.kind(), TypeKind::Optional(payload) if payload == Type::UNIT)
+}
 
 impl Checker<'_> {
     /// `never` once a statement is `never`, else the type of the last statement (`unit` when
@@ -275,7 +282,7 @@ impl Checker<'_> {
             // Its value comes from `break`s anywhere in its body, so the warning points at the
             // loop, from its loop label through `loop`.
             (ast::ExprKind::Loop { label, keyword, .. }, _) => {
-                if !matches!(checked.ty, Type::UNIT | Type::NEVER) {
+                if !is_silent(checked.ty) {
                     unused.push(Unused {
                         ty: self.type_name(checked.ty),
                         at: label.as_ref().map_or(*keyword, |l| l.span).to(*keyword),
@@ -296,7 +303,7 @@ impl Checker<'_> {
                 );
                 // `dbg` is meant to be run, so its value may go unused.
                 let dbg = matches!(checked.kind, ExprKind::Dbg { .. });
-                if !dbg && !matches!(checked.ty, Type::UNIT | Type::NEVER) {
+                if !dbg && !is_silent(checked.ty) {
                     unused.push(Unused {
                         ty: self.type_name(checked.ty),
                         at: source.span,
@@ -1524,10 +1531,13 @@ impl Checker<'_> {
             return checked;
         }
         let checked = match type_of(&checked).or(misfit) {
-            Some(Type::UNIT) => Err(Poisoned::untyped(self.error(DiagnosticKind::NoValue {
-                at: v.span,
-                never: false,
-            }))),
+            Some(Type::UNIT) if self.unit_unwanted(v, Type::UNIT, hint) => {
+                Err(Poisoned::untyped(self.error(DiagnosticKind::NoValue {
+                    at: v.span,
+                    never: false,
+                    unit_call: unit_call(v),
+                })))
+            }
             Some(Type::NEVER) | None => checked,
             Some(got) => {
                 // Checking `v` can set the first type, through a `break` of this loop inside it.
