@@ -211,7 +211,7 @@ fn main() {
 **Methods, interfaces and warnings**
 
 - A method can have `mut` parameters.
-- `self` is never `mut`: a method changes the `mut` fields of its receiver through `self`. [E0018](../diagnostics/E0018.md)
+- `self` of a class is never `mut`: a method changes the `mut` fields of its receiver through `self`. [E0018](../diagnostics/E0018.md) A method of a struct or an enum can take `mut self` ([Structs](structs.md#mut-self)).
 - A generic function can have `mut` parameters, and so can an interface requirement.
 - A class that conforms to the interface must write `mut` in the same places. [E0152](../diagnostics/E0152.md)
 - A `mut` parameter that the function never changes builds with a warning, because its `mut` changes nothing for the caller. [W0002](../diagnostics/W0002.md)

@@ -210,7 +210,7 @@ fn main() {
 **`self`**
 
 - `self` is the first parameter of each method. [E0017](../diagnostics/E0017.md) [E0020](../diagnostics/E0020.md)
-- It is `self`, never `mut self`. [E0018](../diagnostics/E0018.md)
+- It is `self`, never `mut self`. [E0018](../diagnostics/E0018.md) A struct or an enum can take `mut self` ([Structs](structs.md#mut-self)).
 - `self` is valid only in a method. [E0041](../diagnostics/E0041.md)
 - An assignment to `self` is an error. [E0073](../diagnostics/E0073.md)
 - A method can write the `mut` fields of `self`. The change shows through every reference to the object.

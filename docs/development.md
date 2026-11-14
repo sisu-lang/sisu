@@ -726,7 +726,10 @@ must pass seven properties. Each one has the name of its check:
    that parameter. Each such call in `shapes`, or in a generic function that it
    calls, passes a place and prints it after the call as `@d<n> <value>`. The
    calls through `any` and through generic functions that take a `mut` parameter
-   print their lines in the same way. These lines are, in order, a prefix of the
+   print their lines in the same way. A requirement can also take `mut self`. An
+   enum meets it with `mut self` or with plain `self`, and a class meets it with
+   plain `self`. A generic function calls it on a `let mut` copy of its
+   parameter. These lines are, in order, a prefix of the
    values that a correct dispatch reaches; a `main` that returns before the
    calls prints none.
 6. The bound check. A broken bound gives E0154 and nothing else. A bound site is
