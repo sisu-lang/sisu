@@ -1513,16 +1513,17 @@ impl Checker<'_> {
                 }
             }
         }
-        if let (Some(at), Some(valued)) = (frame.bare, frame.valued) {
-            // A bare `break` gives a `unit`, so it joins `unit` values and `unit?` values.
-            match (frame.first, &mut checked) {
-                (Some((ty, _)), Ok(body)) if ty == Type::UNIT || optional_unit(ty) => {
+        if let (Some(at), Some((valued, got))) = (frame.bare, frame.valued) {
+            // A bare `break` gives a `unit`, so it joins `unit` values and `unit?` values. The
+            // type of the values decides, also when the body or the context failed.
+            let ty = frame.first.map_or(got, |(ty, _)| ty);
+            if ty == Type::UNIT || optional_unit(ty) {
+                if let Ok(body) = &mut checked {
                     body.each_expr_mut(&mut |e| fill_bare_breaks(e, 0, ty));
                 }
-                _ => {
-                    let reported = self.error(DiagnosticKind::BareBreak { at, valued });
-                    frame.failed.get_or_insert(reported);
-                }
+            } else {
+                let reported = self.error(DiagnosticKind::BareBreak { at, valued });
+                frame.failed.get_or_insert(reported);
             }
         }
         let ty = frame.loop_type();
@@ -1696,7 +1697,7 @@ impl Checker<'_> {
             Some(got) => {
                 // Checking `v` can set the first type, through a `break` of this loop inside it.
                 let frame = self.frame(target);
-                frame.valued.get_or_insert(span);
+                frame.valued.get_or_insert((span, got));
                 let (expected, first) = (frame.expected, frame.first);
                 let hinted = matches!(expected, Expectation::Hint { .. });
                 if waiting {

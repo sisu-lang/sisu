@@ -488,8 +488,9 @@ struct LoopFrame {
     crossed: bool,
     /// The first bare `break`.
     bare: Option<Span>,
-    /// The first `break` whose value's type is not `never`.
-    valued: Option<Span>,
+    /// The first `break` whose value's type is not `never`, and that type. It holds the type
+    /// also when `first` stays unset, as it does under a `Poisoned` expectation.
+    valued: Option<(Span, Type)>,
     /// The token of the error that failed the loop: a failed jump, loop label or `break` value
     /// in it. It then has no type.
     failed: Option<Reported>,
