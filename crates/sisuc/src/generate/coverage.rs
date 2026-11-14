@@ -4134,7 +4134,8 @@ fn main() {
 /// AND a call on a local, a field, an element, an element of a field, and through a bound
 /// WHEN the walk reads it
 /// THEN it marks each key of `mut self`
-/// AND a program that has only the struct's side marks the keys of that side alone
+/// AND a program that has a `mut self` method and calls `exchange` on each kind of place marks only
+/// the key of the method
 #[test]
 fn the_walk_should_mark_each_key_of_mut_self() {
     let keys = [
@@ -4204,6 +4205,8 @@ fn main() {
     for key in keys {
         assert!(walk.seen.contains(key), "the walk should mark {key}");
     }
+    // `exchange` has the shape of a `mut self` call: its first argument is a `mut` part. No
+    // `mut self` method is called here, so only the method key holds.
     let part = "struct Cell {
     n: i64
 
@@ -4212,10 +4215,20 @@ fn main() {
     }
 }
 
+struct Row {
+    c: Cell
+    cs: [Cell]
+}
+
 fn main() {
     let mut cell = Cell(n: 0)
-    cell.step()
-    print(cell.n)
+    let mut row = Row(c: Cell(n: 0), cs: [Cell(n: 1)])
+    let mut cells = [Cell(n: 2)]
+    let _ = exchange(mut cell, Cell(n: 3))
+    let _ = exchange(mut row.c, Cell(n: 3))
+    let _ = exchange(mut cells[0], Cell(n: 3))
+    let _ = exchange(mut row.cs[0], Cell(n: 3))
+    print(cell.n + row.c.n + cells[0].n + row.cs[0].n)
 }
 ";
     let mut walk = Walk::default();
