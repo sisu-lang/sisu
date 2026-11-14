@@ -1301,7 +1301,8 @@ fn mut_self_in_an_extend_block_should_be_reported_as_in_a_declaration() {
     );
     assert!(applied(grouped, &d).contains("fn grow(self) {}"));
     let e = "enum Dir {\n    North\n}\nextend Dir {\n    fn flip(mut self) {}\n}\nfn main() {}";
-    codes(e, &[]);
+    // A `mut self` that writes nothing gets W0002.
+    codes(e, &[(Code::NeverReassigned, (5, 17))]);
     // The target of a block that failed is not known, so nothing is reported.
     codes(
         "extend Missing {\n    fn flip(mut self) {}\n}\nfn main() {}",

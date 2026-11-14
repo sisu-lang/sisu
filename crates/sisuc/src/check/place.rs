@@ -1910,16 +1910,23 @@ impl Checker<'_> {
         }
     }
 
-    /// Marks the binding at the root of the place `target` as reassigned. A path that crosses a
-    /// class object marks nothing: its write needs no `mut` of the root. A path that the declared
-    /// types do not decide also marks it, such as one with a missing field. The fix of its error
-    /// needs the `mut`.
+    /// Marks the binding at the root of the place `target` as reassigned, or stamps a root `self`
+    /// as written. A path that crosses a class object marks nothing: its write needs no `mut` of
+    /// the root. A path that the declared types do not decide also marks it, such as one with a
+    /// missing field. The fix of its error needs the `mut`.
     pub(super) fn reassign_root(&mut self, target: &ast::Expr) {
-        if let ast::ExprKind::Name(name) = place_root(target).kind
-            && !self.crosses_class(target)
-            && let Some(b) = self.lookup(name)
-        {
-            b.reassigned |= b.kind == BindingKind::Var;
+        if self.crosses_class(target) {
+            return;
+        }
+        match place_root(target).kind {
+            ast::ExprKind::Name(name) => {
+                if let Some(b) = self.lookup(name) {
+                    b.reassigned |= b.kind == BindingKind::Var;
+                }
+            }
+            // `self` has no binding: its stamp is what W0002 of a `mut self` reads.
+            ast::ExprKind::SelfValue => self.body.self_written = self.write_stamp(),
+            _ => {}
         }
     }
 

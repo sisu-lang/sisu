@@ -2585,6 +2585,9 @@ impl Checker<'_> {
                 wrap_block(&mut body, want);
             }
             c.pop_scope();
+            if let Some(mut_self) = &f.mut_self {
+                c.warn_unused_mut_self(id, mut_self);
+            }
             // The value's mismatch is reported once the body is gone, so a misfit is taken now.
             let misfit = (c.misfit_type(&body))
                 .filter(|&found| ret.is_some_and(|ret| ret != Type::UNIT && ret != found));

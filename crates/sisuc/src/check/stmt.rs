@@ -6,6 +6,7 @@ use super::any::{AnyJoin, SEED, is_target, widen};
 use super::array::must_unwrap;
 use super::enums::unwrapped;
 use super::expr::{fits, local};
+use super::extend::mut_self_removal;
 use super::generic::Ahead;
 use super::pattern::LetPattern;
 use super::prelude::PRELUDE;
@@ -1903,6 +1904,27 @@ impl Checker<'_> {
                 form,
             });
         }
+    }
+
+    /// Reports W0002 on the `mut self` of the method `func`, when nothing in its body wrote
+    /// `self` or called a `mut self` method on it. Like a `mut` parameter, it gets none beside a
+    /// `todo`, or for a requirement that spells its `mut`.
+    pub(super) fn warn_unused_mut_self(&mut self, func: tir::FuncId, mut_self: &ast::MutSelf) {
+        if !self.body.self_mut
+            || self.body.self_written != 0
+            || self.body.todo
+            || mut_self.annotation.is_some()
+            || self.named_for_requirement.contains(&func)
+        {
+            return;
+        }
+        self.warn(DiagnosticKind::NeverReassigned {
+            name: "self".to_string(),
+            at: mut_self.receiver,
+            form: NeverReassignedForm::SelfParam {
+                remove: mut_self_removal(self.source.comments, mut_self),
+            },
+        });
     }
 
     /// The form of W0002 for `b`, which nothing reassigns, when it is a `mut` parameter that a

@@ -578,9 +578,9 @@ pub(super) fn method_holder(ty: Type) -> Option<Holder> {
     }
 }
 
-/// What the fix of E0018 removes for `mut_self`: the `mut` and the white space after it, up to
-/// a comment.
-fn mut_self_removal(comments: &[usize], mut_self: &ast::MutSelf) -> Span {
+/// What the fix of E0018 and of W0002 removes for `mut_self`: the `mut` and the white space after
+/// it, up to a comment.
+pub(super) fn mut_self_removal(comments: &[usize], mut_self: &ast::MutSelf) -> Span {
     let (keyword, receiver) = (mut_self.keyword, mut_self.receiver);
     Span::new(
         keyword.start(),

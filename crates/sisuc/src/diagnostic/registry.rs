@@ -2770,6 +2770,9 @@ pub(crate) enum NeverReassignedForm {
     /// A `mut` parameter, of a class type when `class`. Removing its `mut` changes every caller,
     /// so there is no fix.
     Param { class: bool },
+    /// A method's `mut self`. Removing the `mut` changes no caller, so the fix removes `remove`:
+    /// the `mut` and the white space after it, up to a comment.
+    SelfParam { remove: Span },
 }
 
 /// What owns a method.
@@ -3324,6 +3327,24 @@ impl From<DiagnosticKind> for Diagnostic {
                     d
                 }
             }
+            DiagnosticKind::NeverReassigned {
+                at,
+                form: NeverReassignedForm::SelfParam { remove },
+                ..
+            } => Diagnostic::coded(
+                code,
+                at,
+                "`self` is never reassigned, so its `mut` changes nothing",
+            )
+            .with_label("never reassigned")
+            .with_fix(Fix {
+                message: "remove `mut`".to_string(),
+                safe: true,
+                edits: vec![Edit {
+                    span: remove,
+                    replacement: String::new(),
+                }],
+            }),
             DiagnosticKind::LeadingBinaryMinus { at } => {
                 Diagnostic::coded(code, at, "a line cannot start with a binary `-`").with_help(
                     "to continue the previous line, end it with `-`; to negate, write `-x`",
