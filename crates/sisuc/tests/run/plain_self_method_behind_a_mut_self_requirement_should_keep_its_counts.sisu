@@ -1,13 +1,20 @@
 // GIVEN `interface K { fn add(mut self) }` and `struct S: K { xs: [i64]; fn add(self) }`, whose
 // `add` prints `self.xs`
-// AND `class O { mut s: S }`, and `fn bump<T: K>(mut t: T)`, which runs `t.add()`
-// AND `let a = S(xs: [1, 2])`, `let mut x = a` and `let o = O(s: a)`
-// AND `bump` takes `depth`, which `main` reads at run time as 1, and goes `depth` levels down
-// before it calls `add`; the WHEN lines leave `depth` out
-// WHEN `main` runs `bump(mut x)` and `bump(mut o.s)`, and prints `a.xs`, `x.xs` and `o.s.xs`
-// THEN each call prints "[1, 2]", and each holder prints "[1, 2]"
+// AND `class O { mut s: S }`, `class Box<T> { mut t: T }`, and `fn bump<T: K>(mut t: T)`, which
+// runs `t.add()`
+// AND `fn bump_field<T: K>(bs: [Box<T>], i: i64)`, which runs `bs[i].t.add()`, and `fn
+// bump_element<T: K>(mut xs: [T], i: i64)`, which runs `xs[i].add()`
+// AND `let a = S(xs: [1, 2])`, `let mut x = a`, `let o = O(s: a)`, `let c = S(xs: [4])` and `let
+// bs = [Box(t: a), Box(t: c)]`
+// AND `let mut ys = [a, S(xs: [3])]` and `let zs = ys`
+// AND each generic function takes `depth`, which `main` reads at run time as 1, and goes `depth`
+// levels down before it calls `add`; the WHEN lines leave `depth` out
+// WHEN `main` runs `bump(mut x)`, `bump(mut o.s)`, `bump_field(bs, 1)` and `bump_element(mut ys,
+// 1)`, and prints the holders
+// THEN each call prints the value that it got, and each holder prints its value unchanged
 // AND the memory test of the case reports no leak and no error
 // o2-calls: main bump<S> 2
+// o2-calls: main bump_element<S> 1
 interface K {
     fn add(mut self)
 }
@@ -22,6 +29,10 @@ class O {
     mut s: S
 }
 
+class Box<T> {
+    mut t: T
+}
+
 // Recursive to a depth that `main` reads at run time, so that `-O2` keeps the calls.
 fn bump<T: K>(mut t: T, depth: i64) {
     if depth > 0 {
@@ -29,6 +40,24 @@ fn bump<T: K>(mut t: T, depth: i64) {
         return
     }
     t.add()
+}
+
+// The receiver is a field of a class object that is an element: the call keeps the object.
+fn bump_field<T: K>(bs: [Box<T>], i: i64, depth: i64) {
+    if depth > 0 {
+        bump_field(bs, i, depth - 1)
+        return
+    }
+    bs[i].t.add()
+}
+
+// The receiver is an element: the call keeps the array and the index to read it.
+fn bump_element<T: K>(mut xs: [T], i: i64, depth: i64) {
+    if depth > 0 {
+        bump_element(mut xs, i, depth - 1)
+        return
+    }
+    xs[i].add()
 }
 
 fn main() {
@@ -41,4 +70,14 @@ fn main() {
     print(a.xs)                       // [1, 2]
     print(x.xs)                       // [1, 2]
     print(o.s.xs)                     // [1, 2]
+    let c = S(xs: [4])
+    let bs = [Box(t: a), Box(t: c)]
+    bump_field(bs, 1, depth)          // [4]
+    print(bs[1].t.xs)                 // [4]
+    print(c.xs)                       // [4]
+    let mut ys = [a, S(xs: [3])]
+    let zs = ys
+    bump_element(mut ys, 1, depth)    // [3]
+    print(ys[1].xs)                   // [3]
+    print(zs[1].xs)                   // [3]
 }

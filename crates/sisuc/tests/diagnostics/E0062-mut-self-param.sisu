@@ -1,0 +1,38 @@
+// GIVEN an interface `Adder` whose `add` takes `mut self`, and `Holder` with an associated type
+// `Item: Adder`
+// AND `Point: Adder`, a struct
+// WHEN a `?.` leads to a call of `add` on a value of a type parameter, of an associated type and
+// of `Point`
+// THEN it reports E0062 at each `?.`: the first names the type `T`, the second `T.Item`, and the
+// third a struct value
+interface Adder {
+    fn add(mut self)
+}
+
+interface Holder {
+    type Item: Adder
+    fn get(self) -> Item?
+}
+
+struct Point: Adder {
+    x: i64
+
+    fn add(mut self) {
+        self.x += 1
+    }
+}
+
+fn _bump<T: Adder>(mut o: T?) {
+    o?.add()
+}
+
+fn _bump_item<T: Holder>(h: T) {
+    let mut item = h.get()
+    item?.add()
+}
+
+fn main() {
+    let mut p: Point? = Some(Point(x: 1))
+    p?.add()
+    print(p?.x ?? 0)
+}

@@ -3241,10 +3241,16 @@ pub(crate) enum SelfTake {
 }
 
 /// The kind of value that a `?.` takes out of an optional, when a `mut self` call follows it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum ValueKind {
     Struct,
     Enum,
+    /// A value of a type parameter or an associated type, as the compiler writes the type.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the check makes it in the next commit")
+    )]
+    Type(String),
 }
 
 /// What a write changes of its root.
@@ -5273,8 +5279,9 @@ impl From<DiagnosticKind> for Diagnostic {
                 replace,
             } => {
                 let value = match kind {
-                    ValueKind::Struct => "a struct value",
-                    ValueKind::Enum => "an enum value",
+                    ValueKind::Struct => "a struct value".to_string(),
+                    ValueKind::Enum => "an enum value".to_string(),
+                    ValueKind::Type(ty) => format!("a value of type `{ty}`"),
                 };
                 let d = Diagnostic::coded(
                     code,
