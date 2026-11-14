@@ -23,8 +23,9 @@ pub(crate) struct Rule {
     pub(crate) prefix: Option<String>,
     /// The ID of the item, when its prefix is `{#id} ` and the text follows on the same line.
     pub(crate) id: Option<String>,
-    /// Whether a white space character that the site does not see stands before the prefix.
-    pub(crate) after_space: bool,
+    /// The first white space character that the site does not see, when one stands before the
+    /// prefix.
+    pub(crate) before: Option<char>,
     /// The hash of the text of the rule (see `hash_of`): four lowercase hex digits.
     pub(crate) hash: String,
 }
@@ -89,27 +90,27 @@ pub(crate) fn read_rules(text: &str) -> (Vec<Rule>, Vec<usize>) {
                 Event::Text(_) | Event::Code(_) | Event::Start(Tag::Paragraph)
             );
             let at = &text[range.start..];
-            let after_space = at.starts_with(is_stripped);
+            let before = at.chars().next().filter(|&c| is_stripped(c));
             // The site accepts `\{#` after a stripped character, because `pulldown-cmark` then
             // keeps the `\` in the text. With no stripped character first, `at` starts at the
             // escaped `\` of `\\{#`. That `\` is text on the site, so it gives no prefix.
             let trimmed = at.trim_start_matches(is_stripped_or_blank);
             let trimmed = trimmed
                 .strip_prefix('\\')
-                .filter(|rest| after_space && rest.starts_with("{#"))
+                .filter(|rest| before.is_some() && rest.starts_with("{#"))
                 .unwrap_or(trimmed);
             let prefix = starts_text.then(|| read_prefix(trimmed)).flatten();
             if prefix.is_some() {
                 id_lines.push(line);
             }
             if is_rule {
-                let after_space = after_space && prefix.is_some();
+                let before = before.filter(|_| prefix.is_some());
                 let (prefix, id) = prefix.map_or((None, None), |(written, id)| (Some(written), id));
                 rules.push(Rule {
                     line,
                     prefix,
                     id,
-                    after_space,
+                    before,
                     hash: String::new(),
                 });
             }
@@ -187,7 +188,7 @@ fn is_stripped(c: char) -> bool {
 }
 
 /// Whether Python `str.strip` strips `c`.
-fn is_stripped_or_blank(c: char) -> bool {
+pub(crate) fn is_stripped_or_blank(c: char) -> bool {
     is_stripped(c) || matches!(c, ' ' | '\t')
 }
 
@@ -283,10 +284,10 @@ pub(crate) fn id_faults(stem: &str, page: &Page) -> Vec<Fault> {
     for rule in &page.rules {
         let line = rule.line;
         let message = match (&rule.id, &rule.prefix) {
-            _ if rule.after_space => {
-                "write the ID at the start of the item, with no other character before it."
-                    .to_string()
-            }
+            _ if let Some(c) = rule.before => format!(
+                "remove the U+{:04X} before the ID. Write the ID at the start of the item.",
+                u32::from(c)
+            ),
             (None, Some(written)) if written.ends_with('}') => {
                 format!("write one space and then the text of the rule after `{written}`.")
             }
@@ -296,8 +297,11 @@ pub(crate) fn id_faults(stem: &str, page: &Page) -> Vec<Fault> {
             (None, None) => {
                 "this rule has no ID. The page has rule IDs, so each rule needs one.".to_string()
             }
+            (Some(id), _) if id.is_empty() => "the ID is empty. Write lowercase parts that start \
+                 with a letter, joined by dots."
+                .to_string(),
             (Some(id), _) if !has_valid_form(id) => format!(
-                "the ID \"{id}\" has a bad form. Write lowercase parts that start with a letter, \
+                "the ID `{id}` has a bad form. Write lowercase parts that start with a letter, \
                  joined by dots."
             ),
             (Some(id), _)
@@ -305,11 +309,11 @@ pub(crate) fn id_faults(stem: &str, page: &Page) -> Vec<Fault> {
                     .strip_prefix(stem)
                     .is_some_and(|rest| rest.starts_with('.')) =>
             {
-                format!("the ID {id} must start with \"{stem}.\".")
+                format!("the ID `{id}` must start with `{stem}.`.")
             }
             (Some(id), _) => match seen.entry(id) {
                 Entry::Occupied(first) => {
-                    format!("{id} is also the ID of the rule at line {}.", first.get())
+                    format!("`{id}` is also the ID of the rule at line {}.", first.get())
                 }
                 Entry::Vacant(slot) => {
                     slot.insert(line);
@@ -459,7 +463,7 @@ fn proof_faults(page: &Page, markers: &[RuleMarker], bad_lines: &FxHashSet<usize
             if in_development {
                 continue;
             }
-            format!("{id} has no test. Add `r[verify {id}@{hash}]` to a test that proves it.")
+            format!("`{id}` has no test. Add `r[verify {id}@{hash}]` to a test that proves it.")
         } else if stale.is_empty() {
             continue;
         } else {
@@ -468,7 +472,7 @@ fn proof_faults(page: &Page, markers: &[RuleMarker], bad_lines: &FxHashSet<usize
                 .map(|m| format!("{}:{} (@{})", m.file, m.line, m.hash))
                 .collect();
             format!(
-                "the text of {id} changed. Its hash is now @{hash}. Read these tests again, \
+                "the text of `{id}` changed. Its hash is now @{hash}. Read these tests again, \
                  then change each marker's hash:\n  {}",
                 list.join("\n  ")
             )
