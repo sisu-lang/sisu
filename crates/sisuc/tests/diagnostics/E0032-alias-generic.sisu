@@ -3,7 +3,7 @@
 // WHEN `sisu check` runs on it
 // THEN each E0032 says `M`, the alias as written, and not `i64`
 // AND the label of its origin says `M`, with the position of the alias
-// AND a type that names a type parameter, such as `L<U>`, keeps its text
+// AND a type that names a type parameter, such as `L<U>`, is shown resolved, not as written
 type M = i64
 type L<X> = [X]
 fn f<U>(a: U, n: M) {
@@ -94,4 +94,34 @@ fn main() {
     array_of_alias_plain(["x"])
     names_parameter("x")
     print(returns_names_parameter(1))
+    field_names_parameter()
+    constructor_names_parameter(1)
+    payload_names_parameter(1)
+    parameter_names_parameter(1)
+}
+struct N<U> {
+    a: U
+    n: L<U>
+}
+fn field_names_parameter() {
+    let mut p = N(a: 1, n: [2])
+    p.n = "x"
+    print(p.a)
+}
+fn constructor_names_parameter<U>(u: U) {
+    let p = N(a: u, n: "x")
+    print(p.a)
+}
+enum Pay<U> {
+    A(U, L<U>)
+}
+fn payload_names_parameter<U>(u: U) {
+    let _e = Pay.A(u, "x")
+}
+fn takes_list<U>(a: U, n: L<U>) {
+    print(a)
+    print(n)
+}
+fn parameter_names_parameter<U>(u: U) {
+    takes_list(u, "x")
 }

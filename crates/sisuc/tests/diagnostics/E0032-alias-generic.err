@@ -155,5 +155,35 @@ error[E0032]: expected an array, found `string`
 95 |     names_parameter("x")
    |                     ^^^
 
-sisu: 15 errors, 1 warning
+error[E0032]: expected `[i64]`, found `string`
+   --> E0032-alias-generic.sisu:108:11
+    |
+108 |     p.n = "x"
+    |           ^^^
+
+error[E0032]: expected `[U]`, found `string`
+   --> E0032-alias-generic.sisu:112:24
+    |
+112 |     let p = N(a: u, n: "x")
+    |                  -     ^^^
+    |                  |
+    |                  this argument gives `U` the type `U`
+
+error[E0032]: expected `[U]`, found `string`
+   --> E0032-alias-generic.sisu:119:23
+    |
+119 |     let _e = Pay.A(u, "x")
+    |                    -  ^^^
+    |                    |
+    |                    this argument gives `U` the type `U`
+
+error[E0032]: expected `[U]`, found `string`
+   --> E0032-alias-generic.sisu:126:19
+    |
+126 |     takes_list(u, "x")
+    |                -  ^^^
+    |                |
+    |                this argument gives `U` the type `U`
+
+sisu: 19 errors, 1 warning
 sisu: for more on a code, run `sisu explain <code>`: E0032, W0015
