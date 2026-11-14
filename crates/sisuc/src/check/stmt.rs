@@ -1384,7 +1384,7 @@ impl Checker<'_> {
             let ty = frame.first.map_or(got, |(ty, _)| ty);
             if ty == Type::UNIT || optional_unit(ty) {
                 if let Ok(body) = &mut checked {
-                    body.each_expr_mut(&mut |e| fill_bare_breaks(e, 0, ty));
+                    body.each_expr_mut(&mut |e| fill_bare_breaks(e, 0, ty, frame.crossed));
                 }
             } else {
                 let reported = self.error(DiagnosticKind::BareBreak { at, valued });
@@ -2194,13 +2194,17 @@ fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool, widened
 }
 
 /// Gives each bare `break` in `e` that ends the loop `depth` loops out from `e` a `unit` value,
-/// wrapped into `ty` when that is `unit?`. It enters each nested loop, as a labelled `break` in one
-/// can end an outer loop.
-fn fill_bare_breaks(e: &mut tir::Expr, depth: usize, ty: Type) {
+/// wrapped into `ty` when that is `unit?`. It enters nested loops only when `crossed`: when a
+/// `break` in one targets that loop.
+fn fill_bare_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
+    let nested = matches!(e.kind, ExprKind::Loop(_));
+    if nested && !crossed {
+        return;
+    }
     #[cfg(test)]
     super::FILL_STEPS.set(super::FILL_STEPS.get() + 1);
-    let inner = depth + usize::from(matches!(e.kind, ExprKind::Loop(_)));
-    e.each_child_mut(&mut |child| fill_bare_breaks(child, inner, ty));
+    let inner = depth + usize::from(nested);
+    e.each_child_mut(&mut |child| fill_bare_breaks(child, inner, ty, crossed));
     let span = e.span;
     if let ExprKind::Break {
         depth: target,
