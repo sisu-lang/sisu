@@ -166,11 +166,24 @@ fn receiver_without_a_changeable_root_should_be_rejected() {
     );
 }
 
+/// The one diagnostic of `src` with the code `code`.
+fn only(src: &str, code: Code) -> Diagnostic {
+    let (_, ds) = checked(src);
+    let mut found = ds.into_iter().filter(|d| d.code() == code);
+    let d = found.next().expect("the program should have the code");
+    assert!(found.next().is_none(), "{src}: a second {code:?}");
+    d
+}
+
 /// GIVEN `Point` with `move_by`, `enum E { A; B; fn flip(mut self) }`, and an optional value.
-/// WHEN the program runs a `mut self` call whose receiver's path holds a `?.`. THEN `sisu check`
-/// reports E0062 at the first `?.`, and no other error.
+/// WHEN the program runs a `mut self` call whose receiver's path holds a `?.`, or a `.` on an
+/// optional. THEN `sisu check` reports one E0062, at the first `?.` or at the optional, and no
+/// other error. A `.` on an optional gets the help and the fixes of the field write of the same
+/// root, and no W0002.
 #[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows")]
 fn mut_self_call_through_an_optional_value_should_be_e0062() {
+    judge_unused();
     let program = |decl: &str, call: &str| {
         format!(
             "{POINT}enum E {{\n    A\n    B\n    fn flip(mut self) {{ self = E.B }}\n}}\n\
@@ -211,12 +224,156 @@ fn mut_self_call_through_an_optional_value_should_be_e0062() {
         [(MayBeNone, (5, 28))],
         "a write through `?.`"
     );
+    // A receiver whose own check failed at a `?.` has its report: the call adds none. The
+    // payload that a `.` on an optional checks the call on is no failure of its own.
+    let chained = [
+        (
+            "an index after the `?.`",
+            "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nstruct L { p: P; ps: [P] }\nfn main() { let mut o: L? = Some(L(p: P(x: 1), ps: [P(x: 1)])); o?.ps[0].m(); print(o != None) }",
+            (MayBeNone, (3, 65)),
+        ),
+        (
+            "an index after the `?.`, of an enum",
+            "enum D { N; S; fn flip(mut self) { self = D.S } }\nstruct L { ds: [D] }\nfn main() { let mut o: L? = Some(L(ds: [D.N])); o?.ds[0].flip(); print(o != None) }",
+            (MayBeNone, (3, 49)),
+        ),
+        (
+            "`?.` on an optional of an optional",
+            "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nfn main() { let mut q: P?? = Some(Some(P(x: 1))); q?.m(); print(q != None) }",
+            (MayBeNone, (2, 51)),
+        ),
+        (
+            "a field after the `?.`",
+            "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nstruct L { p: P }\nfn main() { let mut o: L? = Some(L(p: P(x: 1))); o?.p.m(); print(o != None) }",
+            (MayBeNone, (3, 51)),
+        ),
+        (
+            "a field after the `?.`, of an enum",
+            "enum D { N; S; fn flip(mut self) { self = D.S } }\nstruct L { d: D }\nfn main() { let mut o: L? = Some(L(d: D.N)); o?.d.flip(); print(o != None) }",
+            (MayBeNone, (3, 47)),
+        ),
+        (
+            "two `?.`",
+            "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nstruct L { p: P? }\nfn main() { let mut o: L? = Some(L(p: Some(P(x: 1)))); o?.p?.m(); print(o != None) }",
+            (MayBeNone, (3, 57)),
+        ),
+        (
+            "a struct's `push` after the `?.`",
+            "struct S { n: i64; fn push(mut self, k: i64) { self.n += k } }\nstruct H { s: S }\nfn main() { let mut o: H? = None; o?.s.push(1); print(o != None) }",
+            (MayBeNone, (3, 36)),
+        ),
+    ];
+    for (row, src, wanted) in chained {
+        let (_, ds) = checked(src);
+        assert_eq!(errors(src, &ds), [wanted], "row `{row}`");
+    }
+    // The peel help of `?.` on an optional of an optional stays, as on a field write.
+    let src = chained[2].1;
+    assert!(only(src, MayBeNone).help().is_some(), "{src}");
+    // Each `.` row, and the field write whose help and fixes it has.
+    let replace_o = "struct S { n: i64 }\nfn main() { let mut o: S? = Some(S(n: 1)); o.n = 2; print(o?.n ?? 0) }";
+    let dotted = [
+        (
+            "a `let mut`",
+            "struct S { n: i64; fn bump(mut self) { self.n += 1 } }\nfn main() { let mut o: S? = Some(S(n: 1)); o.bump(); print(o?.n ?? 0) }",
+            (2, 44),
+            replace_o,
+        ),
+        (
+            "a method of an `extend`",
+            "struct S { n: i64 }\nextend S { fn bump(mut self) { self.n += 1 } }\nfn main() { let mut o: S? = Some(S(n: 1)); o.bump(); print(o?.n ?? 0) }",
+            (3, 44),
+            replace_o,
+        ),
+        (
+            "an enum",
+            "enum D { N; S; fn flip(mut self) { self = D.S } }\nfn main() { let mut o: D? = Some(D.N); o.flip(); print(o != None) }",
+            (2, 40),
+            replace_o,
+        ),
+        (
+            "a `let`",
+            "struct S { n: i64; fn bump(mut self) { self.n += 1 } }\nfn main() { let o: S? = Some(S(n: 1)); o.bump(); print(o?.n ?? 0) }",
+            (2, 40),
+            "struct S { n: i64 }\nfn main() { let o: S? = Some(S(n: 1)); o.n = 2; print(o?.n ?? 0) }",
+        ),
+        (
+            "a field of the optional",
+            "struct P { x: i64; fn bump(mut self) { self.x += 1 } }\nstruct S { p: P }\nfn main() { let mut s: S? = None; s.p.bump(); print(s != None) }",
+            (3, 35),
+            "struct P { x: i64 }\nstruct S { p: P }\nfn main() { let mut s: S? = None; s.p.x = 2; print(s != None) }",
+        ),
+        (
+            "an element of a field of the optional",
+            "struct P { x: i64; fn bump(mut self) { self.x += 1 } }\nstruct L { ps: [P] }\nfn main() { let mut o: L? = None; o.ps[0].bump(); print(o != None) }",
+            (3, 35),
+            "struct P { x: i64 }\nstruct L { ps: [P] }\nfn main() { let mut o: L? = None; o.ps[0].x = 1; print(o != None) }",
+        ),
+        (
+            "an optional of an optional",
+            "struct S { n: i64; fn bump(mut self) { self.n += 1 } }\nfn main() { let mut o: S?? = None; o.bump(); print(o != None) }",
+            (2, 36),
+            "struct S { n: i64 }\nfn main() { let mut o: S?? = None; o.n = 1; print(o != None) }",
+        ),
+        (
+            "an element",
+            "struct S { n: i64; fn bump(mut self) { self.n += 1 } }\nfn main() { let mut xs: [S?] = [None]; xs[0].bump(); print(xs.len()) }",
+            (2, 40),
+            "struct S { n: i64 }\nfn main() { let mut xs: [S?] = [None]; xs[0].n = 1; print(xs.len()) }",
+        ),
+        (
+            "a `mut` parameter",
+            "struct S { n: i64; fn bump(mut self) { self.n += 1 } }\nfn f(mut o: S?) { o.bump(); print(o?.n ?? 0) }\nfn main() { let mut x: S? = None; f(mut x) }",
+            (2, 19),
+            "struct S { n: i64 }\nfn f(mut o: S?) { o.n = 1; print(o?.n ?? 0) }\nfn main() { let mut x: S? = None; f(mut x) }",
+        ),
+        (
+            "a field of `mut self`",
+            "struct S { n: i64; fn bump(mut self) { self.n += 1 } }\nstruct H { o: S?; fn g(mut self) { self.o.bump() } }\nfn main() { let mut h = H(o: None); h.g(); print(h.o?.n ?? 0) }",
+            (2, 36),
+            "struct S { n: i64 }\nstruct H { o: S?; fn g(mut self) { self.o.n = 1 } }\nfn main() { let mut h = H(o: None); h.g(); print(h.o?.n ?? 0) }",
+        ),
+        (
+            "a struct's `push`",
+            "struct S { n: i64; fn push(mut self, k: i64) { self.n += k } }\nfn main() { let mut o: S? = None; o.push(1); print(o?.n ?? 0) }",
+            (2, 35),
+            replace_o,
+        ),
+        (
+            "a struct's `push` on a field of the optional",
+            "struct S { n: i64; fn push(mut self, k: i64) { self.n += k } }\nstruct H { s: S }\nfn main() { let mut o: H? = None; o.s.push(1); print(o != None) }",
+            (3, 35),
+            replace_o,
+        ),
+    ];
+    for (row, src, pos, twin) in dotted {
+        assert_eq!(all_codes(src), [(MayBeNone, pos)], "row `{row}`");
+        // The fixture `E0062-mut-self-call` pins the text of the help.
+        let shape = |d: &Diagnostic| (d.help().is_some(), d.fixes().len());
+        let (d, write) = (only(src, MayBeNone), only(twin, MayBeNone));
+        assert_eq!(
+            shape(&d),
+            shape(&write),
+            "row `{row}`: the help and the fixes"
+        );
+    }
+    // A plain method keeps the read's help and its `?.` fix.
+    let src = "struct S { n: i64; fn show(self) { print(self.n) }; fn bump(mut self) { self.n += 1 } }\nfn main() { let mut o: S? = Some(S(n: 1)); o.show(); print(o?.n ?? 0) }";
+    assert_eq!(
+        all_codes(src),
+        [(NeverReassigned, (2, 21)), (MayBeNone, (2, 44))],
+        "a plain method"
+    );
+    let d = only(src, MayBeNone);
+    assert!(d.help().is_some(), "{d:?}");
+    assert_eq!(d.fixes().len(), 1, "{d:?}");
 }
 
 /// GIVEN `struct A { n: i64; fn len(mut self) }`, after a program whose plain methods share the
 /// name `len`. WHEN the program is checked. THEN each row has the codes of the same program
 /// without `A`: the receiver of a plain method keeps its rules.
 #[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows")]
 fn plain_method_with_a_mut_self_name_should_keep_its_receiver_rules() {
     judge_unused();
     let a = "struct A { n: i64; fn len(mut self) { self.n = 1 } }\n";
@@ -251,6 +408,11 @@ fn plain_method_with_a_mut_self_name_should_keep_its_receiver_rules() {
             "struct P { x: i64; fn len(self) -> i64 { self.x } }\nstruct S { p: P }\nfn main() {\n    let s = S(p: P(x: 1))\n    print(s.p.len())\n}\n",
             vec![],
         ),
+        (
+            "an array field of an optional",
+            "struct S { xs: [i64] }\nfn main() {\n    let mut s: S? = None\n    print(s.xs.len())\n}\n",
+            vec![(NeverReassigned, (3, 13)), (MayBeNone, (4, 11))],
+        ),
     ];
     for (row, src, wanted) in &rows {
         assert_eq!(all_codes(src), *wanted, "row `{row}` without `A`");
@@ -269,6 +431,66 @@ fn plain_method_with_a_mut_self_name_should_keep_its_receiver_rules() {
         [(CannotInfer, on(src, 5, "len"))],
         "with `A`"
     );
+    // A generated `eq` and `less`, and an array's `get` with a range, read the receiver that a
+    // `mut self` method of the same name parks.
+    let ops = "struct A { n: i64; fn eq(mut self, o: i64) -> bool { self.n += o; true }; fn less(mut self, o: i64) -> bool { self.n += o; false }; fn get(mut self, i: i64) -> i64 { self.n += i; self.n } }\n";
+    let rows = [
+        (
+            "an `i64` `let`",
+            "fn main() {\n    let x = 1\n    print(x.eq(1))\n    print(x.less(2))\n}\n",
+        ),
+        (
+            "an array",
+            "fn main() {\n    let xs = [1, 2]\n    print(xs.eq([1, 2]))\n}\n",
+        ),
+        (
+            "a string parameter",
+            "fn f(s: string) -> bool { s.eq(\"b\") }\nfn main() {\n    print(f(\"a\"))\n}\n",
+        ),
+        (
+            "a struct field of a `let mut`",
+            "struct Q { y: i64 }\nstruct W { q: Q }\nfn main() {\n    let mut w = W(q: Q(y: 1))\n    w = W(q: Q(y: 2))\n    print(w.q.eq(Q(y: 2)))\n}\n",
+        ),
+        (
+            "an enum",
+            "enum E { X; Y }\nfn main() {\n    let e = E.X\n    print(e.eq(E.Y))\n}\n",
+        ),
+        (
+            "a `for` binding",
+            "fn main() {\n    for x in [1, 2] {\n        print(x.eq(1))\n    }\n}\n",
+        ),
+        (
+            "an element",
+            "fn main() {\n    let xs = [[1], [2]]\n    print(xs[0].eq([1]))\n}\n",
+        ),
+        (
+            "an optional",
+            "fn main() {\n    let x: i64? = Some(1)\n    print(x.eq(Some(1)))\n}\n",
+        ),
+        (
+            "a field of `self`",
+            "struct B { k: i64; fn f(self) -> bool { self.k.eq(1) } }\nfn main() {\n    print(B(k: 1).f())\n}\n",
+        ),
+        (
+            "a type parameter",
+            "fn g<T: Eq>(t: T, u: T) -> bool { t.eq(u) }\nfn main() {\n    print(g(1, 2))\n}\n",
+        ),
+        (
+            "type arguments",
+            "fn main() {\n    let x = 1\n    print(x.eq<i64>(1))\n}\n",
+        ),
+        (
+            "a struct's own `mut self` `eq`",
+            "struct P { x: i64; fn eq(mut self, o: P) -> bool { self.x = o.x; true } }\nfn main() {\n    let mut p = P(x: 1)\n    print(p.eq(P(x: 2)))\n    print(p.x)\n}\n",
+        ),
+        (
+            "an array's `get` with a range",
+            "fn main() {\n    let xs = [1, 2, 3]\n    print(xs.get(0..1))\n}\n",
+        ),
+    ];
+    for (row, src) in rows {
+        assert_eq!(codes_without(src, ops), all_codes(src), "row `{row}`");
+    }
 }
 
 /// GIVEN a method body with `mut self` in a struct, an enum, an `extend` of each, or a class.
