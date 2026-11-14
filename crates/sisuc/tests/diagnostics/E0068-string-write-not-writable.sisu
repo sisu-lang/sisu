@@ -87,4 +87,21 @@ fn struct_in_let_mut_substring() {
     o.s[..1][0] = "x"
 }
 
+fn mut_parameter(mut t: string) {
+    t[0] = "x"
+}
+
+fn struct_in_let_mut() {
+    let mut o = O(s: "a")
+    o.s[0] = "x"
+}
+
+struct P {
+    s: string
+
+    fn change_substring(self) {
+        self.s[..1][0] = "x"
+    }
+}
+
 fn main() {}
