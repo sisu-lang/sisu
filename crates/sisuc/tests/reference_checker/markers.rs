@@ -37,7 +37,7 @@ fn assert_one_fault(row: &str, faults: &[MarkerFault], file: &str, fragment: &st
 /// GIVEN a test with the comment `// r[verify strings.text.nul@1234]`
 /// AND no rule with the ID `strings.text.nul`
 /// WHEN its markers are read and checked against the IDs of the joined pages
-/// THEN the result is the fault "no rule has the ID strings.text.nul" at the file and line of the
+/// THEN the result is the fault "no rule has the ID `strings.text.nul`" at the file and line of the
 /// marker
 /// AND a marker that does not parse gives a fault for its form at its line
 /// AND a marker in a file that the site shows gives a fault for the file
@@ -51,7 +51,7 @@ fn bad_marker_should_fail_at_its_line() {
             "unknown ID",
             test,
             b"// r[verify strings.text.nul@1234]\n",
-            "no rule has the ID",
+            "no rule has the ID `strings.text.nul`.",
         ),
         (
             "no hash",

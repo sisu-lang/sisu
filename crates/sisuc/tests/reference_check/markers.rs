@@ -154,7 +154,7 @@ pub(crate) fn unknown_ids(markers: &[RuleMarker], known: &FxHashSet<String>) -> 
         .map(|marker| MarkerFault {
             file: marker.file.clone(),
             line: marker.line,
-            message: format!("no rule has the ID {}.", marker.id),
+            message: format!("no rule has the ID `{}`.", marker.id),
         })
         .collect()
 }

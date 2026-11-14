@@ -1523,7 +1523,7 @@ To add a rule to a joined page:
    unique on its page, and it does not change when the wording of the rule
    changes.
 3. Run `make test`. The `reference::<page>::rules` trial fails. Its message is
-   ``<id> has no test. Add `r[verify <id>@<hash>]` to a test that proves it.``
+   `` `<id>` has no test. Add `r[verify <id>@<hash>]` to a test that proves it. ``
    The message gives the marker with the right hash.
 4. Put the marker in a comment line of the test that proves the rule, alone on
    its line. A `.sisu` case in `crates/sisuc/tests/run` puts it in its header
@@ -1547,13 +1547,13 @@ fault. Put the pending part under its own heading.
 
 When the text of a rule changes, its hash changes. The trial then fails with
 this message, followed by the file and line of each marker:
-``the text of <id> changed. Its hash is now @<hash>. Read these tests again, then change each marker's hash:``
+``the text of `<id>` changed. Its hash is now @<hash>. Read these tests again, then change each marker's hash:``
 Read each test again. Check that it still proves the rule. Then change the hash in
 each marker. No command changes the hashes for you. A rename of the section or a
 change of a link target does not change the hash.
 
 The `reference::markers` trial reads each `.rs` and `.sisu` file under `crates/`.
-It fails with ``no rule has the ID <id>.`` for a marker whose ID is on no joined
+It fails with ``no rule has the ID `<id>`.`` for a marker whose ID is on no joined
 page. It fails with ``this marker has a bad form`` for a marker line that does not
 parse. Delete or move the markers of a rule that you remove.
 

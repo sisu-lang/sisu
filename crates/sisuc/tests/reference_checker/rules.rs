@@ -214,12 +214,12 @@ fn prefix_should_be_one_space_then_the_text() {
         (
             "the text on the next line",
             "**Rules**\n\n- {#strings.text.null}\n  A string\n",
-            &[(3, "one space")],
+            &[(3, "write one space")],
         ),
         (
             "no space",
             "**Rules**\n\n- {#strings.text.null}A string\n",
-            &[(3, "one space")],
+            &[(3, "write one space")],
         ),
         (
             "no space, and the message names the ID",
@@ -229,23 +229,62 @@ fn prefix_should_be_one_space_then_the_text() {
         (
             "two spaces",
             "**Rules**\n\n- {#strings.text.null}  A string\n",
-            &[(3, "one space")],
+            &[(3, "write one space")],
         ),
         (
             "no closing brace",
             "**Rules**\n\n- {#strings.text.null A map {k} is\n",
-            &[(3, "one space")],
+            &[(3, "write `}`")],
         ),
         (
-            "an empty ID, and the message names it",
+            "an empty ID",
             "**Rules**\n\n- {#} x\n",
-            &[(3, "the ID \"\" has a bad form")],
+            &[(3, "the ID is empty")],
         ),
         (
             "a code span after the space",
             "**Rules**\n\n- {#strings.text.join} `+` joins two strings\n",
             &[],
         ),
+    ];
+    for (row, text, want) in rows {
+        assert_faults(row, &id_fault_list("strings", text), want);
+    }
+}
+
+/// GIVEN a rule item with one or more characters before `{#strings.a.b}`
+/// WHEN its faults are found
+/// THEN the fault names the first character that the site does not see, as `U+` and its code point
+/// AND a space before the ID gives no fault
+#[test]
+fn character_before_the_id_should_be_named() {
+    let rows: [Row<'_>; 6] = [
+        (
+            "a no-break space",
+            "**Rules**\n\n- \u{a0}{#strings.a.b} x\n",
+            &[(3, "remove the U+00A0 before the ID")],
+        ),
+        (
+            "an ideographic space",
+            "**Rules**\n\n- \u{3000}{#strings.a.b} x\n",
+            &[(3, "remove the U+3000 before the ID")],
+        ),
+        (
+            "a unit separator",
+            "**Rules**\n\n- \u{1f}{#strings.a.b} x\n",
+            &[(3, "remove the U+001F before the ID")],
+        ),
+        (
+            "a no-break space and a backslash",
+            "**Rules**\n\n- \u{a0}\\{#strings.a.b} x\n",
+            &[(3, "remove the U+00A0 before the ID")],
+        ),
+        (
+            "two characters, and the first is named",
+            "**Rules**\n\n- \u{3000}\u{a0}{#strings.a.b} x\n",
+            &[(3, "remove the U+3000 before the ID")],
+        ),
+        ("a space", "**Rules**\n\n-  {#strings.a.b} x\n", &[]),
     ];
     for (row, text, want) in rows {
         assert_faults(row, &id_fault_list("strings", text), want);
@@ -436,8 +475,14 @@ fn id_should_have_the_stem_and_a_valid_form() {
     let rows: [(&str, &[(usize, &str)]); 6] = [
         ("strings.text.null", &[]),
         ("strings.null", &[]),
-        ("text.null", &[(3, "must start with")]),
-        ("strings.Text.null", &[(3, "has a bad form")]),
+        (
+            "text.null",
+            &[(3, "the ID `text.null` must start with `strings.`.")],
+        ),
+        (
+            "strings.Text.null",
+            &[(3, "the ID `strings.Text.null` has a bad form")],
+        ),
         ("strings.text..null", &[(3, "has a bad form")]),
         ("strings.2text", &[(3, "has a bad form")]),
     ];
@@ -449,12 +494,16 @@ fn id_should_have_the_stem_and_a_valid_form() {
 
 /// GIVEN `strings.md` with two rules whose ID is `strings.text.null`
 /// WHEN its faults are found
-/// THEN it fails with "is also the ID of" and names both lines
+/// THEN it fails with "`strings.text.null` is also the ID of" and names both lines
 #[test]
 fn repeated_id_should_fail_with_both_lines() {
     let text = "**Rules**\n\n- {#strings.text.null} a\n- {#strings.text.null} b\n";
     let faults = id_fault_list("strings", text);
-    assert_faults("repeat", &faults, &[(4, "is also the ID of")]);
+    assert_faults(
+        "repeat",
+        &faults,
+        &[(4, "`strings.text.null` is also the ID of")],
+    );
     assert!(
         faults[0].1.ends_with("at line 3."),
         "the message should name line 3: {:?}",
@@ -534,7 +583,7 @@ fn rule_with_a_current_marker_should_pass() {
 
 /// GIVEN a joined page with a rule `strings.text.null` that no test names
 /// WHEN its faults are found
-/// THEN it fails with "strings.text.null has no test"
+/// THEN it fails with "`strings.text.null` has no test"
 /// AND the message holds the marker with the current hash
 #[test]
 fn rule_without_a_marker_should_fail_with_its_hash() {
@@ -544,7 +593,7 @@ fn rule_without_a_marker_should_fail_with_its_hash() {
     assert_faults(
         "no marker",
         &faults,
-        &[(3, "strings.text.null has no test")],
+        &[(3, "`strings.text.null` has no test")],
     );
     assert!(
         faults[0].1.contains("r[verify strings.text.null@3958]"),
@@ -591,13 +640,13 @@ fn proof_check_should_skip_a_rule_and_not_the_page() {
     assert_faults(
         "two rules",
         &rule_fault_list("strings", text, &[]),
-        &[(3, "must start with"), (4, "strings.a.b has no test")],
+        &[(3, "must start with"), (4, "`strings.a.b` has no test")],
     );
 }
 
 /// GIVEN a rule whose marker holds the hash of its old text
 /// WHEN its faults are found
-/// THEN it fails with "the text of strings.text.null changed"
+/// THEN it fails with "the text of `strings.text.null` changed"
 /// AND the message names each file and line of a marker with the old hash
 /// AND it gives the new hash
 #[test]
@@ -623,7 +672,7 @@ fn changed_rule_should_list_each_stale_marker() {
     assert_faults(
         "stale",
         &faults,
-        &[(3, "the text of strings.text.null changed")],
+        &[(3, "the text of `strings.text.null` changed")],
     );
     let message = &faults[0].1;
     for part in [
@@ -887,6 +936,7 @@ fn pending_word_should_be_read_as_the_site_reads_it() {
     let rows = [
         ("in the value of args", "args=\"a pending b\" bogus"),
         ("joined by a tab", "pending\tx"),
+        ("no closing quote", "args=\"a pending"),
     ];
     for (row, info) in rows {
         let text = format!(
@@ -903,6 +953,32 @@ fn pending_word_should_be_read_as_the_site_reads_it() {
     }
 }
 
+/// GIVEN a joined page with a `###` section whose fence info string is `sisu`, a white space
+/// character and `pending`
+/// WHEN `read_page` reads it and its faults are found
+/// THEN the page has one fault, for the fence, at line 3
+/// AND the rule has no fault, because the fence is kept and the section is pending
+#[test]
+fn sisu_fence_with_white_space_should_give_one_fault() {
+    let rows = [
+        ("a tab", "sisu\tpending"),
+        ("a no-break space", "sisu\u{a0}pending"),
+        ("a unit separator", "sisu\u{1c}pending"),
+    ];
+    for (row, info) in rows {
+        let text =
+            format!("### S\n\n```{info}\nfn main() {{}}\n```\n\n**Rules**\n\n- {{#strings.a}} x\n");
+        let page = read_page(&text);
+        let got: Vec<(usize, String)> = page
+            .faults
+            .iter()
+            .map(|fault| (fault.line, fault.message.clone()))
+            .collect();
+        assert_faults(row, &got, &[(3, "the fence `sisu")]);
+        assert_faults(row, &rule_fault_list("strings", &text, &[]), &[]);
+    }
+}
+
 /// GIVEN a joined page with a rule with no test, and after it a rule whose ID has a fault
 /// WHEN its faults are found
 /// THEN the fault for the missing test comes first, as its line is first
@@ -912,7 +988,7 @@ fn rule_faults_should_come_in_line_order() {
     assert_faults(
         "two rules",
         &rule_fault_list("strings", text, &[]),
-        &[(3, "strings.a has no test"), (4, "must start with")],
+        &[(3, "`strings.a` has no test"), (4, "must start with")],
     );
 }
 
@@ -924,7 +1000,7 @@ const RULE_TABLE: &str = "tests/reference_checker/rule_ids.json";
 /// Each container of the rule item: its name, and its page with `{item}` in place of the item.
 /// On a joined page, `{first}` is a rule with an ID and `{parent}` is the prefix of the parent
 /// rule; on a page that has not joined, both are empty.
-const CONTAINERS: [(&str, &str); 6] = [
+const CONTAINERS: [(&str, &str); 7] = [
     ("rule", "**Rules**\n\n{first}- {item}\n"),
     ("nested item", "**Rules**\n\n- {parent}w\n  - {item}\n"),
     ("block quote", "**Rules**\n\n{first}- > {item}\n"),
@@ -934,6 +1010,7 @@ const CONTAINERS: [(&str, &str); 6] = [
         "**Rules**\n\n{first}\nA sentence.\n\n- {item}\n",
     ),
     ("lazy line", "**Rules**\n\n{first}- x\n{item}\n"),
+    ("setext heading", "**Rules**\n\n{first}- {item}\n  ---\n"),
 ];
 
 /// `text` with each character outside ASCII as a JSON `\u` escape, in UTF-16 units, so that no
