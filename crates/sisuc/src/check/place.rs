@@ -1884,6 +1884,14 @@ impl Checker<'_> {
         }
     }
 
+    /// Marks the root of `target` as reassigned, as `reassign_root` does, unless a range index on
+    /// the path gives a copy: a write to the copy changes no root.
+    pub(super) fn reassign_chain_root(&mut self, target: &ast::Expr) {
+        if !matches!(self.struct_walk(target), Ok((StructRoot::Other, _))) {
+            self.reassign_root(target);
+        }
+    }
+
     /// Whether the path of the place `target` crosses a class object, as `struct_walk` finds it.
     fn crosses_class(&self, target: &ast::Expr) -> bool {
         matches!(self.struct_walk(target), Err(WalkStop::Class))
