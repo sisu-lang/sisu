@@ -108,7 +108,7 @@ fn write_through_a_root_that_cannot_change_should_be_e0001() {
 }
 
 /// GIVEN a struct method with plain `self`. WHEN it writes a field or assigns to `self`. THEN
-/// the codes are E0001 and E0073, each with no fix and a help. Another method with `mut self`
+/// the codes are E0001 and E0073, each with one unsafe fix. Another method with `mut self`
 /// gives no error.
 #[test]
 fn plain_self_should_report_its_codes() {
@@ -119,8 +119,8 @@ fn plain_self_should_report_its_codes() {
         [(AssignToImmutable, (4, 9)), (AssignToSelf, (7, 9))]
     );
     for d in ds.iter().filter(|d| d.code().severity() == Severity::Error) {
-        assert!(d.fixes().is_empty(), "{d:?}");
-        assert!(d.help().is_some(), "{d:?}");
+        assert_eq!(d.fixes().len(), 1, "{d:?}");
+        assert!(!d.fixes()[0].safe(), "{d:?}");
     }
 }
 
@@ -895,6 +895,12 @@ fn plain_self_write_should_report_by_its_form() {
         &[(AssignToImmutable, (9, 9))],
     );
     codes_row("a class", &program("self.c.n = 2"), &[]);
+    // Each struct row has the unsafe fix "take `mut self`".
+    for body in ["self.xs.push(1)", "self.n += 1"] {
+        let (_, ds) = checked(&program(body));
+        assert_eq!(ds[0].fixes().len(), 1, "{body}: {ds:?}");
+        assert!(!ds[0].fixes()[0].safe(), "{body}: {ds:?}");
+    }
 }
 
 /// GIVEN a base that fails WHEN a struct path writes through it THEN the base's error is the only
@@ -1031,6 +1037,10 @@ fn struct_self_push_should_report_as_the_class_form() {
         ),
     ];
     error_rows(&rows);
+    // The row of the array has the unsafe fix "take `mut self`".
+    let (_, ds) = checked(&program("self.i.xs[0].push(1)"));
+    assert_eq!(ds[0].fixes().len(), 1, "{ds:?}");
+    assert!(!ds[0].fixes()[0].safe(), "{ds:?}");
 }
 
 /// GIVEN a path of `.xs[0]`, `.os[0]` or `.os[0]?` steps in a struct `T`, 10, 20 and 30 steps

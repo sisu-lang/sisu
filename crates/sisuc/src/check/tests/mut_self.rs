@@ -3,10 +3,10 @@
 
 use super::*;
 use Code::{
-    AssignToExpression, AssignToImmutable, AssignToSelf, BindingNotFound, CannotInfer,
-    ConformanceBody, Expected, FunctionNotFound, MayBeNone, Mismatch, MutArgumentNotPlace,
-    MutMarkerMissing, MutPlaceTwice, MutSelf, NeverReassigned, NoMember, SelfOutsideMethod,
-    TypeArguments, UnknownType, UnusedMember, UnusedVariable,
+    AssignToExpression, AssignToImmutable, AssignToSelf, BindingNotFound, CannotExtend,
+    CannotInfer, ConformanceBody, Expected, FunctionNotFound, MayBeNone, Mismatch,
+    MutArgumentNotPlace, MutMarkerMissing, MutPlaceTwice, MutSelf, NeverReassigned, NoMember,
+    SelfOutsideMethod, TypeArguments, UnknownType, UnusedMember, UnusedVariable,
 };
 
 /// `Point` with the `mut self` method `move_by`, in eight lines.
@@ -984,4 +984,198 @@ fn mut_self_method_should_not_meet_a_plain_requirement() {
     let src = "interface R {\n    fn read(self)\n}\nstruct S: R {\n    n: i64\n    fn read(mut self) { self.n += 1 }\n}\nfn main() {}";
     let (_, ds) = checked(src);
     assert_eq!(errors(src, &ds), [(ConformanceBody, (6, 8))]);
+}
+
+/// The one error of `src`, which has `code` at `at`. With `take`, it has one unsafe fix that
+/// inserts `mut ` there, and no help. Without it, it has no fix and a help.
+fn plain_self_error(row: &str, src: &str, (code, at): Wanted, take: Option<(usize, usize)>) {
+    let (_, ds) = checked(src);
+    assert_eq!(errors(src, &ds), [(code, at)], "row `{row}`");
+    let d = ds
+        .iter()
+        .find(|d| d.code() == code)
+        .expect("the row should have its code");
+    if let Some((line, col)) = take {
+        let want = vec![(false, vec![(line, col, "", "mut ".to_string())])];
+        assert_eq!(fixes(src, d), want, "row `{row}`: {d:?}");
+        assert!(d.help().is_none(), "row `{row}`: {d:?}");
+    } else {
+        assert!(d.fixes().is_empty(), "row `{row}`: {d:?}");
+        assert!(d.help().is_some(), "row `{row}`: {d:?}");
+    }
+}
+
+/// One row of `plain_self_error`: its name, its program, its error, and where its fix inserts.
+type PlainSelfRow = (&'static str, &'static str, Wanted, Option<(usize, usize)>);
+
+/// GIVEN a method with plain `self` that has `self = e`, in a struct, an enum, an `extend`, a
+/// class, or behind a plain `self` requirement. WHEN `sisu check` runs on it. THEN it reports
+/// E0073 at `self`. A struct or an enum has the unsafe fix "take `mut self`". A method that a
+/// requirement binds has the help to copy `self`. A class has its own text.
+#[test]
+fn assignment_to_plain_self_should_give_the_help_of_its_kind() {
+    let rows: [PlainSelfRow; 6] = [
+        (
+            "a struct",
+            "struct T {\n    n: i64\n    fn f(self) { self = T(n: 1) }\n}\nfn main() {}",
+            (AssignToSelf, (3, 18)),
+            Some((3, 10)),
+        ),
+        (
+            "an enum",
+            "enum E {\n    A\n    B\n    fn f(self) { self = E.B }\n}\nfn main() {}",
+            (AssignToSelf, (4, 18)),
+            Some((4, 10)),
+        ),
+        (
+            "a plain `self` requirement",
+            "interface R {\n    fn f(self)\n}\nstruct T: R {\n    n: i64\n    fn f(self) { self = T(n: 1) }\n}\nfn main() {}",
+            (AssignToSelf, (6, 18)),
+            None,
+        ),
+        (
+            "an `extend` of a struct",
+            "struct P { x: i64 }\nextend P {\n    fn f(self) { self = P(x: 1) }\n}\nfn main() {}",
+            (AssignToSelf, (3, 18)),
+            Some((3, 10)),
+        ),
+        (
+            "an `extend` of a class",
+            "class C {\n    mut n: i64\n}\nextend C {\n    fn f(self) { self = C(n: 1) }\n}\nfn main() {}",
+            (AssignToSelf, (5, 18)),
+            None,
+        ),
+        (
+            "a class body",
+            "class C {\n    mut n: i64\n    fn f(self) { self = C(n: 1) }\n}\nfn main() {}",
+            (AssignToSelf, (3, 18)),
+            None,
+        ),
+    ];
+    for (row, src, wanted, take) in rows {
+        plain_self_error(row, src, wanted, take);
+    }
+    // A built-in holder has E0155 alone, whatever its `mut self` method writes.
+    let src = "extend i64 {\n    fn inc(mut self) { self += 1 }\n}\nfn main() {}";
+    let (_, ds) = checked(src);
+    assert_eq!(errors(src, &ds), [(CannotExtend, (1, 8))], "a built-in");
+}
+
+/// The program of `change_through_plain_self_should_offer_mut_self`: `body` in the plain method
+/// `f` of `T`, at line 12, which meets a plain `self` requirement when `bound` holds.
+fn change_program(body: &str, bound: bool) -> String {
+    let conforms = if bound { ": R" } else { "" };
+    format!(
+        "struct Q {{\n    xs: [i64]\n}}\nfn bp(mut q: Q) {{}}\nfn bu(mut t: T) {{}}\n\
+         interface R {{\n    fn f(self)\n}}\nstruct T{conforms} {{\n    n: i64\n    p: Q\n    fn f(self) {{ {body} }}\n}}\nfn main() {{}}\n"
+    )
+}
+
+/// GIVEN a plain `self` method of a struct. It changes `self` or a part of it, passes it `mut`,
+/// or calls a `mut self` method on it. WHEN `sisu check` runs on it. THEN it reports the row's
+/// code at the row's place, with the unsafe fix "take `mut self`". A method that a plain `self`
+/// requirement binds gets the help to copy `self` in place of the fix.
+#[test]
+fn change_through_plain_self_should_offer_mut_self() {
+    // The program has `fn f(self)` at line 12, and the body starts at column 18 of it.
+    let rows = [
+        ("a field write", "self.n = 1", AssignToImmutable, 0),
+        ("a `push`", "self.p.xs.push(1)", AssignToImmutable, 0),
+        (
+            "a `mut` argument on a part",
+            "bp(mut self.p)",
+            MutArgumentNotPlace,
+            7,
+        ),
+        (
+            "a `mut` argument on `self`",
+            "bu(mut self)",
+            MutArgumentNotPlace,
+            7,
+        ),
+    ];
+    for (row, body, code, offset) in rows {
+        for bound in [false, true] {
+            let src = change_program(body, bound);
+            let take = (!bound).then_some((12, 10));
+            let name = format!("{row}, bound: {bound}");
+            plain_self_error(&name, &src, (code, (12, 18 + offset)), take);
+        }
+    }
+    // A `mut self` call on `self`, and on a field of it.
+    let program = |holder: &str, body: &str, bound: bool| {
+        let conforms = if bound { ": R" } else { "" };
+        format!(
+            "{POINT}struct L {{ p: Point; ps: [Point] }}\ninterface R {{\n    fn f(self)\n}}\n\
+             extend {holder}{conforms} {{\n    fn f(self) {{ {body} }}\n}}\nfn main() {{}}\n"
+        )
+    };
+    for bound in [false, true] {
+        let take = (!bound).then_some((14, 10));
+        let src = program("Point", "self.move_by(1, 1)", bound);
+        plain_self_error(
+            "a `mut self` call",
+            &src,
+            (AssignToImmutable, (14, 18)),
+            take,
+        );
+        let src = program("L", "self.p.move_by(1, 1)", bound);
+        plain_self_error(
+            "a call on a field",
+            &src,
+            (AssignToImmutable, (14, 18)),
+            take,
+        );
+    }
+    // A class keeps its text: `self` is a place that no `mut self` can offer.
+    let src = "class C {\n    mut n: i64\n    fn f(self) { bump(mut self) }\n}\nfn bump(mut c: C) {}\nfn main() {}";
+    plain_self_error("a class", src, (MutArgumentNotPlace, (3, 27)), None);
+}
+
+/// GIVEN `enum E { A; B; fn f(self) { be(mut self) } }` and `fn be(mut e: E) {}`. WHEN `sisu
+/// check` runs on it. THEN it reports E0169 at `self`, with the unsafe fix "take `mut self`".
+#[test]
+fn mut_argument_on_enum_self_should_offer_mut_self() {
+    let src = "enum E {\n    A\n    B\n    fn f(self) { be(mut self) }\n}\nfn be(mut e: E) {}\nfn main() {}";
+    plain_self_error(
+        "an enum",
+        src,
+        (MutArgumentNotPlace, (4, 25)),
+        Some((4, 10)),
+    );
+}
+
+/// GIVEN a method that takes `mut self` and a `mut` argument. WHEN the argument is the receiver's
+/// place, is inside it, or holds it. THEN `sisu check` reports E0171 at the argument, with the
+/// receiver's place as its other span, and no fix.
+#[test]
+fn receiver_should_be_the_first_mut_slot() {
+    let rows = [
+        (
+            "the same place",
+            "struct P {\n    n: i64\n    fn change(mut self, mut q: P) { self.n = 1; q.n = 1 }\n}\nfn main() {\n    let mut p = P(n: 0)\n    p.change(mut p)\n}\n",
+            (7, 18),
+            (7, 5),
+        ),
+        (
+            "the argument is inside the receiver",
+            "struct Q {\n    n: i64\n}\nstruct L {\n    c: Q\n    fn change(mut self, mut q: Q) { self.c.n = 1; q.n = 1 }\n}\nfn main() {\n    let mut l = L(c: Q(n: 0))\n    l.change(mut l.c)\n}\n",
+            (10, 18),
+            (10, 5),
+        ),
+        (
+            "the receiver is inside the argument",
+            "struct L {\n    c: Q\n}\nstruct Q {\n    n: i64\n    fn change(mut self, mut l: L) { self.n = 1; l.c.n = 1 }\n}\nfn main() {\n    let mut l = L(c: Q(n: 0))\n    l.c.change(mut l)\n}\n",
+            (10, 20),
+            (10, 5),
+        ),
+    ];
+    for (row, src, arg, receiver) in rows {
+        let (_, ds) = checked(src);
+        assert_eq!(errors(src, &ds), [(MutPlaceTwice, arg)], "row `{row}`");
+        let d = &ds[0];
+        let spans: Vec<_> = d.secondary().iter().map(|(s, _)| at(src, *s)).collect();
+        assert_eq!(spans, [receiver], "row `{row}`: the receiver");
+        assert!(d.fixes().is_empty(), "row `{row}`: {d:?}");
+    }
 }
