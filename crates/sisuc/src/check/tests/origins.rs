@@ -1,6 +1,6 @@
 //! The origin of an expected type: an E0032 says where its required type comes from, as a
 //! secondary label, a note or a label at the primary span (S21). These tests read positions and
-//! counts, never text.
+//! counts. Only `labels` reads text, where no position tells two cases apart.
 
 use super::*;
 
@@ -682,4 +682,118 @@ fn an_index_on_a_base_with_no_element_should_state_no_rule() {
         assert!(mismatch.label().is_none(), "{src}");
         assert!(mismatch.secondary().is_empty(), "{src}");
     }
+}
+
+/// The text of the secondary labels of the one E0032 that `src` gives. A fixture in
+/// `tests/diagnostics` pins the whole text. These tests read it only where a position cannot tell
+/// the cases apart: the wording is the only fact that differs.
+fn labels(src: &str) -> Vec<String> {
+    let (_, ds) = checked_with(PRELUDE_SOURCE, src);
+    let errors: Vec<_> = (ds.iter())
+        .filter(|d| d.code().severity() == Severity::Error)
+        .collect();
+    let [d] = errors[..] else {
+        panic!("{} errors, wanted 1: {src}", errors.len());
+    };
+    assert_eq!(d.code(), Code::Mismatch, "{src}");
+    (d.secondary().iter())
+        .map(|(_, text)| text.clone())
+        .collect()
+}
+
+#[test]
+fn a_loop_in_a_break_value_should_name_the_outer_loop() {
+    let value = labels(
+        "fn f(c: bool) {\n    let _a = loop {\n        if c { break 1 }\n        break loop { break \"x\" }\n    }\n}\nfn main() { f(true) }\n",
+    );
+    let [label] = &value[..] else {
+        panic!("wanted one label, found {value:?}");
+    };
+    assert!(label.contains("the outer loop"), "{label}");
+    // A loop in a `let` is no part of the value: its `break` is of the loop that reports.
+    let local = labels(
+        "fn f(c: bool) {\n    let _a = loop {\n        if c { break 1 }\n        let _y = loop { break \"x\" }\n        break \"y\"\n    }\n}\nfn main() { f(true) }\n",
+    );
+    let [label] = &local[..] else {
+        panic!("wanted one label, found {local:?}");
+    };
+    assert!(!label.contains("outer"), "{label}");
+}
+
+#[test]
+fn a_negated_operand_should_keep_the_origin_of_its_context() {
+    origin_rows(&[
+        (
+            "a declared type",
+            "fn main() {\n    let b: i64 = -\"x\"\n    print(b)\n}\n",
+            (2, 19),
+            Explained::Label(2, 12),
+        ),
+        (
+            "a negation of a negation",
+            "fn main() {\n    let b: i64 = -(-\"x\")\n    print(b)\n}\n",
+            (2, 21),
+            Explained::Label(2, 12),
+        ),
+        (
+            "an `f64` context, which names `i64` or `f64`",
+            "fn main() {\n    let b: f64 = -\"x\"\n    print(b)\n}\n",
+            (2, 19),
+            Explained::Nothing,
+        ),
+    ]);
+}
+
+#[test]
+fn a_type_of_a_generic_signature_that_names_no_parameter_should_be_shown_as_written() {
+    let src =
+        "type M = i64\nfn f<U>(a: U, n: M) {\n    print(n)\n}\nfn main() {\n    f(1, \"x\")\n}\n";
+    let shown = labels(src);
+    let [label] = &shown[..] else {
+        panic!("wanted one label, found {shown:?}");
+    };
+    assert!(label.contains("as `M`"), "{label}");
+    // A type that names a parameter keeps no shown text, and gives no label.
+    origin_rows(&[(
+        "an alias that names a parameter",
+        "type L<X> = [X]\nfn f<U>(a: L<U>) {\n    print(a)\n}\nfn main() {\n    f(\"x\")\n}\n",
+        (6, 7),
+        Explained::Nothing,
+    )]);
+}
+
+#[test]
+fn a_generic_constructor_should_give_the_origin_of_each_field() {
+    origin_rows(&[
+        (
+            "a field of a generic struct",
+            "type M = i64\nstruct P<U> {\n    a: U\n    n: M\n}\nfn main() {\n    let p = P(a: 1, n: \"x\")\n    print(p.n)\n}\n",
+            (7, 24),
+            Explained::Label(4, 8),
+        ),
+        (
+            "a payload of a generic enum",
+            "type M = i64\nenum E<U> {\n    A(U, M)\n}\nfn main() {\n    let e = E.A(1, \"x\")\n    print(e)\n}\n",
+            (6, 20),
+            Explained::Label(3, 10),
+        ),
+        (
+            "a labelled payload of a generic enum",
+            "type M = i64\nenum E<U> {\n    A(a: U, n: M)\n}\nfn main() {\n    let e = E.A(a: 1, n: \"x\")\n    print(e)\n}\n",
+            (6, 26),
+            Explained::Label(3, 16),
+        ),
+        (
+            "a field of the type parameter",
+            "struct P<U> {\n    a: U\n    b: U\n}\nfn main() {\n    let p = P(a: 1, b: \"x\")\n    print(p.a)\n}\n",
+            (6, 18),
+            Explained::Label(6, 24),
+        ),
+        (
+            "an optional of another type",
+            "fn main() {\n    let o: i64? = Some(\"x\")\n    print(o ?? 0)\n}\n",
+            (2, 24),
+            Explained::Nothing,
+        ),
+    ]);
 }

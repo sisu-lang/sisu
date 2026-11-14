@@ -1,0 +1,97 @@
+// GIVEN a generic function, method, struct or enum whose declaration writes an alias such as `M`
+// AND a call, a return, an assignment or a constructor that gives a wrong type
+// WHEN `sisu check` runs on it
+// THEN each E0032 says `M`, the alias as written, and not `i64`
+// AND the label of its origin says `M`, with the position of the alias
+// AND a type that names a type parameter, such as `L<U>`, keeps its text
+type M = i64
+type L<X> = [X]
+fn f<U>(a: U, n: M) {
+    print(n)
+}
+fn g(n: M) {
+    print(n)
+}
+fn returns<U>(a: U) -> M {
+    print(a)
+    "x"
+}
+struct S {
+    v: i64
+    fn m<U>(self, a: U, n: M) {
+        print(n)
+    }
+}
+fn array_alias<U>(a: U, n: L<i64>) {
+    print(n)
+}
+fn optional_alias<U>(a: U, n: M?) {
+    print(n)
+}
+struct P<U> {
+    a: U
+    n: M
+}
+fn assign() {
+    let mut p = P(a: 1, n: 2)
+    p.n = "x"
+    print(p.n)
+}
+type Q = P<i64>
+fn through_alias() {
+    let p = Q(a: 1, n: "x")
+    print(p.a)
+}
+struct B<T> {
+    v: T
+    fn m(self, n: M) {
+        print(n)
+    }
+    fn generic<U>(self, a: U, n: M) {
+        print(n)
+    }
+}
+fn generic_struct_method() {
+    let b = B(v: 1)
+    b.m("x")
+}
+fn generic_method_of_generic_struct() {
+    let b = B(v: 1)
+    b.generic(1, "x")
+}
+fn early_return<U>(a: U, c: bool) -> M {
+    print(a)
+    if c { return "x" }
+    1
+}
+fn array_of_alias<U>(a: U, n: [M]) {
+    print(n)
+}
+fn array_of_alias_plain(n: [M]) {
+    print(n)
+}
+fn names_parameter<U>(a: L<U>) {
+    print(a)
+}
+fn returns_names_parameter<U>(a: U) -> L<U> {
+    print(a)
+    "x"
+}
+fn main() {
+    f(1, "x")
+    g("x")
+    print(returns(1))
+    let s = S(v: 1)
+    s.m(1, "x")
+    array_alias(1, "x")
+    optional_alias(1, "x")
+    assign()
+    through_alias()
+    generic_struct_method()
+    generic_method_of_generic_struct()
+    print(early_return(1, true))
+    array_of_alias(1, ["x"])
+    array_of_alias_plain(["x"])
+    names_parameter("x")
+    print(returns_names_parameter(1))
+}

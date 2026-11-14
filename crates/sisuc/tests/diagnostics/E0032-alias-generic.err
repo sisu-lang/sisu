@@ -1,0 +1,159 @@
+error[E0032]: expected `M`, found `string`
+  --> E0032-alias-generic.sisu:17:5
+   |
+15 | fn returns<U>(a: U) -> M {
+   |                        - `returns` returns `M`
+16 |     print(a)
+17 |     "x"
+   |     ^^^
+
+warning[W0015]: `n` can be `None`, and then this writes the word "None"
+  --> E0032-alias-generic.sisu:29:11
+   |
+29 |     print(n)
+   |           ^
+   |
+   = help: use `if let`, give a default with `??`, or call `n.to_string()` to write "None" on purpose
+
+error[E0032]: expected `M`, found `string`
+  --> E0032-alias-generic.sisu:37:11
+   |
+37 |     p.n = "x"
+   |           ^^^
+
+error[E0032]: expected `M`, found `string`
+  --> E0032-alias-generic.sisu:42:24
+   |
+42 |     let p = Q(a: 1, n: "x")
+   |                        ^^^
+   |
+  ::: E0032-alias-generic.sisu:33:8
+   |
+33 |     n: M
+   |        - `n` is declared as `M`
+
+error[E0032]: expected `M`, found `string`
+  --> E0032-alias-generic.sisu:56:9
+   |
+56 |     b.m("x")
+   |         ^^^
+   |
+  ::: E0032-alias-generic.sisu:47:19
+   |
+47 |     fn m(self, n: M) {
+   |                   - `m` declares `n` as `M`
+
+error[E0032]: expected `M`, found `string`
+  --> E0032-alias-generic.sisu:60:18
+   |
+60 |     b.generic(1, "x")
+   |                  ^^^
+   |
+  ::: E0032-alias-generic.sisu:50:34
+   |
+50 |     fn generic<U>(self, a: U, n: M) {
+   |                                  - `generic` declares `n` as `M`
+
+error[E0032]: expected `M`, found `string`
+  --> E0032-alias-generic.sisu:64:19
+   |
+62 | fn early_return<U>(a: U, c: bool) -> M {
+   |                                      - `early_return` returns `M`
+63 |     print(a)
+64 |     if c { return "x" }
+   |                   ^^^
+
+error[E0032]: expected `[U]`, found `string`
+  --> E0032-alias-generic.sisu:78:5
+   |
+76 | fn returns_names_parameter<U>(a: U) -> L<U> {
+   |                                        ---- `returns_names_parameter` returns `[U]`
+77 |     print(a)
+78 |     "x"
+   |     ^^^
+
+error[E0032]: expected `M`, found `string`
+  --> E0032-alias-generic.sisu:81:10
+   |
+81 |     f(1, "x")
+   |          ^^^
+   |
+  ::: E0032-alias-generic.sisu:9:18
+   |
+ 9 | fn f<U>(a: U, n: M) {
+   |                  - `f` declares `n` as `M`
+
+error[E0032]: expected `M`, found `string`
+  --> E0032-alias-generic.sisu:82:7
+   |
+82 |     g("x")
+   |       ^^^
+   |
+  ::: E0032-alias-generic.sisu:12:9
+   |
+12 | fn g(n: M) {
+   |         - `g` declares `n` as `M`
+
+error[E0032]: expected `M`, found `string`
+  --> E0032-alias-generic.sisu:85:12
+   |
+85 |     s.m(1, "x")
+   |            ^^^
+   |
+  ::: E0032-alias-generic.sisu:21:28
+   |
+21 |     fn m<U>(self, a: U, n: M) {
+   |                            - `m` declares `n` as `M`
+
+error[E0032]: expected `L<i64>`, found `string`
+  --> E0032-alias-generic.sisu:86:20
+   |
+86 |     array_alias(1, "x")
+   |                    ^^^
+   |
+  ::: E0032-alias-generic.sisu:25:28
+   |
+25 | fn array_alias<U>(a: U, n: L<i64>) {
+   |                            ------ `array_alias` declares `n` as `L<i64>`
+
+error[E0032]: expected `M?`, found `string`
+  --> E0032-alias-generic.sisu:87:23
+   |
+87 |     optional_alias(1, "x")
+   |                       ^^^
+   |
+  ::: E0032-alias-generic.sisu:28:31
+   |
+28 | fn optional_alias<U>(a: U, n: M?) {
+   |                               -- `optional_alias` declares `n` as `M?`
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-alias-generic.sisu:93:24
+   |
+93 |     array_of_alias(1, ["x"])
+   |                        ^^^
+   |
+  ::: E0032-alias-generic.sisu:67:31
+   |
+67 | fn array_of_alias<U>(a: U, n: [M]) {
+   |                               --- `array_of_alias` declares `n` as `[M]`
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-alias-generic.sisu:94:27
+   |
+94 |     array_of_alias_plain(["x"])
+   |                           ^^^
+   |
+  ::: E0032-alias-generic.sisu:70:28
+   |
+70 | fn array_of_alias_plain(n: [M]) {
+   |                            --- `array_of_alias_plain` declares `n` as `[M]`
+
+error[E0032]: expected an array, found `string`
+  --> E0032-alias-generic.sisu:95:21
+   |
+95 |     names_parameter("x")
+   |                     ^^^
+
+sisu: 15 errors, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0032, W0015

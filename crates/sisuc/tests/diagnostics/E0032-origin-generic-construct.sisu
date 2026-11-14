@@ -1,0 +1,84 @@
+// GIVEN a generic struct or enum, or an alias of one, and a constructor call with a wrong argument
+// AND the declared type of that field or payload names no type parameter
+// WHEN `sisu check` runs on it
+// THEN each E0032 has a secondary label at the declared type of the field or the payload
+// AND the label and the message say `M` where the declaration writes the alias `M`
+// AND a field of the type parameter `U` gets the label of the argument that bound `U`
+// AND `Some` of an optional with another type has no label
+type M = i64
+struct P<U> {
+    a: U
+    n: M
+}
+fn plain_field() {
+    let p = P(a: 1, n: "x")
+    print(p.n)
+}
+struct K<U> {
+    a: U
+    n: i64
+}
+fn field() {
+    let p = K(a: 1, n: "x")
+    print(p.a)
+}
+enum E<U> {
+    A(U, M)
+}
+fn payload() {
+    let e = E.A(1, "x")
+    print(e)
+}
+enum L<U> {
+    A(a: U, n: M)
+}
+fn labelled_payload() {
+    let e = L.A(a: 1, n: "x")
+    print(e)
+}
+type Q<X> = P<X>
+fn alias_field() {
+    let p = Q(a: 1, n: "x")
+    print(p.n)
+}
+type F<X> = E<X>
+fn alias_payload() {
+    let e = F.A(1, "x")
+    print(e)
+}
+struct R<U> {
+    a: U
+    n: [M]
+}
+fn array_field() {
+    let p = R(a: 1, n: ["x"])
+    print(p.a)
+}
+fn hinted() {
+    let p: P<i64> = P(a: 1, n: "x")
+    print(p.a)
+}
+struct Same<U> {
+    a: U
+    b: U
+}
+fn same_parameter() {
+    let p = Same(a: 1, b: "x")
+    print(p.a)
+}
+fn some() {
+    let o: i64? = Some("x")
+    print(o ?? 0)
+}
+fn main() {
+    plain_field()
+    field()
+    payload()
+    labelled_payload()
+    alias_field()
+    alias_payload()
+    array_field()
+    hinted()
+    same_parameter()
+    some()
+}

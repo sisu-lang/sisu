@@ -1,0 +1,164 @@
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-negated.sisu:10:16
+   |
+ 9 |         if c { break 1 }
+   |                ------- this `break` gave the loop the type `i64`
+10 |         break -"x"
+   |                ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-negated.sisu:14:19
+   |
+14 |     let b: i64 = -"x"
+   |            ---    ^^^
+   |            |
+   |            declared as `i64` here
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-negated.sisu:18:24
+   |
+17 | fn branch(c: bool) -> i64 {
+   |                       --- `branch` returns `i64`
+18 |     if c { 1 } else { -"x" }
+   |                        ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-negated.sisu:24:11
+   |
+24 |     take(-"x")
+   |           ^^^
+   |
+  ::: E0032-origin-negated.sisu:20:12
+   |
+20 | fn take(n: i64) {
+   |            --- `take` declares `n` as `i64`
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-negated.sisu:27:6
+   |
+26 | fn returned() -> i64 {
+   |                  --- `returned` returns `i64`
+27 |     -"x"
+   |      ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-negated.sisu:30:21
+   |
+30 |     let b: i64 = -(-"x")
+   |            ---      ^^^
+   |            |
+   |            declared as `i64` here
+
+error[E0032]: expected `i64`, found `bool`
+  --> E0032-origin-negated.sisu:34:19
+   |
+34 |     let b: i64 = -true
+   |            ---    ^^^^
+   |            |
+   |            declared as `i64` here
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-negated.sisu:39:10
+   |
+38 |     let mut b = 1
+   |             - `b` has the type `i64`
+39 |     b = -"x"
+   |          ^^^
+
+error[E0032]: expected `i64`, found `char`
+  --> E0032-origin-negated.sisu:43:19
+   |
+43 |     let b: i64 = -'c'
+   |            ---    ^^^
+   |            |
+   |            declared as `i64` here
+   |
+help: if the types are right, convert it with `i64(...)`
+   |
+43 |     let b: i64 = -i64('c')
+   |                   ++++   +
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-negated.sisu:48:19
+   |
+46 | struct S { n: i64 }
+   |               --- `n` is declared as `i64`
+47 | fn field() {
+48 |     let s = S(n: -"x")
+   |                   ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-negated.sisu:53:18
+   |
+51 | enum E { V(i64) }
+   |            --- `V` holds `i64`
+52 | fn payload() {
+53 |     let e = E.V(-"x")
+   |                  ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-negated.sisu:60:14
+   |
+60 |     pair(1, -"x")
+   |              ^^^
+   |
+  ::: E0032-origin-negated.sisu:56:21
+   |
+56 | fn pair<T>(a: T, n: i64) {
+   |                     --- `pair` declares `n` as `i64`
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-negated.sisu:64:25
+   |
+62 | struct P<U> { a: U; n: i64 }
+   |                        --- `n` is declared as `i64`
+63 | fn generic_field() {
+64 |     let p = P(a: 1, n: -"x")
+   |                         ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-negated.sisu:68:20
+   |
+68 |     let b: i64? = -"x"
+   |                    ^^^
+
+warning[W0015]: `b` can be `None`, and then this writes the word "None"
+  --> E0032-origin-negated.sisu:69:11
+   |
+69 |     print(b)
+   |           ^
+   |
+   = help: use `if let`, give a default with `??`, or call `b.to_string()` to write "None" on purpose
+
+error[E0032]: expected `i64` or `f64`, found `string`
+  --> E0032-origin-negated.sisu:72:19
+   |
+72 |     let xs = [1, -"x"]
+   |                   ^^^
+
+error[E0032]: expected `i64` or `f64`, found `string`
+  --> E0032-origin-negated.sisu:76:19
+   |
+76 |     let b: f64 = -"x"
+   |                   ^^^
+
+error[E0032]: expected `i64` or `f64`, found `string`
+  --> E0032-origin-negated.sisu:80:18
+   |
+80 |     let b: u8 = -"x"
+   |                  ^^^
+
+error[E0032]: expected `i64` or `f64`, found `string`
+  --> E0032-origin-negated.sisu:84:33
+   |
+84 |     let _a = if c { 1 } else { -"x" }
+   |                                 ^^^
+
+error[E0032]: expected `i64` or `f64`, found `string`
+  --> E0032-origin-negated.sisu:87:37
+   |
+87 |     let a = match k { 0 => 1; _ => -"x" }
+   |                                     ^^^
+
+sisu: 19 errors, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0032, W0015
