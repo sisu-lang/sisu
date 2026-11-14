@@ -1457,6 +1457,22 @@ error[E0011]: expected `=`, found end of line
         }
     }
 
+    /// A path with a space before its line break gets the true column too. The plain form then
+    /// loses that space, as it loses each space at the end of a line.
+    #[test]
+    fn a_header_whose_path_ends_a_line_in_a_space_should_give_the_true_column() {
+        let source = format!("{}{}", long_line(), &numbered(10)[3..]);
+        let d = error(ab(&source, 1), "m");
+        let path = "long \nname.sisu";
+        for (color, want) in [
+            (false, "long\nname.sisu:1:1000"),
+            (true, "long \nname.sisu:1:1000"),
+        ] {
+            let text = d.render(path, &source, &LineIndex::new(&source), color);
+            assert!(text.contains(want), "color {color}: {text}");
+        }
+    }
+
     /// With the styled renderer the header's column is still the true one.
     #[test]
     fn styled_header_of_a_cut_line_should_give_the_true_column() {
