@@ -307,7 +307,6 @@ crates/sisuc/src/check/tests/mod.rs::lowers_methods
 crates/sisuc/src/check/tests/mod.rs::lowers_not_equal
 crates/sisuc/src/check/tests/mod.rs::lowers_safe_field
 crates/sisuc/src/check/tests/mod.rs::lowers_safe_method_with_an_argument
-crates/sisuc/src/check/tests/mod.rs::lowers_safe_unit_method
 crates/sisuc/src/check/tests/mod.rs::lowers_while_let
 crates/sisuc/src/check/tests/mod.rs::lowers_while_to_loop
 crates/sisuc/src/check/tests/mod.rs::main_after_a_class_named_main_is_not_missing

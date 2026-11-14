@@ -190,7 +190,12 @@ fn rows_in(rows: &[UseRow<'_>], template: fn(&str) -> String, line: usize) {
                 (code, (line, 5 + offset), note)
             })
             .collect();
-        let found = reports(&template(used));
+        let src = template(used);
+        // A row that makes the checker panic names itself too.
+        let Ok(found) = std::panic::catch_unwind(|| reports(&src)) else {
+            red.push(format!("row `{row}`: the checker panicked"));
+            continue;
+        };
         if found != wanted {
             red.push(format!("row `{row}`: found {found:?}, wanted {wanted:?}"));
         }
@@ -212,6 +217,10 @@ fn a_valueless_if_should_report_no_value_wherever_its_value_is_used() {
         ("let", "let u = if c { 1 }"),
         ("block", "let u = { if c { 1 } }"),
         ("join", "let u = if n == 1 { if c { 1 } } else { g() }"),
+        (
+            "join with None",
+            "let u = if n == 1 { if c { 1 } } else { None }",
+        ),
         ("match arm", "let a = match n { 1 => if c { 1 }; _ => g() }"),
         ("generic argument", "let a = id(if c { 1 })"),
         ("nested generic argument", "let a = id(id(if c { 1 }))"),
@@ -261,6 +270,7 @@ fn a_unit_where_another_type_is_wanted_should_report_no_value() {
         ("less, right", "let a = 1 < g()".into(), at_g()),
         ("equal, left", "let a = g() == 1".into(), at_g()),
         ("equal, right", "let a = 1 == g()".into(), at_g()),
+        // The next four rows pass before and after the fix of their commit: they pin the report.
         ("typed let", "let y: i64 = g()".into(), at_g()),
         ("argument", "h(g())".into(), at_g()),
         ("arithmetic", "let a = 1 + g()".into(), at_g()),
@@ -366,7 +376,8 @@ fn a_unit_element_should_bind_the_type_of_an_optional_array() {
 
 /// A valueless `if` where no value is used checks as it did before `unit` became a type: a
 /// statement and the body of a `unit` function warn that the `1` is not used. A function that
-/// returns `i64` reports that its body has no value.
+/// returns `i64` reports that its body has no value. A function that returns `unit?` uses the
+/// value of its body, so its valueless `if` is E0043, as in a `let` of type `unit?`.
 #[test]
 fn a_valueless_if_should_keep_its_reports_where_no_value_is_used() {
     with_prelude();
@@ -385,6 +396,21 @@ fn a_valueless_if_should_keep_its_reports_where_no_value_is_used() {
             "body of an i64 function",
             "fn f(c: bool) -> i64 { if c { 1 } }\nfn main() {\n    let a = f(true)\n}",
             (Code::BodyHasNoValue, (1, 35)),
+        ),
+        (
+            "body of a unit? function",
+            "fn f(c: bool) -> unit? { if c { 1 } }\nfn main() {\n    let a = f(true)\n}",
+            (Code::NoValue, (1, 26)),
+        ),
+        (
+            "body of a unit? function, a string",
+            "fn f(c: bool) -> unit? { if c { \"s\" } }\nfn main() {\n    let a = f(true)\n}",
+            (Code::NoValue, (1, 26)),
+        ),
+        (
+            "body of a unit? function, if let",
+            "fn f() -> unit? { if let x = Some(3) { x } }\nfn main() {\n    let a = f()\n}",
+            (Code::NoValue, (1, 19)),
         ),
     ] {
         assert_eq!(reports(src), [(wanted.0, wanted.1, false)], "row `{row}`");
@@ -512,6 +538,22 @@ fn a_comparison_of_a_unit_should_hold_the_other_operands_to_unit() {
         ),
         ("two units", "let a = g() < g()".into(), vec![]),
         ("two units equal", "let a = g() == g()".into(), vec![]),
+        // The context adds no second report at the comparison.
+        (
+            "unit and None, for an i64",
+            "let a: i64 = g() < None".into(),
+            vec![(Code::Mismatch, "None", false)],
+        ),
+        (
+            "unit and Some, for an i64",
+            "let a: i64 = g() < Some(g())".into(),
+            vec![(Code::Mismatch, "Some(g())", false)],
+        ),
+        (
+            "unit and a unit?, for an i64",
+            "let a: i64 = g() < o?.log()".into(),
+            vec![(Code::Mismatch, "o?.log()", false)],
+        ),
     ];
     rows_in(&rows, with_safe_call, 12);
 }
@@ -674,8 +716,8 @@ fn a_bare_break_beside_a_unit_break_should_add_no_report_to_an_error() {
     rows_in(&rows, with_two_conditions, 11);
 }
 
-/// A bare `break` beside a `break` whose value is a `unit?` gives the loop a `None`, as a wrapped
-/// `unit`.
+/// A bare `break` beside a `break` whose value is a `unit?` gives the loop a wrapped `unit`, a
+/// `Some`. This test passes before and after the fix of its commit: it pins the value.
 #[test]
 fn a_bare_break_beside_an_optional_unit_break_should_hold_a_wrapped_unit() {
     with_prelude();
@@ -683,4 +725,186 @@ fn a_bare_break_beside_an_optional_unit_break_should_hold_a_wrapped_unit() {
         &with_safe_call("let x = loop { if c { break o?.log() }; break }"),
         &["(break (wrap ()))"],
     );
+}
+
+/// A `main` that has `used` on line 20, after generic declarations that take a `unit` for `T`
+/// beside a `T?` or a `[T]`: functions, a struct, an enum and a method.
+fn with_generics(used: &str) -> String {
+    format!(
+        "fn g() {{}}\nfn opt<T>(o: T?, d: T) -> T {{ o ?? d }}\nfn later<T>(d: T, o: T?) -> T {{ o ?? d }}\nfn listed<T>(o: [T], d: T) -> T {{ d }}\nfn two<T>(a: T?, b: T?, c: T) {{}}\nfn wrapped<T>(_x: T?) {{}}\nstruct P<T> {{\n    a: T?\n    b: T\n}}\nenum Bx<T> {{\n    One(T?)\n    Two(T?, T)\n}}\nstruct K {{\n    n: i64\n    fn m<T>(self, a: T?, b: T) {{}}\n}}\nfn main() {{\n    {used}\n}}"
+    )
+}
+
+/// A `unit` argument binds `T` before the arguments that wait for it, as a `unit` element does.
+/// So a `None` or a `[]` of the same `T` meets `unit`, in any order.
+#[test]
+fn a_unit_argument_should_bind_its_parameter_before_the_arguments_that_wait() {
+    let rows: Vec<UseRow<'_>> = vec![
+        ("None first", "print(opt(None, g()))".into(), vec![]),
+        ("unit first", "print(later(g(), None))".into(), vec![]),
+        ("empty array", "listed([], g())".into(), vec![]),
+        (
+            "array of None",
+            "listed([None], g())".into(),
+            vec![(Code::Mismatch, "None", false)],
+        ),
+        ("two None", "two(None, None, g())".into(), vec![]),
+        (
+            "unit local",
+            "let u = g(); print(opt(None, u))".into(),
+            vec![],
+        ),
+        ("struct", "let _p = P(a: None, b: g())".into(), vec![]),
+        ("enum variant", "let _b = Bx.Two(None, g())".into(), vec![]),
+        ("method", "K(n: 1).m(None, g())".into(), vec![]),
+        // This row passes before and after the fix: it pins that a `unit` binds `T` of a `T?`.
+        ("optional parameter", "wrapped(g())".into(), vec![]),
+    ];
+    rows_in(&rows, with_generics, 20);
+}
+
+/// A `unit` argument for a `T?` parameter that it binds, or that another `unit` bound, is wrapped,
+/// as an `i64` argument is.
+#[test]
+fn a_unit_argument_for_an_optional_parameter_should_be_wrapped() {
+    with_prelude();
+    for (row, used) in [
+        ("function", "wrapped(g())"),
+        ("bound by an earlier unit", "print(later(g(), g()))"),
+        ("struct", "let _p = P(a: g(), b: g())"),
+        ("enum variant", "let _b = Bx.One(g())"),
+        ("method", "K(n: 1).m(g(), g())"),
+    ] {
+        let printed = lowered(&with_generics(used));
+        assert!(
+            printed.contains("(wrap (call g))"),
+            "row `{row}`: {printed}"
+        );
+    }
+}
+
+/// A call of `unit` is no conversion: `unit` is a type with no value to write, as `bool` is.
+#[test]
+fn a_call_of_unit_should_report_that_unit_is_a_type() {
+    for (row, used) in [
+        ("one argument", "let _u = unit(1)"),
+        ("no argument", "unit()"),
+        ("two arguments", "unit(1, 2)"),
+    ] {
+        let src = format!("fn main() {{\n    {used}\n}}");
+        let column = 5 + used.find("unit").expect("each row calls `unit`");
+        assert_eq!(
+            reports(&src),
+            [(Code::TypeAsValue, (2, column), false)],
+            "row `{row}`"
+        );
+    }
+}
+
+/// A function that returns `unit?` and ends with no value is E0031, as one that returns `i64?` is.
+/// A `unit` tail lifts to `unit?`, and a `-> unit` body takes any end.
+#[test]
+fn an_optional_unit_body_with_no_value_should_report_that_it_has_no_value() {
+    with_prelude();
+    for (row, f, no_value) in [
+        ("empty body", "fn f() -> unit? {}", true),
+        (
+            "if without else",
+            "fn f(c: bool) -> unit? { if c { return None } }",
+            true,
+        ),
+        // This row passes before and after the fix: it pins the rule that `unit?` follows.
+        ("empty i64? body", "fn f() -> i64? {}", true),
+        ("unit tail", "fn f() -> unit? { g() }", false),
+        ("Some tail", "fn f() -> unit? { Some(g()) }", false),
+        ("None tail", "fn f() -> unit? { None }", false),
+        ("empty unit body", "fn f() -> unit {}", false),
+        ("unit tail of a unit body", "fn f() -> unit { g() }", false),
+    ] {
+        let src = format!("fn g() {{}}\n{f}\nfn main() {{}}");
+        // E0031 is at the `}` that ends the body.
+        let wanted: Vec<_> = (no_value.then_some((Code::BodyHasNoValue, (2, f.len()), false)))
+            .into_iter()
+            .collect();
+        assert_eq!(reports(&src), wanted, "row `{row}`");
+    }
+}
+
+/// Where `unit` or `unit?` is expected, the `unit` branch fits: the branch of another type is the
+/// mistake, E0032 against `unit`.
+#[test]
+fn a_branch_beside_a_unit_branch_should_be_the_mistake_where_unit_is_expected() {
+    let rows: Vec<UseRow<'_>> = vec![
+        (
+            "if, unit",
+            "let a: unit = if c { g() } else { 2 }".into(),
+            vec![(Code::Mismatch, "2", false)],
+        ),
+        (
+            "if, unit?",
+            "let b: unit? = if c { g() } else { 2 }".into(),
+            vec![(Code::Mismatch, "2", false)],
+        ),
+        (
+            "match, unit",
+            "let m: unit = match c { true => g(); false => 3 }".into(),
+            vec![(Code::Mismatch, "3", false)],
+        ),
+        // The next three rows pass before and after the fix: they pin the reports beside it.
+        (
+            "no expected type",
+            "let a = if c { g() } else { 2 }".into(),
+            vec![(Code::NoValue, "g()", true)],
+        ),
+        (
+            "array",
+            "let xs: [unit] = [g(), 2]".into(),
+            vec![(Code::Mismatch, "2", false)],
+        ),
+        (
+            "loop",
+            "let l: unit = loop { if c { break g() }; break 4 }".into(),
+            vec![(Code::Mismatch, "4", false)],
+        ),
+    ];
+    use_rows(&rows);
+    with_prelude();
+    let tail = "fn f(c: bool) -> unit? { if c { g() } else { 7 } }";
+    let src = format!("fn g() {{}}\n{tail}\nfn main() {{}}");
+    let column = 1 + tail.find('7').expect("the tail holds a 7");
+    assert_eq!(
+        reports(&src),
+        [(Code::Mismatch, (2, column), false)],
+        "function tail"
+    );
+}
+
+/// The walk that fills the bare `break`s of a `unit` loop leaves a bare `break` of an inner loop
+/// alone: that `break` ends the inner loop, which has no value.
+#[test]
+fn a_bare_break_of_an_inner_loop_should_keep_no_value() {
+    with_prelude();
+    contains(
+        &with_safe_call("loop { if c { break g() }; loop { break }; break }"),
+        &["(loop (block (break)))"],
+    );
+}
+
+/// The note of E0043 and E0031 names the call that gives the `unit`. `dbg` returns its argument,
+/// so the note names the call in it.
+#[test]
+fn the_unit_note_should_name_the_call_in_dbg() {
+    for (row, src, called) in [
+        ("call", "g()", Some("g")),
+        ("dbg of a call", "dbg(g())", Some("g")),
+        ("dbg of dbg", "dbg(dbg(g()))", Some("g")),
+        ("dbg of a local", "dbg(u)", None),
+    ] {
+        let program = parse_ok(&format!("fn main() {{ {src} }}"));
+        let [ast::Item::Function(f)] = program.items.as_slice() else {
+            panic!("row `{row}`: the program should hold one function");
+        };
+        let tail = tail(&f.body).expect("the body should end in the expression");
+        assert_eq!(expr::unit_call(tail).as_deref(), called, "row `{row}`");
+    }
 }

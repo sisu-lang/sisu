@@ -649,6 +649,8 @@ thread_local! {
     /// How many values `wrap_breaks` has wrapped in a walk that enters no nested loop, on this
     /// thread.
     pub(crate) static WIDENED_BREAKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many expressions `fill_bare_breaks` has visited on this thread.
+    pub(super) static FILL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `object_in_some` has been called on this thread.
     pub(crate) static OBJECT_IN_SOME_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many calls written `.push` have read a place of a type that is no array, on this

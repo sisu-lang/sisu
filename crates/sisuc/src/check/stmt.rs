@@ -2341,6 +2341,8 @@ fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool, widened
 /// wrapped into `ty` when that is `unit?`. It enters each nested loop, as a labelled `break` in one
 /// can end an outer loop.
 fn fill_bare_breaks(e: &mut tir::Expr, depth: usize, ty: Type) {
+    #[cfg(test)]
+    super::FILL_STEPS.set(super::FILL_STEPS.get() + 1);
     let inner = depth + usize::from(matches!(e.kind, ExprKind::Loop(_)));
     e.each_child_mut(&mut |child| fill_bare_breaks(child, inner, ty));
     let span = e.span;

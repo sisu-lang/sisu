@@ -698,6 +698,26 @@ fn a_condition_that_is_not_bool_should_keep_the_join_of_the_branches() {
             vec![(NoValue, (2, 13)), (Mismatch, (2, 16))],
         ),
         (
+            "if condition without else, as the value of a block",
+            "fn main() {\n    let x = { if 1 { 2 } }\n    print(x)\n}".into(),
+            vec![(NoValue, (2, 15)), (Mismatch, (2, 18))],
+        ),
+        (
+            "if let subject that is no optional, without else",
+            "fn main() {\n    let x = if let v = 5 { 2 }\n    print(x)\n}".into(),
+            vec![(NoValue, (2, 13)), (UnwrapNeedsOptional, (2, 24))],
+        ),
+        (
+            "if let subject that is not found, without else",
+            "fn main() {\n    let x = if let Some(v) = missing { 2 }\n    print(x)\n}".into(),
+            vec![(NoValue, (2, 13)), (BindingNotFound, (2, 30))],
+        ),
+        (
+            "if let subject that is not found, as the value of a block",
+            "fn main() {\n    let x = { if let Some(v) = missing { 2 } }\n    print(x)\n}".into(),
+            vec![(NoValue, (2, 15)), (BindingNotFound, (2, 32))],
+        ),
+        (
             "a none as the condition",
             "fn main() {\n    let x = if None { 1 } else { 2 }\n    print(x && true)\n}".into(),
             vec![(Mismatch, (2, 16)), (Mismatch, (3, 11))],

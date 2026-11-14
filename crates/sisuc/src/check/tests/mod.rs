@@ -1608,6 +1608,25 @@ fn widening_walk_enters_only_crossed_loops() {
     assert_eq!(entered("outer: ", "if c { break outer None }"), 1);
 }
 
+/// The walk that gives each bare `break` a `unit` enters a nested loop only when a `break` in one
+/// targets the outer loop: a `unit` loop in each `unit` loop stays linear. Depth 2 shows the
+/// nesting; 20 is ten times that.
+#[test]
+fn bare_break_walk_should_stay_linear_in_nested_loops() {
+    let steps = |depth: usize| {
+        let mut e = "g()".to_string();
+        for _ in 0..depth {
+            e = format!("loop {{ if c {{ break g() }}; {e}; break }}");
+        }
+        FILL_STEPS.set(0);
+        lowered(&format!(
+            "fn g() {{}}\nfn f(c: bool) {{ {e} }}\nfn main() {{}}"
+        ));
+        FILL_STEPS.get()
+    };
+    assert_near_linear(steps(20), steps(40), steps(60));
+}
+
 /// `??` expects a `T` or a `T?` of its right side, so the loop keeps its values' `i64`.
 #[test]
 fn loop_after_coalesce_is_its_values_type() {
@@ -4950,11 +4969,11 @@ fn safe_optional_field_not_wrapped() {
 }
 
 #[test]
-fn lowers_safe_unit_method() {
+fn a_safe_unit_method_call_should_wrap_the_call_in_some() {
     f_contains(
-        C,
+        "struct T {\n    v: i64\n    fn m(self) {}\n}\n",
         "fn f(t: T?) { t?.m() }",
-        "(if-some #1 t#0 (block (call T.m #1)) (block))",
+        "(if-some #1 t#0 (block (wrap (call T.m #1))) (block None))",
     );
 }
 
@@ -5058,7 +5077,7 @@ fn equal_should_spill_a_counted_operand_before_an_exit() {
 #[test]
 fn print_should_report_a_value_at_the_argument_and_a_count_on_the_call() {
     codes(
-        "class P {\n    x: i64\n}\nfn main() {\n    print(P(x: 1))\n    print(if true { 1 })\n    print([1])\n    print(1, 2)\n}",
+        "struct P {\n    x: i64\n}\nfn main() {\n    print(P(x: 1))\n    print(if true { 1 })\n    print([1])\n    print(1, 2)\n}",
         &[(Code::NoValue, (6, 11)), (Code::PrintArgument, (8, 5))],
     );
 }
@@ -5098,7 +5117,7 @@ fn a_unit_branch_beside_a_value_should_report_no_value() {
             31,
         ),
     ] {
-        let d = diagnostic(src, Code::NoValue, (2, column, "nothing()"), &[]);
+        let d = diagnostic_row(src, src, Code::NoValue, (2, column, "nothing()"), &[]);
         assert!(unit_values::has_unit_note(&d), "{src}");
     }
 }
