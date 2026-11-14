@@ -555,14 +555,15 @@ impl<'ctx> Codegen<'ctx, '_> {
         vec![part.into()]
     }
 
-    /// The LLVM type of a function that returns a `ret`, with the parameters `params`.
+    /// The LLVM type of a function that returns a `ret`, with the parameters `params`. A function
+    /// that returns `unit` returns `void`: its call has no value.
     pub(super) fn function_type(
         &self,
         ret: Option<Type>,
         mut params: Vec<BasicMetadataTypeEnum<'ctx>>,
     ) -> FunctionType<'ctx> {
         let void = self.context.void_type();
-        match ret.and_then(|ret| self.llvm_type(ret)) {
+        match (ret.filter(|&ret| ret != Type::UNIT)).and_then(|ret| self.llvm_type(ret)) {
             Some(ret) if self.by_memory(ret) => {
                 params.push(self.context.ptr_type(AddressSpace::default()).into());
                 void.fn_type(&params, false)

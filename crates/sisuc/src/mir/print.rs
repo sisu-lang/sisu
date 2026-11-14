@@ -415,5 +415,6 @@ fn constant(c: &Const) -> String {
         Const::Char(c) => format!("{c:?}"),
         Const::None { .. } => "None".to_owned(),
         Const::Str(text) => format!("{text:?}"),
+        Const::Unit => "()".to_owned(),
     }
 }

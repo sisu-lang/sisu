@@ -194,6 +194,11 @@ fn constant(e: &Expr, counted: impl Fn(Type) -> bool) -> Option<Const> {
     if let ExprKind::Char(c) = e.kind {
         return Some(Const::Char(c));
     }
+    // A `unit` local holds nothing to read: its value is always `()`.
+    let unit_local = matches!(e.kind, ExprKind::Local(_)) && e.ty == Type::UNIT;
+    if matches!(e.kind, ExprKind::Unit) || unit_local {
+        return Some(Const::Unit);
+    }
     if let ExprKind::None = e.kind {
         return Some(Const::None {
             ty: e.ty,
@@ -687,12 +692,26 @@ impl<'a> Lowering<'a> {
         Some(())
     }
 
-    /// The value of `e`, which the checker gives one, in a new temporary.
+    /// The value of `e`, which the checker gives one, in a new temporary. A `unit` expression
+    /// lowers to no local, so its `()` goes into a new one.
     fn temp_of(&mut self, e: &Expr) -> Option<LocalId> {
-        Some(
-            self.into(e, None)?
-                .expect("the checker should give this expression a value"),
-        )
+        let value = self.into(e, None)?;
+        Some(value.unwrap_or_else(|| self.unit_temp(e.ty)))
+    }
+
+    /// A new temporary that holds `()`, for an expression of type `ty` that lowered to no local.
+    fn unit_temp(&mut self, ty: Type) -> LocalId {
+        assert_eq!(
+            ty,
+            Type::UNIT,
+            "the checker should give this expression a value"
+        );
+        let temp = self.temp(Type::UNIT);
+        self.push(Statement::Assign {
+            dest: Some(temp),
+            value: Rvalue::Use(Operand::Const(Const::Unit)),
+        });
+        temp
     }
 
     /// `e` as an operand: a constant, a read of a source local, or a temporary.
@@ -1022,9 +1041,8 @@ impl<'a> Lowering<'a> {
             }
             ExprKind::Dbg { at, text, operand } => {
                 // The operand runs once, into the result; the statement reads it in place.
-                let value = self
-                    .into(operand, dest)?
-                    .expect("the checker should give the argument of `dbg` a value");
+                let value = self.into(operand, dest)?;
+                let value = value.unwrap_or_else(|| self.unit_temp(operand.ty));
                 let calls = self.calls_dbg(operand.ty);
                 self.assign(
                     Type::UNIT,
@@ -1036,7 +1054,8 @@ impl<'a> Lowering<'a> {
                         calls,
                     },
                 );
-                return Some(Some(value));
+                // A `unit` lowers to no local, as everywhere else.
+                return Some(valued(e.ty).then_some(value));
             }
             ExprKind::Panic(message) => {
                 let message = self.operand(message)?;

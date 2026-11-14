@@ -1326,6 +1326,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             ),
             Const::None { ty, .. } => (self.empty(*ty), *ty),
             Const::Str(text) => (self.string_const(text), Type::STRING),
+            Const::Unit => (self.context.const_struct(&[], false).into(), Type::UNIT),
         }
     }
 

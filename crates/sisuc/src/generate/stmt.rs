@@ -260,10 +260,17 @@ impl Gen<'_> {
         self.effect = effect;
     }
 
-    /// A value for `print`, in a `form` from 0 to 3: as it is, interpolated alone, interpolated
-    /// with a width, or through `to_string`. Each writes the same text for any type. An optional
-    /// in the first three forms warns (W0015), and `to_string` of it does not.
+    /// A value for `print`, in a `form` from 0 to 4: as it is, interpolated alone, interpolated
+    /// with a width, through `to_string`, or a `bool` from `unit` values. Each of the first four
+    /// writes the same text for any type. An optional in the first three forms warns (W0015),
+    /// and `to_string` of it does not.
     fn printed_value(&mut self, form: usize) {
+        if form == 4 {
+            // A block binds the `()` of `{}`, a block with no tail, and stores and compares it.
+            let compare = ["[u, u] == [u]", "[u] != [u]", "u < u", "u >= u"][self.pick(4)];
+            self.w.text(&format!("{{ let u = {{}}; {compare} }}"));
+            return;
+        }
         if form == 3 {
             let ty = self.bare_type();
             self.w.text("(");
@@ -296,7 +303,7 @@ impl Gen<'_> {
             Rule::Print => {
                 // One pick for both, so that the bytes after it stay where they were: the stream
                 // is `print` or `eprint`, and the form is the value's.
-                let choice = self.pick(8);
+                let choice = self.pick(10);
                 self.w.text(["print(", "eprint("][choice % 2]);
                 self.printed_value(choice / 2);
                 self.w.text(")");

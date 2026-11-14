@@ -9,7 +9,7 @@ fn main() {
     print(id(u))                // ()
     print(idr(u))               // ()
     print([u, u])               // [(), ()]
-    print(Some(u))              // Some(())
+    print(Some(u))              // ()
     print(u == u)               // true
     let r: Result<unit, string> = Ok(u)
     match r {

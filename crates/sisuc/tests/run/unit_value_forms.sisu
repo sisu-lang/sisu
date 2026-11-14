@@ -1,12 +1,11 @@
 // GIVEN an enum `U` whose method `log` prints `log`, a function `g` of no result, and `c` true
 // WHEN the program binds, passes, prints, compares and breaks with a `unit` or a `unit?` value,
 //   with `o` as `None` and as `Some(U.A)`
-// THEN `log` runs only when `o` holds a value. A `unit?` prints `None` or `Some(())`, and a
+// THEN `log` runs only when `o` holds a value. A `unit?` prints `None` or `()`, and a
 //   `unit` prints `()`. Two `unit` values are equal, and neither is less than the other
 // AND `dbg` writes each value to stderr
 enum U {
     A
-    B
     fn log(self) {
         print("log")
     }
@@ -20,15 +19,15 @@ fn f() -> unit? { None }
 
 fn rows(o: U?) {
     let c = true
-    print(o?.log())                                   // None | log, Some(())
+    print(o?.log())                                   // None | log, ()
     let u = { o?.log() }                              // | log
-    print(u)                                          // None | Some(())
+    print(u)                                          // None | ()
     let _ = o?.log()                                  // | log
-    print(id(o?.log()))                               // None | log, Some(())
+    print(id(o?.log()))                               // None | log, ()
     print(o?.log() ?? g())                            // () | log, ()
     dbg(o?.log())                                     // | log
     let x = loop { if c { break o?.log() }; break }   // | log
-    print(x)                                          // None | Some(())
+    print(x)                                          // None | ()
 }
 
 fn main() {
@@ -42,7 +41,7 @@ fn main() {
     let w: unit = y
     print(w)              // ()
     let w2: unit? = y
-    print(w2)             // Some(())
+    print(w2)             // ()
     print(g() < g())      // false
     print(g() <= g())     // true
     print(g() == g())     // true

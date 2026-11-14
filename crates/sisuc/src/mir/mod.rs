@@ -280,6 +280,8 @@ pub(crate) enum Const {
     },
     /// A string pattern's literal, which a test compares with in place.
     Str(String),
+    /// The one `unit` value, `()`.
+    Unit,
 }
 
 #[derive(Clone, Debug, PartialEq)]
