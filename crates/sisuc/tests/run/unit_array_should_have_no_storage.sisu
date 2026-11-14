@@ -1,15 +1,17 @@
-// GIVEN two arrays of `unit`, `xs` and `ys`
-// WHEN the program pushes the value of `print("")` 100 000 times into each one
+// GIVEN two arrays of `unit`, `xs` and `ys`, and a function `g` that prints nothing
+// WHEN the program pushes the value of `g()` 100 000 times into each one
 // THEN `xs.len()` is 100000, `xs[99999]` is `()`, and `xs == ys` is true
 // AND the arrays hold no bytes for their elements, so Valgrind and `--rc-checks` report no error
+fn g() {}
+
 fn main() {
     let mut xs: [unit] = []
     let mut ys: [unit] = []
     for _i in 0..100000 {
-        xs.push(print(""))
+        xs.push(g())
     }
     for _i in 0..100000 {
-        ys.push(print(""))
+        ys.push(g())
     }
     print(xs.len())     // 100000
     print(xs[99999])    // ()

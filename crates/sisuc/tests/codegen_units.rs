@@ -937,8 +937,8 @@ fn split_build_should_succeed_when_threads_cannot_start() {
 /// GIVEN a program that pushes 100 000 `unit` values into each of two `[unit]` arrays
 /// WHEN `sisu build --emit ir -O2` builds it
 /// THEN each array block size that the IR computes multiplies its capacity by an element size of 0
-/// AND each `sisu_alloc`, `sisu_realloc` and `sisu_free` call of an array block after the pipeline
-///   gets only the 24 bytes of the header
+/// AND each `sisu_alloc`, `sisu_realloc` and `sisu_free` call after the pipeline gets only the
+///   24 bytes of the header
 /// AND no store writes a `unit` element
 #[test]
 fn unit_array_should_allocate_no_payload() {
@@ -969,8 +969,6 @@ fn unit_array_should_allocate_no_payload() {
                 && ["@sisu_alloc(", "@sisu_realloc(", "@sisu_free("]
                     .iter()
                     .any(|callee| line.contains(callee))
-                // The block of the literal `""`, which `print("")` releases, is a string block.
-                && !line.contains("ptr nonnull @str")
         })
         .collect();
     assert!(
