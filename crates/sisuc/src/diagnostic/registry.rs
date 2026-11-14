@@ -1,5 +1,7 @@
 //! The registry: every diagnostic code, and the message, labels, help and fixes of each.
 
+use rustc_hash::FxHashSet;
+
 use super::{Diagnostic, Edit, Fix, Severity, Suggestion};
 use crate::conformance::CHOICE_DEPTH_LIMIT;
 use crate::payload_limit::{self, PAYLOAD_LIMIT_GIB};
@@ -1641,16 +1643,19 @@ impl ReceiverArgument {
 }
 
 /// The first argument of a call through a type, which becomes the receiver of the method call.
-/// `safe` is whether the method call takes the other arguments.
+/// `takes` is whether the method call takes the other arguments. `safe` is whether the fixed
+/// program checks: the method call takes them and its result meets the context of the call.
 pub(crate) struct TypeReceiver {
     pub(crate) argument: ReceiverArgument,
+    pub(crate) takes: bool,
     pub(crate) safe: bool,
 }
 
 /// The message of the fix that calls the method `name` on the first argument of a call written as
-/// a function. `safe` is whether the method call takes the other arguments.
-fn method_form_message(name: &str, safe: bool) -> String {
-    if safe {
+/// a function. `takes` is whether the method call takes the other arguments: when it does not,
+/// the message says that they need a fix.
+fn method_form_message(name: &str, takes: bool) -> String {
+    if takes {
         format!("call `{name}` as a method")
     } else {
         format!("try calling `{name}` as a method, then fix its arguments")
@@ -2397,7 +2402,7 @@ fn unwrap_text(unwrap: UnwrapHelp, fix: bool) -> Option<String> {
 
 #[cfg(test)]
 thread_local! {
-    /// How many words `string_index_names` has compared on this thread.
+    /// How many words `string_index_names` has put into its set or looked up, on this thread.
     pub(crate) static NAME_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
@@ -2405,18 +2410,22 @@ thread_local! {
 /// `base` holds as a whole word gets the first number from 2 that `base` does not hold. So the
 /// help does not name `base` twice.
 pub(crate) fn string_index_names(base: &str) -> [String; 3] {
-    let words: Vec<&str> = base
+    let words: FxHashSet<&str> = base
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
         .filter(|word| !word.is_empty())
+        .inspect(|_| {
+            #[cfg(test)]
+            NAME_STEPS.set(NAME_STEPS.get() + 1);
+        })
         .collect();
     ["bs", "cs", "i"].map(|name| {
         let mut fresh = name.to_owned();
         let mut number = 1;
-        while words.iter().any(|word| {
+        while {
             #[cfg(test)]
             NAME_STEPS.set(NAME_STEPS.get() + 1);
-            *word == fresh
-        }) {
+            words.contains(fresh.as_str())
+        } {
             number += 1;
             fresh = format!("{name}{number}");
         }
@@ -6141,8 +6150,12 @@ impl From<DiagnosticKind> for Diagnostic {
                 };
                 let d = Diagnostic::coded(code, at, message);
                 match receiver {
-                    Some(TypeReceiver { argument, safe }) => d.with_fix(Fix {
-                        message: method_form_message(&name, safe),
+                    Some(TypeReceiver {
+                        argument,
+                        takes,
+                        safe,
+                    }) => d.with_fix(Fix {
+                        message: method_form_message(&name, takes),
                         safe,
                         edits: argument.edits(&format!(".{name}(")),
                     }),

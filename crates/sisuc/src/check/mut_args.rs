@@ -905,7 +905,7 @@ impl Checker<'_> {
 
     /// Whether the result of a call, of type `got`, meets the type `want` that its context
     /// expects. A context that is unknown or holds a hole expects nothing.
-    fn result_meets(&mut self, (want, got): (Option<Type>, Option<Type>)) -> bool {
+    pub(super) fn result_meets(&mut self, (want, got): (Option<Type>, Option<Type>)) -> bool {
         let (Some(want), Some(got)) = (want, got) else {
             return true;
         };

@@ -414,8 +414,9 @@ impl Checker<'_> {
     /// `Type.member`, or `Type.member(args)`, where `member` is the method `func` of the struct or
     /// enum `holder`, which `site` writes as `type_name`: E0120. When the first argument is a
     /// value of the type, the fix calls the method on it, as `unknown_call` does. A label, a
-    /// `mut` on the first argument, or a type argument of the method (`typed`) leaves no fix.
-    /// Checks each argument once.
+    /// `mut` on the first argument, or a type argument of the method (`typed`) leaves no fix. The
+    /// fix is safe when the fixed program checks: the method takes the other arguments, and its
+    /// result meets the type that `site` expects. Checks each argument once.
     pub(super) fn method_through_type(
         &mut self,
         func: tir::FuncId,
@@ -435,7 +436,8 @@ impl Checker<'_> {
                     .map(|checked| checked.ty)
                     .filter(|ty| method_holder(*ty) == Some(holder));
                 if let Some(ty) = ty {
-                    let idiom = Idiom::Method(func, self.owner_args(func, ty));
+                    let owner = self.owner_args(func, ty);
+                    let idiom = Idiom::Method(func, owner);
                     // A method of the declaration has no block, so no bound that `ty` fails.
                     let (argument, takes, _) = self.receiver_call(
                         site.name.span,
@@ -445,9 +447,17 @@ impl Checker<'_> {
                         first,
                         rest,
                     );
+                    // The fixed call is the method call, so its result must meet the context.
+                    // A result that is not known does not.
+                    let result =
+                        (self.signatures[func.0].ret).and_then(|ret| self.subst(ret, owner.get()));
+                    let expected = site.expected.ty();
+                    let meets = expected.is_none()
+                        || (result.is_some() && self.result_meets((expected, result)));
                     Some(TypeReceiver {
                         argument,
-                        safe: takes,
+                        takes,
+                        safe: takes && meets,
                     })
                 } else {
                     self.stray(rest);
@@ -502,8 +512,9 @@ impl Checker<'_> {
     /// first one when it is checked already. `owner` is the type arguments of the method's class
     /// or enum. The method call takes them when there are as many as the method has parameters.
     /// Each must fit its parameter type, with `owner` in it, as a call `receiver.method(args)`
-    /// checks. A method with type parameters of its own takes none of them as written, as they
-    /// are not known.
+    /// checks. An argument has `mut` exactly when its parameter has. Then it is a place that can
+    /// change, with no `?.` along it and the parameter's type, as `mut_arg` takes it. A method with
+    /// type parameters of its own takes none of them as written, as they are not known.
     fn method_arguments(
         &mut self,
         func: tir::FuncId,
@@ -524,8 +535,8 @@ impl Checker<'_> {
         // The method call needs the `mut` that the parameter has, so an argument without it
         // cannot be taken as written (E0166).
         let mut takes = args.len() == sig.params.len()
-            && !(args.iter().zip(&sig.muts))
-                .any(|(arg, &at_mut)| at_mut && arg.mut_keyword.is_none());
+            && (args.iter().zip(&sig.muts))
+                .all(|(arg, &at_mut)| at_mut == arg.mut_keyword.is_some());
         // The checks below borrow `self` again. Only the parameters that have an argument are
         // made, so that a call with few arguments costs little.
         let params: Vec<_> = sig
@@ -543,10 +554,25 @@ impl Checker<'_> {
                 function: Origin::id(func.0),
                 index: Origin::id(i),
             };
-            let checked = first
-                .take()
-                .unwrap_or_else(|| self.expr(&arg.value, Expectation::or_poisoned(want, origin)));
-            takes &= want.is_some_and(|want| checked.is_ok_and(|checked| fits(want, checked.ty)));
+            if let Some(checked) = first.take() {
+                takes &=
+                    want.is_some_and(|want| checked.is_ok_and(|checked| fits(want, checked.ty)));
+            } else if arg.mut_keyword.is_some() && muts.get(i) == Some(&true) {
+                // The call takes a `mut` argument as `mut_arg` does: a place that can change, with
+                // no `?.` along it, and exactly the type of the parameter.
+                takes &= match self.mut_place(&arg.value) {
+                    Ok(place) => {
+                        place.path.is_some()
+                            && place.chain.is_none()
+                            && want.is_some_and(|want| place.ty == Some(want))
+                    }
+                    Err(_) => false,
+                };
+            } else {
+                let checked = self.expr(&arg.value, Expectation::or_poisoned(want, origin));
+                takes &=
+                    want.is_some_and(|want| checked.is_ok_and(|checked| fits(want, checked.ty)));
+            }
         }
         takes
     }
