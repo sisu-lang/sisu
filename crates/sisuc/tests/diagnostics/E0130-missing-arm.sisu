@@ -1,0 +1,77 @@
+// GIVEN a `match` that misses one value that has a pattern of its own: a variant with no fields, a variant with fields, `None`, a variant with an enum field, `Err`, a variant with `bool` fields and `Some(None)`
+// AND a `match` of one line, which ends in `}` after its last arm
+// WHEN `sisu check` runs on it
+// THEN it reports E0130 at 27:5, 34:5, 41:5, 47:5, 54:5, 60:5, 67:5 and 73:32, one for each function
+// AND each fix adds an arm for the value that the error names, and no `_ =>` arm
+enum Shape {
+    Circle(r: f64)
+    Rect(w: f64, h: f64)
+    Point
+}
+
+enum Inner {
+    X
+    Y
+}
+
+enum Wrap {
+    A(i: Inner)
+    B
+}
+
+enum Flags {
+    On(x: bool, y: bool)
+}
+
+fn area(s: Shape) -> f64 {
+    match s {
+        Circle(r) => f64.pi * r * r
+        Rect(w, h) => w * h
+    }
+}
+
+fn with_fields(s: Shape) -> i64 {
+    match s {
+        Circle(_) => 1
+        Point => 2
+    }
+}
+
+fn optional(s: Shape?) -> i64 {
+    match s {
+        Some(_) => 1
+    }
+}
+
+fn nested(w: Wrap) -> i64 {
+    match w {
+        A(X) => 1
+        B => 2
+    }
+}
+
+fn result(r: Result<i64, string>) -> i64 {
+    match r {
+        Ok(v) => v
+    }
+}
+
+fn two_bools(f: Flags) -> i64 {
+    match f {
+        On(true, _) => 1
+        On(false, true) => 2
+    }
+}
+
+fn optional_of_optional(s: bool??) -> i64 {
+    match s {
+        Some(Some(true)) => 1
+        None => 2
+    }
+}
+
+fn one_line(s: Shape) -> i64 { match s { Circle(_) => 1; Rect(_, _) => 2 } }
+
+fn main() {
+    print(area(Shape.Point))
+}

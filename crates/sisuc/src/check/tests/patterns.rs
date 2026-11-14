@@ -253,28 +253,73 @@ fn pattern_names() {
     );
 }
 
-/// E0125 offers the lower-case name. A keyword cannot be a binding, but `true` and `false` are
-/// patterns, and the fix is right on a `bool`.
+/// E0125 offers the lower-case name. A keyword or a reserved word cannot be a binding, so the
+/// help says that and there is no fix. But `true` and `false` are patterns, and the fix is right
+/// on a `bool`. The test reads no help text, as the unit tests do not: the `E0125-keyword`
+/// fixture pins the text, and this test pins which names get a fix, and the places that report.
+/// Each row: the program and whether the one E0125 has a fix.
 #[test]
-fn a_name_that_lowers_to_a_keyword_should_get_no_fix() {
-    let rows = [
-        ("1", "If", false),
-        ("1", "Import", false),
-        ("1", "Stopped", true),
-        ("1 == 1", "True", true),
-        ("1 == 1", "False", true),
-    ];
-    for (scrutinee, name, has_fix) in rows {
-        let src = format!(
+fn an_e0125_help_should_name_a_keyword_that_the_lower_case_name_is() {
+    let on_match = |scrutinee: &str, name: &str| {
+        format!(
             "fn main() {{\n    match {scrutinee} {{\n        {name} => print(1)\n        _ => print(2)\n    }}\n}}\n"
-        );
-        let ds = diags(&src);
-        let [d] = ds.as_slice() else {
-            panic!("{name}: {ds:?}");
-        };
-        assert_eq!(d.code(), Code::NotVariantHere, "{name}");
-        assert_eq!(!d.fixes().is_empty(), has_fix, "{name}");
+        )
+    };
+    let in_if_let = |name: &str| {
+        format!("fn f(x: i64?) {{\n    if let Some({name}) = x {{}}\n}}\nfn main() {{}}\n")
+    };
+    let in_let_else = |name: &str| {
+        format!(
+            "fn f(x: i64?) {{\n    let Some({name}) = x else {{ return }}\n}}\nfn main() {{}}\n"
+        )
+    };
+    let mut rows = vec![
+        ("If".to_string(), on_match("1", "If"), false),
+        ("Import".to_string(), on_match("1", "Import"), false),
+        ("Stopped".to_string(), on_match("1", "Stopped"), true),
+        ("True".to_string(), on_match("1 == 1", "True"), true),
+        ("False".to_string(), on_match("1 == 1", "False"), true),
+        ("Print".to_string(), on_match("1", "Print"), true),
+        ("Use".to_string(), on_match("1", "Use"), true),
+        ("Async".to_string(), on_match("1", "Async"), true),
+        ("Some(If) in an if let".to_string(), in_if_let("If"), false),
+        (
+            "Some(If) in a let else".to_string(),
+            in_let_else("If"),
+            false,
+        ),
+        (
+            "Some(Print) in an if let".to_string(),
+            in_if_let("Print"),
+            true,
+        ),
+    ];
+    // The keywords, then the reserved words.
+    for name in [
+        "Match", "Fn", "Let", "Todo", "Mut", "Pub", "Move", "Weak", "Test", "Extern", "As",
+    ] {
+        rows.push((name.to_string(), on_match("1", name), false));
     }
+    let mut red = Vec::new();
+    for (row, src, has_fix) in &rows {
+        let ds = diags(src);
+        let [d] = ds.as_slice() else {
+            red.push(format!("row `{row}`: {ds:?}"));
+            continue;
+        };
+        if d.code() != Code::NotVariantHere
+            || d.help().is_none()
+            || d.fixes().is_empty() == *has_fix
+        {
+            red.push(format!("row `{row}`: {d:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
 }
 
 #[test]
@@ -547,10 +592,11 @@ fn match_coverage() {
     );
 }
 
-/// The note names the first arm that has the missing value's variant at the top, and the fix
-/// adds `_ => todo` as the last arm: on the `}` line's own line, or by breaking `{}`.
+/// The note names the first arm that has the missing value's variant at the top. The fix adds an
+/// arm for the missing value as the last arm: on the `}` line's own line, or by breaking `{}`.
+/// An integer has no pattern for its gap, so its fix adds `_ => todo`.
 #[test]
-fn non_exhaustive_note_and_fix() {
+fn a_non_exhaustive_match_should_get_a_note_and_an_arm_fix() {
     let src = match_on(
         "e",
         &["Num(_) => 0", "Add(Num(_), _) => 1", "Mul(_, _) => 2"],
@@ -558,7 +604,10 @@ fn non_exhaustive_note_and_fix() {
     let d = diagnostic(&src, Code::NonExhaustive, (12, 5, "match"), &[(14, 9)]);
     assert_eq!(
         fixes(&src, &d),
-        [(false, vec![(16, 1, "", "        _ => todo\n".to_string())])]
+        [(
+            false,
+            vec![(16, 1, "", "        Add(Add(_, _), _) => todo\n".to_string())]
+        )]
     );
     applied(&src, &d);
     let src = format!("{COVER}\nfn t(i: i64) -> i64 {{\n    match i {{}}\n}}");
@@ -580,7 +629,7 @@ fn non_exhaustive_note_and_fix() {
         fixes(&src, &d),
         [(
             false,
-            vec![(12, 30, " ", "\n        _ => todo\n    ".to_string())]
+            vec![(12, 30, " ", "\n        B => todo\n    ".to_string())]
         )]
     );
     applied(&src, &d);
@@ -591,9 +640,201 @@ fn non_exhaustive_note_and_fix() {
     let d = diagnostic(&src, Code::NonExhaustive, (12, 14, "match"), &[]);
     assert_eq!(
         fixes(&src, &d),
-        [(false, vec![(14, 1, "", "        _ => todo\n".to_string())])]
+        [(false, vec![(14, 1, "", "        B => todo\n".to_string())])]
     );
     applied(&src, &d);
+}
+
+/// How the arm of an E0130 fix relates to the value that the error names, in a row of
+/// `an_e0130_fix_should_add_an_arm_that_covers_the_missing_value`.
+enum Added {
+    /// The fix adds this arm, which covers the value, and no E0130 is left.
+    Covers(&'static str),
+    /// The fix adds this arm, and the next missing value is the E0130 that is left.
+    CoversThenMore(&'static str),
+}
+
+/// The fix of an E0130 adds an arm for the value that the error names, so the corrected program
+/// has no E0130 for it. A gap, which has no pattern of its own, and an empty `match`, which names
+/// `_`, get `_ => todo`. The text of the help is pinned in the `E0130-missing-arm` fixture; this
+/// test reads the edit, which is where the fix wrote `_ =>` for each value. Each row: the program
+/// and the arm that its fix adds. The rows of a gap and of an empty `match` pass before the fix
+/// too.
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row for each kind of missing value"
+)]
+fn an_e0130_fix_should_add_an_arm_that_covers_the_missing_value() {
+    use Added::{Covers, CoversThenMore};
+    with_prelude();
+    let shape = "enum Shape { Circle(r: f64); Rect(w: f64, h: f64); Point }\n";
+    let rows: Vec<(&str, String, Added)> = vec![
+        (
+            "unit variant",
+            format!("{shape}fn f(s: Shape) -> i64 {{ match s {{ Circle(_) => 1; Rect(_, _) => 2 }} }}"),
+            Covers("Point"),
+        ),
+        (
+            "unit variant of an optional",
+            format!("{shape}fn f(s: Shape?) -> i64 {{ match s {{ Some(Circle(_)) => 1; Some(Rect(_, _)) => 2; None => 3 }} }}"),
+            Covers("Some(Point)"),
+        ),
+        (
+            "qualified patterns",
+            format!("{shape}fn f(s: Shape) -> i64 {{ match s {{ Shape.Circle(_) => 1; Shape.Rect(_, _) => 2 }} }}"),
+            Covers("Point"),
+        ),
+        (
+            "guarded arm",
+            format!("{shape}fn f(s: Shape, c: bool) -> i64 {{ match s {{ Circle(_) => 1; Rect(_, _) => 2; Point if c => 3 }} }}"),
+            Covers("Point"),
+        ),
+        (
+            "name that the variant shadows",
+            format!("{shape}fn f(s: Shape) -> i64 {{ let Point = 1; match s {{ Circle(_) => 1; Rect(_, _) => 2 }} }}"),
+            Covers("Point"),
+        ),
+        (
+            "variant with fields",
+            format!("{shape}fn f(s: Shape) -> i64 {{ match s {{ Circle(_) => 1; Point => 2 }} }}"),
+            Covers("Rect(_, _)"),
+        ),
+        (
+            "two variants",
+            format!("{shape}fn f(s: Shape) -> i64 {{ match s {{ Circle(_) => 1 }} }}"),
+            CoversThenMore("Rect(_, _)"),
+        ),
+        (
+            "none",
+            format!("{shape}fn f(s: Shape?) -> i64 {{ match s {{ Some(_) => 1 }} }}"),
+            Covers("None"),
+        ),
+        (
+            "variant that covers only part",
+            "enum E { A(n: i64); B }\nfn f(e: E) -> i64 { match e { A(1) => 1; B => 2 } }".to_string(),
+            Covers("A(_)"),
+        ),
+        (
+            "variant with an enum field",
+            "enum In { X; Y }\nenum E { A(i: In); B }\nfn f(e: E) -> i64 { match e { A(X) => 1; B => 2 } }".to_string(),
+            Covers("A(Y)"),
+        ),
+        (
+            "bool",
+            "fn f(b: bool) -> i64 { match b { true => 1 } }".to_string(),
+            Covers("false"),
+        ),
+        (
+            "result",
+            "fn f(r: Result<i64, string>) -> i64 { match r { Ok(v) => v } }".to_string(),
+            Covers("Err(_)"),
+        ),
+        (
+            "variant with two bool fields",
+            "enum E { A(x: bool, y: bool) }\nfn f(e: E) -> i64 { match e { A(true, _) => 1; A(false, true) => 2 } }".to_string(),
+            Covers("A(false, false)"),
+        ),
+        (
+            "generic enum",
+            "enum Bx<T> { B(v: T); E }\nfn f(e: Bx<bool>) -> i64 { match e { B(true) => 1; E => 2 } }".to_string(),
+            Covers("B(false)"),
+        ),
+        (
+            "optional of an optional",
+            "fn f(s: bool??) -> i64 { match s { Some(Some(true)) => 1; None => 2 } }".to_string(),
+            CoversThenMore("Some(None)"),
+        ),
+        (
+            "variant with a string field",
+            "enum E { A(s: string); B }\nfn f(e: E) -> i64 { match e { A(\"x\") => 1; B => 2 } }".to_string(),
+            Covers("A(_)"),
+        ),
+        // A gap has no pattern of its own, so only `_` closes it.
+        (
+            "integer",
+            "fn f(b: i64) -> i64 { match b { 1 => 1 } }".to_string(),
+            Covers("_"),
+        ),
+        (
+            "string",
+            "fn f(e: string) -> i64 { match e { \"a\" => 1 } }".to_string(),
+            Covers("_"),
+        ),
+        // An empty `match` names `_`, and no gap.
+        (
+            "empty match on an enum",
+            format!("{shape}fn f(s: Shape) -> i64 {{ match s {{}} }}"),
+            Covers("_"),
+        ),
+        (
+            "empty match on an optional",
+            "fn f(b: bool?) -> i64 {\n    match b {\n    }\n}".to_string(),
+            Covers("_"),
+        ),
+    ];
+    // The arm that the fix of the one E0130 of `src` adds, and the result of the fix.
+    let add_arm = |src: &str| -> Option<(String, String)> {
+        let ds = diags(src);
+        let [d] = ds
+            .iter()
+            .filter(|d| d.code() == Code::NonExhaustive)
+            .collect::<Vec<_>>()[..]
+        else {
+            return None;
+        };
+        let [fix] = d.fixes() else { return None };
+        let [edit] = fix.edits() else { return None };
+        let arm = edit.replacement().trim().to_string();
+        Some((arm, apply(src, &[edit])))
+    };
+    let mut red = Vec::new();
+    for (row, src, added) in &rows {
+        let src = format!("{src}\nfn main() {{}}");
+        let Some((arm, result)) = add_arm(&src) else {
+            red.push(format!("row `{row}`: no single E0130 with a single edit"));
+            continue;
+        };
+        let (pattern, more) = match added {
+            Covers(pattern) => (pattern, false),
+            CoversThenMore(pattern) => (pattern, true),
+        };
+        if arm != format!("{pattern} => todo") {
+            red.push(format!(
+                "row `{row}`: the fix adds `{arm}`, wanted `{pattern} => todo`"
+            ));
+            continue;
+        }
+        let errors: Vec<_> = diags(&result)
+            .iter()
+            .filter(|d| d.code().severity() == Severity::Error)
+            .map(Diagnostic::code)
+            .collect();
+        let left = if more {
+            vec![Code::NonExhaustive]
+        } else {
+            vec![]
+        };
+        if errors != left {
+            red.push(format!(
+                "row `{row}`: after the fix {errors:?}, wanted {left:?}"
+            ));
+        } else if more {
+            // The E0130 that is left names another value, so its fix adds another arm.
+            let next = add_arm(&result).map(|(next, _)| next);
+            if next.as_deref().is_none_or(|next| next == arm) {
+                red.push(format!(
+                    "row `{row}`: the next fix adds {next:?}, the same arm"
+                ));
+            }
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
 }
 
 #[test]

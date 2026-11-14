@@ -4,9 +4,9 @@ error[E0130]: `match` does not cover `Point`
  8 |     match s {
    |     ^^^^^
    |
-help: add a `_ =>` arm
+help: add an arm for `Point`
    |
-11 +         _ => todo
+11 +         Point => todo
    |
 
 sisu: 1 error

@@ -82,5 +82,47 @@ help: call `bumpm` as a method
 59 +     (if c { a } else { b }).bumpm(1)
    |
 
-sisu: 7 errors
-sisu: for more on a code, run `sisu explain <code>`: E0120
+error[E0137]: `Tree` takes no type arguments
+  --> E0120-type-method-call.sisu:63:9
+   |
+63 |     Tree<i64>.bumpm(t, 1)
+   |         ^^^^^
+   |
+help: remove the type arguments
+   |
+63 -     Tree<i64>.bumpm(t, 1)
+63 +     Tree.bumpm(t, 1)
+   |
+
+error[E0120]: `bumpm` is a method of `Tree`; call it on a value
+  --> E0120-type-method-call.sisu:63:15
+   |
+63 |     Tree<i64>.bumpm(t, 1)
+   |               ^^^^^
+   |
+help: call `bumpm` as a method
+   |
+63 -     Tree<i64>.bumpm(t, 1)
+63 +     t.bumpm(1)
+   |
+
+error[E0137]: `Tree` takes no type arguments
+  --> E0120-type-method-call.sisu:67:18
+   |
+67 |     let _m = Tree<i64>.bumpm
+   |                  ^^^^^
+   |
+help: remove the type arguments
+   |
+67 -     let _m = Tree<i64>.bumpm
+67 +     let _m = Tree.bumpm
+   |
+
+error[E0120]: `bumpm` is a method of `Tree`; call it on a value
+  --> E0120-type-method-call.sisu:67:24
+   |
+67 |     let _m = Tree<i64>.bumpm
+   |                        ^^^^^
+
+sisu: 11 errors
+sisu: for more on a code, run `sisu explain <code>`: E0120, E0137

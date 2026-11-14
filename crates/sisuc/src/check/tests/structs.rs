@@ -5,10 +5,11 @@ use super::*;
 use Code::{
     ArgumentCount, ArgumentNeedsLabel, AssignToExpression, AssignToImmutable, AssignToSelf,
     BindingNotFound, CannotExtend, CannotInfer, CannotMatch, ConstantType, DefinedTwice, Expected,
-    FieldOutOfOrder, FunctionNotFound, InstantiationCycle, IsNeedsObjects, MayBeNone,
+    FieldOutOfOrder, FunctionNotFound, InstantiationCycle, IsNeedsObjects, MayBeNone, MemberKind,
     MethodAsFunction, Mismatch, MissingField, MutArgumentNotPlace, MutArgumentType, MutPlaceTwice,
     MutSelf, NeverConstructed, NeverReassigned, NoMember, NoOperator, NotAnInterface, ReservedWord,
-    TooManyArguments, TypeAsValue, UnusedMember, UnusedVariable, UnwrapNeedsOptional,
+    TooManyArguments, TypeArguments, TypeAsValue, UnusedMember, UnusedVariable,
+    UnwrapNeedsOptional,
 };
 
 /// The word `record` is a name, the word `struct` is a keyword that no name can be, and the word
@@ -2752,4 +2753,37 @@ fn safe_push_through_a_failed_field_should_keep_its_proof() {
     let src = "struct T {\n    xs: Nope\n}\nstruct U { t: T? }\nfn main() {\n    \
                let mut u = U(t: None)\n    u.t?.xs.push(1)\n    print(u.t == None)\n}";
     only("safe push", src, Code::UnknownType, (2, 9));
+}
+
+/// A struct with no type parameters takes no type arguments, as an enum does: a method named
+/// through it with type arguments reports E0137 first, then the E0120 of the method form. Each
+/// row: the statement, and the two errors on line 10. The enum row passes before the fix too.
+#[test]
+fn a_type_argument_on_a_struct_without_type_parameters_should_report_e0137_first() {
+    let decls = "struct Tree {\n    n: i64\n    fn bumpm(self, x: i64) {}\n}\nenum E {\n    A\n    fn g(self, x: i64) {}\n}";
+    let rows = [
+        (
+            "t: Tree",
+            "Tree<i64>.bumpm(t, 1)",
+            vec![(TypeArguments, (10, 9)), (MemberKind, (10, 15))],
+        ),
+        (
+            "",
+            "let _m = Tree<i64>.bumpm",
+            vec![(TypeArguments, (10, 18)), (MemberKind, (10, 24))],
+        ),
+        (
+            "e: E",
+            "E<i64>.g(e, 1)",
+            vec![(TypeArguments, (10, 6)), (MemberKind, (10, 12))],
+        ),
+    ];
+    let rows: Vec<_> = rows
+        .into_iter()
+        .map(|(params, statement, wanted)| {
+            let src = format!("{decls}\nfn f({params}) {{\n    {statement}\n}}\nfn main() {{}}");
+            (statement, src, wanted)
+        })
+        .collect();
+    error_rows(&rows);
 }
