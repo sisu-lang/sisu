@@ -256,10 +256,11 @@ fn pattern_names() {
 /// E0125 offers the lower-case name. A keyword or a reserved word cannot be a binding, so the
 /// help says that and there is no fix. But `true` and `false` are patterns, and the fix is right
 /// on a `bool`. The test reads no help text, as the unit tests do not: the `E0125-keyword`
-/// fixture pins the text, and this test pins which names get a fix, and the places that report.
-/// Each row: the program and whether the one E0125 has a fix.
+/// fixture pins the help text. This test pins which names get a fix and where E0125 is reported.
+/// Each row holds before and after the #597 fix. Each row: the program and whether the one E0125
+/// has a fix.
 #[test]
-fn an_e0125_help_should_name_a_keyword_that_the_lower_case_name_is() {
+fn a_name_that_lowers_to_a_keyword_or_a_reserved_word_should_get_no_fix() {
     let on_match = |scrutinee: &str, name: &str| {
         format!(
             "fn main() {{\n    match {scrutinee} {{\n        {name} => print(1)\n        _ => print(2)\n    }}\n}}\n"

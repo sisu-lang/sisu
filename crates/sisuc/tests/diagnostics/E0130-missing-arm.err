@@ -91,5 +91,31 @@ help: add an arm for `Point`
 74 +     Point => todo
    |
 
-sisu: 8 errors
+error[E0130]: `match` does not cover `_`
+  --> E0130-missing-arm.sisu:76:5
+   |
+76 |     match s {}
+   |     ^^^^^
+   |
+help: add a `_ =>` arm
+   |
+76 ~     match s {
+77 +         _ => todo
+78 ~     }
+   |
+
+error[E0130]: `match` does not cover `_`
+  --> E0130-missing-arm.sisu:80:5
+   |
+80 |     match s {}
+   |     ^^^^^
+   |
+help: add a `_ =>` arm
+   |
+80 ~     match s {
+81 +         _ => todo
+82 ~     }
+   |
+
+sisu: 10 errors
 sisu: for more on a code, run `sisu explain <code>`: E0130

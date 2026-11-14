@@ -1,8 +1,8 @@
 // GIVEN a `match` that misses one value that has a pattern of its own: a variant with no fields, a variant with fields, `None`, a variant with an enum field, `Err`, a variant with `bool` fields and `Some(None)`
-// AND a `match` of one line, which ends in `}` after its last arm
+// AND a `match` of one line, which ends in `}` after its last arm, and an empty `match` on an enum and on a `bool?`
 // WHEN `sisu check` runs on it
-// THEN it reports E0130 at 27:5, 34:5, 41:5, 47:5, 54:5, 60:5, 67:5 and 73:32, one for each function
-// AND each fix adds an arm for the value that the error names, and no `_ =>` arm
+// THEN it reports E0130 at 27:5, 34:5, 41:5, 47:5, 54:5, 60:5, 67:5, 73:32, 76:5 and 80:5, one for each function
+// AND each fix adds an arm for the value that the error names, except that the fix of an empty `match` adds `_ => todo`
 enum Shape {
     Circle(r: f64)
     Rect(w: f64, h: f64)
@@ -71,6 +71,14 @@ fn optional_of_optional(s: bool??) -> i64 {
 }
 
 fn one_line(s: Shape) -> i64 { match s { Circle(_) => 1; Rect(_, _) => 2 } }
+
+fn empty_on_enum(s: Shape) -> i64 {
+    match s {}
+}
+
+fn empty_on_optional_bool(s: bool?) -> i64 {
+    match s {}
+}
 
 fn main() {
     print(area(Shape.Point))
