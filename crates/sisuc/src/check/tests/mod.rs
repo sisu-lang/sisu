@@ -42,6 +42,7 @@ mod shadowing;
 mod strings;
 mod structs;
 mod u8;
+mod unit_values;
 mod unused;
 mod unused_names;
 
