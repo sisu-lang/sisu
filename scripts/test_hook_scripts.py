@@ -173,7 +173,11 @@ class TestWording(unittest.TestCase):
             "    d.secondary().len();\n",
             "    d.secondary().is_empty();\n",
             "    let span = d.secondary()[0].0;\n",
+            "    let span = d.secondary()[i].0;\n",
             "    assert_eq!(d.secondary(), []);\n",
+            "    let [(a, _), (b, _)] = d.secondary() else { return };\n",
+            "    let [(c, _)] = ds[0].secondary() else { return };\n",
+            "    let [\n        (a, _),\n        (b, _),\n    ] = d.secondary() else {\n        return;\n    };\n",
             "    d.secondary().iter().map(|(s, _)| at(src, *s));\n",
             "    d.secondary().iter().map(|&(span, _)| span);\n",
             (
