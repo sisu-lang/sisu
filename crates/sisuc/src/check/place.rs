@@ -1848,7 +1848,7 @@ impl Checker<'_> {
 
     /// Why the root of the place `target` cannot change, when a write through its struct path
     /// reaches it. A path that crosses a class object writes no root. The root binding is
-    /// reassigned: W0002's fix would lead to this E0001.
+    /// reassigned, and `self` is stamped: W0002's fix would lead to this E0001.
     fn chain_root_cause(&mut self, target: &ast::Expr) -> Option<Immutable> {
         match self.struct_root(target) {
             StructRoot::Binding(name) => {
@@ -1858,7 +1858,11 @@ impl Checker<'_> {
                 b.reassigned |= b.kind == BindingKind::Var;
                 binding_cause(b)
             }
-            StructRoot::SelfValue => (!self.body.self_mut).then(|| self.struct_self()),
+            StructRoot::SelfValue => {
+                // As the binding above is reassigned: W0002 of `mut self` must not warn here.
+                self.body.self_written = self.write_stamp();
+                (!self.body.self_mut).then(|| self.struct_self())
+            }
             StructRoot::Other => None,
         }
     }
