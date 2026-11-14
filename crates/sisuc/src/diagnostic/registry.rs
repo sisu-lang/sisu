@@ -3246,10 +3246,6 @@ pub(crate) enum ValueKind {
     Struct,
     Enum,
     /// A value of a type parameter or an associated type, as the compiler writes the type.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the check makes it in the next commit")
-    )]
     Type(String),
 }
 

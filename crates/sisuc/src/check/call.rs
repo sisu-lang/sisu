@@ -850,10 +850,12 @@ impl Checker<'_> {
             Dot::Plain | Dot::Payload { .. } => first_safe(receiver_expr),
         };
         let reported = if let Some(chain) = chain {
-            let kind = match type_of(&receiver).map(|ty| array::innermost(ty).kind()) {
-                Some(TypeKind::Enum(..)) => ValueKind::Enum,
-                // A struct, or a receiver whose method came through a conformance, as for a type
-                // parameter. Only the enum word differs, so the rest take the struct word.
+            let kind = match type_of(&receiver).map(array::innermost) {
+                // A type parameter or an associated type has no kind of its own: name the type.
+                Some(ty) if matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) => {
+                    ValueKind::Type(self.type_name(ty))
+                }
+                Some(ty) if matches!(ty.kind(), TypeKind::Enum(..)) => ValueKind::Enum,
                 _ => ValueKind::Struct,
             };
             let d = self.chain_call(receiver_expr, chain, (method.name, kind));
