@@ -29,7 +29,7 @@ enum Bx<T> {
 
 struct K {
     n: i64
-    fn m<T>(self, a: T?, b: T) -> bool { a == None }
+    fn m<T>(self, a: T?, _b: T) -> bool { a == None }
     fn m2<T>(self, a: T?) -> bool { a == None }
 }
 

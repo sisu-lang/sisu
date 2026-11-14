@@ -35,7 +35,6 @@ use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 use crate::types::{HOLE_INDEX, Head, REJECTED_INDEX};
 
-/// Whether `ty` is `want`, where a hole of `want` meets any part of `ty`.
 /// Whether a parameter of type `param` takes a `unit` argument: it is `unit`, or a type parameter
 /// of the callee that the `unit` binds, or an optional of either.
 fn binds_unit(param: Type) -> bool {
@@ -46,6 +45,7 @@ fn binds_unit(param: Type) -> bool {
     }
 }
 
+/// Whether `ty` is `want`, where a hole of `want` meets any part of `ty`.
 fn meets(ty: Type, want: Type) -> bool {
     meets_in(ty, want, &mut WalkMemo::default())
 }
@@ -2592,6 +2592,19 @@ impl Checker<'_> {
                 || call.bindings.constrain(ret, payload(want));
             self.report_fresh(&mut call, span);
         }
+        // A `unit` argument binds its parameter before the arguments that wait, so that a `None`
+        // or a `[]` meets the type that it binds.
+        for (i, ty, at) in std::mem::take(&mut call.last) {
+            if ty == Type::UNIT
+                && let Some(param) = sig.params[i].filter(|&param| binds_unit(param))
+                && self.known_in(&call, param).is_none()
+                && self.bind_param(&mut call, param, ty, at)
+            {
+                self.settle_unit(&mut call, args, i, param);
+            } else {
+                call.last.push((i, ty, at));
+            }
+        }
         self.sweep_waiting(&mut call, sig, args, &ranks, &fit);
         for (i, ty, at) in std::mem::take(&mut call.last) {
             let param = sig.params[i];
@@ -2603,13 +2616,16 @@ impl Checker<'_> {
                 && self.known_in(&call, param).is_none()
                 && self.bind_param(&mut call, param, ty, at)
             {
+                if ty == Type::UNIT {
+                    self.settle_unit(&mut call, args, i, param);
+                }
                 continue;
             }
             if ty == Type::UNIT
-                && param
-                    .and_then(|p| self.known_in(&call, p))
-                    .is_some_and(takes_unit)
+                && let Some(param) = param
+                && self.known_in(&call, param).is_some_and(takes_unit)
             {
+                self.settle_unit(&mut call, args, i, param);
                 continue;
             }
             let reported = self.no_value(at, ty, unit_call(&args[i].value));
@@ -3428,6 +3444,19 @@ impl Checker<'_> {
                 self.enums[id.0].variants[variant].shown.get(i)?.clone()
             }
         }
+    }
+
+    /// Holds the `unit` argument at `i` to `param`, its parameter, which the call binds now: a
+    /// `unit?` parameter wraps it.
+    fn settle_unit(&mut self, call: &mut Inference<'_>, args: &[ast::Arg], i: usize, param: Type) {
+        let Some(want) = self.known_in(call, param) else {
+            return;
+        };
+        let slot = call.slots[i]
+            .take()
+            .expect("a `unit` argument should have its slot");
+        let want = Expectation::Required(want, call.declarer.origin(i));
+        call.slots[i] = Some(mark(self.against(&args[i].value, slot, want)));
     }
 
     /// Checks `e`, the argument at `i` for `param`: against `param` once the call binds what it
