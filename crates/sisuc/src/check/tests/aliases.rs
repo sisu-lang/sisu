@@ -1638,4 +1638,33 @@ fn an_alias_with_the_name_of_an_interface_should_be_read_as_a_type() {
     .map(|(row, src, wanted)| (row, src.to_owned(), wanted))
     .collect();
     error_rows(&rows);
+    // E0105 is one code for "interface" and for "type", so the rows compare the whole diagnostic:
+    // it is the one that the registry builds for a type that the name stands for.
+    let mut red = Vec::new();
+    for (row, src, _) in &rows {
+        let (_, ds) = checked_with(PRELUDE_SOURCE, src);
+        let reads: Vec<_> = ds
+            .iter()
+            .filter(|d| d.code() == Code::TypeAsValue)
+            .collect();
+        let [d] = reads[..] else {
+            red.push(format!("row `{row}`: wanted one E0105, found {ds:?}"));
+            continue;
+        };
+        let kind = DiagnosticKind::TypeAsValue {
+            name: src[d.span().start()..d.span().end()].to_owned(),
+            at: d.span(),
+            alias: None,
+        };
+        let (found, wanted) = (format!("{d:?}"), format!("{:?}", Diagnostic::from(kind)));
+        if found != wanted {
+            red.push(format!("row `{row}`: found {found}, wanted {wanted}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
 }

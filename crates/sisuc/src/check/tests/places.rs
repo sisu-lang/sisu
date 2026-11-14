@@ -1090,7 +1090,7 @@ fn an_assignment_to_a_hidden_name_should_report_what_a_read_reports() {
     const SOURCE: &str = "interface I { type Item; fn m(self) }\nfn Item() {}\nclass C: I { type Item = i64; fn m(self) { %% } }\nfn main() { Item() }";
     const TYPE_PARAM: Code = Code::TypeAsValue;
     // `%%` is the statement of the row, in its program.
-    let rows: [HiddenRow<'_>; 17] = [
+    let rows: [HiddenRow<'_>; 18] = [
         (
             "p639a",
             "fn T() {}\nfn q<T>() { %% }\nfn main() {}",
@@ -1187,7 +1187,14 @@ fn an_assignment_to_a_hidden_name_should_report_what_a_read_reports() {
             "fn q<T>() { let mut x = 1; %%; print(x) }\nfn main() {}",
             "T = 1",
             None,
-            vec![(Code::NeverReassigned, (1, 21)), (TYPE_PARAM, (1, 28))],
+            vec![(TYPE_PARAM, (1, 28))],
+        ),
+        (
+            "a local beside the write to an associated type",
+            "interface I { type Item; fn m(self) }\nclass C: I { type Item = i64; fn m(self) { let mut z = 1; %%; print(z) } }\nfn main() {}",
+            "Item = 1",
+            None,
+            vec![(TYPE_PARAM, (2, 59))],
         ),
         (
             "p639-const",
