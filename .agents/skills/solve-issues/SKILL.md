@@ -146,11 +146,13 @@ Do this once for each group. On resume, use the worktree in the ledger.
 2. Set `<BASE>` to the worktree's `HEAD` now. Write it in the brief and in the ledger.
 3. Launch the executor with `run_in_background`.
 4. Read its report, and act on its status:
-   - **DONE:** go to step 6.5.
+   - **DONE:** commit the work (below), then go to step 6.5.
    - **BLOCKED:** the stated cause is wrong. Do step 3 again for that issue, then Stop 2 again.
-   - **DONE_WITH_CONCERNS:** check each concern.
+   - **DONE_WITH_CONCERNS:** check each concern, then commit the work.
 
-   Then commit the work. The executor's sandbox cannot write the git index, so the executor writes each commit as a message file and a `.files` list (brief.md, step 4). For each pair, in order, stage the paths of the `.files` list and run `git -C <worktree> commit -F <message file>`. Commit as the user's git identity, one commit per Bash call, with the sandbox off. Then check `git log -1`. A change in `scripts/` has its tests in its fix commit (brief.md, step 1). Before that commit, run the new tests against the old script, and check that each one fails for the stated cause.
+   To commit the work: the executor's sandbox cannot write the git index, so the executor writes each commit as a message file and a patch (brief.md, step 4). Each patch holds all the changes since the `HEAD` that the executor started from: `<BASE>`, or the round base in a fix round. For each pair, in order, run `git -C <worktree> read-tree <that HEAD> && git -C <worktree> apply --cached <patch> && git -C <worktree> commit -F <message file>`. Commit as the user's git identity, one commit per Bash call, with the sandbox off. Then check `git log -1`. After the last commit, `git -C <worktree> status --short` must print nothing.
+
+   A task whose tests are in `scripts/test_*.py` has its tests in its fix commit (brief.md, step 1). Before that commit, check that each new test fails at that `HEAD`, for the stated cause. Run `mkdir <dir> && git -C <worktree> archive <that HEAD> scripts | tar -x -C <dir>`, and copy each new or changed `scripts/test_*.py` from the worktree into `<dir>/scripts/`. Then run `(cd <dir>/scripts && python3 -m unittest <test module>)`.
 5. Run `review-sisu` on `<BASE>..HEAD`. It writes the review brief, launches the reviewers, and says how to rule and when to ask the user.
 6. Write each fix-round brief from the "Fix round" part of [brief.md](brief.md). Have its test list reviewed (step 4.4). Then give it to a `sonnet-high` executor.
 
