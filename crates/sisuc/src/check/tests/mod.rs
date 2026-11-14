@@ -4191,7 +4191,7 @@ fn push_onto_an_optional_array_should_offer_unwrap_help_only_for_a_stored_array(
 /// An unwrap gives a copy, which the `push` does not change, and the peeled `push` gives E0021:
 /// so it gets no help either. A `.` and a `?.` get none, on a local and on a struct field.
 #[test]
-fn a_push_onto_a_double_optional_array_should_get_no_unwrap_help() {
+fn a_push_onto_a_double_optional_array_should_get_no_help_and_no_fix() {
     let local = "fn main() {\n    let mut xs: [i64]?? = Some(Some([1]))\n    xs.push(2)\n}";
     let local_safe = local.replace("xs.push", "xs?.push");
     let field =

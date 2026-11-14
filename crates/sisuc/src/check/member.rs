@@ -140,9 +140,7 @@ impl Checker<'_> {
         };
         // `?.` takes one layer off: on a `C??` it leaves a `C?`, which has no members.
         if matches!(payload.kind(), TypeKind::Optional(_)) {
-            // The peeled `push` onto an array fails too (E0021): no help leads to it.
-            let pushes_array = name.name.as_str() == "push"
-                && matches!(innermost(payload).kind(), TypeKind::Array(_));
+            // The peeled `push` onto an array fails too (E0021), so give no help.
             let kind = DiagnosticKind::MayBeNone {
                 value: path(receiver),
                 at: receiver.span,
@@ -153,7 +151,7 @@ impl Checker<'_> {
                     left: self.type_name(payload),
                     member: name.name.to_string(),
                     layers: optional_layers(payload),
-                    help: !pushes_array,
+                    help: !pushes_array(name, innermost(payload)),
                 }),
                 unwrap: UnwrapHelp::It,
             };
@@ -660,7 +658,7 @@ impl Checker<'_> {
             return Err(Poisoned::untyped(held));
         }
         // A `push` onto an optional array writes: the `?.` fix makes it do nothing.
-        let write = name.name.as_str() == "push" && matches!(inner.kind(), TypeKind::Array(_));
+        let write = pushes_array(name, inner);
         let unwrap = if write {
             self.pushed_array_unwrap(receiver, &value)
         } else if indexed {
@@ -994,6 +992,11 @@ fn candidate_results(rets: &[Option<Type>]) -> impl Iterator<Item = (usize, Opti
         #[cfg(test)]
         super::PICK_STEPS.set(super::PICK_STEPS.get() + 1);
     })
+}
+
+/// Whether `name` is a `push` onto the array `inner`, a call that writes.
+fn pushes_array(name: &ast::Ident, inner: Type) -> bool {
+    name.name.as_str() == "push" && matches!(inner.kind(), TypeKind::Array(_))
 }
 
 /// The layers of optional that `ty` has.
