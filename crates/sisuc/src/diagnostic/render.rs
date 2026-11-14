@@ -799,6 +799,7 @@ error[E0011]: expected `=`, found end of line
         let d = blank_with(fix(&[(between(BLANK, "let", "    \n}"), "let n = 0")]));
         let text = d.render("t.sisu", BLANK, &LineIndex::new(BLANK), true);
         assert!(text.contains("\u{1b}[91m-     \u{1b}[0m"), "{text:?}");
+        assert!(text.contains("let n = 0   \n"), "{text:?}");
     }
 
     #[test]
