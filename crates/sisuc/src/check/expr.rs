@@ -5,6 +5,7 @@ use std::ops::Range;
 use super::generic::{Site, mismatch_poison};
 use super::names::{self, Resolved};
 use super::reports::Reported;
+use super::stmt::optional_unit;
 use super::{
     Checked, Checker, Expectation, Origin, Poisoned, SelfType, Uninferred, payload, type_of, wrap,
 };
@@ -417,7 +418,7 @@ impl Checker<'_> {
             let at = self.never_at(e.span);
             return Err(Poisoned::untyped(self.no_value(at, Type::NEVER, None)));
         }
-        Self::with_unit(self.refuse_unwanted(e, checked, expected))
+        self.refuse_unwanted(e, checked, expected)
     }
 
     /// `checked`, the value of `e`, or E0043 when it is a `unit`: the context takes no `unit`, and
@@ -455,83 +456,6 @@ impl Checker<'_> {
             Some(at) => Err(Poisoned::untyped(self.no_value(at, Type::UNIT, None))),
             None => checked,
         }
-    }
-
-    /// `checked`, the value of an expression that is used. A block with no tail gets a `unit` as
-    /// its value. A `loop` that a bare `break` ends gets a block around it, which holds one.
-    fn with_unit(checked: Checked) -> Checked {
-        let Ok(mut done) = checked else {
-            return checked;
-        };
-        if done.ty != Type::UNIT {
-            return Ok(done);
-        }
-        let unit = |span| Box::new(tir::Expr::new(tir::ExprKind::Unit, Type::UNIT, span));
-        match &mut done.kind {
-            tir::ExprKind::Block(block) => {
-                if block.value.is_none() {
-                    block.value = Some(unit(done.span));
-                }
-            }
-            tir::ExprKind::Loop(_) => {
-                let span = done.span;
-                let block = tir::Block {
-                    stmts: vec![tir::Stmt::Expr(done)],
-                    value: Some(unit(span)),
-                    ty: Type::UNIT,
-                };
-                done = tir::Expr::new(tir::ExprKind::Block(block), Type::UNIT, span);
-            }
-            // Each of these has its value, a `unit` too, or is no block or `loop`.
-            tir::ExprKind::Int(_)
-            | tir::ExprKind::Float(_)
-            | tir::ExprKind::Bool(_)
-            | tir::ExprKind::Char(_)
-            | tir::ExprKind::Str(_)
-            | tir::ExprKind::None
-            | tir::ExprKind::Unit
-            | tir::ExprKind::Local(_)
-            | tir::ExprKind::Call { .. }
-            | tir::ExprKind::InterfaceCall { .. }
-            | tir::ExprKind::New { .. }
-            | tir::ExprKind::Variant { .. }
-            | tir::ExprKind::Field { .. }
-            | tir::ExprKind::Struct { .. }
-            | tir::ExprKind::StructField { .. }
-            | tir::ExprKind::Wrap(_)
-            | tir::ExprKind::ToAny(_)
-            | tir::ExprKind::DynCall { .. }
-            | tir::ExprKind::Convert(_)
-            | tir::ExprKind::Print { .. }
-            | tir::ExprKind::Dbg { .. }
-            | tir::ExprKind::Panic(_)
-            | tir::ExprKind::ReadLine
-            | tir::ExprKind::ArrayLit(_)
-            | tir::ExprKind::ArrayFill { .. }
-            | tir::ExprKind::Index { .. }
-            | tir::ExprKind::Slice { .. }
-            | tir::ExprKind::Len(_)
-            | tir::ExprKind::Chars(_)
-            | tir::ExprKind::Bytes(_)
-            | tir::ExprKind::Words(_)
-            | tir::ExprKind::FromChars(_)
-            | tir::ExprKind::Math { .. }
-            | tir::ExprKind::Unary { .. }
-            | tir::ExprKind::Binary { .. }
-            | tir::ExprKind::Interpolate { .. }
-            | tir::ExprKind::Concat { .. }
-            | tir::ExprKind::Compare { .. }
-            | tir::ExprKind::Equal { .. }
-            | tir::ExprKind::Is { .. }
-            | tir::ExprKind::If { .. }
-            | tir::ExprKind::IfSome { .. }
-            | tir::ExprKind::Match { .. }
-            | tir::ExprKind::Break { .. }
-            | tir::ExprKind::Continue { .. }
-            | tir::ExprKind::Return(_)
-            | tir::ExprKind::MutCall { .. } => {}
-        }
-        Ok(done)
     }
 
     /// Reports a value of `ty`, `unit` or `never`, used at `at`. `unit_call` is the function that
@@ -961,7 +885,7 @@ fn valueless_value(checked: &Checked) -> Option<Span> {
 /// Only a `unit` or a `unit?` can give one, so the walk stops at any other type.
 pub(super) fn valueless(e: &tir::Expr) -> Option<Span> {
     let unit = e.ty == Type::UNIT;
-    if !unit && !matches!(e.ty.kind(), TypeKind::Optional(payload) if payload == Type::UNIT) {
+    if !unit && !optional_unit(e.ty) {
         return None;
     }
     let tail = |block: &tir::Block| block.value.as_deref().and_then(valueless);

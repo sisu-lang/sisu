@@ -2574,7 +2574,7 @@ impl Checker<'_> {
             };
             c.show_value(&f.body, ret);
             let mut body = c.block(&f.body, expected);
-            if let (Some(Type::UNIT), Ok(checked)) = (ret, &mut body) {
+            if let (Some(Type::UNIT), Ok(checked)) = (ret, &body) {
                 c.discard_tail(&f.body, checked);
             }
             if let Some(want) = ret {
@@ -2948,7 +2948,7 @@ fn wrap(e: tir::Expr, ty: Type) -> tir::Expr {
 }
 
 /// Makes a block of type `T` one of the optional `ty` by wrapping its value. A block with no value
-/// is a `unit`: it gets a `unit` at `span` as its value first, as `with_unit` gives one.
+/// is a `unit`: it gets a `unit` at `span` as its value first.
 fn wrap_block(block: &mut CheckedBlock, ty: Type, span: Span) {
     match block {
         Ok(block) => {
