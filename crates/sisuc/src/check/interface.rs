@@ -135,6 +135,8 @@ pub(super) struct RequirementInfo {
     pub(super) own_at: Vec<Span>,
     /// The bounds of each of `own`.
     pub(super) bounds: Vec<Bounds>,
+    /// `mut ` in front of `self`, through the start of `self`, if written.
+    pub(super) self_mut: Option<Span>,
     /// Without `self`; `None` is `Error`.
     pub(super) params: Vec<Option<Type>>,
     /// Whether each of `params` is `mut`.
@@ -454,6 +456,9 @@ impl Checker<'_> {
                 .map_or(Some(Type::UNIT), |ret| self.resolve(ret));
             let ret_queued = from..self.queued();
             self.body.truncate_type_params(scope);
+            if requirement.mut_self.is_some() {
+                self.mut_self_names.insert(requirement.name.name);
+            }
             if first_of_name {
                 let r = self.interfaces[id.0].requirements.len();
                 for (i, queued) in queued.into_iter().enumerate() {
@@ -470,6 +475,8 @@ impl Checker<'_> {
                         .map(|p| p.name.span)
                         .collect(),
                     bounds,
+                    self_mut: (requirement.mut_self.as_ref())
+                        .map(|m| Span::new(m.keyword.start(), m.receiver.start())),
                     params,
                     muts: requirement.params.iter().map(|p| p.mutable).collect(),
                     param_names: requirement.params.iter().map(|p| p.name.clone()).collect(),
@@ -1120,8 +1127,9 @@ impl Checker<'_> {
     /// type that is `Error` matches any.
     pub(super) fn meets(&self, requirement: &RequirementInfo, func: FuncId, base: &[Type]) -> bool {
         let sig = &self.signatures[func.0];
-        // A requirement's `self` is plain, which a `mut self` method does not meet.
-        if sig.self_mut
+        // A `mut self` method meets only a `mut self` requirement. A plain `self` method meets
+        // either: it changes nothing, so mono gives it a copy of the place.
+        if sig.self_mut && requirement.self_mut.is_none()
             || requirement.own.len() != sig.own
             || requirement.params.len() != sig.params.len()
         {

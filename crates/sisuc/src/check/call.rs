@@ -708,11 +708,17 @@ impl Checker<'_> {
         if method.name.as_str() == "push" && receiver.is_ok() && parked.is_some() {
             super::OWN_PUSH_READS.set(super::OWN_PUSH_READS.get() + 1);
         }
-        // Only the method of a struct or an enum can take `mut self`: any other call reads the
-        // place.
-        if !type_of(&receiver)
-            .is_some_and(|ty| matches!(ty.kind(), TypeKind::Struct(..) | TypeKind::Enum(..)))
-        {
+        // Only the method of a struct or an enum, or a requirement, can take `mut self`: any
+        // other call reads the place.
+        let bound = |ty: Type| {
+            matches!(
+                ty.kind(),
+                TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..)
+            )
+        };
+        if !type_of(&receiver).is_some_and(|ty| {
+            matches!(ty.kind(), TypeKind::Struct(..) | TypeKind::Enum(..)) || bound(ty)
+        }) {
             self.read_parked(parked.take(), &receiver, receiver_expr);
         }
         match type_of(&receiver) {
@@ -738,13 +744,9 @@ impl Checker<'_> {
                 self.refuse_builtin(receiver_expr, ty, method, args);
                 return self.number_method(span, receiver, ty, method, args);
             }
-            Some(ty)
-                if matches!(
-                    ty.kind(),
-                    TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..)
-                ) =>
-            {
-                return self.bound_method(span, receiver, ty, site, args);
+            Some(ty) if bound(ty) => {
+                let receiver = (receiver, receiver_expr, parked);
+                return self.bound_method(span, dot, receiver, ty, site, args);
             }
             _ => {}
         }
@@ -784,7 +786,7 @@ impl Checker<'_> {
 
     /// Records the reads of `receiver`, checked from `receiver_expr`, when `parked` holds its
     /// place: the call takes no `mut self`, so it reads the place, as a class's own `push` does.
-    fn read_parked(
+    pub(super) fn read_parked(
         &mut self,
         parked: Option<CheckedPlace>,
         receiver: &Checked,
@@ -796,20 +798,42 @@ impl Checker<'_> {
     }
 
     /// The call of `func`, a method that takes `mut self`, on `receiver`, checked from
-    /// `receiver_expr`, whose place is `parked` when `method_expr` kept it. The place is the
-    /// first `mut` part of the call (ADR 0043): its held report is raised, and its root is
-    /// stamped as written. A receiver that is no place is E0021. One that a `?.` leads to is
-    /// E0062 until `?.` can write a value.
+    /// `receiver_expr`, whose place is `parked` when `method_expr` kept it (`mut_self_receiver`).
     fn mut_self_call(
         &mut self,
         span: Span,
         dot: Dot,
         func: tir::FuncId,
-        (receiver, receiver_expr, parked): (Checked, &ast::Expr, Option<CheckedPlace>),
+        receiver: (Checked, &ast::Expr, Option<CheckedPlace>),
         site: Site<'_>,
         args: &[ast::Arg],
     ) -> Checked {
-        let method = site.name;
+        match self.mut_self_receiver(dot, receiver, site.name) {
+            Ok((temp, parts)) => self.invoke(span, func, Some(temp), site, args, parts),
+            Err((receiver, reported)) => {
+                let checked =
+                    self.invoke(span, func, Some(receiver), site, args, MutParts::default());
+                match reported {
+                    Some(reported) => Err(Poisoned::new(type_of(&checked), reported)),
+                    None => checked,
+                }
+            }
+        }
+    }
+
+    /// The receiver of a call of `method`, which takes `mut self`: `receiver`, checked from
+    /// `receiver_expr`, whose place is `parked` when `method_expr` kept it. The place is the
+    /// first `mut` part of the call (ADR 0043): its held report is raised, and its root is
+    /// stamped as written. A receiver that is no place is E0021. One that a `?.` leads to is
+    /// E0062 until `?.` can write a value. Gives the temporary that the call takes and the parts
+    /// it starts with. When the place fails, gives the receiver to check the call with, and the
+    /// report that stands for the call, if any.
+    pub(super) fn mut_self_receiver(
+        &mut self,
+        dot: Dot,
+        (receiver, receiver_expr, parked): (Checked, &ast::Expr, Option<CheckedPlace>),
+        method: &ast::Ident,
+    ) -> Result<(Checked, MutParts), (Checked, Option<Reported>)> {
         // A receiver that failed has its own report, which the `?.` led to: E0062 would repeat
         // it. The payload of a `.` on an optional fails only when the optional did.
         let failed = match dot {
@@ -853,20 +877,13 @@ impl Checker<'_> {
         };
         let read = match receiver {
             Ok(read) if reported.is_none() => read,
-            receiver => {
-                let checked =
-                    self.invoke(span, func, Some(receiver), site, args, MutParts::default());
-                return match reported {
-                    Some(reported) => Err(Poisoned::new(type_of(&checked), reported)),
-                    None => checked,
-                };
-            }
+            receiver => return Err((receiver, reported)),
         };
         let ty = read.ty;
         let path = try_unread(read, receiver_expr)
             .expect("the place that `method_expr` kept should read as its path");
         let (temp, parts) = self.receiver_slot(receiver_expr, method.name, path, ty);
-        self.invoke(span, func, Some(Ok(temp)), site, args, parts)
+        Ok((Ok(temp), parts))
     }
 
     /// Stamps the arguments of `Name.method(args)`, whose receiver has no type. E0105 reports a

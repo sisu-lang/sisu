@@ -1,0 +1,19 @@
+// GIVEN an interface `Adder` whose `add` takes `mut self`
+// AND an interface `Counter` that inherits `Adder`
+// WHEN a parameter has the type `any Counter`
+// THEN it reports E0164 at `Counter`: it inherits `Adder`, whose `add` takes `mut self`
+interface Adder {
+    fn add(mut self)
+}
+
+interface Counter: Adder {
+    fn count(self) -> i64
+}
+
+fn _show(_c: any Counter) {
+    print(1)
+}
+
+fn main() {
+    print(2)
+}

@@ -709,8 +709,9 @@ impl Checker<'_> {
             let found = self.written_method(p.source, name);
             if let Some(Declared::Known(f)) = found {
                 self.named_for_requirement.insert(f);
-                // Every requirement has a plain `self` for now.
-                self.plain_self_requirement.insert(f);
+                if requirement.self_mut.is_none() {
+                    self.plain_self_requirement.insert(f);
+                }
             }
             let elsewhere = others
                 .iter()
@@ -742,6 +743,7 @@ impl Checker<'_> {
                             method: name.to_string(),
                             found: self.source_text(sig.header).trim_end().to_string(),
                             want: self.required_text(p.source, p.interface, requirement),
+                            mut_self: sig.self_mut && requirement.self_mut.is_none(),
                             mut_differs: differs.map(|(param, mutable)| MutDiffers {
                                 at: param.span,
                                 name: param.name.to_string(),
@@ -1141,11 +1143,11 @@ impl Checker<'_> {
         format!("extend{list} {ty}: {inherited} {{ ... }}")
     }
 
-    /// The text of `requirement` as a block writes it for the conformance to `bound`: the
-    /// interface's arguments stand where its parameters do, in the types of the signature and in
-    /// the bounds of the requirement's own type parameters, and `Self` stays. A type parameter of
-    /// the requirement that has the name of a parameter of `source` or of a type that an argument
-    /// writes is renamed, as the argument would take its place.
+    /// The text of `requirement` as a block writes it for the conformance to `bound`. The
+    /// interface's arguments stand for its parameters in the signature's types and in the bounds
+    /// of the requirement's own type parameters. `Self` stays. A requirement's type
+    /// parameter is renamed when it has the name of a parameter of `source` or of a type that an
+    /// argument writes. The argument would take its place. A class writes `self` for `mut self`.
     fn required_text(&self, source: Source, bound: Bound, requirement: &RequirementInfo) -> String {
         let params = &self.interfaces[bound.interface.0].type_params;
         let mut with = vec![Type::intern(TypeKind::Param(params[0], 0))];
@@ -1202,6 +1204,13 @@ impl Checker<'_> {
             if substituted != ty {
                 changed.push((at, self.type_name(substituted)));
             }
+        }
+        let holder = match source {
+            Source::Body(holder) => holder,
+            Source::Block(b) => self.extensions[b].holder,
+        };
+        if let (Holder::Class(_), Some(at)) = (holder, requirement.self_mut) {
+            changed.push((at, String::new()));
         }
         changed.sort_by_key(|(at, _)| at.start());
         let mut out = String::new();

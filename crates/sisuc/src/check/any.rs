@@ -77,6 +77,8 @@ enum ReasonKind {
     Assoc(usize),
     /// The root inherits the interface `owner` with these arguments, which name `Self`.
     InheritsSelf(TypeArgs),
+    /// The requirement at this place takes `mut self`. Part 3 lets `any` call it.
+    MutSelf(usize),
 }
 
 /// The index of the seed of a hinted join, the sibling's type: no member of `any_join_all` has it.
@@ -184,6 +186,9 @@ impl Checker<'_> {
             ReasonKind::InheritsSelf(args) => NotAny::InheritsSelf {
                 inherited: self.bound_text(reason.owner, args),
             },
+            ReasonKind::MutSelf(at) => NotAny::MutSelf {
+                method: method(self, at),
+            },
         };
         let owner = (reason.owner != bound.interface
             && !matches!(reason.kind, ReasonKind::InheritsSelf(_)))
@@ -198,8 +203,9 @@ impl Checker<'_> {
 
     /// Why `interface` cannot be `any`, or `None` when it can. The reason is the first one among
     /// its own requirements, then in each interface it inherits, depth first in the order of the
-    /// lists. The answers are kept by interface. The reason of each interface in the walk is kept
-    /// by interface and arguments, so a shared ancestor is read once.
+    /// lists. A `mut self` requirement is the reason only when no interface has another. The
+    /// answers are kept by interface. The reason of each interface in the walk is kept by
+    /// interface and arguments, so a shared ancestor is read once.
     ///
     /// The requirements are read over the interface's own parameters and `Self`. The answer is
     /// the same for every argument of a generic interface, because an argument names no `Self`.
@@ -229,7 +235,7 @@ impl Checker<'_> {
                 ANY_VISITS.set(ANY_VISITS.get() + 1);
             },
         );
-        let answer = closure.into_iter().find_map(|(entry, args)| {
+        let lasting = closure.iter().find_map(|&(entry, args)| {
             // An argument that names `Self` names the type behind the `any` in a table, which
             // has no conformance for it.
             if args.get().iter().any(|&arg| mentions_self(arg)) {
@@ -239,6 +245,17 @@ impl Checker<'_> {
                 });
             }
             self.entry_reason(entry, args, this)
+        });
+        // A `mut self` requirement is a reason only until part 3, so a lasting reason wins.
+        let answer = lasting.or_else(|| {
+            closure.iter().find_map(|&(entry, _)| {
+                let requirements = &self.interfaces[entry.0].requirements;
+                let at = requirements.iter().position(|r| r.self_mut.is_some())?;
+                Some(AnyReason {
+                    owner: entry,
+                    kind: ReasonKind::MutSelf(at),
+                })
+            })
         });
         self.any_roots.insert(interface, answer);
         answer

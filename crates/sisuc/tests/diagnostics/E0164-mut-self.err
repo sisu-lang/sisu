@@ -1,0 +1,10 @@
+error[E0164]: `Counter` cannot be used as `any Counter` yet: it inherits `Adder`, whose `add` takes `mut self`
+  --> E0164-mut-self.sisu:13:18
+   |
+13 | fn _show(_c: any Counter) {
+   |                  ^^^^^^^ used after `any` here
+   |
+   = help: use a type parameter: `T: Counter`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0164

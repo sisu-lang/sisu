@@ -160,6 +160,10 @@ struct Ms {
         0
     }
 }
+// `Km` requires `mut self`, so `any Km` is E0164 until part 3.
+interface Km {
+    fn bump(mut self) -> i64
+}
 // `Ms` takes `mut self` in `eq`, `less`, `get` and `len`, whose names an array or a generated
 // method shares. `olp()` gives an optional `Lp`, whose fields hold `Ms` in arrays.
 struct Lp {
@@ -411,6 +415,7 @@ let _a = op ?? $
 let _a: (any Pet)? = $
 let _a: [(any Pet)?] = [$]
 let _v: any Pet = $
+let _k: any Km = $
 # A loop over a join.
 for _x in if c { [Some(p)] } else { [$] } {}
 let _l = $ else { return }

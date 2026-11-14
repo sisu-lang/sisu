@@ -2796,6 +2796,8 @@ pub(crate) enum ConformanceForm {
         method: String,
         found: String,
         want: String,
+        /// The method takes `mut self`, and the requirement plain `self`.
+        mut_self: bool,
         mut_differs: Option<MutDiffers>,
     },
     /// The method `method` of an `extend` block, which is no requirement; `target` is the type
@@ -2829,6 +2831,8 @@ pub(crate) enum NotAny {
     Assoc { owner: String, assoc: String },
     /// The interface inherits `inherited`, written with its arguments, one of which names `Self`.
     InheritsSelf { inherited: String },
+    /// The requirement `method` takes `mut self`, which `any` cannot call until part 3.
+    MutSelf { method: String },
 }
 
 /// How `any` is written wrongly (`AnyForm`).
@@ -3579,33 +3583,21 @@ impl From<DiagnosticKind> for Diagnostic {
                             .collect(),
                     })
                 };
-                // The fix of a class or an interface method: safe when only `,` or `)` follows
-                // `self`.
+                // The fix of a class method: safe when only `,` or `)` follows `self`.
                 let message = if safe {
                     "remove the `mut`"
                 } else {
                     "try removing the `mut`; the receiver may need another change"
                 };
                 match owner {
-                    Owner::Class => drop_mut(
+                    // A requirement may take `mut self`, so no interface comes here.
+                    Owner::Class | Owner::Interface => drop_mut(
                         Diagnostic::coded(
                             code,
                             keyword,
                             "a class method takes `self`, not `mut self`",
                         )
                         .with_help("an object is shared: `self` can already write every `mut` field"),
-                        safe,
-                        message,
-                    ),
-                    Owner::Interface => drop_mut(
-                        Diagnostic::coded(
-                            code,
-                            keyword,
-                            "an interface method cannot take `mut self`",
-                        )
-                        .with_help(
-                            "a class method changes its object's `mut` fields through plain `self`",
-                        ),
                         safe,
                         message,
                     ),
@@ -3702,15 +3694,19 @@ impl From<DiagnosticKind> for Diagnostic {
                     method,
                     found,
                     want,
+                    mut_self,
                     mut_differs,
                 } => {
-                    let d = Diagnostic::coded(
+                    let mut d = Diagnostic::coded(
                         code,
                         at,
                         format!("`{method}` does not match `{interface}`'s requirement"),
                     )
                     .with_label(format!("found `{found}`"))
                     .with_help(format!("`{interface}` requires `{want}`"));
+                    if mut_self {
+                        d = d.with_note("the requirement's `self` is not `mut`");
+                    }
                     match mut_differs {
                         Some(MutDiffers { at, name, mutable }) => {
                             let not = if mutable { "" } else { "not " };
@@ -4438,6 +4434,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 reason,
                 at,
             } => {
+                let mut_self = matches!(reason, NotAny::MutSelf { .. });
                 let inherited = owner.map(|owner| format!("it inherits `{owner}`"));
                 let why = match (reason, inherited) {
                     (NotAny::TakesSelf { method }, None) => {
@@ -4465,11 +4462,16 @@ impl From<DiagnosticKind> for Diagnostic {
                     (NotAny::InheritsSelf { inherited }, _) => {
                         format!("it inherits `{inherited}`, whose arguments name `Self`")
                     }
+                    (NotAny::MutSelf { method }, None) => format!("`{method}` takes `mut self`"),
+                    (NotAny::MutSelf { method }, Some(inherits)) => {
+                        format!("{inherits}, whose `{method}` takes `mut self`")
+                    }
                 };
+                let yet = if mut_self { " yet" } else { "" };
                 Diagnostic::coded(
                     code,
                     at,
-                    format!("`{interface}` cannot be used as `any {interface}`: {why}"),
+                    format!("`{interface}` cannot be used as `any {interface}`{yet}: {why}"),
                 )
                 .with_label("used after `any` here")
                 .with_help(format!("use a type parameter: `T: {interface}`"))

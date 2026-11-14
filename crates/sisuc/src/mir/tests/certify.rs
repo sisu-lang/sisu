@@ -5,7 +5,8 @@ use super::*;
 use crate::mir::certify::range::RangeMin;
 use crate::mir::certify::wavelet::Wavelet;
 use crate::mir::certify::{
-    EMPTY, Effect, OWNED, READS, Rule, Violation, certify, scope_release_states, statement,
+    EMPTY, Effect, OWNED, READS, Rule, Violation, certify, certify_in, scope_release_states,
+    statement,
 };
 use crate::mir::elaborate::flagged;
 use crate::source::Span;
@@ -3280,11 +3281,11 @@ fn double_release_before_a_panic() {
 /// message naming the function, the block, the local and the rule.
 #[test]
 #[should_panic(expected = "mir certifier: fn f, bb0, s#0: may still own a reference at `return`")]
-fn violation_message_names_where_and_what() {
+fn violation_message_should_name_where_and_what() {
     let mut b = Builder::new("f");
     let s = b.local("s", Type::STRING);
     b.block(vec![fresh(s)], ret());
-    certified(&b.finish());
+    certified(&b.finish(), &[]);
 }
 
 /// The message of a write through `Some` that no test proves names the missing proof.
@@ -3296,7 +3297,7 @@ fn unproved_write_message_should_name_the_missing_proof() {
     let mut b = Builder::new("f");
     let xs = b.param("xs", Type::optional(Type::array(Type::I64)));
     b.block(released(vec![push_one(some(xs))], &[xs]), ret());
-    certified(&b.finish());
+    certified(&b.finish(), &[]);
 }
 
 /// Every range of a pseudo-random array, and of a falling one, against a scan: its least
@@ -4052,6 +4053,43 @@ fn out_of_a_dyn_call_argument_should_need_its_flag() {
             assert_eq!(certify(&b.finish()), Ok(()), "flagged: {flagged}");
         } else {
             rejects(&b.finish(), 0, t, Rule::Out);
+        }
+    }
+}
+
+/// GIVEN `call f(move s)` and then `s = out 0`, where `f` takes its parameter with `mut`, or
+/// without it
+/// WHEN the function is certified with `f` among the program's functions
+/// THEN it is accepted with `mut`, and rejected without it: codegen gives an out slot only to a
+/// `mut` parameter, as for a call through a table
+#[test]
+fn out_of_a_call_argument_should_need_a_mut_parameter() {
+    for mutable in [true, false] {
+        let mut callee = Builder::new("f");
+        callee.param("x", Type::STRING);
+        let mut callee = callee.finish();
+        callee.muts[0] = mutable;
+        let mut b = Builder::new("g");
+        let s = b.local("s", Type::STRING);
+        b.block(
+            vec![
+                literal(s),
+                call(vec![Operand::Move(s)], vec![false]),
+                out(s, 0),
+                Statement::Release(s),
+            ],
+            ret(),
+        );
+        let found = certify_in(&b.finish(), &[callee]);
+        if mutable {
+            assert_eq!(found, Ok(()));
+        } else {
+            let want = Violation {
+                block: BlockId(0),
+                local: s,
+                rule: Rule::Out,
+            };
+            assert_eq!(found, Err(want));
         }
     }
 }

@@ -1017,7 +1017,6 @@ crates/sisuc/src/mir/tests/certify.rs::unmentioned_local_is_ignored
 crates/sisuc/src/mir/tests/certify.rs::unmentioned_parameter_reaches_a_return
 crates/sisuc/src/mir/tests/certify.rs::unreachable_code_certifies
 crates/sisuc/src/mir/tests/certify.rs::use_after_the_ownership_pass_panics
-crates/sisuc/src/mir/tests/certify.rs::violation_message_names_where_and_what
 crates/sisuc/src/mir/tests/certify.rs::write_into_a_borrowed_array_is_rejected
 crates/sisuc/src/mir/tests/elaborate.rs::each_exit_edge_is_elaborated_on_its_own
 crates/sisuc/src/mir/tests/elaborate.rs::free_after_reuse_is_removed

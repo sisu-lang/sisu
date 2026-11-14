@@ -1,11 +1,13 @@
 //! Methods on a type parameter: a call on a value of type `T` names a requirement of the
 //! interfaces that `T`'s bounds give, and is an `InterfaceCall` that `mono` resolves.
 
+use super::call::Dot;
 use super::generic::{GenericSig, Site, mismatched, named_params, written_args};
 use super::interface::Required;
 use super::mut_args::{MutParts, MutSite, site_of};
+use super::place::CheckedPlace;
 use super::reports::Reported;
-use super::{Checked, Checker, Poisoned};
+use super::{Checked, Checker, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{Definition, DiagnosticKind};
 use crate::source::Span;
@@ -13,17 +15,15 @@ use crate::tir::{self, Type, TypeArgs};
 
 impl Checker<'_> {
     /// `receiver.method(args)` on a value of type `ty`, a type parameter or an associated type,
-    /// which `site` writes: the call of the requirement that its bounds give. The call's own type
-    /// arguments are inferred against the requirement, as for a generic method, and the bounds of
-    /// the requirement's own parameters are checked.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the steps of a call of a requirement read in order in one place"
-    )]
+    /// which `site` writes: the call of the requirement that its bounds give. `receiver` is
+    /// checked from `receiver_expr`, whose place is `parked` when `method_expr` kept it. A
+    /// requirement that takes `mut self` writes the place, as `mut_self_call` does; any other
+    /// reads it.
     pub(super) fn bound_method(
         &mut self,
         span: Span,
-        receiver: Checked,
+        dot: Dot,
+        (receiver, receiver_expr, parked): (Checked, &ast::Expr, Option<CheckedPlace>),
         ty: Type,
         site: Site<'_>,
         args: &[ast::Arg],
@@ -42,17 +42,57 @@ impl Checker<'_> {
         if found.is_empty()
             && let Some(&reported) = self.rejected_methods.get(&site.name.name)
         {
+            self.read_parked(parked, &receiver, receiver_expr);
             return self.call_of_rejected_method(site.name, args, reported);
         }
         let picked = match self.pick_required(ty, site, span, &found) {
             Ok(picked) => picked,
             Err(reported) => {
+                self.read_parked(parked, &receiver, receiver_expr);
                 self.stamp_candidates(&found, args);
                 self.labels(args);
                 self.stray(args);
                 return Err(Poisoned::untyped(reported));
             }
         };
+        let requirement = &self.interfaces[picked.interface.0].requirements[picked.method];
+        if requirement.self_mut.is_none() {
+            self.read_parked(parked, &receiver, receiver_expr);
+            return self.requirement_call(
+                span,
+                picked,
+                (receiver, MutParts::default()),
+                ty,
+                site,
+                args,
+            );
+        }
+        match self.mut_self_receiver(dot, (receiver, receiver_expr, parked), site.name) {
+            Ok(receiver) => self.requirement_call(span, picked, receiver, ty, site, args),
+            Err((receiver, reported)) => {
+                let receiver = (receiver, MutParts::default());
+                let checked = self.requirement_call(span, picked, receiver, ty, site, args);
+                match reported {
+                    Some(reported) => Err(Poisoned::new(type_of(&checked), reported)),
+                    None => checked,
+                }
+            }
+        }
+    }
+
+    /// The call at `span` of the requirement `picked` on `receiver`, of type `ty`, which `site`
+    /// writes. `parts` are the `mut` parts the receiver starts the call with. The call's own type
+    /// arguments are inferred against the requirement, as for a generic method, and the bounds of
+    /// the requirement's own parameters are checked.
+    fn requirement_call(
+        &mut self,
+        span: Span,
+        picked: Required,
+        (receiver, mut parts): (Checked, MutParts),
+        ty: Type,
+        site: Site<'_>,
+        args: &[ast::Arg],
+    ) -> Checked {
         let Required {
             interface,
             args: iargs,
@@ -94,7 +134,6 @@ impl Checker<'_> {
             mut_site: (!muts.is_empty()).then_some(&mut_site),
             function: None,
         };
-        let mut parts = MutParts::default();
         let written = (site.written, site.angles);
         let result = self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts);
         let list = result.as_ref().ok().map(|(_, list, _)| *list);

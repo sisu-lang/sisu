@@ -585,7 +585,7 @@ enum Receiver<'o> {
     /// A function outside a class, an enum, an interface and an `extend` block: no `self`.
     Free,
     /// A method of a class, a struct, an enum or an interface. `mut self` is an error at once in
-    /// a class and an interface.
+    /// a class.
     Of(&'o Owner),
     /// A method of an `extend` block. The target may be a class or an enum, which the parser
     /// cannot tell, so it records `mut self` for the checker to report.
@@ -2167,7 +2167,7 @@ impl<'a> Parser<'a> {
                     // `mut` is never `Eof`, so the token after it exists.
                     match (&self.tokens[self.pos + 1].kind, receiver) {
                         (TokenKind::SelfKw, Receiver::Of(owner))
-                            if matches!(owner, Owner::Class | Owner::Interface) =>
+                            if matches!(owner, Owner::Class) =>
                         {
                             return Err(self.mut_self_error(owner.clone()));
                         }
@@ -2320,6 +2320,7 @@ impl<'a> Parser<'a> {
             type_params: signature.type_params,
             angles: signature.angles,
             self_param,
+            mut_self: signature.mut_self,
             params: signature.params,
             ret: signature.ret,
             span: signature.fn_span.to(self.last_span()),
@@ -7035,14 +7036,14 @@ mod tests {
                 "interface I {\n    mut x: i64\n}",
                 (Code::InterfaceBody, 2, 5),
             ),
-            // A requirement takes `self`, and never `mut self`.
+            // A requirement takes `self` or `mut self`, and its `self` has no type.
             (
                 "interface I {\n    fn f()\n}",
                 (Code::MethodNeedsSelf, 2, 8),
             ),
             (
-                "interface I {\n    fn f(mut self)\n}",
-                (Code::MutSelf, 2, 10),
+                "interface I {\n    fn f(mut self: i64)\n}",
+                (Code::Expected, 2, 18),
             ),
             ("interface I {\n    1\n}", (Code::Expected, 2, 5)),
             // `type` is a keyword: it is no name, and it starts an item or a choice only where the
@@ -11393,11 +11394,6 @@ mod tests {
                 "class C {\n    fn f(mut self: i64, a: i64) {}\n}",
                 2,
                 "class C {\n    fn f(self, a: i64) {}\n}",
-            ),
-            (
-                "interface I {\n    fn f(mut self: i64)\n}",
-                2,
-                "interface I {\n    fn f(self)\n}",
             ),
             (
                 "class C {\n    fn f(mut self: Box<i64>) {}\n}",

@@ -139,8 +139,15 @@ const NONE: usize = usize::MAX;
 /// Checks `function` after the ownership pass: the first violation, if any. Rule 6 is checked
 /// first, then the statements that read a root in place and then kill it, then each counted
 /// local in order.
+#[cfg(test)]
 pub(crate) fn certify(function: &Function) -> Result<(), Violation> {
-    outs(function)?;
+    certify_in(function, &[])
+}
+
+/// `certify` with the program's `functions`, which give the flags of a direct call's callee for
+/// the `out` rule. With none, a direct call's `out` is not checked against its callee's flags.
+pub(crate) fn certify_in(function: &Function, functions: &[Function]) -> Result<(), Violation> {
+    outs(function, functions)?;
     regions(
         function,
         |_| true,
@@ -152,18 +159,22 @@ pub(crate) fn certify(function: &Function) -> Result<(), Violation> {
 /// Each `out` takes the final value of an argument of the call just before it. The nearest call in
 /// its block must pass the `out`'s destination at the index that the `out` names. Only `release`s,
 /// `end`s and other `out`s may come between them. Codegen reads the out slots of that call, so no
-/// other call may come between. A `DynCall` must also flag that index: codegen gives an out slot
-/// to a flagged argument only.
-fn outs(function: &Function) -> Result<(), Violation> {
+/// other call may come between. The call must also flag that index, a `DynCall` in its `muts`
+/// and a direct call in its callee's among `functions`: codegen gives an out slot to a flagged
+/// argument only.
+fn outs(function: &Function, functions: &[Function]) -> Result<(), Violation> {
     for (b, block) in function.blocks.iter().enumerate() {
-        // The arguments of the nearest call, and the flags of a call through a table.
+        // The arguments of the nearest call, and its flags when they are known.
         let mut call: Option<(&[Operand], Option<&[bool]>)> = None;
         for stmt in &block.stmts {
             match stmt {
                 Statement::Assign {
-                    value: Rvalue::Call { args: passed, .. },
+                    value:
+                        Rvalue::Call {
+                            func, args: passed, ..
+                        },
                     ..
-                } => call = Some((passed, None)),
+                } => call = Some((passed, functions.get(func.0).map(|f| f.muts.as_slice()))),
                 Statement::Assign {
                     value:
                         Rvalue::DynCall {
