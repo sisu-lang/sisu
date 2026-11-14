@@ -3,9 +3,10 @@
 
 use super::*;
 use Code::{
-    AssignToExpression, AssignToImmutable, AssignToSelf, CannotInfer, ConformanceBody, Expected,
-    MayBeNone, Mismatch, MutArgumentNotPlace, MutMarkerMissing, MutPlaceTwice, MutSelf,
-    NeverReassigned, NoMember, SelfOutsideMethod, TypeArguments, UnusedMember, UnusedVariable,
+    AssignToExpression, AssignToImmutable, AssignToSelf, BindingNotFound, CannotInfer,
+    ConformanceBody, Expected, MayBeNone, Mismatch, MutArgumentNotPlace, MutMarkerMissing,
+    MutPlaceTwice, MutSelf, NeverReassigned, NoMember, SelfOutsideMethod, TypeArguments,
+    UnusedMember, UnusedVariable,
 };
 
 /// `Point` with the `mut self` method `move_by`, in eight lines.
@@ -326,6 +327,45 @@ fn mut_self_call_through_an_optional_value_should_be_e0062() {
             [(NeverReassigned, (3, 21)), (MayBeNone, pos)],
             "a range index {row}"
         );
+    }
+    // A receiver that fails with no `?.` has its own error, and the call writes the root.
+    let p = "struct P { x: i64; fn bump(mut self) { self.x += 1 } }\n";
+    let rows = [
+        (
+            "an optional array",
+            format!("{p}fn main() {{ let mut ps: [P]? = None; ps[0].bump(); print(ps != None) }}"),
+            (MayBeNone, (2, 38)),
+        ),
+        (
+            "an optional array field",
+            format!(
+                "{p}struct L {{ ps: [P]? }}\nfn main() {{ let mut l = L(ps: None); l.ps[0].bump(); print(l.ps != None) }}"
+            ),
+            (MayBeNone, (3, 38)),
+        ),
+        (
+            "an unknown name in the index",
+            format!(
+                "{p}fn main() {{ let mut ps: [P] = [P(x: 1)]; ps[zz].bump(); print(ps.len()) }}"
+            ),
+            (BindingNotFound, (2, 45)),
+        ),
+        (
+            "an index of the wrong type",
+            format!(
+                "{p}fn main() {{ let mut ps: [P] = [P(x: 1)]; ps[true].bump(); print(ps.len()) }}"
+            ),
+            (Mismatch, (2, 45)),
+        ),
+        (
+            "an array's `push` on an optional array",
+            "fn main() { let mut ps: [[i64]]? = None; ps[0].push(1); print(ps != None) }"
+                .to_string(),
+            (MayBeNone, (1, 42)),
+        ),
+    ];
+    for (row, src, wanted) in &rows {
+        assert_eq!(all_codes(src), [*wanted], "a failed receiver: {row}");
     }
     // An optional element after the `?.` has an E0062 of its own, as for a plain method.
     // The call writes `o`, as a field write does, so `o` has no W0002.
