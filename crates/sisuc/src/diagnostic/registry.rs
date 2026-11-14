@@ -1420,11 +1420,13 @@ pub(crate) enum DiagnosticKind {
     },
     /// The function, method, class, enum or constant `name` (its `kind`), whose name in its
     /// declaration is at `at`, which no live code uses; `uses` are up to three uses in dead code,
-    /// each with the kind and name of its dead user.
+    /// each with the kind and name of its dead user. `named` is, for a struct or an enum, the
+    /// first place outside its declaration where a type names it.
     UnusedItem {
         kind: Definition,
         name: String,
         at: Span,
+        named: Option<Span>,
         uses: Vec<(Span, UsedBy, String)>,
     },
     /// The `extend` block of the type written `name`, whose header is at `at`, which no live code
@@ -1981,19 +1983,24 @@ impl Definition {
 }
 
 /// The W0012 or W0013 of the item or member `name`, whose name is at `at`. `shown` is the `dbg`
-/// call that shows it.
+/// call that shows it. `named` is the first type that names a struct or an enum.
 fn unused_name(
     code: Code,
     kind: Definition,
     name: &str,
     at: Span,
     shown: Option<Span>,
+    named: Option<Span>,
     uses: Vec<(Span, UsedBy, String)>,
 ) -> Diagnostic {
     let verb = kind.unused_verb();
     // A variant cannot take a `_` name (E0113).
     let help = if kind == Definition::Variant {
         "delete it".to_string()
+    } else if named.is_some() {
+        format!(
+            "delete it and each type that names it, directly or through an alias, or name it `_{name}` everywhere if it is kept on purpose"
+        )
     } else {
         format!("delete it, or name it `_{name}` if it is kept on purpose")
     };
@@ -2009,6 +2016,10 @@ fn unused_name(
             call,
             format!("`dbg` can show `{name}` here, but `dbg` is not a read"),
         ),
+        None => d,
+    };
+    let d = match named {
+        Some(at) => d.with_secondary(at, "named here"),
         None => d,
     };
     cite_uses(d, uses)
@@ -6597,15 +6608,16 @@ impl From<DiagnosticKind> for Diagnostic {
                 kind,
                 name,
                 at,
+                named,
                 uses,
-            } => unused_name(code, kind, &name, at, None, uses),
+            } => unused_name(code, kind, &name, at, None, named, uses),
             DiagnosticKind::UnusedMember {
                 kind,
                 name,
                 at,
                 shown,
                 uses,
-            } => unused_name(code, kind, &name, at, shown, uses),
+            } => unused_name(code, kind, &name, at, shown, None, uses),
             DiagnosticKind::UnusedBlock { name, at, uses } => {
                 let d = Diagnostic::coded(
                     code,

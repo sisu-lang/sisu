@@ -37,6 +37,8 @@ pub(super) struct EnumInfo {
     pub(super) methods: FxHashMap<Symbol, Declared<tir::FuncId>>,
     /// The associated types the declaration's body chooses.
     pub(super) assoc: std::rc::Rc<super::Choices>,
+    /// Where a type first names the enum, outside its own declaration (`Checker::note_named`).
+    pub(super) named: Option<Span>,
 }
 
 pub(super) struct VariantInfo {

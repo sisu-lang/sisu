@@ -330,6 +330,8 @@ struct ClassInfo {
     names_to_string: bool,
     /// The associated types the declaration's body chooses.
     assoc: Rc<Choices>,
+    /// For a struct: where a type first names it, outside its own declaration (`note_named`).
+    named: Option<Span>,
 }
 
 impl ClassInfo {
@@ -345,6 +347,7 @@ impl ClassInfo {
             methods: FxHashMap::default(),
             names_to_string: false,
             assoc: Rc::default(),
+            named: None,
         }
     }
 
@@ -876,6 +879,9 @@ struct Checker<'src> {
     /// no owner, because a signature is resolved outside a body. No other body is resolved while
     /// it is `Some`: `resolve_aliases` resolves each alias body before `collect_signatures`.
     signature_anys: Option<Vec<(tir::InterfaceId, Span)>>,
+    /// While `extend_target` resolves the target of an `extend` block: where the target starts.
+    /// The type that it names is the block's own, so it is no name of that type for W0012.
+    extend_head: Option<usize>,
     /// Each use of an item that a function, method or constant has, in check order.
     uses: Vec<Use>,
     /// Each binding of a function or a method that nothing reads, in check order.
@@ -1498,6 +1504,7 @@ impl<'src> Checker<'src> {
             parse_errors: Vec::new(),
             body: Body::default(),
             signature_anys: None,
+            extend_head: None,
             uses: Vec::new(),
             pending: Vec::new(),
             instantiates: false,
@@ -1713,6 +1720,7 @@ impl Checker<'_> {
                         index: FxHashMap::default(),
                         methods: FxHashMap::default(),
                         assoc: Rc::default(),
+                        named: None,
                     });
                     if !self.built_in(&e.name)
                         && self.first_callable(&mut first, &mut rejected, Definition::Enum, &e.name)
@@ -2397,6 +2405,7 @@ impl Checker<'_> {
                     .then_some(ty)
             }
             Resolved::Item(ItemId::Struct(id)) => {
+                self.note_named(Holder::Struct(id), ty, ident().span);
                 let list = if args.is_empty() && self.structs[id.0].type_params.is_empty() {
                     TypeArgs::NONE
                 } else {
@@ -2409,6 +2418,7 @@ impl Checker<'_> {
             }
             Resolved::Item(ItemId::Enum(id)) => {
                 self.reaches_prelude(id.0 >= self.prelude.enums, ident().span);
+                self.note_named(Holder::Enum(id), ty, ident().span);
                 let list = if args.is_empty() && self.enums[id.0].type_params.is_empty() {
                     TypeArgs::NONE
                 } else {
