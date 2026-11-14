@@ -1,6 +1,6 @@
 //! The origin of an expected type: an E0032 says where its required type comes from, as a
 //! secondary label, a note or a label at the primary span (S21). These tests read positions and
-//! counts. Only `labels` reads text, where no position tells two cases apart.
+//! counts, never text.
 
 use super::*;
 
@@ -684,40 +684,25 @@ fn an_index_on_a_base_with_no_element_should_state_no_rule() {
     }
 }
 
-/// The text of the secondary labels of the one E0032 that `src` gives. A fixture in
-/// `tests/diagnostics` pins the whole text. These tests read it only where a position cannot tell
-/// the cases apart: the wording is the only fact that differs.
-fn labels(src: &str) -> Vec<String> {
-    let (_, ds) = checked_with(PRELUDE_SOURCE, src);
-    let errors: Vec<_> = (ds.iter())
-        .filter(|d| d.code().severity() == Severity::Error)
-        .collect();
-    let [d] = errors[..] else {
-        panic!("{} errors, wanted 1: {src}", errors.len());
-    };
-    assert_eq!(d.code(), Code::Mismatch, "{src}");
-    (d.secondary().iter())
-        .map(|(_, text)| text.clone())
-        .collect()
-}
-
+/// A fixture in `tests/diagnostics` pins the wording "the outer loop". These rows pin where the
+/// label is: at the first `break` of the loop that gave the type.
 #[test]
-fn a_loop_in_a_break_value_should_name_the_outer_loop() {
-    let value = labels(
-        "fn f(c: bool) {\n    let _a = loop {\n        if c { break 1 }\n        break loop { break \"x\" }\n    }\n}\nfn main() { f(true) }\n",
-    );
-    let [label] = &value[..] else {
-        panic!("wanted one label, found {value:?}");
-    };
-    assert!(label.contains("the outer loop"), "{label}");
-    // A loop in a `let` is no part of the value: its `break` is of the loop that reports.
-    let local = labels(
-        "fn f(c: bool) {\n    let _a = loop {\n        if c { break 1 }\n        let _y = loop { break \"x\" }\n        break \"y\"\n    }\n}\nfn main() { f(true) }\n",
-    );
-    let [label] = &local[..] else {
-        panic!("wanted one label, found {local:?}");
-    };
-    assert!(!label.contains("outer"), "{label}");
+fn a_loop_in_a_break_value_should_label_the_first_break_of_the_outer_loop() {
+    origin_rows(&[
+        (
+            "a loop in the value of a `break`",
+            "fn f(c: bool) {\n    let _a = loop {\n        if c { break 1 }\n        break loop { break \"x\" }\n    }\n}\nfn main() { f(true) }\n",
+            (4, 28),
+            Explained::Label(3, 16),
+        ),
+        // A loop in a `let` is no part of the value: its `break` is of the loop that reports.
+        (
+            "a loop in a `let`",
+            "fn f(c: bool) {\n    let _a = loop {\n        if c { break 1 }\n        let _y = loop { break \"x\" }\n        break \"y\"\n    }\n}\nfn main() { f(true) }\n",
+            (5, 15),
+            Explained::Label(3, 16),
+        ),
+    ]);
 }
 
 #[test]
@@ -746,20 +731,21 @@ fn a_negated_operand_should_keep_the_origin_of_its_context() {
 
 #[test]
 fn a_type_of_a_generic_signature_that_names_no_parameter_should_be_shown_as_written() {
-    let src =
-        "type M = i64\nfn f<U>(a: U, n: M) {\n    print(n)\n}\nfn main() {\n    f(1, \"x\")\n}\n";
-    let shown = labels(src);
-    let [label] = &shown[..] else {
-        panic!("wanted one label, found {shown:?}");
-    };
-    assert!(label.contains("as `M`"), "{label}");
-    // A type that names a parameter keeps no shown text, and gives no label.
-    origin_rows(&[(
-        "an alias that names a parameter",
-        "type L<X> = [X]\nfn f<U>(a: L<U>) {\n    print(a)\n}\nfn main() {\n    f(\"x\")\n}\n",
-        (6, 7),
-        Explained::Nothing,
-    )]);
+    origin_rows(&[
+        (
+            "an alias that names no parameter",
+            "type M = i64\nfn f<U>(a: U, n: M) {\n    print(n)\n}\nfn main() {\n    f(1, \"x\")\n}\n",
+            (6, 10),
+            Explained::Label(2, 18),
+        ),
+        // A type that names a parameter keeps no shown text, and gives no label.
+        (
+            "an alias that names a parameter",
+            "type L<X> = [X]\nfn f<U>(a: L<U>) {\n    print(a)\n}\nfn main() {\n    f(\"x\")\n}\n",
+            (6, 7),
+            Explained::Nothing,
+        ),
+    ]);
 }
 
 #[test]

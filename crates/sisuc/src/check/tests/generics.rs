@@ -6606,6 +6606,25 @@ fn a_misfit_that_no_code_reports_should_give_e0050_at_the_call() {
     assert_eq!(codes, [Code::CannotInfer], "{found:?}");
 }
 
+/// A parameter whose type is an alias that names no type parameter is shown as written, as in
+/// a function with no type parameter (#663): the message of the generic call and that of its
+/// concrete twin are equal, at the same place.
+#[test]
+fn a_generic_call_should_show_an_alias_parameter_as_its_concrete_twin_does() {
+    with_prelude();
+    let program = |generics: &str, first: &str| {
+        format!(
+            "type M = i64\nfn f{generics}(a: {first}, n: M) {{\n    print(n)\n}}\nfn main() {{\n    f(1, \"x\")\n}}\n"
+        )
+    };
+    let (generic_failed, generic) = parity_found(&program("<U>", "U"));
+    let (concrete_failed, concrete) = parity_found(&program("", "i64"));
+    assert!(generic_failed && concrete_failed);
+    let codes: Vec<_> = generic.iter().map(|(code, ..)| *code).collect();
+    assert_eq!(codes, [Code::Mismatch], "{generic:?}");
+    assert_eq!(generic, concrete);
+}
+
 /// A `return` or a `panic` before a misfit tail makes the block `never`, so no code uses the
 /// tail's value and none reports its misfit. The call gives its E0050, and the rest is what the
 /// concrete twin gives: no crash, and no "found `never`".
