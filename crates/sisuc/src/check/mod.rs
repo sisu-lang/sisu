@@ -2584,7 +2584,17 @@ impl Checker<'_> {
                 && let TypeKind::Optional(payload) = want.kind()
                 && block_type(&body) == Some(payload)
             {
-                wrap_block(&mut body, want, value_span(&f.body));
+                // A `unit` body is a value of a `unit?` function only when it ends in one: a
+                // valueless `if` is E0043, and an empty body or an `if` without an `else` gets
+                // E0031, as an `i64?` body does.
+                let valueless = (body.as_ref().ok())
+                    .and_then(|block| block.value.as_deref())
+                    .and_then(expr::valueless);
+                if let Some(at) = valueless {
+                    body = Err(Poisoned::untyped(c.no_value(at, Type::UNIT, None)));
+                } else if payload != Type::UNIT || tail(&f.body).is_some_and(|e| !without_else(e)) {
+                    wrap_block(&mut body, want, value_span(&f.body));
+                }
             }
             c.pop_scope();
             // The value's mismatch is reported once the body is gone, so a misfit is taken now.
@@ -2897,6 +2907,20 @@ fn tail(block: &ast::Block) -> Option<&ast::Expr> {
         }) if !e.is_jump() => Some(e),
         _ => None,
     }
+}
+
+/// Whether `e` is an `if` or an `if let` without an `else`.
+fn without_else(e: &ast::Expr) -> bool {
+    matches!(
+        e.kind,
+        ast::ExprKind::If {
+            else_block: None,
+            ..
+        } | ast::ExprKind::IfLet {
+            else_block: None,
+            ..
+        }
+    )
 }
 
 /// Where a block's value comes from: its last statement, or the block itself when empty.
