@@ -42,7 +42,7 @@ a warning
 - No argument and more than one argument are errors. [E0059](../diagnostics/E0059.md)
 - An argument of the type `never`, such as a call of `panic`, is an error. [E0061](../diagnostics/E0061.md)
 - An optional builds with a warning, because the text can be `None`. Unwrap it with `if let`, give a default with `??`, or call `to_string()`. [W0015](../diagnostics/W0015.md)
-- `print` and `eprint` give no value. [E0043](../diagnostics/E0043.md)
+- `print` and `eprint` give a `unit` value ([unit](types.md#unit)).
 
 **The text**
 

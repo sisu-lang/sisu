@@ -476,7 +476,7 @@ fn main() {
 
 ## unit
 
-`unit` is the type of an expression that gives no value, such as a call of `print`. `unit` is an ordinary type: a program writes its name, and it can be a type argument, such as `[unit]`, `unit?` and `Stack<unit>`.
+`unit` is the type of an expression that gives no other value, such as a call of `print`. `unit` is an ordinary type: a program writes its name, and it can be a type argument, such as `[unit]`, `unit?` and `Stack<unit>`.
 
 ```sisu
 fn main() {
@@ -487,8 +487,9 @@ fn main() {
 
 **Rules**
 
-- `unit` has no literal. A `unit` value comes from a call, such as `print(...)`.
+- `unit` has no literal. A `unit` value comes from a call of a function with no return type, such as `print(...)`. A block that does not end in an expression gives one too, and so does a `loop` whose `break`s have no value.
 - `unit` has a `Display`, which writes `()`, and an `Eq` and an `Ord`, under which all `unit` values are equal.
+- `match` on a `unit` value is an error. [E0124](../diagnostics/E0124.md)
 - A `unit` value fits only where `unit` or a type parameter is expected. Where another type is expected, it is an error. [E0043](../diagnostics/E0043.md)
 
 ## Conversions

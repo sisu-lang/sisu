@@ -62,6 +62,12 @@ before milestone 9.
   value, and else does not run its right side
   ([ADR 0037](adr/0037-assignment-through-optional-chaining.md))
 - the prelude enum `Result<T, E>`, with the bare names `Ok` and `Err`
+- `unit` is a value type (milestone 12, stage 1). A call of a function with
+  no return type gives a `unit` value. So do a block with no tail and a
+  `loop` that ends at a bare `break`. `let u = print("a")` binds one, and
+  `[unit]`, `unit?`, a `unit` field and `Result<unit, E>` work. A `unit`
+  value prints as `()`, and all `unit` values are equal. It fits only where
+  `unit` or a type parameter is expected (`E0043`)
 - enums, declared with `enum` and a list of variants, each with no payload,
   labeled fields (`Rect(w: i64, h: i64)`) or unlabeled ones (`Num(i64)`);
   `Expr.Num(2)` builds a value, an enum has methods and compares with `==`,
@@ -88,12 +94,12 @@ before milestone 9.
   written out (`first<i64>([])`, `Stack<string>(top: None)`); a generic body
   is checked once, at its definition, and compiled once for each list of type
   arguments the program reaches. A type parameter takes bounds that name
-  interfaces (`T: Shape & Named`), and a value of one calls the methods of
-  its bounds, and the operators that `Eq` and `Ord` give it, but a `==` or
-  `<` on a `T` with no such bound is an error (`E0139`); `unit` and `never`
-  are not type arguments (`E0138`); a use that would need copies without end
-  is an error (`E0140`), and so is a program whose generic items make more
-  than 100,000 instantiations, in `sisu build` (`E0163`)
+  interfaces (`T: Shape & Named`). A value of one calls the methods of its
+  bounds, and the operators that `Eq` and `Ord` give it. A `==` or `<` on a
+  `T` with no such bound is an error (`E0139`). `never` is not a type
+  argument (`E0138`). A use that would need copies without end is an error
+  (`E0140`). So is a program whose generic items make more than 100,000
+  instantiations, in `sisu build` (`E0163`)
 - interfaces: `interface Shape { fn area(self) -> f64 }` lists method
   signatures with no body, associated types (`type Item`), type parameters
   and inherited interfaces (`interface Solid: Named`), and `Self` is the
@@ -434,7 +440,7 @@ These came out of the milestone 2 design and are now part of its spec:
 - `dbg(x)` writes `file:line:column: source = value` to standard error and
   returns `x`. It shows a class one level deep, lays the value out as `{x:#}`
   does, and does not warn.
-- Every type but `unit` and `never` prints, through a generated `Display`. A
+- Every type but `never` prints, through a generated `Display`. A
   value prints as the code that built it reads: a class prints its name, a
   variant prints without its enum, and a `string` or a `char` is quoted inside
   an array or a payload. The `Some` rule: a `T?` that holds `x` prints the

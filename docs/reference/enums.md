@@ -260,8 +260,8 @@ fn main() {
 
 - The values of the arms follow the rules of the branches of an `if` ([Expressions](expressions.md#match)).
 - When every arm has the type `never`, so has the `match` ([Types](types.md#never)).
-- An arm with a value and an arm with no value cannot be in one `match`. An arm of the type `never` goes with both. [E0043](../diagnostics/E0043.md)
-- A `match` statement whose arms have no value is valid.
+- An arm that gives `unit` and an arm with a value of another type cannot be in one `match`. An arm of the type `never` goes with both. [E0043](../diagnostics/E0043.md)
+- A `match` whose arms give `unit` gives a `unit` value.
 - A `match` statement whose arms have a value gives a warning. [W0004](../diagnostics/W0004.md)
 - Every value of the type must reach an arm ([Coverage](#coverage)).
 
@@ -685,7 +685,7 @@ fn main() {
 
 - The names of the pattern are in scope in the first block only, and not in the `else` block.
 - An `if let` with an `else` is an expression, as an `if` is.
-- An `if let` without an `else` has no value. [E0043](../diagnostics/E0043.md)
+- An `if let` without an `else` whose branch gives `unit` gives a `unit` value. When its branch has a value of another type, it has no value. [E0043](../diagnostics/E0043.md)
 
 ```sisu
 fn main() {
