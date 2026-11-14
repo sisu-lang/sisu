@@ -7,8 +7,8 @@ use Code::{
     AssignToExpression, AssignToImmutable, AssignToSelf, BindingNotFound, CannotBeAny,
     CannotExtend, CannotInfer, ConformanceBody, Expected, FunctionNotFound, InterfaceAsType,
     MayBeNone, Mismatch, MutArgumentNotPlace, MutMarkerMissing, MutPlaceTwice, MutSelf,
-    NeverReassigned, NoMember, SelfOutsideMethod, TypeArguments, UnknownType, UnusedMember,
-    UnusedVariable,
+    NeverReassigned, NoMember, SelfOutsideMethod, TypeArguments, UnchangedLoopCondition,
+    UnknownType, UnusedMember, UnusedVariable,
 };
 
 /// `Point` with the `mut self` method `move_by`, in eight lines.
@@ -1446,4 +1446,141 @@ fn interface_with_a_mut_self_requirement_as_a_type_should_offer_only_a_type_para
     let start = K_ADD.len() + "fn f(k: ".len();
     let wanted = [(InterfaceAsType, Span::new(start, start + 1), true)];
     assert_eq!(error_shapes(&src), wanted);
+}
+
+/// `T` with `step` and `next`, and the `u` that its loops compare with.
+const STEP: &str = "struct T {\n    n: i64\n    fn step(mut self) { self.n += 1 }\n    fn next(mut self) -> i64 {\n        self.n += 1\n        self.n\n    }\n}\n";
+
+/// GIVEN `struct T` with `fn step(mut self)` and `fn next(mut self) -> i64`, `let mut t = T(n: 0)`
+/// and `let u = T(n: 3)`. WHEN the program has a `while` whose condition reads `t`. THEN `sisu
+/// check` reports W0011 at the condition only when nothing in the loop changes `t`.
+#[test]
+fn mut_self_call_should_count_as_a_change_in_a_while() {
+    let program = |lp: &str| {
+        format!(
+            "{STEP}fn main() {{\n    let mut t = T(n: 0)\n    let u = T(n: 3)\n    {lp}\n    print(t.n)\n    print(u.n)\n}}\n"
+        )
+    };
+    let rows = [
+        ("a call in the body", "while t != u { t.step() }", vec![]),
+        (
+            "no change",
+            "while t != u { print(t.n) }",
+            vec![(UnchangedLoopCondition, (12, 11))],
+        ),
+        (
+            "a call with a result in the condition",
+            "while t.next() < 3 {}",
+            vec![],
+        ),
+    ];
+    for (row, lp, wanted) in rows {
+        codes_row(row, &program(lp), &wanted);
+    }
+}
+
+/// GIVEN `Point` with `move_by`. WHEN `sisu check` runs on a program that calls it, or on a
+/// `mut self` method that never changes `self`. THEN W0002 and W0014 follow the rule of a `mut`
+/// argument. A call with no result is a write, and a call with a result is a read. An unused
+/// `mut self` gets W0002 at `self`, with the safe fix that removes `mut `.
+#[test]
+fn unused_warnings_should_see_a_mut_self_call() {
+    judge_unused();
+    let program = |items: &str, body: &str| format!("{POINT}{items}fn main() {{\n    {body}\n}}\n");
+    let rows = [
+        (
+            "a call with no result is a write",
+            program("", "let mut p = Point(x: 1, y: 2)\n    p.move_by(1, 1)"),
+            vec![(UnusedVariable, (10, 13))],
+        ),
+        (
+            "the lost write of a copy",
+            program(
+                "",
+                "let xs = [Point(x: 1, y: 2)]\n    let mut a = xs[0]\n    a.move_by(1, 1)",
+            ),
+            vec![(UnusedVariable, (11, 13))],
+        ),
+        (
+            "a call with a result is a read",
+            program(
+                "extend Point {\n    fn next(mut self) -> i64 {\n        self.x += 1\n        self.x\n    }\n}\n",
+                "let mut p = Point(x: 1, y: 2)\n    print(p.next())",
+            ),
+            vec![],
+        ),
+        (
+            "an unused `mut self`",
+            program(
+                "struct T {\n    n: i64\n    fn f(mut self) { print(self.n) }\n}\n",
+                "let mut t = T(n: 1)\n    t.f()\n    print(t.n)",
+            ),
+            vec![(NeverReassigned, (11, 14))],
+        ),
+        (
+            "a struct's own `push`",
+            program(
+                "struct St {\n    xs: [i64]\n    fn push(mut self, x: i64) { self.xs.push(x) }\n}\n",
+                "let mut s = St(xs: [])\n    s.push(1)\n    print(s.xs)",
+            ),
+            vec![],
+        ),
+    ];
+    for (row, src, wanted) in rows {
+        // `Point`'s fields and `move_by` go unused in some rows: W0012 and W0013 are not the row's.
+        let found: Vec<_> = (all_codes(&src).into_iter())
+            .filter(|&(code, _)| !matches!(code, Code::UnusedItem | UnusedMember))
+            .collect();
+        assert_eq!(found, wanted, "row `{row}`");
+    }
+    // The fix removes `mut ` and nothing else.
+    let src = "struct T {\n    n: i64\n    fn f(mut self) { print(self.n) }\n}\nfn main() {\n    let mut t = T(n: 1)\n    t.f()\n    print(t.n)\n}\n";
+    let (_, ds) = checked(src);
+    let d = ds
+        .iter()
+        .find(|d| d.code() == NeverReassigned)
+        .expect("W0002 should be reported");
+    assert_eq!(at(src, d.span()), (3, 14), "{d:?}");
+    let [fix] = d.fixes() else {
+        panic!("W0002 should have one fix: {d:?}");
+    };
+    assert!(fix.safe(), "{d:?}");
+    assert_eq!(fix.apply(src), src.replacen("(mut self)", "(self)", 1));
+}
+
+/// GIVEN `extend<T> G<T>: K { fn add(mut self) {} }`, a `struct T` whose `f` does `self = T(n: 9)`,
+/// and one whose `f` loops with `self = T(n: self.n + 1)`. WHEN `sisu check` runs on each. THEN
+/// no row has W0002, and the loop has no W0011: a write of `self` counts as a change.
+#[test]
+fn mut_self_should_count_a_write_of_self_and_a_requirement() {
+    judge_unused();
+    let rows = [
+        (
+            "a requirement keeps the `mut`",
+            "interface K { fn add(mut self) }\nstruct G<T> { v: T }\nextend<T> G<T>: K { fn add(mut self) {} }\nfn main() {\n    let mut g = G(v: 1)\n    g.add()\n    print(g.v)\n}\n",
+        ),
+        (
+            "a whole write of `self`",
+            "struct T {\n    n: i64\n    fn f(mut self) { self = T(n: 9) }\n}\nfn main() {\n    let mut t = T(n: 1)\n    t.f()\n    print(t.n)\n}\n",
+        ),
+        (
+            "a loop that writes `self`",
+            "struct T {\n    n: i64\n    fn f(mut self) {\n        while self.n < 3 { self = T(n: self.n + 1) }\n    }\n}\nfn main() {\n    let mut t = T(n: 1)\n    t.f()\n    print(t.n)\n}\n",
+        ),
+    ];
+    for (row, src) in rows {
+        codes_row(row, src, &[]);
+    }
+}
+
+/// GIVEN `struct S { p: Point; k: i64 }` and `let mut s = S(p: Point(x: 1, y: 2), k: 3)`. WHEN
+/// `main` calls `s.p.move_by(1, 1)` and prints `s.k`, and nothing else reads `p`. THEN `sisu check`
+/// reports no W0013 at `p`, as `bump(mut s.p)` has none.
+#[test]
+fn mut_self_call_on_a_field_should_read_the_field() {
+    judge_unused();
+    let src = format!(
+        "{POINT}struct S {{\n    p: Point\n    k: i64\n}}\nfn main() {{\n    let mut s = S(p: Point(x: 1, y: 2), k: 3)\n    s.p.move_by(1, 1)\n    print(s.k)\n    let q = Point(x: 1, y: 2)\n    print(q.x + q.y)\n}}\n"
+    );
+    codes(&src, &[]);
 }
