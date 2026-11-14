@@ -1,7 +1,7 @@
 //! Branches: `if`, `if let` and the join of branch types.
 
 use super::any::{AnyJoin, SEED, is_target};
-use super::expr::{fits, unit_call};
+use super::expr::{fits, takes_unit, unit_call};
 use super::generic::{Ahead, Rank, Ranked};
 use super::pattern::{LetPattern, arm_key};
 use super::reports::Reported;
@@ -421,7 +421,7 @@ impl Checker<'_> {
             AnyJoin::Leaves {
                 member: (i, Type::UNIT),
                 ..
-            } => sources[i].no_value().into(),
+            } if !wants_unit(expected) => sources[i].no_value().into(),
             AnyJoin::Leaves {
                 ty,
                 giver,
@@ -458,8 +458,9 @@ impl Checker<'_> {
     /// The mistake when the branch `first`, of type `first_ty`, and the later branch `other`,
     /// of type `other_ty`, do not join. With a type expected, the branch that fits it neither as
     /// is nor as its payload is the mistake; without one, `other` is, against `first_ty`. A
-    /// branch with no value is that mistake, not a type mismatch. `givers` are the branches that
-    /// can give the join its type, in the order of the check, and the origin of the anchor.
+    /// branch with no value is that mistake, not a type mismatch, unless the expected type takes a
+    /// `unit`. `givers` are the branches that can give the join its type, in the order of the
+    /// check, and the origin of the anchor.
     fn join_mismatch(
         &mut self,
         (sources, blocks): (&[Branch<'_>], &[CheckedBlock]),
@@ -482,9 +483,10 @@ impl Checker<'_> {
             let (at, tail, want, got) = self.reported(&sources[i], &blocks[i], want, got);
             self.leaves_any(at, tail, want, got, origin)
         };
+        let unit = !wants_unit(expected);
         match expected.ty() {
-            _ if first_ty == Type::UNIT => sources[first].no_value().into(),
-            _ if other_ty == Type::UNIT => sources[other].no_value().into(),
+            _ if unit && first_ty == Type::UNIT => sources[first].no_value().into(),
+            _ if unit && other_ty == Type::UNIT => sources[other].no_value().into(),
             Some(want) if fits(want, first_ty) => report(other, want, other_ty, expected.origin()),
             Some(want) => report(first, want, first_ty, expected.origin()),
             None => report(other, first_ty, other_ty, given),
@@ -506,7 +508,9 @@ impl Checker<'_> {
             return None;
         }
         // A branch with no value is the mistake first, as in `join_mismatch`.
-        if let Some(&(i, _)) = members.iter().find(|&&(_, t)| t == Type::UNIT) {
+        if !wants_unit(expected)
+            && let Some(&(i, _)) = members.iter().find(|&&(_, t)| t == Type::UNIT)
+        {
             return Some(sources[i].no_value().into());
         }
         for &(i, t) in members {
@@ -762,4 +766,10 @@ fn after_branch(ty: Option<Type>, exact: bool, origin: Origin) -> Expectation {
             origin,
         },
     }
+}
+
+/// Whether `expected` takes a `unit`: there a `unit` branch is a value, and a branch of another
+/// type beside it is the mistake.
+fn wants_unit(expected: Expectation) -> bool {
+    expected.ty().is_some_and(takes_unit)
 }
