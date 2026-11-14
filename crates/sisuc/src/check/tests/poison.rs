@@ -2129,14 +2129,22 @@ fn a_conversion_to_i64_of_an_untyped_value_should_be_untyped() {
     ]);
 }
 
-/// An `if` with no value is E0043, so `i64` of it is untyped too.
+/// `nothing()` has a declaration and gives no value (E0043), so `i64` of it is untyped too. An
+/// `if` with no value is E0043 in the same way.
 #[test]
 fn a_conversion_to_i64_of_a_call_with_no_value_should_be_untyped() {
-    error_rows(&[(
-        "coalesce",
-        "fn main() {\n    let x = i64(if true { 1 }) ?? 0\n}\n".into(),
-        vec![(NoValue, (2, 17))],
-    )]);
+    error_rows(&[
+        (
+            "coalesce",
+            "fn nothing() {}\nfn main() {\n    let x = i64(nothing()) ?? 0\n}\n".into(),
+            vec![(NoValue, (3, 17))],
+        ),
+        (
+            "coalesce of an if",
+            "fn main() {\n    let x = i64(if true { 1 }) ?? 0\n}\n".into(),
+            vec![(NoValue, (2, 17))],
+        ),
+    ]);
 }
 
 /// The conversions that state their type apart from a failed argument stay typed: `u8(x)` and

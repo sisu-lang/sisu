@@ -165,3 +165,211 @@ fn a_body_that_ends_in_a_unit_call_should_name_the_call() {
     };
     assert!(renders_as(&d, kind));
 }
+
+/// A `main` that has `used` on line 14, after the declarations that the rows share. These are a
+/// function `g` that returns `unit`, a function `h` over `i64`, and a generic `id`. Then a generic
+/// `k` over `[T?]`, an enum `U` with a method, and four bindings.
+fn with_names(used: &str) -> String {
+    format!(
+        "fn g() {{}}\nfn h(a: i64) -> i64 {{ a }}\nfn id<T>(x: T) -> T {{ x }}\nfn k<T>(xs: [T?]) {{}}\nenum U {{\n    A\n    fn log(self) {{}}\n}}\nfn main() {{\n    let c = true\n    let x: i64? = None\n    let o: U? = None\n    let n = 1\n    {used}\n}}"
+    )
+}
+
+/// A row of the `with_names` tables: its name, the use, and each report wanted in it. A report
+/// is its code and the text whose last start in the use is the report's start. It also says if
+/// the report has the note that names a call of a `unit` function.
+type UseRow<'a> = (&'a str, String, Vec<(Code, &'a str, bool)>);
+
+/// The reports of `src`: code, line and column, and whether the report has a note. Of the reports
+/// that these rows find, only E0043 and E0031 have a note. They have it only when a call of a
+/// `unit` function is the expression with no value.
+fn reports(src: &str) -> Vec<(Code, (usize, usize), bool)> {
+    (diags(src).iter())
+        .map(|d| (d.code(), at(src, d.span()), !d.notes().is_empty()))
+        .collect()
+}
+
+/// Checks each row of `rows` in `with_names`, and lists every row that is red.
+fn use_rows(rows: &[UseRow<'_>]) {
+    with_prelude();
+    let mut red = Vec::new();
+    for (row, used, wanted) in rows {
+        let wanted: Vec<_> = (wanted.iter())
+            .map(|&(code, text, note)| {
+                let offset = used.rfind(text).expect("each wanted text is in its use");
+                (code, (14, 5 + offset), note)
+            })
+            .collect();
+        let found = reports(&with_names(used));
+        if found != wanted {
+            red.push(format!("row `{row}`: found {found:?}, wanted {wanted:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+/// An `if` with no `else` whose branch has a value gives no value. Each use of it as a value is
+/// E0043 at the `if`, also through a block, a join, a `match` arm or a generic argument. The
+/// same holds for `if let`.
+#[test]
+fn a_valueless_if_should_report_no_value_wherever_its_value_is_used() {
+    let shapes = [
+        ("let", "let u = if c { 1 }"),
+        ("block", "let u = { if c { 1 } }"),
+        ("join", "let u = if n == 1 { if c { 1 } } else { g() }"),
+        ("match arm", "let a = match n { 1 => if c { 1 }; _ => g() }"),
+        ("generic argument", "let a = id(if c { 1 })"),
+        ("nested generic argument", "let a = id(id(if c { 1 }))"),
+        ("Some", "let a = Some(if c { 1 })"),
+        ("print of a block", "print({ if c { 1 } })"),
+        ("dbg of a block", "let a = dbg({ if c { 1 } })"),
+        ("interpolated block", "let s = \"{ { if c { 1 } } }\""),
+    ];
+    let mut rows = Vec::new();
+    for (row, used) in shapes {
+        rows.push((row.to_string(), used.to_string(), "if c"));
+        rows.push((
+            format!("{row}, if let"),
+            used.replace("if c", "if let Some(v) = x"),
+            "if let",
+        ));
+    }
+    let rows: Vec<UseRow<'_>> = (rows.iter())
+        .map(|(row, used, at)| {
+            (
+                row.as_str(),
+                used.clone(),
+                vec![(Code::NoValue, *at, false)],
+            )
+        })
+        .collect();
+    use_rows(&rows);
+}
+
+/// A `unit` where a value of another type is wanted is E0043 at the `unit` operand, with the note
+/// that names the call. Two `unit` operands, and a `unit` for a call's own type parameter, check
+/// clean.
+#[test]
+fn a_unit_where_another_type_is_wanted_should_report_no_value() {
+    let at_g = || vec![(Code::NoValue, "g()", true)];
+    let rows: Vec<UseRow<'_>> = vec![
+        ("negation", "let a = -g()".into(), at_g()),
+        ("conversion", "let a = i64(g())".into(), at_g()),
+        ("array, last", "let a = [1, g()]".into(), at_g()),
+        ("array, first", "let a = [g(), 1]".into(), at_g()),
+        (
+            "array beside a bool",
+            "let a = [g(), 1 == 1]".into(),
+            at_g(),
+        ),
+        ("less, left", "let a = g() < 1".into(), at_g()),
+        ("less, right", "let a = 1 < g()".into(), at_g()),
+        ("equal, left", "let a = g() == 1".into(), at_g()),
+        ("equal, right", "let a = 1 == g()".into(), at_g()),
+        ("typed let", "let y: i64 = g()".into(), at_g()),
+        ("argument", "h(g())".into(), at_g()),
+        ("arithmetic", "let a = 1 + g()".into(), at_g()),
+        ("fallback", "let a = x ?? g()".into(), at_g()),
+        ("equal units", "let a = g() == g()".into(), vec![]),
+        ("less units", "let a = g() < g()".into(), vec![]),
+        ("array of units", "let a = [g(), g()]".into(), vec![]),
+        ("generic argument", "let a = id(g())".into(), vec![]),
+    ];
+    use_rows(&rows);
+}
+
+/// A type parameter of the body that is checked is not a hole of a call: a `unit` for it is
+/// E0043, with the note.
+#[test]
+fn a_unit_for_a_type_parameter_of_the_body_should_report_no_value() {
+    with_prelude();
+    for (row, body, column) in [
+        ("typed let", "let y: T = g()\n    x", 16),
+        ("optional let", "let y: T? = g()\n    x", 17),
+        ("return", "return g()", 12),
+    ] {
+        let src = format!("fn g() {{}}\nfn f<T>(x: T) -> T {{\n    {body}\n}}\nfn main() {{}}");
+        assert_eq!(
+            reports(&src),
+            [(Code::NoValue, (3, column), true)],
+            "row `{row}`"
+        );
+    }
+}
+
+/// `o?.log()`, where `log` returns `unit`, is a `unit?` in every position: a `let unit` of it is
+/// E0032, `print` and an interpolation warn as for an `i64?`, and an `i64` gets the mismatch
+/// with no note.
+#[test]
+fn a_safe_call_of_a_unit_method_should_be_an_optional_unit() {
+    let unit_of_u = |first: &str| format!("{first}; let v: unit = u");
+    let mismatch = || vec![(Code::Mismatch, "u", false)];
+    let at_call = || vec![(Code::PrintsOptional, "o?.log()", false)];
+    let rows: Vec<UseRow<'_>> = vec![
+        ("let", unit_of_u("let u = o?.log()"), mismatch()),
+        ("block", unit_of_u("let u = { o?.log() }"), mismatch()),
+        (
+            "generic argument",
+            unit_of_u("let u = id(o?.log())"),
+            mismatch(),
+        ),
+        (
+            "join with a unit",
+            unit_of_u("let u = if c { o?.log() } else { g() }"),
+            mismatch(),
+        ),
+        ("print", "print(o?.log())".into(), at_call()),
+        ("eprint", "eprint(o?.log())".into(), at_call()),
+        ("interpolation", "let s = \"{o?.log()}\"".into(), at_call()),
+        ("dbg", "let d = dbg(o?.log())".into(), vec![]),
+        (
+            "i64",
+            "let z: i64 = o?.log()".into(),
+            vec![(Code::Mismatch, "o?.log()", false)],
+        ),
+        ("statement", "o?.log()".into(), vec![]),
+    ];
+    use_rows(&rows);
+}
+
+/// A `unit?` binding takes each of these as it is, with no wrap: each is a `unit?` already.
+#[test]
+fn a_safe_call_of_a_unit_method_should_bind_an_optional_unit() {
+    for used in [
+        "let u = { o?.log() }",
+        "let u = id(o?.log())",
+        "let u = if c { o?.log() } else { g() }",
+    ] {
+        contains(
+            &with_names(&format!("{used}\n    let w: unit? = u")),
+            &["(let w#6 u#5)"],
+        );
+    }
+}
+
+/// A `unit` element binds `T` of a `[T?]` parameter and lifts to `T?`, as an `i64` element does.
+/// A valueless `if` and a `unit` beside an `i64` stay E0043.
+#[test]
+fn a_unit_element_should_bind_the_type_of_an_optional_array() {
+    let rows: Vec<UseRow<'_>> = vec![
+        ("two units", "k([g(), g()])".into(), vec![]),
+        ("one unit", "k([g()])".into(), vec![]),
+        ("Some beside a unit", "k([Some(g()), g()])".into(), vec![]),
+        (
+            "valueless if",
+            "k([if c { 1 }])".into(),
+            vec![(Code::NoValue, "if c", false)],
+        ),
+        (
+            "unit beside an i64",
+            "k([1, g()])".into(),
+            vec![(Code::NoValue, "g()", true)],
+        ),
+    ];
+    use_rows(&rows);
+}
