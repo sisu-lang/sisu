@@ -3,7 +3,7 @@
 // WHEN `sisu check` runs on it
 // THEN each E0032 has a secondary label at the first `break` of the outer loop
 // AND the label says that the `break` gave the outer loop its type
-// AND a `break` that names a label, a loop in a `let`, and a loop inside `Some` keep their labels
+// AND a `break` that names a label and a loop in a `let` keep "the loop", and a loop inside `Some` keeps no label
 fn direct(c: bool) {
     let _a = loop {
         if c { break 1 }
