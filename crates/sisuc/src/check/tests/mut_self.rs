@@ -279,15 +279,13 @@ fn mut_self_call_through_an_optional_value_should_be_e0062() {
         assert_eq!(errors(src, &ds), [wanted], "row `{row}`");
     }
     // An optional element after the `?.` has an E0062 of its own, as for a plain method.
+    // The call writes `o`, as a field write does, so `o` has no W0002.
     let src = "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nstruct L { pss: [P?] }\nfn main() { let mut o: L? = Some(L(pss: [None])); o?.pss[0].m(); print(o != None) }";
-    let plain = src.replace("fn m(mut self) { self.x = 1 }", "fn m(self) {}");
-    let (_, ds) = checked(src);
     assert_eq!(
-        errors(src, &ds),
+        all_codes(src),
         [(MayBeNone, (3, 51)), (MayBeNone, (3, 51))],
         "an optional element"
     );
-    assert_eq!(all_codes(src), all_codes(&plain), "an optional element");
     // The peel help of `?.` on an optional of an optional stays, as on a field write.
     let src = chained[2].1;
     assert!(only(src, MayBeNone).help().is_some(), "{src}");

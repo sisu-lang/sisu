@@ -1,7 +1,9 @@
 // GIVEN a struct method and an enum method that take `mut self`
-// AND a call of each through `?.` on an optional value
+// AND a call of each through `?.` and through `.` on an optional value
 // WHEN `sisu check` runs on it
-// THEN each call is E0062 from the `?.` to the method name, with the help that replaces the value
+// THEN each `?.` call is E0062 from the `?.` to the method name
+// AND each `.` call is E0062 at the receiver
+// AND each error has the help that replaces the value, as a field write has
 struct Point {
     x: i64
     y: i64
@@ -26,4 +28,6 @@ fn main() {
     p?.move_by(1, 1)
     let mut d: Dir? = Some(Dir.North)
     d?.flip()
+    p.move_by(1, 1)
+    d.flip()
 }

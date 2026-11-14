@@ -120,7 +120,8 @@ impl Change {
     /// How a field access of this change uses the field.
     fn access(self) -> Access {
         match self {
-            Change::Push | Change::Receiver(_) => Access::Push,
+            Change::Push => Access::Push,
+            Change::Receiver(method) => Access::Receiver(method),
             Change::MutArg => Access::Mut,
             Change::Assign | Change::Element | Change::Field => Access::Assign,
         }
