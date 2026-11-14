@@ -70,7 +70,8 @@ before milestone 9.
 - structs, declared with `struct`. A struct value holds its fields inline. It is
   copied when it is bound, passed, stored or returned
   ([ADR 0046](adr/0046-structs-replace-classes.md)). A struct has fields with no
-  `mut`, methods, type parameters, a conformance list and `extend`. `Point(x: 1, y: 2)` builds one. The compiler writes `==` and `print`
+  `mut`, methods, type parameters, a conformance list and `extend`.
+  `Point(x: 1, y: 2)` builds one. The compiler writes `==` and `print`
   when each field has them. One rule decides what can change. A write, or a `mut`
   argument, needs a root that is a `let mut` or a `mut` parameter (`E0001`,
   `E0169`). It can go any depth: through a field, a field of a field, or an
