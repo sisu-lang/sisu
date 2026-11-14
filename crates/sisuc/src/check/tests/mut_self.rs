@@ -1,10 +1,11 @@
 //! `mut self` on a struct or an enum method: the declaration, the receiver of a call, and a bare
 //! `self` as a place.
 
+use super::parity::parity_found;
 use super::*;
 use Code::{
-    AssignToExpression, AssignToImmutable, AssignToSelf, BindingNotFound, CannotExtend,
-    CannotInfer, ConformanceBody, Expected, FunctionNotFound, MayBeNone, Mismatch,
+    AssignToExpression, AssignToImmutable, AssignToSelf, BindingNotFound, CannotBeAny,
+    CannotExtend, CannotInfer, ConformanceBody, Expected, FunctionNotFound, MayBeNone, Mismatch,
     MutArgumentNotPlace, MutMarkerMissing, MutPlaceTwice, MutSelf, NeverReassigned, NoMember,
     SelfOutsideMethod, TypeArguments, UnknownType, UnusedMember, UnusedVariable,
 };
@@ -1188,5 +1189,179 @@ fn receiver_should_be_the_first_mut_slot() {
         let spans: Vec<_> = d.secondary().iter().map(|(s, _)| at(src, *s)).collect();
         assert_eq!(spans, [receiver], "row `{row}`: the receiver");
         assert!(d.fixes().is_empty(), "row `{row}`: {d:?}");
+    }
+}
+
+/// `interface K { fn add(mut self) }`, on one line, before the row's items.
+const K_ADD: &str = "interface K { fn add(mut self) }\n";
+
+/// GIVEN `interface K { fn add(mut self) }` and a type that conforms to it. WHEN `sisu check` runs
+/// on it. THEN it reports the row's errors: none for a struct, an enum or a class that has `add`,
+/// and E0152 at `K` for a class without it. The generic struct's `mut self` gets no W0002.
+#[test]
+fn interface_should_accept_a_mut_self_requirement() {
+    let program = |items: &str| format!("{K_ADD}{items}\nfn main() {{}}");
+    let rows: Vec<(&str, String, Vec<Wanted>)> = vec![
+        (
+            "a struct's `mut self`",
+            program("struct S: K { n: i64; fn add(mut self) { self.n += 1 } }"),
+            vec![],
+        ),
+        (
+            "plain `self` meets it",
+            program("struct S: K { fn add(self) {} }"),
+            vec![],
+        ),
+        (
+            "a conformance in `extend`",
+            program("struct S { n: i64 }\nextend S: K { fn add(mut self) { self.n += 1 } }"),
+            vec![],
+        ),
+        (
+            "a generic struct",
+            program("struct G<T> { v: T }\nextend<T> G<T>: K { fn add(mut self) {} }"),
+            vec![],
+        ),
+        (
+            "a class's plain `self`",
+            program("class C: K { mut n: i64; fn add(self) { self.n += 1 } }"),
+            vec![],
+        ),
+        (
+            "a class without `add`",
+            program("class C: K {}"),
+            vec![(ConformanceBody, (2, 10))],
+        ),
+        (
+            "an enum's `mut self`",
+            program("enum E: K { A; fn add(mut self) { self = E.A } }"),
+            vec![],
+        ),
+    ];
+    error_rows(&rows);
+    // A requirement keeps the `mut` of its method, so W0002 leaves it alone.
+    let (_, ds) = checked_with(PRELUDE_SOURCE, &rows[3].1);
+    assert!(ds.iter().all(|d| d.code() != NeverReassigned), "{ds:?}");
+}
+
+/// GIVEN an interface whose requirement takes plain `self`, and a type whose method takes
+/// `mut self`. WHEN `sisu check` runs on it. THEN it reports E0152 at the method's name. For a
+/// written interface, the diagnostic has a note.
+#[test]
+fn method_should_match_the_self_mark_of_its_requirement() {
+    let rows: Vec<(&str, String, Vec<Wanted>)> = vec![
+        (
+            "`mut self` asks for more",
+            "interface R { fn read(self) }\nstruct S: R { fn read(mut self) {} }\nfn main() {}"
+                .to_string(),
+            vec![(ConformanceBody, (2, 18))],
+        ),
+        (
+            "a language interface",
+            "struct S: Display { fn to_string(mut self) -> string { \"s\" } }\nfn main() {}"
+                .to_string(),
+            vec![(ConformanceBody, (1, 24))],
+        ),
+    ];
+    error_rows(&rows);
+    let (_, ds) = checked_with(PRELUDE_SOURCE, &rows[0].1);
+    let d = only_code(&ds, ConformanceBody);
+    assert_eq!(d.notes().len(), 1, "{d:?}");
+}
+
+/// The one diagnostic of `ds` with `code`.
+fn only_code(ds: &[Diagnostic], code: Code) -> &Diagnostic {
+    let mut found = ds.iter().filter(|d| d.code() == code);
+    let d = found.next().expect("the program should have the code");
+    assert!(found.next().is_none(), "{ds:?}");
+    d
+}
+
+/// GIVEN `interface K { fn add(mut self) }` and `struct S: K` whose `add` takes plain `self` and
+/// writes `self.n`. WHEN `sisu check` runs on it. THEN it reports E0001 at `self` with the unsafe
+/// fix "take `mut self`": the requirement allows `mut self`, so no copy is needed.
+#[test]
+fn method_for_a_mut_self_requirement_should_offer_mut_self() {
+    let src = "interface K {\n    fn add(mut self)\n}\nstruct S: K {\n    n: i64\n    fn add(self) { self.n = 1 }\n}\nfn main() {}";
+    plain_self_error(
+        "a `mut self` requirement",
+        src,
+        (AssignToImmutable, (6, 20)),
+        Some((6, 12)),
+    );
+}
+
+/// GIVEN a class method with `mut self`, in the class body or in an `extend`. WHEN `sisu check`
+/// runs on it. THEN it reports E0018 at `mut`.
+#[test]
+fn class_should_still_reject_mut_self() {
+    let rows: Vec<(&str, String, Vec<Wanted>)> = vec![
+        (
+            "the body",
+            "class C { fn f(mut self) {} }\nfn main() {}".to_string(),
+            vec![(MutSelf, (1, 16))],
+        ),
+        (
+            "`extend`",
+            "class C {}\nextend C { fn f(mut self) {} }\nfn main() {}".to_string(),
+            vec![(MutSelf, (2, 17))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN `interface K { fn add(mut self) }`. WHEN the program has `fn bump<T: K>(t: T) { t.add()
+/// }`. THEN `sisu check` reports E0001 at `t` of the call.
+#[test]
+fn plain_parameter_of_a_bound_should_not_take_a_mut_self_call() {
+    let src = format!("{K_ADD}fn bump<T: K>(t: T) {{ t.add() }}\nfn main() {{}}");
+    let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+    assert_eq!(errors(&src, &ds), [(AssignToImmutable, (2, 23))]);
+}
+
+/// GIVEN `interface K { fn add(mut self) }` and `struct S: K` with `fn add(mut self)`. WHEN the
+/// program has `any K` as the type of a local, a parameter or a field, or `any L` with `interface
+/// L: K {}`. THEN `sisu check` reports E0164 at the interface name after `any`. An interface that
+/// cannot be `any` for a lasting reason as well gives that reason: the message is the one that
+/// the program has with a plain `self` in place of the `mut self`.
+#[test]
+fn any_should_reject_an_interface_with_a_mut_self_requirement() {
+    let s = "struct S: K { n: i64; fn add(mut self) { self.n += 1 } }\n";
+    let rows: Vec<(&str, String, Vec<Wanted>)> = vec![
+        (
+            "a local",
+            format!("{K_ADD}{s}fn main() {{ let a: any K = S(n: 1) }}"),
+            vec![(CannotBeAny, (3, 24))],
+        ),
+        (
+            "a parameter",
+            format!("{K_ADD}{s}fn f(k: any K) {{}}\nfn main() {{}}"),
+            vec![(CannotBeAny, (3, 13))],
+        ),
+        (
+            "a field",
+            format!("{K_ADD}{s}struct H {{ k: any K }}\nfn main() {{}}"),
+            vec![(CannotBeAny, (3, 19))],
+        ),
+        (
+            "an inherited requirement",
+            format!("{K_ADD}{s}interface L: K {{}}\nfn f(l: any L) {{}}\nfn main() {{}}"),
+            vec![(CannotBeAny, (4, 13))],
+        ),
+    ];
+    error_rows(&rows);
+    // The lasting reason wins: an associated type, another requirement, an inherited interface,
+    // and an interface that inherits the `mut self` requirement.
+    let lasting = [
+        "interface K { type A; fn add(mut self) }\nfn f(k: any K) {}\nfn main() {}",
+        "interface K { fn add(mut self); fn same(self, o: Self) -> bool }\nfn f(k: any K) {}\nfn main() {}",
+        "interface L { fn same(self, o: Self) -> bool }\ninterface K: L { fn add(mut self) }\nfn f(k: any K) {}\nfn main() {}",
+        "interface K { fn eq(self, o: Self) -> bool }\ninterface L: K { fn add(mut self) }\nfn f(l: any L) {}\nfn main() {}",
+    ];
+    for src in lasting {
+        let plain = src.replace("mut self", "self");
+        let (_, found) = parity_found(src);
+        assert_eq!(found, parity_found(&plain).1, "{src}");
+        assert_eq!(found.len(), 1, "{src}");
     }
 }

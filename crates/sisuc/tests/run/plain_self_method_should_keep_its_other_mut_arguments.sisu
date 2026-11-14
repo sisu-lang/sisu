@@ -1,0 +1,38 @@
+// GIVEN `interface K { fn add(mut self, mut n: i64) }`
+// AND `struct S: K { c: i64; fn add(self, mut n: i64) { n += 1 } }`
+// AND `fn bump<T: K>(mut t: T, mut n: i64)`, which runs `t.add(mut n)`
+// AND `bump` takes `depth`, which `main` reads at run time as 1, and goes `depth` levels down
+// before it calls `add`; the WHEN lines leave `depth` out
+// WHEN `main` runs `bump(mut x, mut n)` twice with `let mut n = 0`, and prints `n` after each
+// THEN it prints "1" and "2": the call writes `n` back, and only the receiver's store-back goes
+// AND it prints `x.c`, "5", which no call changes
+// o2-calls: main bump<S> 2
+interface K {
+    fn add(mut self, mut n: i64)
+}
+
+struct S: K {
+    c: i64
+
+    fn add(self, mut n: i64) { n += 1 }
+}
+
+// Recursive to a depth that `main` reads at run time, so that `-O2` keeps the calls.
+fn bump<T: K>(mut t: T, mut n: i64, depth: i64) {
+    if depth > 0 {
+        bump(mut t, mut n, depth - 1)
+        return
+    }
+    t.add(mut n)
+}
+
+fn main() {
+    let depth = 1 + (read_line() ?? "").len()
+    let mut x = S(c: 5)
+    let mut n = 0
+    bump(mut x, mut n, depth)
+    print(n)                          // 1
+    bump(mut x, mut n, depth)
+    print(n)                          // 2
+    print(x.c)                        // 5
+}

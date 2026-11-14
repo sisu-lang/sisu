@@ -1,0 +1,44 @@
+// GIVEN `interface K { fn add(mut self) }` and `struct S: K { xs: [i64]; fn add(self) }`, whose
+// `add` prints `self.xs`
+// AND `class O { mut s: S }`, and `fn bump<T: K>(mut t: T)`, which runs `t.add()`
+// AND `let a = S(xs: [1, 2])`, `let mut x = a` and `let o = O(s: a)`
+// AND `bump` takes `depth`, which `main` reads at run time as 1, and goes `depth` levels down
+// before it calls `add`; the WHEN lines leave `depth` out
+// WHEN `main` runs `bump(mut x)` and `bump(mut o.s)`, and prints `a.xs`, `x.xs` and `o.s.xs`
+// THEN each call prints "[1, 2]", and each holder prints "[1, 2]"
+// AND the memory test of the case reports no leak and no error
+// o2-calls: main bump<S> 2
+interface K {
+    fn add(mut self)
+}
+
+struct S: K {
+    xs: [i64]
+
+    fn add(self) { print(self.xs) }
+}
+
+class O {
+    mut s: S
+}
+
+// Recursive to a depth that `main` reads at run time, so that `-O2` keeps the calls.
+fn bump<T: K>(mut t: T, depth: i64) {
+    if depth > 0 {
+        bump(mut t, depth - 1)
+        return
+    }
+    t.add()
+}
+
+fn main() {
+    let depth = 1 + (read_line() ?? "").len()
+    let a = S(xs: [1, 2])
+    let mut x = a
+    let o = O(s: a)
+    bump(mut x, depth)                // [1, 2]
+    bump(mut o.s, depth)              // [1, 2]
+    print(a.xs)                       // [1, 2]
+    print(x.xs)                       // [1, 2]
+    print(o.s.xs)                     // [1, 2]
+}
