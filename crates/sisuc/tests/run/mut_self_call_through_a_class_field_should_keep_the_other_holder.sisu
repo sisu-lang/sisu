@@ -27,4 +27,5 @@ fn main() {
     c.ps[0].move_by(1, 1)
     print(keep[0].x)                  // 1
     print(c.ps[0].x)                  // 2
+    print(c.ps[0].y)                  // 3
 }

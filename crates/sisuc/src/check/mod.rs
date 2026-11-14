@@ -249,6 +249,9 @@ struct Signature {
     params: Vec<Option<Type>>,
     /// Whether each of `params` is `mut`.
     muts: Vec<bool>,
+    /// Whether a method of a struct or an enum takes `mut self`. A class method's `mut self` is
+    /// E0018, and leaves this false.
+    self_mut: bool,
     /// The name of each of `params`.
     param_names: Vec<ast::Ident>,
     ret: Option<Type>,
@@ -735,6 +738,9 @@ struct Checker<'src> {
     /// The methods that a conformance names for a requirement, also those that do not meet it. A
     /// `mut` parameter of one is the requirement's, or E0152 reports it: W0002 leaves it alone.
     named_for_requirement: FxHashSet<tir::FuncId>,
+    /// The name of each method that takes `mut self`. A method call of one of these names checks
+    /// its receiver as a place, and decides when the method resolves.
+    mut_self_names: FxHashSet<Symbol>,
     /// For each method name, the interfaces that declare a requirement of it.
     declaring: FxHashMap<Symbol, Vec<tir::InterfaceId>>,
     /// For each name of an associated type, the interfaces that declare one of it, with its place
@@ -1079,8 +1085,8 @@ struct Body {
     writes: u32,
     /// `writes` at the last write rooted at `self`; 0 for none.
     self_written: u32,
-    /// For a method of an `extend` with `mut self`, which has its E0018: its body may change
-    /// `self`, so no E0001 follows that error.
+    /// For a method of a struct or an enum with `mut self` (`Signature.self_mut`): its body may
+    /// change `self`.
     self_mut: bool,
     /// How many `break`, `continue`, `return`, `panic` and `todo` the body has checked.
     exits: u32,
@@ -1442,6 +1448,7 @@ impl<'src> Checker<'src> {
             interfaces: Vec::new(),
             meets: FxHashMap::default(),
             named_for_requirement: FxHashSet::default(),
+            mut_self_names: FxHashSet::default(),
             declaring: FxHashMap::default(),
             declaring_assoc: FxHashMap::default(),
             assoc_at: FxHashMap::default(),
@@ -2164,6 +2171,12 @@ impl Checker<'_> {
         self.keep_at(from..self.queued(), Slot::Ret(func));
         let anys = self.signature_anys.take().unwrap_or_default();
         self.body.set_type_params(&[]);
+        // A class method's `mut self` is E0018, and its `self` stays a value.
+        let self_mut = f.mut_self.is_some()
+            && !matches!(self.body.self_type, SelfType::Known(ty) if matches!(ty.kind(), TypeKind::Class(..)));
+        if self_mut {
+            self.mut_self_names.insert(f.name.name);
+        }
         self.signatures.push(Signature {
             name,
             type_params,
@@ -2171,6 +2184,7 @@ impl Checker<'_> {
             bounds,
             params,
             muts: f.params.iter().map(|p| p.mutable).collect(),
+            self_mut,
             param_names: f.params.iter().map(|p| p.name.clone()).collect(),
             ret,
             anys,
@@ -2490,12 +2504,13 @@ impl Checker<'_> {
         // The parameters of a method's owner: its class's, or its `extend` block's.
         let owner_params = sig.type_params.len() - sig.own;
         let ret_shown = sig.ret_shown.clone();
+        let self_mut = sig.self_mut;
         let mut fresh = Body {
             owner: Some(Owner::Func(id)),
             ret,
             ret_shown,
             self_type: owner.map_or(SelfType::Absent, SelfType::Known),
-            self_mut: f.mut_self.is_some(),
+            self_mut,
             ..Body::default()
         };
         fresh.set_type_params(&sig.type_params);
@@ -2523,11 +2538,12 @@ impl Checker<'_> {
             }
             c.body.scopes.push(FxHashMap::default());
             // `self` is a keyword, so it needs no binding: `ExprKind::SelfValue` reads local 0.
+            // A `mut self` is a `mut` parameter in slot 0, so the mir gives it an out pointer.
             let receiver = owner.map(|ty| {
                 c.body.locals.push(tir::Local {
                     name: Some("self".into()),
                     ty,
-                    mutable: false,
+                    mutable: self_mut,
                 });
                 tir::LocalId(0)
             });

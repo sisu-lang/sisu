@@ -118,6 +118,52 @@ class Ocs {
     mut s: Sxs
 }
 fn ocs() -> Ocs? { None }
+// The positions where a bare `self` is a place: in a `mut self` method of a struct and of an
+// enum, `self = e`, `self` as a `mut` argument, and `self` as the receiver of a `mut self` call,
+// bare and in the argument of a generic call. `none` shares its name with `Bx`'s plain generic
+// `none`. These positions give an error, so they are rows of
+// `mut_self.rs::bare_self_should_be_a_place_only_in_a_struct_or_enum_method`, not lines here:
+// `self[0] = 1` in a class method (E0021), `self += 1` in a plain `self` method (E0073 and
+// E0032), and `bump(self)` in a `mut self` method (E0166).
+struct Ms {
+    n: i64
+    fn bump(mut self) -> i64 {
+        self.n += 1
+        self.n
+    }
+    fn push(mut self, x: i64) { self.n += x }
+    fn none(mut self) -> i64? {
+        self.n = 0
+        None
+    }
+    fn all(mut self) {
+        self = Ms(n: 1)
+        bump_ms(mut self)
+        let _b = self.bump()
+        self.push(1)
+        let _ = id(self.bump())
+    }
+}
+enum Me {
+    A
+    B
+    fn bump(mut self) -> i64 {
+        self = Me.B
+        1
+    }
+    fn push(mut self, x: i64) {
+        if x > 0 { self = Me.A }
+    }
+    fn all(mut self) {
+        self = Me.A
+        bump_me(mut self)
+        let _b = self.bump()
+        self.push(1)
+        let _ = id(self.bump())
+    }
+}
+fn bump_ms(mut t: Ms) { t.n += 1 }
+fn bump_me(mut t: Me) { t = Me.B }
 fn take<T>(mut x: T?) { x = None }
 fn take2<T>(mut x: T?, n: i64) { x = None }
 fn keep<T>(mut x: T?) -> T? { x }
@@ -281,6 +327,8 @@ Am(n: 1)
 ocs()?.s.n
 ocs()?.s.xs
 ocs()?.s.xs[0]
+# A bare `self` in `main` and in a generic function, where it is no place and has no value.
+self
 
 [failed values]
 # A type parameter read: in the function whose bound failed, `u` is unknown.
@@ -294,6 +342,21 @@ id(u)
 Some(u)
 
 [contexts]
+# A call of a `mut self` method on each value: bare, on a `let mut` copy, on the binding of a
+# `let`-`else` and of an `if let`, in the argument of a generic call, of `Some` and of a join, on an
+# element, through `?.` and on a field. The last is a plain generic method that shares its name
+# with a `mut self` method, in the argument of a generic call.
+$.bump()
+let mut _m = $; _m.bump()
+let Some(_r) = $ else { return }; _r.bump()
+if let Some(_r) = $ { _r.bump() }
+id($.bump())
+Some($.bump())
+id(if true { $.bump() } else { $.bump() })
+$[0].bump()
+$?.bump()
+$.p.bump()
+id($.none())
 # Array literals beside a hint from another branch, with the value alone, first and last.
 let _a = if c { [Some(p)] } else { [$] }
 let _a = if c { [Some(p)] } else { [$, Some(Some(p))] }

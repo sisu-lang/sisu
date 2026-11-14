@@ -14,13 +14,5 @@ error[E0073]: cannot assign to `self`
   |
   = help: copy `self` into a `let mut` variable
 
-error[E0018]: a struct method cannot take `mut self` yet
-  --> struct_self.sisu:12:10
-   |
-12 |     fn c(mut self) {}
-   |          ^^^
-   |
-   = help: take `self` and return the changed copy
-
-sisu: 3 errors
-sisu: for more on a code, run `sisu explain <code>`: E0001, E0018, E0073
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0073

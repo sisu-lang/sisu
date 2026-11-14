@@ -1,5 +1,7 @@
 // GIVEN `struct T { n: i64 }` with the `mut self` method `f`, which runs `bump(mut self)` and
 // then `self.g()`, where `fn bump(mut t: T)` and the `mut self` method `g` each add 1 to `n`
+// AND each `mut self` method takes `depth`, which `main` reads at run time as 1, and the call
+// goes `depth` levels down before it changes `self`; the WHEN lines leave `depth` out
 // WHEN `main` runs `t.f()` on `let mut t = T(n: 1)`
 // THEN `t.n` is 3
 // AND `before`, a copy of `t` taken before the call, keeps 1
@@ -7,10 +9,12 @@
 struct T {
     n: i64
 
-    // Recursive while `n` is below zero, so that `-O2` keeps the call.
-    fn f(mut self) {
-        if self.n < 0 {
-            self.f()
+    // Recursive, to a depth that `main` reads at run time, so that `-O2` keeps the call. Only
+    // the last level changes `self`.
+    fn f(mut self, depth: i64) {
+        if depth > 0 {
+            self.f(depth - 1)
+            return
         }
         bump(mut self)
         self.g()
@@ -26,9 +30,10 @@ fn bump(mut t: T) {
 }
 
 fn main() {
+    let depth = 1 + (read_line() ?? "").len()
     let mut t = T(n: 1)
     let before = t
-    t.f()
+    t.f(depth)
     print(before.n)                   // 1
     print(t.n)                        // 3
 }

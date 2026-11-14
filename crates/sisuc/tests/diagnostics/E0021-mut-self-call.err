@@ -1,0 +1,10 @@
+error[E0021]: cannot call `move_by` on a temporary value
+  --> E0021-mut-self-call.sisu:20:5
+   |
+20 |     origin().move_by(1, 1)
+   |     ^^^^^^^^ this value is not stored in a variable
+   |
+   = help: store it in a `let mut` variable first
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0021

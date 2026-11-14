@@ -1,5 +1,7 @@
 // GIVEN `struct T { n: i64; fn next(mut self) -> i64 }`, where `next` adds 1 to `n` and gives
 // it, `fn id<U>(u: U) -> U` and `let mut t = T(n: 0)`
+// AND each `mut self` method takes `depth`, which `main` reads at run time as 1, and the call
+// goes `depth` levels down before it changes `self`; the WHEN lines leave `depth` out
 // WHEN `main` runs `let o = Some(t.next())`, `print(id(t.next()))` and
 // `exchange(mut a, t.next())`, each an argument of a generic call
 // THEN each call changes `t`: the results are 1, 2 and 3, and `t.n` is 1, 2 and 3 after each
@@ -8,10 +10,11 @@
 struct T {
     n: i64
 
-    // Recursive while `n` is below zero, so that `-O2` keeps the calls.
-    fn next(mut self) -> i64 {
-        if self.n < 0 {
-            self.next()
+    // Recursive, to a depth that `main` reads at run time, so that `-O2` keeps the calls. Only
+    // the last level changes `self`.
+    fn next(mut self, depth: i64) -> i64 {
+        if depth > 0 {
+            return self.next(depth - 1)
         }
         self.n += 1
         self.n
@@ -23,15 +26,16 @@ fn id<U>(u: U) -> U {
 }
 
 fn main() {
+    let depth = 1 + (read_line() ?? "").len()
     let mut t = T(n: 0)
     let before = t
-    let o = Some(t.next())
+    let o = Some(t.next(depth))
     print(o ?? 0)                     // 1
     print(t.n)                        // 1
-    print(id(t.next()))               // 2
+    print(id(t.next(depth)))               // 2
     print(t.n)                        // 2
     let mut a = 0
-    let old = exchange(mut a, t.next())
+    let old = exchange(mut a, t.next(depth))
     print(a)                          // 3
     print(old)                        // 0
     print(t.n)                        // 3

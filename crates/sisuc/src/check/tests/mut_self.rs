@@ -140,8 +140,8 @@ fn receiver_without_a_changeable_root_should_be_rejected() {
         ),
     ];
     error_rows(&rows);
-    // The `let` row has the fix `let mut`, and the class field row the help "mark the field
-    // `mut`".
+    // The `let` row has the fix `let mut`, and the class field row the fix "mark the field
+    // `mut`", as a `push` has.
     let src = program("", "let p = Point(x: 1, y: 2); p.move_by(1, 1)");
     let (_, ds) = checked(&src);
     let d = ds
@@ -159,7 +159,11 @@ fn receiver_without_a_changeable_root_should_be_rejected() {
         .iter()
         .find(|d| d.code() == AssignToImmutable)
         .expect("the class field row should be E0001");
-    assert!(d.help().is_some() && d.fixes().is_empty(), "{d:?}");
+    assert_eq!(
+        fixes(&src, d),
+        [(true, vec![(10, 11, "", "mut ".to_string())])],
+        "{d:?}"
+    );
 }
 
 /// GIVEN `Point` with `move_by`, `enum E { A; B; fn flip(mut self) }`, and an optional value.
@@ -239,7 +243,7 @@ fn plain_method_with_a_mut_self_name_should_keep_its_receiver_rules() {
         ),
         (
             "a `?.` receiver",
-            "fn main() {\n    let o: [i64]? = Some([1])\n    print(o?.len())\n}\n",
+            "fn main() {\n    let o: [i64]? = Some([1])\n    print(o?.len() ?? 0)\n}\n",
             vec![],
         ),
         (

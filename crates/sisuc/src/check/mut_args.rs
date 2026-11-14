@@ -367,6 +367,10 @@ impl Checker<'_> {
                 let (_, failed) = self.checked_alone(arg);
                 return Ok(CheckedPlace::failed(failed));
             }
+            // A `mut self` is a place: its write goes back through slot 0.
+            if self.body.self_mut {
+                return Ok(self.place(arg.span, arg, Change::MutArg));
+            }
             let class = matches!(
                 self.body.self_type.known().map(Type::kind),
                 Some(TypeKind::Class(..))
@@ -618,10 +622,34 @@ impl Checker<'_> {
         let path = place
             .path
             .expect("a place that a `mut` argument takes should have a path");
+        self.slot(&arg.value, (path, ty), parts)
+    }
+
+    /// The temp that stands for the receiver `receiver` of a call of a `mut self` method, and the
+    /// call's parts. The receiver's place is `path` of type `ty`, and its part comes first.
+    pub(super) fn receiver_slot(
+        &mut self,
+        receiver: &ast::Expr,
+        path: Path,
+        ty: Type,
+    ) -> (tir::Expr, MutParts) {
+        let mut parts = MutParts::default();
+        let temp = self.slot(receiver, (path, ty), &mut parts);
+        (temp, parts)
+    }
+
+    /// The temp that stands for the place `path` of type `ty`, written `value`, in its call. The
+    /// part that the call takes with it goes to `parts`.
+    fn slot(
+        &mut self,
+        value: &ast::Expr,
+        (path, ty): (Path, Type),
+        parts: &mut MutParts,
+    ) -> tir::Expr {
         let key = self.mut_key(&path);
         let temp = self.fresh(ty);
-        let span = arg.value.span;
-        let root = match place_root(&arg.value).kind {
+        let span = value.span;
+        let root = match place_root(value).kind {
             ast::ExprKind::Name(name) => Some(name),
             _ => None,
         };
@@ -711,7 +739,7 @@ impl Checker<'_> {
         parts: &mut MutParts,
         bind: Option<(&mut super::generic::Inference<'_>, Option<Type>)>,
     ) -> Option<Checked> {
-        if arg.label.is_some() || !is_place(&arg.value) {
+        if arg.label.is_some() || !is_place(&arg.value) && !self.is_self_place(&arg.value) {
             return None;
         }
         let mut failed = None;
@@ -925,7 +953,7 @@ impl Checker<'_> {
         let fits = |kept: &Kept| !related && !kept.chain && kept.ty.is_some() && kept.ty == want;
         match check {
             // A place of a call that failed before it checked its arguments: nothing is known.
-            None if is_place(&arg.value) => MissingFix::NoFix,
+            None if is_place(&arg.value) || self.is_self_place(&arg.value) => MissingFix::NoFix,
             Some(MarkCheck::Place(kept)) if fits(&kept) => MissingFix::Add,
             Some(MarkCheck::Failed | MarkCheck::Place(_)) => MissingFix::NoFix,
             Some(MarkCheck::NotPlace(NotPlace::Immutable(cause), kept)) => {

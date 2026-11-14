@@ -1120,7 +1120,11 @@ impl Checker<'_> {
     /// type that is `Error` matches any.
     pub(super) fn meets(&self, requirement: &RequirementInfo, func: FuncId, base: &[Type]) -> bool {
         let sig = &self.signatures[func.0];
-        if requirement.own.len() != sig.own || requirement.params.len() != sig.params.len() {
+        // A requirement's `self` is plain, which a `mut self` method does not meet.
+        if sig.self_mut
+            || requirement.own.len() != sig.own
+            || requirement.params.len() != sig.params.len()
+        {
             return false;
         }
         let owner = sig.type_params.len() - sig.own;

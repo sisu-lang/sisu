@@ -1,0 +1,18 @@
+error[E0062]: `?.` cannot call `move_by` on a struct value yet
+  --> E0062-mut-self-call.sisu:26:6
+   |
+26 |     p?.move_by(1, 1)
+   |      ^^^^^^^^^
+   |
+   = help: replace the value: `p = Some(...)`
+
+error[E0062]: `?.` cannot call `flip` on an enum value yet
+  --> E0062-mut-self-call.sisu:28:6
+   |
+28 |     d?.flip()
+   |      ^^^^^^
+   |
+   = help: replace the value: `d = Some(...)`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0062

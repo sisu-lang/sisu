@@ -1260,8 +1260,8 @@ fn a_method_defined_in_the_body_and_in_a_block_should_be_reported_twice() {
     }
 }
 
-/// `mut self` in an `extend` block is reported once the target is known, in the form of a class
-/// or of an enum, as in a declaration's body.
+/// `mut self` in an `extend` block is reported once the target is known, in the form of a class,
+/// as in a declaration's body. An enum's method can take `mut self`.
 #[test]
 fn mut_self_in_an_extend_block_should_be_reported_as_in_a_declaration() {
     let class =
@@ -1301,8 +1301,7 @@ fn mut_self_in_an_extend_block_should_be_reported_as_in_a_declaration() {
     );
     assert!(applied(grouped, &d).contains("fn grow(self) {}"));
     let e = "enum Dir {\n    North\n}\nextend Dir {\n    fn flip(mut self) {}\n}\nfn main() {}";
-    let d = diagnostic(e, Code::MutSelf, (5, 13, "mut"), &[]);
-    assert!(!fixes(e, &d)[0].0);
+    codes(e, &[]);
     // The target of a block that failed is not known, so nothing is reported.
     codes(
         "extend Missing {\n    fn flip(mut self) {}\n}\nfn main() {}",

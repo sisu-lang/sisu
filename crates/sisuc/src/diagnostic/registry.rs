@@ -4,6 +4,7 @@ use super::{Diagnostic, Edit, Fix, Severity, Suggestion};
 use crate::conformance::CHOICE_DEPTH_LIMIT;
 use crate::payload_limit::{self, PAYLOAD_LIMIT_GIB};
 use crate::source::Span;
+use crate::symbol::Symbol;
 
 /// The code table: each code's variant and number. A number is never reused or changed.
 /// A row may name extra `DiagnosticKind` variants after `|` that share its code.
@@ -114,7 +115,7 @@ codes! {
     FieldNotMethod = "E0058",
     PrintArgument = "E0059",
     PrintNever = "E0061",
-    MayBeNone | ChainWriteOnStruct = "E0062",
+    MayBeNone | ChainWriteOnStruct | ChainCallOnValue = "E0062",
     NoMember = "E0063",
     TooManyArguments = "E0064",
     ArgumentNeedsLabel = "E0065",
@@ -296,11 +297,13 @@ pub(crate) enum DiagnosticKind {
         written: Written,
         cause: Immutable,
     },
-    /// A `push` at `at` onto `name`, or onto an element of it, which cannot change.
+    /// A `push` at `at` onto `name`, or onto an element of it, which cannot change. With
+    /// `method`, it is the call of that `mut self` method on the receiver at `at`.
     PushToImmutable {
         name: String,
         at: Span,
         cause: Immutable,
+        method: Option<Symbol>,
     },
     /// A statement at `at` after one that never finishes.
     UnreachableCode { at: Span },
@@ -662,8 +665,13 @@ pub(crate) enum DiagnosticKind {
         range: Option<RangeTarget>,
     },
     /// A `push` at `at` onto something that is not a place; `range` says which range index it
-    /// holds, if any.
-    PushToTemporary { at: Span, range: Option<RangePush> },
+    /// holds, if any. With `method`, it is the call of that `mut self` method on the receiver at
+    /// `at`.
+    PushToTemporary {
+        at: Span,
+        range: Option<RangePush>,
+        method: Option<Symbol>,
+    },
     /// A range at `at` where it is not allowed, in the way that `form` says.
     RangeOutsideFor { at: Span, form: RangeForm },
     /// A second `==`, `!=` or `is` at `at` in one chain.
@@ -934,6 +942,15 @@ pub(crate) enum DiagnosticKind {
     /// A write at `at`, from the end of a `?.`'s base to its field, that the `?.` on a struct
     /// value leads to. `replace` is the base as written, when the help can name it.
     ChainWriteOnStruct { at: Span, replace: Option<String> },
+    /// The call of the `mut self` method `method` that a `?.` on a value of `kind` leads to. It is
+    /// at `at`, from the end of the `?.`'s base to the name after it. `replace` is as in
+    /// `ChainWriteOnStruct`.
+    ChainCallOnValue {
+        at: Span,
+        method: Symbol,
+        kind: ValueKind,
+        replace: Option<String>,
+    },
     /// The `kind` member `name`, at `at`, which `owner` does not have.
     NoMember {
         owner: String,
@@ -3196,6 +3213,13 @@ pub(crate) enum Immutable {
     StructSelf,
 }
 
+/// The kind of value that a `?.` takes out of an optional, when a `mut self` call follows it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ValueKind {
+    Struct,
+    Enum,
+}
+
 /// What a write changes of its root.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Written {
@@ -3228,9 +3252,15 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d = Diagnostic::coded(code, at, format!("cannot assign to {what}`{name}`"));
                 immutable_cause(d, &name, written != Written::Whole, &cause)
             }
-            DiagnosticKind::PushToImmutable { name, at, cause } => {
+            DiagnosticKind::PushToImmutable {
+                name,
+                at,
+                cause,
+                method,
+            } => {
+                let method = method.map_or("push", |method| method.as_str());
                 let d = Diagnostic::coded(code, at, format!("cannot change `{name}`"))
-                    .with_label(format!("`push` changes `{name}`"));
+                    .with_label(format!("`{method}` changes `{name}`"));
                 immutable_cause(d, &name, true, &cause)
             }
             DiagnosticKind::UnreachableCode { at } => {
@@ -4457,14 +4487,23 @@ impl From<DiagnosticKind> for Diagnostic {
                 Some(range) => range.diagnostic(code, at),
                 None => Diagnostic::coded(code, at, "cannot assign to this expression"),
             },
-            DiagnosticKind::PushToTemporary { at, range: None } => {
-                Diagnostic::coded(code, at, "cannot push to a temporary value")
+            DiagnosticKind::PushToTemporary {
+                at,
+                range: None,
+                method,
+            } => {
+                let message = match method {
+                    Some(method) => format!("cannot call `{method}` on a temporary value"),
+                    None => "cannot push to a temporary value".to_string(),
+                };
+                Diagnostic::coded(code, at, message)
                     .with_label("this value is not stored in a variable")
                     .with_help("store it in a `let mut` variable first")
             }
             DiagnosticKind::PushToTemporary {
                 at,
                 range: Some(range),
+                ..
             } => {
                 let d = Diagnostic::coded(code, at, "cannot push to a temporary value")
                     .with_label("a range index gives a new value");
@@ -5173,6 +5212,26 @@ impl From<DiagnosticKind> for Diagnostic {
                         };
                         d.with_fix(unsafe_fix(fix, access, "?."))
                     }
+                    None => d,
+                }
+            }
+            DiagnosticKind::ChainCallOnValue {
+                at,
+                method,
+                kind,
+                replace,
+            } => {
+                let value = match kind {
+                    ValueKind::Struct => "a struct value",
+                    ValueKind::Enum => "an enum value",
+                };
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`?.` cannot call `{method}` on {value} yet"),
+                );
+                match replace {
+                    Some(base) => d.with_help(replace_text(&base)),
                     None => d,
                 }
             }

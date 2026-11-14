@@ -130,15 +130,32 @@ impl<'a> Checker<'_> {
             if let Some(Some((bound, _))) = interface {
                 self.signatures[func.0].conformance = Some((bound.interface, bound.args));
             }
-            if let (Some(mut_self), Some(holder)) = (&method.mut_self, holder) {
-                let owner = method_owner(holder, &name);
-                self.error(DiagnosticKind::MutSelf {
-                    keyword: mut_self.keyword,
-                    remove: mut_self_removal(self.source.comments, mut_self),
-                    annotation: mut_self.annotation,
-                    safe: mut_self.annotation.is_none(),
-                    owner,
-                });
+            match (&method.mut_self, holder) {
+                (Some(mut_self), Some(Holder::Class(_))) => {
+                    self.error(DiagnosticKind::MutSelf {
+                        keyword: mut_self.keyword,
+                        remove: mut_self_removal(self.source.comments, mut_self),
+                        annotation: mut_self.annotation,
+                        safe: mut_self.annotation.is_none(),
+                        owner: MethodOwner::Class,
+                    });
+                }
+                // A struct or an enum takes `mut self` with no type: the `:` is E0011, as the
+                // parser reports it after `self` in the body.
+                (
+                    Some(ast::MutSelf {
+                        annotation: Some(annotation),
+                        ..
+                    }),
+                    Some(_),
+                ) => {
+                    self.error(DiagnosticKind::Expected {
+                        what: "`)`".to_string(),
+                        found: "`:`".to_string(),
+                        at: Span::new(annotation.start(), annotation.start() + 1),
+                    });
+                }
+                _ => {}
             }
             declared.push((method, receiver));
         }
@@ -569,16 +586,4 @@ fn mut_self_removal(comments: &[usize], mut_self: &ast::MutSelf) -> Span {
         keyword.start(),
         removal_end(comments, keyword.end(), receiver.start()),
     )
-}
-
-/// What owns the methods of `holder`, whose type is named `name`, in the report of a `mut self`.
-fn method_owner(holder: Holder, name: &str) -> MethodOwner {
-    match holder {
-        Holder::Class(_) => MethodOwner::Class,
-        Holder::Struct(_) => MethodOwner::Struct,
-        Holder::Enum(_) => MethodOwner::Enum(name.to_string()),
-        Holder::Array | Holder::I64 => {
-            unreachable!("the prelude should write no `mut self` on a built-in type")
-        }
-    }
 }

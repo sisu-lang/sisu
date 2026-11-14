@@ -75,6 +75,11 @@ extend L {
     }
 }
 
+// 1, read at run time: `-O2` cannot fix the depth of `move_by` at a call that moves by `one()`.
+fn one() -> i64 {
+    1 + (read_line() ?? "").len()
+}
+
 fn f(mut p: Point) {
     p.move_by(1, 1)
 }
@@ -82,8 +87,9 @@ fn f(mut p: Point) {
 fn local() {
     let mut p = Point(x: 1, y: 2)
     let before = p
-    p.move_by(1, 1)
+    p.move_by(one(), 1)
     print(p.x)                        // 2
+    print(p.y)                        // 3
     print(before.x)                   // 1
 }
 
@@ -106,7 +112,7 @@ fn element() {
 fn element_of_a_field() {
     let mut l = L(p: Point(x: 1, y: 2), ps: [Point(x: 1, y: 2)])
     let before = l
-    l.ps[0].move_by(1, 1)
+    l.ps[0].move_by(one(), 1)
     print(l.ps[0].x)                  // 2
     print(before.ps[0].x)             // 1
 }
@@ -158,6 +164,8 @@ fn through_a_box() {
     y.b.bump()
     print(y.b.n)                      // 2
     print(x.b.n)                      // 1
+    print(y.b.xs[0])                  // 1
+    print(y.b.a?.b?.n ?? 0)           // 0: `a` is `None`
 }
 
 fn generic_struct() {
