@@ -386,7 +386,7 @@ impl Checker<'_> {
             kept_first = is_kept(&checked);
             let ty = ty.or_else(|| kept_first.then_some(Type::I64));
             if !arithmetic && type_of(&checked) == Some(Type::UNIT) {
-                return self.units_compared(operands, k, checked);
+                return self.units_compared(operands, &ranks, k, checked);
             }
             first = Some((k, checked));
             ty
@@ -699,37 +699,59 @@ impl Checker<'_> {
         (checked, ty, mismatched)
     }
 
-    /// The operands of a comparison whose leader, at `k` and checked as `leader`, is a `unit`.
-    /// The others are checked with no expected type. Beside an operand of another type, each
-    /// `unit` operand has no value to compare: E0043.
+    /// The operands of a comparison whose leader, at `k` and checked as `leader`, is a `unit`, with
+    /// `ranks`, their `sibling_rank`s. An operand that waits for context, such as `None` or `[]`,
+    /// is checked against `unit`. The others are checked with no expected type. Beside an operand
+    /// of a type that takes no `unit`, each `unit` operand has no value to compare: E0043.
+    /// Otherwise each operand of another type, such as `unit?`, is reported against `unit`.
     fn units_compared(
         &mut self,
         operands: &[&ast::Expr],
+        ranks: &[Rank],
         k: usize,
         leader: Checked,
     ) -> (Vec<Checked>, Option<Type>, bool) {
-        let mut leader = Some(leader);
-        let mut checked: Vec<Checked> = (operands.iter().enumerate())
-            .map(|(i, e)| match leader.take_if(|_| i == k) {
+        let unit = Expectation::Required(Type::UNIT, Origin::None);
+        let (mut leader, mut mismatched) = (Some(leader), false);
+        let mut checked = Vec::with_capacity(operands.len());
+        for (i, e) in operands.iter().enumerate() {
+            checked.push(match leader.take_if(|_| i == k) {
                 Some(leader) => leader,
+                None if ranks[i] == Rank::Waits => {
+                    let (operand, m) = self.operand(e, unit);
+                    mismatched |= m;
+                    operand
+                }
                 None => self.value(e, Expectation::None),
-            })
-            .collect();
+            });
+        }
         let other =
             (checked.iter().filter_map(type_of)).any(|ty| !takes_unit(ty) && ty != Type::NEVER);
-        if !other {
-            return (checked, Some(Type::UNIT), false);
-        }
-        for (e, c) in operands.iter().zip(&mut checked) {
-            if type_of(c) == Some(Type::UNIT) {
-                *c = Err(Poisoned::untyped(self.no_value(
-                    e.span,
-                    Type::UNIT,
-                    unit_call(e),
-                )));
+        if other {
+            for (e, c) in operands.iter().zip(&mut checked) {
+                if type_of(c) == Some(Type::UNIT) {
+                    *c = Err(Poisoned::untyped(self.no_value(
+                        e.span,
+                        Type::UNIT,
+                        unit_call(e),
+                    )));
+                }
             }
+            return (checked, None, false);
         }
-        (checked, None, false)
+        let mut held = Vec::with_capacity(checked.len());
+        for (e, c) in operands.iter().zip(checked) {
+            let misfit = type_of(&c).is_some_and(|ty| ty != Type::UNIT && ty != Type::NEVER);
+            let c = if misfit {
+                let (operand, m) = self.against(e, c, unit);
+                mismatched |= m;
+                operand
+            } else {
+                c
+            };
+            held.push(c);
+        }
+        (held, Some(Type::UNIT), mismatched)
     }
 
     /// The operand `e`, checked as `checked`, reported against `ty`, the type of a later operand,
