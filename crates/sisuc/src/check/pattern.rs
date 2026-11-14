@@ -15,8 +15,8 @@ use super::stmt::BlockSoFar;
 use super::{Checked, CheckedBlock, Checker, Declared, Expectation, Origin, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{
-    BadRange, Definition, DiagnosticKind, Expected, GuardHelp, MismatchOrigin, Plain, Unwrap,
-    suggestion,
+    BadRange, Definition, DiagnosticKind, Expected, GuardHelp, LowerName, MismatchOrigin, Plain,
+    Unwrap, suggestion,
 };
 use crate::lexer::{self, TokenKind};
 use crate::source::{Span, removal_end};
@@ -975,13 +975,16 @@ impl Checker<'_> {
                     }
                     // Another keyword is no binding, so the fix would not parse. `true` and `false`
                     // are patterns: `True` on a `bool` is likely one of them.
-                    let parses = matches!(
-                        lexer::keyword(&lower),
-                        None | Some(TokenKind::True | TokenKind::False)
-                    );
+                    let lower = match lexer::keyword(&lower) {
+                        None | Some(TokenKind::True | TokenKind::False) => {
+                            LowerName::Binding(lower)
+                        }
+                        Some(TokenKind::Reserved(_)) => LowerName::Reserved(lower),
+                        Some(_) => LowerName::Keyword(lower),
+                    };
                     DiagnosticKind::NotVariantHere {
                         name: text.to_string(),
-                        binding: parses.then_some(lower),
+                        lower,
                         at: name.span,
                     }
                 };

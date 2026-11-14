@@ -1238,7 +1238,7 @@ pub(crate) enum DiagnosticKind {
         type_name: String,
         method: bool,
         at: Span,
-        receiver: Option<(ReceiverArgument, bool)>,
+        receiver: Option<TypeReceiver>,
     },
     /// The field at `at`, read or assigned on a value of the enum `enum_name`.
     EnumField { enum_name: String, at: Span },
@@ -1248,11 +1248,12 @@ pub(crate) enum DiagnosticKind {
     PatternForm { form: ForeignPattern, at: Span },
     /// The scrutinee at `at`, of type `ty`, which `match` cannot take.
     CannotMatch { ty: String, at: Span },
-    /// The upper-case name `name`, at `at`, in a pattern where no enum is expected. `binding` is
-    /// the name with its first letter in lower case, or `None` when that spells a keyword.
+    /// The upper-case name `name`, at `at`, in a pattern where no enum is expected. `lower` is the
+    /// name with its first letter in lower case, and what that spells: a binding, which the fix
+    /// writes, or a keyword or a reserved word, which no binding can be.
     NotVariantHere {
         name: String,
-        binding: Option<String>,
+        lower: LowerName,
         at: Span,
     },
     /// The constant `name`, at `at`, written as a pattern. `guard` is the guard the help shows:
@@ -1293,9 +1294,10 @@ pub(crate) enum DiagnosticKind {
     /// first arm with `missing`'s variant at the top: its span, its pattern and its payload.
     /// `guarded` is whether a guarded arm may not match it, and `gap` whether it is a gap in an
     /// integer, `char` or `string` type, which only `_ =>` closes for good.
-    /// The fix writes a `_ =>` arm, indented by `indent`, in place of `insert`: an empty span,
-    /// or the space between the last arm and a `}` on its line. `close` is the indentation of
-    /// that `}`, which the fix moves to a line of its own.
+    /// The fix writes an arm for `missing`, indented by `indent`, in place of `insert`: an empty
+    /// span, or the space between the last arm and a `}` on its line. The arm is `_ =>` when
+    /// `gap`, or when `missing` is `_`, an empty `match`: neither has a pattern of its own.
+    /// `close` is the indentation of that `}`, which the fix moves to a line of its own.
     NonExhaustive {
         missing: String,
         partly: Option<(Span, String, String)>,
@@ -1636,6 +1638,13 @@ impl ReceiverArgument {
         edits.extend(part_edits(&self.gap, &format!("{close}{access}")));
         edits
     }
+}
+
+/// The first argument of a call through a type, which becomes the receiver of the method call.
+/// `safe` is whether the method call takes the other arguments.
+pub(crate) struct TypeReceiver {
+    pub(crate) argument: ReceiverArgument,
+    pub(crate) safe: bool,
 }
 
 /// The message of the fix that calls the method `name` on the first argument of a call written as
@@ -2782,6 +2791,16 @@ impl RangeTarget {
             RangeWrite::Temporary => format!("store `{base}` in a `let mut` variable first"),
         })
     }
+}
+
+/// The name of `NotVariantHere` with its first letter in lower case, and what that spells.
+pub(crate) enum LowerName {
+    /// No keyword: a binding. `true` and `false` are here too, as they are patterns.
+    Binding(String),
+    /// A keyword other than `true` and `false`.
+    Keyword(String),
+    /// A reserved word.
+    Reserved(String),
 }
 
 /// The guard the help of `BoundTwice` or `ConstantInPattern` suggests.
@@ -6112,7 +6131,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 };
                 let d = Diagnostic::coded(code, at, message);
                 match receiver {
-                    Some((argument, safe)) => d.with_fix(Fix {
+                    Some(TypeReceiver { argument, safe }) => d.with_fix(Fix {
                         message: method_form_message(&name, safe),
                         safe,
                         edits: argument.edits(&format!(".{name}(")),
@@ -6207,12 +6226,19 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, format!("cannot `match` on `{ty}`"))
                     .with_help("`match` takes enums, optionals, integers, `bool`, `char` and `string`")
             }
-            DiagnosticKind::NotVariantHere { name, binding, at } => {
-                let d = Diagnostic::coded(code, at, format!("`{name}` is not a variant here"))
-                    .with_help("a binding starts with a lower-case letter");
-                match binding {
-                    Some(lower) => d.with_fix(unsafe_fix(&format!("write `{lower}`"), at, &lower)),
-                    None => d,
+            DiagnosticKind::NotVariantHere { name, lower, at } => {
+                let d = Diagnostic::coded(code, at, format!("`{name}` is not a variant here"));
+                let help = "a binding starts with a lower-case letter";
+                match lower {
+                    LowerName::Binding(lower) => d
+                        .with_help(help)
+                        .with_fix(unsafe_fix(&format!("write `{lower}`"), at, &lower)),
+                    LowerName::Keyword(lower) => d.with_help(format!(
+                        "{help}, but `{lower}` is a keyword; use a different name"
+                    )),
+                    LowerName::Reserved(lower) => d.with_help(format!(
+                        "{help}, but `{lower}` is reserved; use a different name"
+                    )),
                 }
             }
             DiagnosticKind::ConstantInPattern { name, at, guard } => {
@@ -6296,11 +6322,16 @@ impl From<DiagnosticKind> for Diagnostic {
                     }
                     None => d,
                 };
-                let arm = match close {
-                    Some(close) => format!("\n{indent}_ => todo\n{close}"),
-                    None => format!("{indent}_ => todo\n"),
+                let (pattern, message) = if gap || missing == "_" {
+                    ("_", "add a `_ =>` arm".to_string())
+                } else {
+                    (missing.as_str(), format!("add an arm for `{missing}`"))
                 };
-                d.with_fix(unsafe_fix("add a `_ =>` arm", insert, &arm))
+                let arm = match close {
+                    Some(close) => format!("\n{indent}{pattern} => todo\n{close}"),
+                    None => format!("{indent}{pattern} => todo\n"),
+                };
+                d.with_fix(unsafe_fix(&message, insert, &arm))
             }
             DiagnosticKind::UnreachableArm {
                 at,

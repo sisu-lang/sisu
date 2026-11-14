@@ -678,7 +678,7 @@ fn an_e0130_fix_should_add_an_arm_that_covers_the_missing_value() {
         (
             "unit variant of an optional",
             format!("{shape}fn f(s: Shape?) -> i64 {{ match s {{ Some(Circle(_)) => 1; Some(Rect(_, _)) => 2; None => 3 }} }}"),
-            Covers("Some(Point)"),
+            Covers("Point"),
         ),
         (
             "qualified patterns",

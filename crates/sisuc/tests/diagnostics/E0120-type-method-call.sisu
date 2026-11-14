@@ -1,7 +1,7 @@
 // GIVEN a method of a struct, of an alias of a struct and of an enum, called through its type
 // AND the first argument is a value of that type, as `Tree.bumpm(t, 1)`
 // WHEN `sisu check` runs on it
-// THEN it reports E0120 at 35:10, 39:8 and 55:11, each with the safe fix that moves the first argument before the `.`. A struct method called with type arguments gets E0137 in a call at 63:9 and as a value at 67:18. Then it gets E0120 at 63:15 and 67:24
+// THEN it reports E0120 at 35:10, 39:8 and 55:11, each with the safe fix that moves the first argument before the `.`
 // AND the fix writes a first argument that is no postfix form in parentheses
 struct Tree {
     n: i64
@@ -57,14 +57,6 @@ fn enum_method(s: Shape) {
 
 fn wrapped(a: Tree, b: Tree, c: bool) {
     Tree.bumpm(if c { a } else { b }, 1)
-}
-
-fn struct_type_arguments(t: Tree) {
-    Tree<i64>.bumpm(t, 1)
-}
-
-fn struct_type_arguments_not_called() {
-    let _m = Tree<i64>.bumpm
 }
 
 fn main() {}

@@ -22,7 +22,7 @@ use super::{array, number, string};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
     BlockBound, Code, Definition, Diagnostic, DiagnosticKind, MethodReceiver, ReceiverArgument,
-    Suggestion, alias, suggestion,
+    Suggestion, TypeReceiver, alias, suggestion,
 };
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
@@ -440,7 +440,10 @@ impl Checker<'_> {
                         first,
                         rest,
                     );
-                    Some((argument, takes))
+                    Some(TypeReceiver {
+                        argument,
+                        safe: takes,
+                    })
                 } else {
                     self.stray(rest);
                     None

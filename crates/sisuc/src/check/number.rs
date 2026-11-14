@@ -159,11 +159,16 @@ impl Checker<'_> {
             {
                 return Some(checked);
             }
-            // A struct's method named through the struct is no value.
+            // A struct's method named through the struct is no value. A struct with no type
+            // parameters takes no type arguments, as an enum does: that error comes first.
             Resolved::Item(ItemId::Struct(id))
-                if let Some(checked) = self.struct_path(id, member, call, (site, typed)) =>
+                if self.structs[id.0].methods.contains_key(&member.name) =>
             {
-                return Some(checked);
+                let generic = !self.structs[id.0].type_params.is_empty();
+                if let Some(angles) = angles.filter(|_| !generic) {
+                    self.not_generic(name, angles);
+                }
+                return self.struct_path(id, member, call, (site, typed));
             }
             // The base is a value: the value check reports it.
             Resolved::Local { .. }

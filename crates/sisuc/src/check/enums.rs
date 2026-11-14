@@ -321,7 +321,7 @@ impl Checker<'_> {
             let args = call.map_or(&[][..], |(args, _)| args);
             let reported = match info.methods.get(&member.name) {
                 Some(&Declared::Known(func)) => {
-                    // The call checks its arguments.
+                    // `method_through_type` checks the arguments of the call.
                     let site = (site, enum_name, typed);
                     let reported =
                         self.method_through_type(func, Holder::Enum(id), member, site, args);
