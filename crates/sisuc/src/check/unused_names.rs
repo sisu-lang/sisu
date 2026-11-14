@@ -989,7 +989,8 @@ impl Checker<'_> {
         // The interfaces live code uses, and those not yet followed to the ones they name.
         let mut interfaces = vec![false; self.interfaces.len()];
         let mut to_follow = Vec::new();
-        // An alias body that names `S.Name` has no owner, so no use records its interface.
+        // An alias body has no owner, so no use records the interfaces that it names (`S.Name`,
+        // `any I`).
         for interface in &self.aliases.named_interfaces {
             use_interface(&mut interfaces, &mut to_follow, interface.0);
         }
