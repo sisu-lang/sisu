@@ -390,10 +390,14 @@ impl Checker<'_> {
     ) -> (ReceiverArgument, bool, Option<BlockBound>) {
         let receiver = first.value.span;
         let head = Span::new(callee.start(), receiver.start());
+        // The gap ends where the next argument starts, at its `mut` when it has one, so that
+        // the fix keeps that `mut`.
         let gap = Span::new(
             receiver.end(),
-            rest.first()
-                .map_or_else(|| receiver.end(), |arg| arg.value.span.start()),
+            rest.first().map_or_else(
+                || receiver.end(),
+                |arg| arg.mut_keyword.unwrap_or(arg.value.span).start(),
+            ),
         );
         let (takes, bound) = self.idiom_call(idiom, name, ty, rest);
         // A comment before the receiver keeps its line break, which must stay in brackets.
@@ -420,9 +424,10 @@ impl Checker<'_> {
         (site, type_name, typed): (Site<'_>, &str, bool),
         args: &[ast::Arg],
     ) -> Reported {
-        // An argument at a `mut` parameter gets the help of a place.
+        // An argument at a `mut` parameter gets the help of a place. `muts` holds no `self`, so
+        // the receiver is not one of them.
         let muts = self.signatures[func.0].muts.clone();
-        self.stamp_mut_params(args, &muts);
+        self.stamp_mut_params(args.get(1..).unwrap_or_default(), &muts);
         let unlabeled = args.iter().all(|arg| arg.label.is_none());
         let receiver = match args.split_first() {
             Some((first, rest)) if unlabeled && !typed && first.mut_keyword.is_none() => {
