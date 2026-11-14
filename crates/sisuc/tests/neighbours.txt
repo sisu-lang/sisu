@@ -488,3 +488,9 @@ let _x = k == id($)
 $ < 1
 if c { $ } else {}
 match k { 0 => $; _ => None }
+# A bare `break` beside a `break` of the value: in a `let`, in a statement, and through a label
+# from an inner loop, with the bare `break` in the inner loop or in the outer loop.
+let _a = loop { if c { break $ }; break }
+loop { if c { break $ }; break }
+outer: loop { loop { if c { break outer $ }; break outer } }
+outer: loop { loop { if c { break outer $ }; break }; break outer }

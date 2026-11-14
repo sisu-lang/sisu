@@ -518,22 +518,45 @@ fn a_comparison_of_a_unit_should_hold_the_other_operands_to_unit() {
 
 /// A bare `break` beside a `break` whose value is a `unit` gives the loop a `unit`, so the loop is
 /// a `unit`. Beside a `unit?` value, the loop is a `unit?`. A bare `break` beside a value of
-/// another type stays E0043. A `let w` of the written type proves the type of `x`.
+/// another type stays E0043.
 #[test]
 fn a_bare_break_beside_a_unit_break_should_give_the_loop_a_unit() {
     with_prelude();
+    let in_f = |body: &str| {
+        format!(
+            "enum U {{\n    A\n    B\n    fn log(self) {{}}\n}}\nfn g() {{}}\n{body}\nfn main() {{}}"
+        )
+    };
+    assert_eq!(
+        loop_type(&in_f(
+            "fn f(c: bool) { loop { if c { break g() }; break } }"
+        )),
+        Type::UNIT
+    );
+    assert_eq!(
+        loop_type(&in_f(
+            "fn f(c: bool) { loop { if c { break }; break g() } }"
+        )),
+        Type::UNIT
+    );
+    assert_eq!(
+        loop_type(&in_f(
+            "fn f(c: bool, o: U?) -> unit? { loop { if c { break o?.log() }; break } }"
+        )),
+        Type::optional(Type::UNIT)
+    );
     for (row, used) in [
         (
             "unit value first",
-            "let x = loop { if c { break g() }; break }\n    let w: unit = x",
+            "let x = loop { if c { break g() }; break }",
         ),
         (
             "bare break first",
-            "let x = loop { if c { break }; break g() }\n    let w: unit = x",
+            "let x = loop { if c { break }; break g() }",
         ),
         (
             "unit? value",
-            "let x = loop { if c { break o?.log() }; break }\n    let w: unit? = x",
+            "let x = loop { if c { break o?.log() }; break }",
         ),
         ("statement", "loop { if c { break g() }; break }"),
         ("unit? statement", "loop { if c { break o?.log() }; break }"),
@@ -566,4 +589,98 @@ fn a_bare_break_beside_a_unit_break_should_give_the_loop_a_unit() {
         ),
     ];
     rows_in(&rows, with_safe_call, 12);
+}
+
+/// The template of `with_safe_call`, with a second `bool` binding `d` in place of `n` and `u`.
+fn with_two_conditions(used: &str) -> String {
+    format!(
+        "enum U {{\n    A\n    B\n    fn log(self) {{}}\n}}\nfn g() {{}}\nfn main() {{\n    let o: U? = None\n    let c = true\n    let d = true\n    {used}\n}}"
+    )
+}
+
+/// A bare `break` beside a `break` whose value is a `unit` adds no report to an error. The error
+/// can be in the body, in the value or in the context of the loop. A bare `break` beside an `i64`
+/// value stays E0043, also when the body has an error.
+#[test]
+fn a_bare_break_beside_a_unit_break_should_add_no_report_to_an_error() {
+    let rows: Vec<UseRow<'_>> = vec![
+        (
+            "error in the body",
+            "loop { if c { break g() }; nope; break }".into(),
+            vec![(Code::BindingNotFound, "nope", false)],
+        ),
+        (
+            "error in the body of a let",
+            "let x = loop { if c { break g() }; nope; break }".into(),
+            vec![(Code::BindingNotFound, "nope", false)],
+        ),
+        (
+            "error in the body before a unit value",
+            "loop { if c { break }; nope; break g() }".into(),
+            vec![(Code::BindingNotFound, "nope", false)],
+        ),
+        (
+            "error in the value",
+            "loop { if c { break g(nope) }; break }".into(),
+            vec![
+                (Code::ArgumentCount, "g(nope)", false),
+                (Code::BindingNotFound, "nope", false),
+            ],
+        ),
+        (
+            "error in an inner loop",
+            "loop { if c { break g() }; loop { nope; break }; break }".into(),
+            vec![(Code::BindingNotFound, "nope", false)],
+        ),
+        (
+            "error through a label",
+            "outer: loop { loop { if c { break outer g() }; nope; break outer } }".into(),
+            vec![(Code::BindingNotFound, "nope", false)],
+        ),
+        (
+            "unit? value after a unit value",
+            "loop { if c { break g() }; if d { break o?.log() }; break }".into(),
+            vec![(Code::Mismatch, "o?.log()", false)],
+        ),
+        (
+            "i64 value after a unit value",
+            "loop { if c { break g() }; if d { break 1 }; break }".into(),
+            vec![(Code::Mismatch, "1 }", false)],
+        ),
+        (
+            "failed coalesce",
+            "let _a = missing ?? loop { if c { break g() }; break }".into(),
+            vec![(Code::BindingNotFound, "missing", false)],
+        ),
+        (
+            "failed call",
+            "let _d = i64(loop { if c { break g() }; break }, 1)".into(),
+            vec![(Code::ArgumentCount, "i64(", false)],
+        ),
+        (
+            "i64 value and an error in the body",
+            "let x = loop { if c { break 1 }; nope; break }".into(),
+            vec![
+                (Code::BindingNotFound, "nope", false),
+                (Code::NoValue, "break }", false),
+            ],
+        ),
+        (
+            "i64 values and an error in the body",
+            "let x = loop { if c { break 1 }; nope; break 2 }".into(),
+            vec![(Code::BindingNotFound, "nope", false)],
+        ),
+    ];
+    rows_in(&rows, with_two_conditions, 11);
+}
+
+/// A bare `break` beside a `break` whose value is a `unit?` gives the loop a `None`, as a wrapped
+/// `unit`.
+#[test]
+fn a_bare_break_beside_an_optional_unit_break_should_hold_a_wrapped_unit() {
+    with_prelude();
+    contains(
+        &with_safe_call("let x = loop { if c { break o?.log() }; break }"),
+        &["(break (wrap ()))"],
+    );
 }
