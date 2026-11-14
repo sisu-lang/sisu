@@ -265,8 +265,9 @@ fn read_prefix(at: &str) -> Option<(String, Option<String>)> {
 
 /// The faults of the IDs of `page`, the page `stem`, by line. A page with no `{#` item has no
 /// fault. In the index, each `{#` item is a fault and the rules need nothing. In any other
-/// page, an item gets one fault, the first that applies: an ID on an item that is not a rule, a
-/// bad prefix, a bad form, a wrong stem, a repeated ID. A rule with no `{#` has no ID.
+/// page, an item gets one fault, the first that applies. First come an ID on an item that is
+/// not a rule, a character before the ID and a bad prefix. Then come an empty ID, a bad form, a
+/// wrong stem and a repeated ID. A rule with no `{#` has no ID.
 pub(crate) fn id_faults(stem: &str, page: &Page) -> Vec<Fault> {
     let fault = |line, message: String| Fault { line, message };
     if is_index(stem) {
