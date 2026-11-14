@@ -1343,7 +1343,13 @@ impl Checker<'_> {
         body: &ast::Block,
         expected: Expectation,
     ) -> Checked {
-        let frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
+        // A `break` origin in `expected` is of a loop around this one.
+        let frame = LoopFrame::new(
+            LoopKind::Loop,
+            keyword,
+            label.cloned(),
+            expected.for_inner_loop(),
+        );
         let (mut checked, mut frame) = self.loop_body(frame, |c| c.block(body, Expectation::None));
         self.join_deferred(&mut frame);
         if let Ok(checked) = &mut checked {
@@ -1424,10 +1430,15 @@ impl Checker<'_> {
                 // The seed of a hinted loop, member `SEED`, is no `break`.
                 let given = match giver {
                     SEED => Origin::None,
-                    0 => Origin::Break { at, ty: first },
+                    0 => Origin::Break {
+                        at,
+                        ty: first,
+                        outer: false,
+                    },
                     _ => Origin::Break {
                         at: span(giver),
                         ty: members[giver].1,
+                        outer: false,
                     },
                 };
                 self.leaves_any(span(i), None, ty, got, given)
@@ -1435,11 +1446,25 @@ impl Checker<'_> {
             AnyJoin::Fails {
                 earlier: (_, want),
                 later: (i, got),
-            } => self.mismatch(span(i), None, want, got, Origin::Break { at, ty: want }),
+            } => self.mismatch(
+                span(i),
+                None,
+                want,
+                got,
+                Origin::Break {
+                    at,
+                    ty: want,
+                    outer: false,
+                },
+            ),
             // Objects that join to no `any` type: each is not the first value's.
             AnyJoin::NoAny => {
                 for &(at_value, got) in &deferred {
-                    let origin = Origin::Break { at, ty: first };
+                    let origin = Origin::Break {
+                        at,
+                        ty: first,
+                        outer: false,
+                    };
                     let d = self.mismatch(at_value, None, first, got, origin);
                     let reported = self.diagnostics.error(d);
                     frame.failed.get_or_insert(reported);
@@ -1508,7 +1533,11 @@ impl Checker<'_> {
             (Expectation::None, Some((ty, at))) => Expectation::Hint {
                 want: ty,
                 siblings: ty,
-                origin: Origin::Break { at, ty },
+                origin: Origin::Break {
+                    at,
+                    ty,
+                    outer: false,
+                },
             },
             (expected, _) => expected,
         };
@@ -1581,7 +1610,14 @@ impl Checker<'_> {
         if let Some((first, at)) = first
             && self.misfit_type(&checked).is_some()
         {
-            let want = Expectation::Required(first, Origin::Break { at, ty: first });
+            let want = Expectation::Required(
+                first,
+                Origin::Break {
+                    at,
+                    ty: first,
+                    outer: false,
+                },
+            );
             return self.against(v, checked, want).0;
         }
         let Some((first, at)) = first else {
@@ -1608,7 +1644,11 @@ impl Checker<'_> {
                 return checked;
             }
             // A `Some` of an object is the mistake at the object, as in a branch.
-            let given = Origin::Break { at, ty: first };
+            let given = Origin::Break {
+                at,
+                ty: first,
+                outer: false,
+            };
             if let Ok(value) = &checked
                 && let Some((at, want, object)) = self.object_in_some(value, first)
             {

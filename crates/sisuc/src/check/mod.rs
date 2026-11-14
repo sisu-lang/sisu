@@ -2067,8 +2067,7 @@ impl Checker<'_> {
                         scoped = true;
                     }
                     let from = self.queued();
-                    let FieldType { ty, inner, shown } =
-                        self.resolve_field(&field.ty, owner.is_empty());
+                    let FieldType { ty, inner, shown } = self.resolve_field(&field.ty);
                     let queued = from..self.queued();
                     if self.first_definition(
                         &mut first,
@@ -2156,8 +2155,8 @@ impl Checker<'_> {
         self.body.set_bounds(0, owner_bounds);
         let bounds = self.declare_bounds(owner.len(), Vec::new(), &f.type_params);
         let func = tir::FuncId(self.signatures.len());
-        // A mismatch shows an alias as written only where the type is the declaration's own.
-        let plain = type_params.is_empty();
+        // A mismatch shows an alias as written only where the type is the declaration's own: it
+        // names no type parameter, which a call can give another type.
         self.signature_anys = Some(Vec::new());
         let (params, param_shown): (Vec<_>, Vec<_>) = (f.params.iter().enumerate())
             .map(|(i, p)| {
@@ -2165,7 +2164,8 @@ impl Checker<'_> {
                 let uses = self.aliases.uses;
                 let ty = self.resolve(&p.ty);
                 self.keep_at(from..self.queued(), Slot::Param(func, i));
-                (ty, self.shown_text(&p.ty, uses).filter(|_| plain))
+                let shown = self.shown_text(&p.ty, uses);
+                (ty, shown.filter(|_| ty.is_some_and(|ty| !ty.has_param())))
             })
             .unzip();
         let from = self.queued();
@@ -2176,7 +2176,7 @@ impl Checker<'_> {
             .map_or(Some(Type::UNIT), |ty| self.resolve(ty));
         let ret_shown = (f.ret.as_ref())
             .and_then(|ty| self.shown_text(ty, uses))
-            .filter(|_| plain);
+            .filter(|_| ret.is_some_and(|ty| !ty.has_param()));
         self.keep_at(from..self.queued(), Slot::Ret(func));
         let anys = self.signature_anys.take().unwrap_or_default();
         self.body.set_type_params(&[]);
