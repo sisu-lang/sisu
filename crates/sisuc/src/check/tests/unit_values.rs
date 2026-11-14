@@ -134,7 +134,7 @@ fn a_program_that_printed_a_unit_should_check_clean() {
         ),
         (
             "type argument",
-            "class Cell<T> {\n    value: T\n}\n\nfn size(c: Cell<unit>) -> i64 {\n    0\n}\n\nfn main() {}\n",
+            "struct Cell<T> {\n    value: T\n}\n\nfn size(c: Cell<unit>) -> i64 {\n    0\n}\n\nfn main() {}\n",
         ),
     ] {
         clean_row(row, src);

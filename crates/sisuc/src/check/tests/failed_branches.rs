@@ -568,7 +568,7 @@ fn a_typed_poisoned_break_value_should_join_with_the_other_breaks() {
             vec![(ArgumentCount, (4, 33)), (NoValue, (4, 40))],
         ),
         (
-            "a call that gives no value",
+            "a call with a wrong count",
             "fn u(x: i64) {}\nfn main() {\n    let a = loop { break u() }\n    print(a)\n}\n".into(),
             vec![(ArgumentCount, (3, 26))],
         ),
