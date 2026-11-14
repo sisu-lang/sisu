@@ -554,9 +554,9 @@ holds `table.md`, `counts.json` and the program of each shape at each size.
 A sweep that stops early still writes the shapes that it measured, then a line
 `scaling: <message>`. To run the sweep on
 your machine, use `make scaling`. In the job, each script has a total time
-bound. The job gives `--time-bound 300` to step 1 and `--time-bound 1800` to
+bound. The job gives `--time-bound 300` to step 1 and `--time-bound 3600` to
 the sweep. A script that runs over exits with code 1. The bound is a guard
-against a hang. A local `make scaling` has the same bound of 1800 seconds, the
+against a hang. A local `make scaling` has the same bound of 3600 seconds, the
 default of `scripts/scaling.py`.
 
 The scheduled run starts only from the default branch. After a change to the

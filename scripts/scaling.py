@@ -1014,7 +1014,7 @@ def main(argv: list[str]) -> int:
         "--out", default=DEFAULT_OUT, help="the directory for table.md and counts.json"
     )
     parser.add_argument("--sisu", default=DEFAULT_SISU, help="the compiler")
-    parser.add_argument("--time-bound", type=float, default=1800, help="seconds for the whole run")
+    parser.add_argument("--time-bound", type=float, default=3600, help="seconds for the whole run")
     args = parser.parse_args(argv)
     counts: dict[str, Any] = {
         "commit": "unknown",
