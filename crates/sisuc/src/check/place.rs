@@ -993,26 +993,27 @@ impl Checker<'_> {
                 return place;
             }
             // A poisoned item's own error is reported, and the name is no typo for a binding.
-            let reported = if let Some(reported) = self.use_poison(name, target.span) {
-                reported
+            let (reported, typo) = if let Some(reported) = self.use_poison(name, target.span) {
+                (reported, false)
             } else if let Some(wrong) = self.hidden_name(name, target.span) {
-                // A type parameter or an associated type hides a function of this name, as it
-                // does in a read.
-                wrong
+                // A type parameter or an associated type holds the name, with or without a
+                // function of that name, as in a read. The name may be a typo of a binding.
+                (wrong, true)
             } else if self.is_function(name) {
-                self.error(DiagnosticKind::AssignToFunction {
+                let reported = self.error(DiagnosticKind::AssignToFunction {
                     name: name.to_string(),
                     at: target.span,
-                })
+                });
+                (reported, false)
             } else {
-                let reported = self.not_found(name, target.span);
-                // The name may have meant any open binding; none of them warns as
-                // unassigned.
+                (self.not_found(name, target.span), true)
+            };
+            if typo {
+                // The name may have meant any open binding; none of them warns as unassigned.
                 for b in self.body.scopes.iter_mut().flat_map(|s| s.values_mut()) {
                     b.reassigned = true;
                 }
-                reported
-            };
+            }
             return CheckedPlace::failed(Some(reported));
         };
         if let Some(stamp) = stamp {
