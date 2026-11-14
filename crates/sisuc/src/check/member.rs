@@ -650,7 +650,10 @@ impl Checker<'_> {
         };
         let checked = Err(Poisoned::typed(inner, held));
         // The call reports its own mistakes, and its type waits for the fix.
-        drop(self.method_call(span, Dot::Payload, checked, receiver, site, args));
+        let dot = Dot::Payload {
+            failed: value.is_err(),
+        };
+        drop(self.method_call(span, dot, checked, receiver, site, args));
         let name = site.name;
         if self.body.failed_lookups.contains(&name.span) {
             return Err(Poisoned::untyped(held));

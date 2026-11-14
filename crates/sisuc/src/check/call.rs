@@ -37,8 +37,9 @@ pub(super) enum Dot {
     /// `receiver?.method(args)`.
     Safe,
     /// The check of `receiver.method(args)` on the payload of an optional `receiver`. The user
-    /// wrote `.` on the optional, so the call is neither of the others.
-    Payload,
+    /// wrote `.` on the optional, so the call is neither of the others. `failed` says that the
+    /// check of the optional failed: the payload has no value of its own in any case.
+    Payload { failed: bool },
 }
 
 /// The method that a call written as a function names.
@@ -562,6 +563,9 @@ impl Checker<'_> {
             let mut call = |c: &mut Self, checked: Checked| -> Checked {
                 if !path && let Some((first, _)) = types.split_first() {
                     if let Some(value) = c.method_args(&checked, receiver, method, first, angles) {
+                        // A field read as a comparison reads the receiver.
+                        let parked = c.take_parked(receiver);
+                        c.read_parked(parked, &checked, receiver);
                         c.stray_call(type_of(&checked), method.name, args);
                         return Err(value);
                     }
@@ -586,6 +590,9 @@ impl Checker<'_> {
                         && c.could_be_value(first)
                     {
                         deferred = false;
+                        // The comparison reads the receiver.
+                        let parked = c.take_parked(receiver);
+                        c.read_parked(parked, &checked, receiver);
                         c.stray_call(type_of(&checked), method.name, args);
                         let at = receiver.span.to(method.span);
                         let text = c.source;
@@ -626,6 +633,10 @@ impl Checker<'_> {
         if deferred && !unknown {
             self.not_generic(method.name, angles);
         }
+        debug_assert!(
+            !matches!(&self.body.pushed, Some((at, _)) if *at == receiver.span),
+            "the call should take the place that it parked"
+        );
         checked
     }
 
@@ -657,6 +668,8 @@ impl Checker<'_> {
         let safe = dot == Dot::Safe;
         // The arguments are not part of the chain that an index ends; `expr` restores the flag.
         let indexed = std::mem::take(&mut self.body.indexed);
+        // The place that `method_expr` kept for the receiver: each way out reads or writes it.
+        let mut parked = self.take_parked(receiver_expr);
         // A range argument is E0023 once the call is found, as it is anywhere else. A string's
         // `get` takes its range (`string_method`), and so does the `get` of a `string?`, which is
         // E0062 first. An array's `get` takes an `i64`, so a range is E0032, found before
@@ -672,19 +685,16 @@ impl Checker<'_> {
             // `base[a..b]` is the help for a `.` call only: through `?.`, or on an optional's
             // payload, it would be E0062.
             let base = (dot == Dot::Plain).then_some(receiver_expr);
+            self.read_parked(parked.take(), &receiver, receiver_expr);
             self.refuse_method(receiver_expr, (type_of(&receiver), method), args, Some(1));
             return self.array_get_range((span, array), base, args);
         }
         let receiver_ty = type_of(&receiver);
-        let receiver = match self.generated_operator(span, receiver, site, args) {
-            Ok(checked) => {
-                self.refuse_method(receiver_expr, (receiver_ty, method), args, Some(1));
-                return checked;
-            }
+        let op = self.generated_operator(span, (receiver, receiver_expr), &mut parked, site, args);
+        let receiver = match op {
+            Ok(checked) => return checked,
             Err(receiver) => receiver,
         };
-        // The place that `method_expr` kept for the receiver, if it kept one.
-        let mut parked = self.take_parked(receiver_expr);
         // A `push` onto an array writes its place, so it is not a method of the prelude's. A type
         // that is known and is no array has a `push` method of its own. That method reads its
         // receiver and writes nothing, unless it takes `mut self`.
@@ -800,9 +810,16 @@ impl Checker<'_> {
         args: &[ast::Arg],
     ) -> Checked {
         let method = site.name;
+        // A receiver that failed has its own report, which the `?.` led to: E0062 would repeat
+        // it. The payload of a `.` on an optional fails only when the optional did.
+        let failed = match dot {
+            Dot::Payload { failed } => failed,
+            Dot::Plain | Dot::Safe => receiver.is_err(),
+        };
         let chain = match dot {
+            _ if failed => None,
             Dot::Safe => first_safe(receiver_expr).or(Some((receiver_expr, method))),
-            Dot::Plain | Dot::Payload => first_safe(receiver_expr),
+            Dot::Plain | Dot::Payload { .. } => first_safe(receiver_expr),
         };
         let reported = if let Some(chain) = chain {
             let kind = match type_of(&receiver).map(|ty| array::innermost(ty).kind()) {
@@ -961,11 +978,13 @@ impl Checker<'_> {
     /// writes: the operator itself, as `==` and `<` make it. `Err` gives the receiver back when
     /// the call is something else: a method that the type writes, which wins (ADR 0023), or a
     /// method of another name. The arguments are checked as for any method: one count, no label,
-    /// and the call takes no type argument.
+    /// and the call takes no type argument, and E0167 refuses a `mut` argument. The operator
+    /// reads `parked`, the place of `receiver_expr` that `method_expr` kept.
     fn generated_operator(
         &mut self,
         span: Span,
-        receiver: Checked,
+        (receiver, receiver_expr): (Checked, &ast::Expr),
+        parked: &mut Option<CheckedPlace>,
         site: Site<'_>,
         args: &[ast::Arg],
     ) -> Result<Checked, Checked> {
@@ -992,6 +1011,7 @@ impl Checker<'_> {
         {
             return Err(receiver);
         }
+        self.read_parked(parked.take(), &receiver, receiver_expr);
         if !site.written.is_empty() {
             self.not_generic(method.name, site.angles);
         }
@@ -1006,7 +1026,7 @@ impl Checker<'_> {
         }
         let labeled = self.labels(args);
         let (other, _) = self.operand(&args[0].value, Expectation::Required(ty, Origin::None));
-        Ok(match (receiver, other) {
+        let checked = match (receiver, other) {
             (Ok(lhs), Ok(rhs)) if labeled.is_none() => {
                 let eq = interface == self.lang.eq;
                 self.record_shown(ty, interface);
@@ -1040,7 +1060,9 @@ impl Checker<'_> {
                     .expect("a generated `eq` or `less` that fails should have a failed part");
                 Err(Poisoned::typed(Type::BOOL, reported))
             }
-        })
+        };
+        self.refuse_method(receiver_expr, (Some(ty), method), args, Some(1));
+        Ok(checked)
     }
 
     /// A call of `func`, which `site` writes. `receiver` is a method's `self`; `args` match the

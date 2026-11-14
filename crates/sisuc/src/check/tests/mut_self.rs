@@ -5,7 +5,7 @@ use super::*;
 use Code::{
     AssignToExpression, AssignToImmutable, AssignToSelf, CannotInfer, ConformanceBody, Expected,
     MayBeNone, Mismatch, MutArgumentNotPlace, MutMarkerMissing, MutPlaceTwice, MutSelf,
-    NeverReassigned, SelfOutsideMethod, UnusedMember, UnusedVariable,
+    NeverReassigned, SelfOutsideMethod, TypeArguments, UnusedMember, UnusedVariable,
 };
 
 /// `Point` with the `mut self` method `move_by`, in eight lines.
@@ -278,6 +278,16 @@ fn mut_self_call_through_an_optional_value_should_be_e0062() {
         let (_, ds) = checked(src);
         assert_eq!(errors(src, &ds), [wanted], "row `{row}`");
     }
+    // An optional element after the `?.` has an E0062 of its own, as for a plain method.
+    let src = "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nstruct L { pss: [P?] }\nfn main() { let mut o: L? = Some(L(pss: [None])); o?.pss[0].m(); print(o != None) }";
+    let plain = src.replace("fn m(mut self) { self.x = 1 }", "fn m(self) {}");
+    let (_, ds) = checked(src);
+    assert_eq!(
+        errors(src, &ds),
+        [(MayBeNone, (3, 51)), (MayBeNone, (3, 51))],
+        "an optional element"
+    );
+    assert_eq!(all_codes(src), all_codes(&plain), "an optional element");
     // The peel help of `?.` on an optional of an optional stays, as on a field write.
     let src = chained[2].1;
     assert!(only(src, MayBeNone).help().is_some(), "{src}");
@@ -418,6 +428,16 @@ fn plain_method_with_a_mut_self_name_should_keep_its_receiver_rules() {
             "a struct field that nothing else reads",
             "struct P { x: i64; fn len(self) -> i64 { self.x } }\nstruct S { p: P }\nfn main() {\n    let s = S(p: P(x: 1))\n    print(s.p.len())\n}\n",
             vec![],
+        ),
+        (
+            "a field read as a comparison",
+            "struct W { len: i64 }\nfn main() {\n    let w = W(len: 1)\n    let t = 2\n    print(w.len<i64>(t))\n}\n",
+            vec![(TypeArguments, (5, 11))],
+        ),
+        (
+            "a built-in's method read as a comparison",
+            "fn main() {\n    let a1 = 1\n    let b1 = 2\n    let xs = [1]\n    print(xs.len<a1, b1>(3))\n}\n",
+            vec![(TypeArguments, (5, 11))],
         ),
         (
             "an array field of an optional",
