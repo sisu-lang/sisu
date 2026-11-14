@@ -1068,9 +1068,6 @@ struct Body {
     /// field bases and indexed bases up to the written place. A `?.` on a struct value there
     /// leads to a write that part 1 cannot make.
     write_chain: Option<(Span, place::Change)>,
-    /// Whether the call whose receiver is being checked as a place writes it: the method that the
-    /// receiver's declared type finds takes `mut self` (`Checker::receiver_writes`).
-    receiver_writes: bool,
     /// The initializer of the `let` being checked, and what that `let` writes before its type
     /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
     /// `None` or `[]`.

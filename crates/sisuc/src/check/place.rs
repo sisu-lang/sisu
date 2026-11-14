@@ -112,15 +112,22 @@ pub(super) enum Change {
     /// `mut x` as an argument: the place gives its cause when it cannot change, and reports none.
     MutArg,
     /// `x.m()`, where some `mut self` method has the name `m`: the place holds its report as a
-    /// `push` does, until the call finds the method.
-    Receiver(Symbol),
+    /// `push` does, until the call finds the method. The flag says whether the call writes the
+    /// place: the method that the receiver's declared type finds takes `mut self`.
+    Receiver(Symbol, bool),
 }
 
 impl Change {
+    /// Whether the change writes its place. Every change does, except the receiver of a call
+    /// that only reads it.
+    fn writes(self) -> bool {
+        !matches!(self, Change::Receiver(_, false))
+    }
+
     /// The method that a receiver change calls. A `push` has none.
     fn method(self) -> Option<Symbol> {
         match self {
-            Change::Receiver(method) => Some(method),
+            Change::Receiver(method, _) => Some(method),
             _ => None,
         }
     }
@@ -129,7 +136,7 @@ impl Change {
     fn access(self) -> Access {
         match self {
             Change::Push => Access::Push,
-            Change::Receiver(_) => Access::Receiver,
+            Change::Receiver(_, writes) => Access::Receiver(writes),
             Change::MutArg => Access::Mut,
             Change::Assign | Change::Element | Change::Field => Access::Assign,
         }
@@ -140,18 +147,18 @@ impl Change {
     fn of_part(self) -> Change {
         match self {
             Change::Assign | Change::Element | Change::Field => Change::Field,
-            Change::Push | Change::MutArg | Change::Receiver(_) => self,
+            Change::Push | Change::MutArg | Change::Receiver(..) => self,
         }
     }
 
     /// Whether the change holds its report and its write stamp until the call is found.
     fn holds(self) -> bool {
-        matches!(self, Change::Push | Change::Receiver(_))
+        matches!(self, Change::Push | Change::Receiver(..))
     }
 
     /// Whether the call reads the place before it writes it, so a field on its path is read.
     fn copies_in(self) -> bool {
-        matches!(self, Change::MutArg | Change::Receiver(_))
+        matches!(self, Change::MutArg | Change::Receiver(..))
     }
 
     /// How the index that this change reaches uses its element: an assignment writes it, when
@@ -167,7 +174,7 @@ impl Change {
     /// E0001 for the root `name`, whose write at `at` its `cause` forbids.
     fn immutable(self, name: String, at: Span, cause: Immutable) -> DiagnosticKind {
         match self {
-            Change::Push | Change::Receiver(_) => DiagnosticKind::PushToImmutable {
+            Change::Push | Change::Receiver(..) => DiagnosticKind::PushToImmutable {
                 name,
                 at,
                 cause,
@@ -426,9 +433,7 @@ impl Checker<'_> {
     /// yet: a plain method only reads its receiver.
     pub(super) fn receiver_place(&mut self, receiver: &ast::Expr, method: Symbol) -> Checked {
         let writes = self.receiver_writes(receiver, method);
-        let outer = std::mem::replace(&mut self.body.receiver_writes, writes);
-        let place = self.place(receiver.span, receiver, Change::Receiver(method));
-        self.body.receiver_writes = outer;
+        let place = self.place(receiver.span, receiver, Change::Receiver(method, writes));
         self.park(receiver, place)
     }
 
@@ -1245,7 +1250,7 @@ impl Checker<'_> {
             } => self.field_place(span, target, (base, name, *safe), change),
             ast::ExprKind::Index { base, index } => {
                 let inner_change = match change {
-                    Change::Push | Change::MutArg | Change::Receiver(_) => change,
+                    Change::Push | Change::MutArg | Change::Receiver(..) => change,
                     Change::Assign | Change::Element | Change::Field => Change::Element,
                 };
                 let outer = std::mem::replace(&mut self.body.indexed, true);
@@ -1339,7 +1344,7 @@ impl Checker<'_> {
             _ => self.body.quiet,
         };
         // The base of a receiver whose call only reads it is read as any value is.
-        let chain = self.writes(change).then_some((span, change));
+        let chain = change.writes().then_some((span, change));
         let outer = (
             std::mem::replace(&mut self.body.indexed, indexed),
             std::mem::replace(&mut self.body.quiet, quiet),
@@ -1547,7 +1552,7 @@ impl Checker<'_> {
                     let d = DiagnosticKind::AssignToExpression { at, range: None };
                     (None, Some(self.error(d)), None)
                 }
-                Change::Push | Change::Receiver(_) => (
+                Change::Push | Change::Receiver(..) => (
                     Some(DiagnosticKind::PushToTemporary {
                         at,
                         range: None,
@@ -1642,7 +1647,7 @@ impl Checker<'_> {
             let array = ty.is_some_and(|ty| matches!(payload(ty).kind(), TypeKind::Array(_)));
             let writes = match change {
                 Change::Push => array,
-                Change::MutArg | Change::Receiver(_) => false,
+                Change::MutArg | Change::Receiver(..) => false,
                 Change::Assign | Change::Element | Change::Field => true,
             };
             // A `?.` that takes out a class object: the field of the object is a place, and only
@@ -1818,7 +1823,7 @@ impl Checker<'_> {
             StructRoot::Other => None,
         };
         if let (Some(root), Some(cause)) = (root, self.chain_root_cause(receiver)) {
-            return Change::Receiver(method).immutable(root, receiver.span, cause);
+            return Change::Receiver(method, true).immutable(root, receiver.span, cause);
         }
         DiagnosticKind::ChainCallOnValue {
             at: Span::new(object.span.end(), name.span.end()),
@@ -1905,15 +1910,9 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether `change` writes its place. Every change does, except the receiver of a call that
-    /// only reads it (`Body::receiver_writes`).
-    fn writes(&self, change: Change) -> bool {
-        !matches!(change, Change::Receiver(_)) || self.body.receiver_writes
-    }
-
     /// Marks the root of `target` as reassigned, as `reassign_root` does, when `change` writes.
     fn reassign_for(&mut self, target: &ast::Expr, change: Change) {
-        if self.writes(change) {
+        if change.writes() {
             self.reassign_root(target);
         }
     }
