@@ -140,6 +140,9 @@ impl Checker<'_> {
         };
         // `?.` takes one layer off: on a `C??` it leaves a `C?`, which has no members.
         if matches!(payload.kind(), TypeKind::Optional(_)) {
+            // The peeled `push` onto an array fails too (E0021): no help leads to it.
+            let pushes_array = name.name.as_str() == "push"
+                && matches!(innermost(payload).kind(), TypeKind::Array(_));
             let kind = DiagnosticKind::MayBeNone {
                 value: path(receiver),
                 at: receiver.span,
@@ -150,6 +153,7 @@ impl Checker<'_> {
                     left: self.type_name(payload),
                     member: name.name.to_string(),
                     layers: optional_layers(payload),
+                    help: !pushes_array,
                 }),
                 unwrap: UnwrapHelp::It,
             };
@@ -1018,11 +1022,6 @@ fn may_be_none(
     write: bool,
     unwrap: UnwrapHelp,
 ) -> Diagnostic {
-    // Without a fix, the help says what to do.
-    let unwrap = match unwrap {
-        UnwrapHelp::Nothing if !fix => UnwrapHelp::It,
-        unwrap => unwrap,
-    };
     DiagnosticKind::MayBeNone {
         value: path(receiver),
         at: receiver.span,

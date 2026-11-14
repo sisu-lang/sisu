@@ -2310,6 +2310,8 @@ pub(crate) struct Peel {
     pub(crate) member: String,
     /// How many `?? None` the help puts around the receiver.
     pub(crate) layers: usize,
+    /// Whether the diagnostic has the peel help. The peeled member may fail too.
+    pub(crate) help: bool,
 }
 
 /// What the help of a `MayBeNone` tells the user to unwrap with `if let`.
@@ -5188,14 +5190,21 @@ impl From<DiagnosticKind> for Diagnostic {
                     left,
                     member,
                     layers,
+                    help,
                 }),
                 ..
-            } => Diagnostic::coded(
-                code,
-                at,
-                format!("`{receiver}?.` leaves a `{left}`, which may be `None`"),
-            )
-            .with_help(peel_text("other", &receiver, &member, layers)),
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{receiver}?.` leaves a `{left}`, which may be `None`"),
+                );
+                if help {
+                    d.with_help(peel_text("other", &receiver, &member, layers))
+                } else {
+                    d
+                }
+            }
             DiagnosticKind::MayBeNone {
                 value,
                 at,
