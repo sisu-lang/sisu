@@ -373,3 +373,30 @@ fn a_unit_element_should_bind_the_type_of_an_optional_array() {
     ];
     use_rows(&rows);
 }
+
+/// A valueless `if` where no value is used checks as it did before `unit` became a type: a
+/// statement and the body of a `unit` function warn that the `1` is not used. A function that
+/// returns `i64` reports that its body has no value.
+#[test]
+fn a_valueless_if_should_keep_its_reports_where_no_value_is_used() {
+    with_prelude();
+    for (row, src, wanted) in [
+        (
+            "statement",
+            "fn main() {\n    let c = true\n    if c { 1 }\n}",
+            (Code::UnusedValue, (3, 12)),
+        ),
+        (
+            "body of a unit function",
+            "fn f(c: bool) { if c { 1 } }\nfn main() {\n    f(true)\n}",
+            (Code::UnusedValue, (1, 24)),
+        ),
+        (
+            "body of an i64 function",
+            "fn f(c: bool) -> i64 { if c { 1 } }\nfn main() {\n    let a = f(true)\n}",
+            (Code::BodyHasNoValue, (1, 35)),
+        ),
+    ] {
+        assert_eq!(reports(src), [(wanted.0, wanted.1, false)], "row `{row}`");
+    }
+}
