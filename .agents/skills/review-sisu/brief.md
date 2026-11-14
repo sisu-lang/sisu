@@ -190,6 +190,13 @@ vague or generic error, or with none.
   at that commit. Each one must fail, and for the cause that the commit
   names. A test that passes there, or fails for another reason, does not
   prove its name.
+- A fix commit can also add tests in `scripts/test_*.py`, because the
+  `python-tests` hook rejects a red test. Extract `git archive <parent>`
+  into your scratch directory, because many script tests read files
+  outside `scripts/`. Copy each new or changed test file into it, and
+  run the tests there. Each one must fail, for the cause that the commit
+  names. A failure for a missing file or a missing git repository does
+  not count.
 - For each new `expect`, `unreachable!` or index in `sisu`, write a
   program that tries to break its invariant, for example a nested use
   that changes the state first. A program that makes `sisu` panic blocks.

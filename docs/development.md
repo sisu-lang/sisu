@@ -85,6 +85,12 @@ CI keeps the report of each part of the `Test` job and of the `Coverage` run
 for 14 days. The artifacts are `junit-test-part-<part>` and `junit-coverage`.
 They give the time of each test on a runner.
 
+The `python-tests` hook runs the unit tests of the scripts, `scripts/test_*.py`,
+when a commit changes a file that they read, such as a script. So a commit
+with a red script test fails. A test file imports
+its script by its bare name, so run one test class from `scripts/`:
+`(cd scripts && python3 -m unittest test_hook_scripts.TestWording)`.
+
 The pre-commit hook also runs `crates/sisuc/tests/architecture.rs` when a commit
 changes a file that the test reads. CI's lint job skips that hook, because its
 test job runs the test.

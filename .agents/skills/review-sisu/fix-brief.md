@@ -16,6 +16,8 @@ Failure class: <the class of the round's findings, such as an incomplete fix or 
 Test first: the tests of each change in behaviour go in one commit titled "Add failing tests",
 each red at the base. Then the fix commits. A test that kills a surviving mutant, or that holds
 the rule of code a ruling kept, is green at the base: commit it on its own and say why.
+A change whose tests are in `scripts/test_*.py` has no separate test commit, because the
+`python-tests` pre-commit hook rejects a red test. Its tests go into the fix commit.
 
 1. **<Title> (<stem> <n>).** Cause: <the function and line, and why it gives the wrong result>.
    Fix: <the change, in the shared code that each neighbour reaches>.
