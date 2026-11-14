@@ -6272,7 +6272,10 @@ fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
 }
 
 /// A clean call of `n` arguments, whose last argument binds `T`, finds that argument once for
-/// each other argument. A walk of the arguments before it for each would cost n².
+/// each other argument. A walk of the arguments before it for each would cost n². Two counters
+/// guard this. `PEELED` counts the layers that each search for the argument peels from a pattern.
+/// `ORIGINS` counts each read of the private list of origins, so a search that scans the list
+/// ticks it.
 #[test]
 fn the_argument_that_bound_a_parameter_should_be_found_without_a_walk() {
     let reads = |n: usize| {
@@ -6284,11 +6287,15 @@ fn the_argument_that_bound_a_parameter_should_be_found_without_a_walk() {
             args.join(", ")
         );
         generic::PEELED.set(0);
+        generic::ORIGINS.set(0);
         let (_, ds) = checked(&src);
         assert!(ds.is_empty(), "{ds:?}");
-        generic::PEELED.get()
+        (generic::PEELED.get(), generic::ORIGINS.get())
     };
-    assert_near_linear(reads(20), reads(40), reads(60));
+    let ((peeled20, origins20), (peeled40, origins40), (peeled60, origins60)) =
+        (reads(20), reads(40), reads(60));
+    assert_near_linear(peeled20, peeled40, peeled60);
+    assert_near_linear(origins20, origins40, origins60);
 }
 
 /// A pattern that names no type parameter gives no origin of one. So the search for the
