@@ -1086,15 +1086,18 @@ impl Checker<'_> {
         }
     }
 
-    /// `resolve_written` for the type of a field, and the type as the field writes it, when the
-    /// type names an alias and the class takes no type parameter, `plain`.
-    pub(super) fn resolve_field(&mut self, ty: &ast::TypeExpr, plain: bool) -> FieldType {
+    /// `resolve_written` for the type of a field. It also gives the type as the field writes it,
+    /// when the type names an alias and no type parameter. A call or an object can give a
+    /// parameter another type.
+    pub(super) fn resolve_field(&mut self, ty: &ast::TypeExpr) -> FieldType {
         let uses = self.aliases.uses;
         let (resolved, inner) = self.resolve_written(ty);
         FieldType {
             ty: resolved,
             inner,
-            shown: self.shown_text(ty, uses).filter(|_| plain),
+            shown: self
+                .shown_text(ty, uses)
+                .filter(|_| resolved.is_some_and(|ty| !ty.has_param())),
         }
     }
 

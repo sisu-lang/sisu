@@ -785,6 +785,10 @@ A span in a diagnostic, with a short text. The primary label marks the mistake.
 A secondary label marks a reason, such as the declaration that sets the expected
 type.
 
+**Snippet**:
+The source lines that a diagnostic shows, with their labels under them. A
+label far from the others gets its own snippet, with a `:::` header.
+
 **Note**:
 Text in a diagnostic, with no span, that says why.
 
@@ -887,7 +891,7 @@ its counted parts.
 **Inline program**:
 A whole program given on the command line with `-e` in place of a file.
 Its diagnostics and panics name the source `<inline>`.
-_Avoid_: snippet, one-liner, script
+_Avoid_: one-liner, script
 
 **Growing proof program**:
 The one Sisu program that grows with the language: Sisu's own lexer in

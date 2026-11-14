@@ -1,0 +1,110 @@
+// GIVEN a negation `-x` whose operand has a mistake, in a context that has an origin
+// AND the context is a `break` value, a `let` type, a branch, an argument, a return, an assignment,
+// a field or a payload
+// WHEN `sisu check` runs on it
+// THEN each E0032 has the secondary label that the same mistake in a binary operand has
+// AND a `?` type, an element, and a message that says "`i64` or `f64`" have no label
+fn break_value(c: bool) {
+    let _a = loop {
+        if c { break 1 }
+        break -"x"
+    }
+}
+fn declared() {
+    let b: i64 = -"x"
+    print(b)
+}
+fn branch(c: bool) -> i64 {
+    if c { 1 } else { -"x" }
+}
+fn take(n: i64) {
+    print(n)
+}
+fn argument() {
+    take(-"x")
+}
+fn returned() -> i64 {
+    -"x"
+}
+fn twice() {
+    let b: i64 = -(-"x")
+    print(b)
+}
+fn boolean() {
+    let b: i64 = -true
+    print(b)
+}
+fn assigned() {
+    let mut b = 1
+    b = -"x"
+    print(b)
+}
+fn character() {
+    let b: i64 = -'c'
+    print(b)
+}
+struct S { n: i64 }
+fn field() {
+    let s = S(n: -"x")
+    print(s.n)
+}
+enum E { V(i64) }
+fn payload() {
+    let e = E.V(-"x")
+    print(e)
+}
+fn pair<T>(a: T, n: i64) {
+    print(n)
+}
+fn generic_argument() {
+    pair(1, -"x")
+}
+struct P<U> { a: U; n: i64 }
+fn generic_field() {
+    let p = P(a: 1, n: -"x")
+    print(p.a)
+}
+fn optional() {
+    let b: i64? = -"x"
+    print(b)
+}
+fn element() {
+    let xs = [1, -"x"]
+    print(xs)
+}
+fn float_context() {
+    let b: f64 = -"x"
+    print(b)
+}
+fn byte_context() {
+    let b: u8 = -"x"
+    print(b)
+}
+fn let_branch(c: bool) {
+    let _a = if c { 1 } else { -"x" }
+}
+fn let_arm(k: i64) {
+    let a = match k { 0 => 1; _ => -"x" }
+    print(a)
+}
+fn main() {
+    break_value(true)
+    declared()
+    print(branch(true))
+    argument()
+    print(returned())
+    twice()
+    boolean()
+    assigned()
+    character()
+    field()
+    payload()
+    generic_argument()
+    generic_field()
+    optional()
+    element()
+    float_context()
+    byte_context()
+    let_branch(true)
+    let_arm(1)
+}

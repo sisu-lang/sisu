@@ -1273,9 +1273,14 @@ fn a_never_from_a_valid_jump_beside_an_invalid_one_should_keep_its_report() {
             "outer: loop { let x = id({ break outer; 1 }) }",
             &[(T, "{ break outer; 1 }"), (U, "; «1»")],
         ),
+        // A failed value does not change this: the `break` is still `never`, as a `return` is.
         (
             "loop { let x = id({ break nope; 1 }) }",
-            &[(Code::BindingNotFound, "nope")],
+            &[
+                (T, "{ break nope; 1 }"),
+                (Code::BindingNotFound, "nope"),
+                (U, "; «1»"),
+            ],
         ),
     ];
     for &(stmt, expected) in rows {

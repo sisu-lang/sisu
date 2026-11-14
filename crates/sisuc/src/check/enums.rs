@@ -6,7 +6,7 @@ use std::{fmt, mem};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::Through;
-use super::generic::{GenericSig, Site, written_args};
+use super::generic::{Declarer, GenericSig, Site, written_args};
 use super::interface::Slot;
 use super::mut_args::Callee;
 use super::reports::Reported;
@@ -246,7 +246,7 @@ impl Checker<'_> {
             let (mut fields, mut inner, mut shown) = (Vec::new(), Vec::new(), Vec::new());
             for field in payload {
                 let from = self.queued();
-                let written = self.resolve_field(&field.ty, e.type_params.is_empty());
+                let written = self.resolve_field(&field.ty);
                 queued.push(from..self.queued());
                 fields.push(written.ty);
                 inner.push(written.inner);
@@ -514,7 +514,7 @@ impl Checker<'_> {
             ret: Some(ret),
             bounds: &bounds,
             mut_site: None,
-            function: None,
+            declarer: Declarer::Variant(id, variant),
         };
         // An alias's type arguments, when the call wrote them, are applied already.
         let written = (

@@ -1,7 +1,7 @@
 //! Methods on a type parameter: a call on a value of type `T` names a requirement of the
 //! interfaces that `T`'s bounds give, and is an `InterfaceCall` that `mono` resolves.
 
-use super::generic::{GenericSig, Site, mismatched, named_params, written_args};
+use super::generic::{Declarer, GenericSig, Site, mismatched, named_params, written_args};
 use super::interface::Required;
 use super::mut_args::{MutParts, MutSite, site_of};
 use super::reports::Reported;
@@ -92,7 +92,7 @@ impl Checker<'_> {
             ret,
             bounds: &bounds,
             mut_site: (!muts.is_empty()).then_some(&mut_site),
-            function: None,
+            declarer: Declarer::None,
         };
         let mut parts = MutParts::default();
         let written = (site.written, site.angles);

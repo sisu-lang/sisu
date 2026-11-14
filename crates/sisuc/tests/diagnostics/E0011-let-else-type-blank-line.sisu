@@ -1,0 +1,6 @@
+fn f(o: i64?) {
+    let w: i64 = o
+
+    else { return }
+}
+fn main() {}
