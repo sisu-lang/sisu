@@ -354,6 +354,7 @@ ob?.ste(mut $)
 put(ob, $, 1)
 put(ob, $)
 put(ob, mut $)
+put(self, mut $)
 put(ob, x: $, n: 1)
 Bx.put($, 1)
 Bx.put($)
@@ -364,6 +365,10 @@ St.put(st, $)
 St.put(st, mut $)
 E.push($, 1)
 E.push(E.A, $)
+# The same call where the context expects a type: the result must meet it for a safe fix.
+let _s: string = St.m($)
+return St.m($)
+take(St.m($))
 # A `mut` call with an exit in another argument or in the receiver: the call is rebound, and its
 # exit flag follows its new arguments.
 take2(mut $, some(k) ?? return)
