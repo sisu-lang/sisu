@@ -61,3 +61,7 @@ panics.
 - The run-time panics "value does not fit in `u8`" and "value is not a valid
   `char`" go away. A diagnostic code that no program can reach any longer is
   marked retired under ADR 0013.
+
+Note (2026-11-14, ADR 0051): The table gains the `string` to `i64` row. Parsing a string fails for
+several reasons (empty, a bad character, overflow) and still returns an
+optional, as Swift's `Int("x")` does.

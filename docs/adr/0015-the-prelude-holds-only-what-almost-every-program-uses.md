@@ -70,3 +70,7 @@ same reason.
   top-level name, so each addition must meet the rule above.
 - A function that does not meet the rule goes in a module, such as `os` and
   `io` in milestone 11.
+
+Note (2026-11-14, ADR 0051): `Error`, `Convert` and `AnyError` are in `lang.sisu`, not in the prelude.
+`read_file`, `write_file` and `IoError` are a temporary exception to "almost
+every program" until milestone 11 moves them into `io`.

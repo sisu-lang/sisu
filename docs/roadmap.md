@@ -334,6 +334,8 @@ These came out of the milestone 2 design and are now part of its spec:
   ([ADR 0016](adr/0016-word-functions-trust-the-utf-8-invariant.md); added
   after milestone 5, for the `wc` benchmark).
 
+- `site/programs/pending/total.sisu` compiles from milestone 12, stage 4.
+
 ### Decided in milestone 6
 
 - Floats follow IEEE 754: `f64` arithmetic, methods and comparisons never
@@ -488,7 +490,7 @@ how to avoid it. Each milestone keeps the table current.
 | `[v; n]` | `n` is negative, or the array would be too large to allocate (`[0; 9223372036854775807]`) | check `n` first, and keep it to a size the program can use |
 | `xs.sum()` on `[i64]` | the sum overflows | gap |
 | `panic(msg)`, `todo` | always | they are the deliberate panics |
-| `print`, `eprint`, `read_line` | the write or read fails | none until `Result` (milestone 12) |
+| `print`, `eprint`, `read_line` | the write or read fails | none for these; file functions return results (milestone 12) |
 | Conversions | never | they return an optional |
 | `f64` arithmetic, methods, comparisons | never | IEEE 754 ([ADR 0017](adr/0017-floats-follow-ieee-754.md)) |
 | `x.clamp`, `x.min`, `x.max` | never | |
@@ -703,7 +705,7 @@ The compiler is fuzzed in two stages:
 | 9 | Closures and lazy iterator methods (`map`, `filter`, `count`, `sum`), plus a `filter_some`-style method on `[T?]` | Closures first: a function that takes an `(i64) -> bool` runs with a closure that captures a local. Then `words.filter(w => w.len() > 3).count()` runs |
 | 10 | Records, named arguments, default parameters, and `p as name` to bind a whole sub-pattern | A `Point` record prints and compares with no hand-written methods |
 | 11 | Modules, `pub` visibility, and a standard library written in Sisu (`Map`), including `os.env(name)`, `os.exit(code)`, and an `io` module with `read_lines()`, read-everything and `read_bytes()` | Modules first: a program of two files, each with a class of the same name, builds and runs. Then a word-frequency tool reads like a Python script |
-| 12 | Error handling: `Result<T, E>` and a `?` operator | File I/O code has no nested error checks |
+| 12 | Error handling: `T \| E` (`Result<T, E>`) and a `?` operator, in eight plan stages; the settled decisions are in [ADR 0051](adr/0051-a-failure-is-written-t-or-e.md) | File I/O code has no nested error checks |
 
 Every milestone's "Done when" also includes generator rules for its features ([ADR 0033](adr/0033-every-language-feature-has-a-generator-rule.md)).
 
@@ -817,8 +819,6 @@ The first candidates:
   `weak` back links, is the worst case for reference counting. A
   breadth-first search over a graph held as `[[i64]]` measures uniqueness
   and bounds checks on nested arrays.
-- 12: `?` on a path that runs often: a calculator whose every parse and
-  evaluation step returns a `Result`.
 
 A program that also gets ports for the tables in
 [Benchmarks](benchmarks.md) runs at three input sizes, so a cost that grows
@@ -1657,6 +1657,9 @@ accepted.
 
 ## Open decisions
 
+- **Before file handles.** Milestone 12 adds file functions but no file handle.
+  User drop code and recovering from a panic are still due before a file
+  handle exists.
 - **Same-scope shadowing.** Resolved in milestone 4: allowed. `let n = n.trim()`
   in the same scope declares a new binding, and the old one stays visible to
   its own right-hand side.

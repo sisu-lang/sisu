@@ -62,3 +62,7 @@ print of a value that can be `None`.
   by the `Some` rule of ADR 0024.
 - The program fuzzer prints optionals at the top level, so the generated
   programs reach W0015.
+
+Note (2026-11-14, ADR 0051): The `unit` print forms are reversed, because `unit` prints as `()`.
+E0059's no-value form moves to E0043, and E0098 retires. E0138's `unit` form is
+the type-argument rule of milestone 8, not of this ADR.

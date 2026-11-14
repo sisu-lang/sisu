@@ -57,8 +57,9 @@ The write after a call that puts the final value of a `mut` parameter into the
 place of its `mut` argument. It runs on every return path of the function.
 
 **Block value**:
-The value of a block's last statement when that statement is an expression;
-otherwise the block has no value.
+The value of a block's last statement when that statement is an expression. A
+block with no tail is a `unit` value. An `if` with no `else` whose branch is not
+`unit` or `never` has no value.
 
 **Separator**:
 What ends one statement, field, variant or arm and starts the next: a
@@ -90,7 +91,8 @@ Two or more comparisons in one direction written together, such as
 `a < b <= c`, meaning each adjacent pair holds.
 
 **`unit`**:
-The type of an expression that produces no value.
+The type with one value, printed as `()`; the return type of a function that
+writes no return type; an ordinary type that can be a type argument.
 _Avoid_: void
 
 **`never`**:
@@ -100,7 +102,8 @@ The type of an expression that does not finish, such as `return`, or a
 **Conversion**:
 A call written with a type's name, `T(x)`, that turns a value into an
 adjacent type, such as `u8(n)`, `i64(c)` or `f64(n)`. A conversion that can fail
-returns `T?`.
+returns `T?`. Parsing a string, `i64(s)`, is a conversion. The `Convert`
+interface that `?` and `fail` use is separate from `T(x)`.
 _Avoid_: cast, fallible conversion, `as`
 
 **Panic**:
@@ -466,9 +469,10 @@ replaces it.
 _Avoid_: derived, synthesized, auto-implemented
 
 **Language interface**:
-One of the four prelude interfaces the language itself uses: `Display` for
-`print` and interpolation, `Eq` for `==` and `!=`, `Ord` for `<`, `<=`, `>`
-and `>=`, and `AnyObject` for `is` and `weak` in generic code.
+An interface that the language itself uses. `Display` is for `print` and
+interpolation. `Eq` is for `==` and `!=`. `Ord` is for `<`, `<=`, `>` and `>=`.
+`AnyObject` is for `is` and `weak` in generic code. `Error` is for the right
+side of `|` and for `main`. `Convert` is for `?`.
 
 **Requirement**:
 A method signature or associated type an interface declares, which each
@@ -586,6 +590,19 @@ _Avoid_: failure type
 **Unused result**:
 An unused value whose type is a result. Unlike other unused values it is
 an error, not a warning; `let _ = e` ignores it on purpose.
+
+**`AnyError`**:
+The struct that holds any error, for a failure that no caller matches. It is
+not the same as `any Error`, an interface value.
+
+**Source**:
+The error that caused another error, given by `source()`. The sources of an
+error, in order, are its **chain**.
+
+**Error return trace**:
+The sites that a failure passed through, from `fail`, `Err(...)` or the first
+`?`. A failing `main` prints it when `SISU_BACKTRACE` is set.
+_Avoid_: backtrace, which names a stack of calls
 
 ## Modules
 

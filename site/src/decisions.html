@@ -111,8 +111,9 @@ The design decisions behind Sisu, each written down as a short record with its r
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0013-diagnostics-have-stable-codes.md"><span class="num">0013</span><b>Diagnostics have stable codes<small>amended by 0049</small></b><span>Every error and warning has a code that is never reused, one wording, and an explanation that a test compiles.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0049-one-name-resolver-and-one-poison-rule.md"><span class="num">0049</span><b>One name resolver and one poison rule</b><span>One function in the checker decides what a name means. A poisoned value has a type only when the source states it apart from the poisoned part.</span></a></li>
         <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0040-a-failure-the-caller-can-handle-is-a-value-not-a-panic.md"><span class="num">0040</span><b>A failure the caller can handle is a value, not a panic</b><span>A function whose failure the caller can check gives a total result, an optional or a <code>Result</code>. A panic stays only where every value is worse.</span></a></li>
+        <li><a href="https://github.com/sisu-lang/sisu/blob/main/docs/adr/0051-a-failure-is-written-t-or-e.md"><span class="num">0051</span><b>A failure is written <code>T | E</code></b><span>A function that can fail returns <code>T | E</code>, shorthand for <code>Result</code>; <code>fail</code> makes a failure and <code>?</code> passes one up.</span></a></li>
       </ul>
-      <!-- source: docs/adr/0003-arithmetic-panics.md, docs/adr/0013-diagnostics-have-stable-codes.md, docs/adr/0049-one-name-resolver-and-one-poison-rule.md, docs/adr/0040-a-failure-the-caller-can-handle-is-a-value-not-a-panic.md -->
+      <!-- source: docs/adr/0003-arithmetic-panics.md, docs/adr/0013-diagnostics-have-stable-codes.md, docs/adr/0049-one-name-resolver-and-one-poison-rule.md, docs/adr/0040-a-failure-the-caller-can-handle-is-a-value-not-a-panic.md, docs/adr/0051-a-failure-is-written-t-or-e.md -->
 
       <h2 id="runtime">Runtime, I/O and concurrency</h2>
       <ul class="rows">

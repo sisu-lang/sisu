@@ -61,3 +61,6 @@ conversions: `u8(x)` and `char(n)` panicked, and now return an optional.
   decision when its area changes.
 - Specs written before 2026-10-29 were not searched for panics. Each one gets
   a check when its plan runs.
+
+Note (2026-11-14, ADR 0051): `i64(s)` is its form 2. The standard-stream panic stays. Milestone 12
+adds no panicking function.

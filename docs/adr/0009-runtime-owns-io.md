@@ -44,3 +44,6 @@ return only integers, `bool`, floats and pointers.
   [ADR 0014](0014-strings-are-utf-8-values.md): the first operation that
   turns bytes into a string, such as a read from standard input, validates
   them.
+
+Note (2026-11-14, ADR 0051): File functions return results, while the standard streams still panic.
+The `i64(s)` parse is runtime code until milestone 11.
