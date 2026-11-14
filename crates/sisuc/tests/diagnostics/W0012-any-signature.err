@@ -41,32 +41,6 @@ warning[W0012]: interface `I3` is never used
    |
    = help: delete it, or name it `_I3` if it is kept on purpose
 
-warning[W0012]: interface `I4` is never used
-  --> W0012-any-signature.sisu:10:11
-   |
-10 | interface I4<T> {
-   |           ^^ never used
-   |
-  ::: W0012-any-signature.sisu:60:19
-   |
-60 | fn dead_alias(_x: Al4) {}
-   |                   --- used here, in `dead_alias`, which is never called
-   |
-   = help: delete it, or name it `_I4` if it is kept on purpose
-
-warning[W0012]: interface `I5` is never used
-  --> W0012-any-signature.sisu:13:11
-   |
-13 | interface I5<T> {
-   |           ^^ never used
-   |
-  ::: W0012-any-signature.sisu:62:13
-   |
-62 |     let _x: Al5 = None
-   |             --- used here, in `dead_alias_let`, which is never called
-   |
-   = help: delete it, or name it `_I5` if it is kept on purpose
-
 warning[W0012]: interface `I6` is never used
   --> W0012-any-signature.sisu:16:11
    |
@@ -184,8 +158,11 @@ warning[W0012]: enum `P` is never built
    |
 40 | enum P<A, B> { X(A, B) }
    |      ^ never built
+...
+43 |     fn dead_method(self, _x: P<any I10<i64>, any I10<bool>>?) {}
+   |                              - named here
    |
-   = help: delete it, or name it `_P` if it is kept on purpose
+   = help: delete it and each type that names it, directly or through an alias, or name it `_P` everywhere if it is kept on purpose
 
 warning[W0012]: method `dead_method` is never called
   --> W0012-any-signature.sisu:43:8
@@ -302,5 +279,5 @@ warning[W0012]: the `extend` block of `Ext` is never used
    |
    = help: delete it
 
-sisu: 28 warnings
+sisu: 26 warnings
 sisu: for more on a code, run `sisu explain <code>`: W0012

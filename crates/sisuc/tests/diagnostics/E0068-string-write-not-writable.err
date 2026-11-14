@@ -1,0 +1,249 @@
+error[E0001]: cannot assign to a part of `self`
+  --> E0068-string-write-not-writable.sisu:10:9
+   |
+10 |         self.s[0] = "x"
+   |         ^^^^^^^^^^^^^^^
+   |
+   = help: copy `self` into a `let mut` variable
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:10:9
+   |
+10 |         self.s[0] = "x"
+   |         ^^^^^^ this is a string
+   |
+   = help: for bytes, write `let bs = self.s.bytes()` once, then `bs[i]`; for characters, write `let cs = self.s.chars()` once, then `cs[i]`
+
+error[E0001]: cannot assign to an element of `T`
+  --> E0068-string-write-not-writable.sisu:17:5
+   |
+14 | const T = "ab"
+   |       - declared with `const` here
+...
+17 |     T[0] = "x"
+   |     ^^^^^^^^^^
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:17:5
+   |
+17 |     T[0] = "x"
+   |     ^ this is a string
+   |
+   = help: for bytes, write `let bs = T.bytes()` once, then `bs[i]`; for characters, write `let cs = T.chars()` once, then `cs[i]`
+
+error[E0001]: cannot assign to an element of `t`
+  --> E0068-string-write-not-writable.sisu:22:9
+   |
+21 |     for t in ["ab"] {
+   |         - bound by `for` here
+22 |         t[0] = "x"
+   |         ^^^^^^^^^^
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:22:9
+   |
+22 |         t[0] = "x"
+   |         ^ this is a string
+   |
+   = help: for bytes, write `let bs = t.bytes()` once, then `bs[i]`; for characters, write `let cs = t.chars()` once, then `cs[i]`
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:28:5
+   |
+28 |     t[..2][0] = "x"
+   |     ^^^^^^ this is a string
+   |
+   = help: for bytes, write `let bs = t[..2].bytes()` once, then `bs[i]`; for characters, write `let cs = t[..2].chars()` once, then `cs[i]`
+
+error[E0001]: cannot assign to an element of `t`
+  --> E0068-string-write-not-writable.sisu:33:5
+   |
+32 |     let t = "ab"
+   |         - declared with `let` here
+33 |     t[0] = "x"
+   |     ^^^^^^^^^^
+   |
+help: declare it with `let mut`
+   |
+32 |     let mut t = "ab"
+   |         +++
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:33:5
+   |
+33 |     t[0] = "x"
+   |     ^ this is a string
+   |
+   = help: for bytes, write `let bs = t.bytes()` once, then `bs[i]`; for characters, write `let cs = t.chars()` once, then `cs[i]`
+
+error[E0001]: cannot assign to an element of `t`
+  --> E0068-string-write-not-writable.sisu:37:5
+   |
+36 | fn parameter(t: string) {
+   |              - declared as a parameter here
+37 |     t[0] = "x"
+   |     ^^^^^^^^^^
+   |
+   = help: copy it into a variable: `let mut t = t`
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:37:5
+   |
+37 |     t[0] = "x"
+   |     ^ this is a string
+   |
+   = help: for bytes, write `let bs = t.bytes()` once, then `bs[i]`; for characters, write `let cs = t.chars()` once, then `cs[i]`
+
+error[E0001]: cannot assign to a part of `o`
+  --> E0068-string-write-not-writable.sisu:42:5
+   |
+41 |     let o = O(s: "a")
+   |         - declared with `let` here
+42 |     o.s[0] = "x"
+   |     ^^^^^^^^^^^^
+   |
+help: declare it with `let mut`
+   |
+41 |     let mut o = O(s: "a")
+   |         +++
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:42:5
+   |
+42 |     o.s[0] = "x"
+   |     ^^^ this is a string
+   |
+   = help: for bytes, write `let bs = o.s.bytes()` once, then `bs[i]`; for characters, write `let cs = o.s.chars()` once, then `cs[i]`
+
+error[E0001]: cannot assign to an element of `x`
+  --> E0068-string-write-not-writable.sisu:47:9
+   |
+46 |     if let x = o {
+   |            - bound by `if let` here
+47 |         x[0] = "x"
+   |         ^^^^^^^^^^
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:47:9
+   |
+47 |         x[0] = "x"
+   |         ^ this is a string
+   |
+   = help: for bytes, write `let bs = x.bytes()` once, then `bs[i]`; for characters, write `let cs = x.chars()` once, then `cs[i]`
+
+error[E0001]: cannot assign to an element of `x`
+  --> E0068-string-write-not-writable.sisu:54:13
+   |
+53 |         Some(x) => {
+   |              - bound by `match` here
+54 |             x[0] = "x"
+   |             ^^^^^^^^^^
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:54:13
+   |
+54 |             x[0] = "x"
+   |             ^ this is a string
+   |
+   = help: for bytes, write `let bs = x.bytes()` once, then `bs[i]`; for characters, write `let cs = x.chars()` once, then `cs[i]`
+
+error[E0001]: cannot assign to an element of `t`
+  --> E0068-string-write-not-writable.sisu:62:5
+   |
+61 |     let t = "ab"
+   |         - declared with `let` here
+62 |     t[0] += "x"
+   |     ^^^^^^^^^^^
+   |
+help: declare it with `let mut`
+   |
+61 |     let mut t = "ab"
+   |         +++
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:62:5
+   |
+62 |     t[0] += "x"
+   |     ^ this is a string
+   |
+   = help: for bytes, write `let bs = t.bytes()` once, then `bs[i]`; for characters, write `let cs = t.chars()` once, then `cs[i]`
+
+error[E0001]: cannot assign to an element of `ts`
+  --> E0068-string-write-not-writable.sisu:67:5
+   |
+66 |     let ts = ["ab"]
+   |         -- declared with `let` here
+67 |     ts[0][0] = "x"
+   |     ^^^^^^^^^^^^^^
+   |
+help: declare it with `let mut`
+   |
+66 |     let mut ts = ["ab"]
+   |         +++
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:67:5
+   |
+67 |     ts[0][0] = "x"
+   |     ^^^^^ this is a string
+   |
+   = help: for bytes, write `let bs = ts[0].bytes()` once, then `bs[i]`; for characters, write `let cs = ts[0].chars()` once, then `cs[i]`
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:72:9
+   |
+72 |         t[..1][0] = "x"
+   |         ^^^^^^ this is a string
+   |
+   = help: for bytes, write `let bs = t[..1].bytes()` once, then `bs[i]`; for characters, write `let cs = t[..1].chars()` once, then `cs[i]`
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:77:5
+   |
+77 |     t[..1][0] = "x"
+   |     ^^^^^^ this is a string
+   |
+   = help: for bytes, write `let bs = t[..1].bytes()` once, then `bs[i]`; for characters, write `let cs = t[..1].chars()` once, then `cs[i]`
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:82:5
+   |
+82 |     ss[0][..2][0] = "x"
+   |     ^^^^^^^^^^ this is a string
+   |
+   = help: to change a character, write `let mut cs = ss[0].chars()`, change `cs[i]`, then write `ss[0] = string(cs)`
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:87:5
+   |
+87 |     o.s[..1][0] = "x"
+   |     ^^^^^^^^ this is a string
+   |
+   = help: to change a character, write `let mut cs = o.s.chars()`, change `cs[i]`, then write `o.s = string(cs)`
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:91:5
+   |
+91 |     t[0] = "x"
+   |     ^ this is a string
+   |
+   = help: to change a character, write `let mut cs = t.chars()`, change `cs[i]`, then write `t = string(cs)`
+
+error[E0068]: a string has no single index
+  --> E0068-string-write-not-writable.sisu:96:5
+   |
+96 |     o.s[0] = "x"
+   |     ^^^ this is a string
+   |
+   = help: to change a character, write `let mut cs = o.s.chars()`, change `cs[i]`, then write `o.s = string(cs)`
+
+error[E0068]: a string has no single index
+   --> E0068-string-write-not-writable.sisu:103:9
+    |
+103 |         self.s[..1][0] = "x"
+    |         ^^^^^^^^^^^ this is a string
+    |
+    = help: for bytes, write `let bs = self.s[..1].bytes()` once, then `bs[i]`; for characters, write `let cs = self.s[..1].chars()` once, then `cs[i]`
+
+sisu: 28 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0068

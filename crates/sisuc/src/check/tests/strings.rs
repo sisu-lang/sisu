@@ -1,6 +1,7 @@
 //! `string`: literals, `+`, comparison, `len()`, and the operators and tests it does not take.
 
 use super::*;
+use crate::diagnostic::{NAME_STEPS, string_index_names};
 
 /// `src` with an empty `main` after it.
 fn with_main(src: &str) -> String {
@@ -1001,4 +1002,47 @@ fn a_never_part_of_a_literal_as_an_argument_should_be_underlined_at_the_part() {
     for &(stmt, expected) in rows {
         codes_texts(&row_program(stmt), stmt, expected);
     }
+}
+
+/// The names that the help of a single index of a string writes, for each base: a name that the
+/// base holds as a whole word gets the first number from 2 that the base does not hold.
+#[test]
+fn a_string_index_help_should_name_new_words_that_the_base_does_not_hold() {
+    let rows: &[(&str, [&str; 3])] = &[
+        ("cs", ["bs", "cs2", "i"]),
+        ("bs", ["bs2", "cs", "i"]),
+        ("ts[i]", ["bs", "cs", "i2"]),
+        ("(cs + cs2)", ["bs", "cs3", "i"]),
+        // No whole word: `ics` holds `cs` only inside a longer word.
+        ("ics", ["bs", "cs", "i"]),
+    ];
+    for &(base, names) in rows {
+        assert_eq!(string_index_names(base), names, "row `{base}`");
+    }
+}
+
+/// The search for a fresh name takes steps in proportion to the words of the base, not to their
+/// square. The base holds the words `bs`, `bs2` and on, so the search for `bs` tries each number.
+/// With N = 100 words, a quadratic search takes 5350, 20700 and 46050 steps for N, 2N and 3N: the
+/// second step adds 25350, and `assert_near_linear` allows 10% above the first, 15350. A linear
+/// search takes about 2N + 3 steps: each step adds 200, and the limit is 220.
+#[test]
+fn the_search_for_a_fresh_name_should_read_each_word_once() {
+    let steps = |n: usize| {
+        let base = (1..=n)
+            .map(|i| {
+                if i == 1 {
+                    "bs".to_owned()
+                } else {
+                    format!("bs{i}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        NAME_STEPS.set(0);
+        let [bs, ..] = string_index_names(&base);
+        assert_eq!(bs, format!("bs{}", n + 1));
+        NAME_STEPS.get()
+    };
+    assert_near_linear(steps(100), steps(200), steps(300));
 }

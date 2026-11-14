@@ -1,0 +1,121 @@
+error[E0130]: `match` does not cover `Point`
+  --> E0130-missing-arm.sisu:27:5
+   |
+27 |     match s {
+   |     ^^^^^
+   |
+help: add an arm for `Point`
+   |
+30 +         Point => todo
+   |
+
+error[E0130]: `match` does not cover `Rect(_, _)`
+  --> E0130-missing-arm.sisu:34:5
+   |
+34 |     match s {
+   |     ^^^^^
+   |
+help: add an arm for `Rect(_, _)`
+   |
+37 +         Rect(_, _) => todo
+   |
+
+error[E0130]: `match` does not cover `None`
+  --> E0130-missing-arm.sisu:41:5
+   |
+41 |     match s {
+   |     ^^^^^
+   |
+help: add an arm for `None`
+   |
+43 +         None => todo
+   |
+
+error[E0130]: `match` does not cover `A(Y)`
+  --> E0130-missing-arm.sisu:47:5
+   |
+47 |     match w {
+   |     ^^^^^
+48 |         A(X) => 1
+   |         ---- `A(X)` covers only `X`
+   |
+help: add an arm for `A(Y)`
+   |
+50 +         A(Y) => todo
+   |
+
+error[E0130]: `match` does not cover `Err(_)`
+  --> E0130-missing-arm.sisu:54:5
+   |
+54 |     match r {
+   |     ^^^^^
+   |
+help: add an arm for `Err(_)`
+   |
+56 +         Err(_) => todo
+   |
+
+error[E0130]: `match` does not cover `On(false, false)`
+  --> E0130-missing-arm.sisu:60:5
+   |
+60 |     match f {
+   |     ^^^^^
+61 |         On(true, _) => 1
+   |         ----------- `On(true, _)` covers only `true, _`
+   |
+help: add an arm for `On(false, false)`
+   |
+63 +         On(false, false) => todo
+   |
+
+error[E0130]: `match` does not cover `Some(None)`
+  --> E0130-missing-arm.sisu:67:5
+   |
+67 |     match s {
+   |     ^^^^^
+   |
+help: add an arm for `Some(None)`
+   |
+70 +         Some(None) => todo
+   |
+
+error[E0130]: `match` does not cover `Point`
+  --> E0130-missing-arm.sisu:73:32
+   |
+73 | fn one_line(s: Shape) -> i64 { match s { Circle(_) => 1; Rect(_, _) => 2 } }
+   |                                ^^^^^
+   |
+help: add an arm for `Point`
+   |
+73 ~ fn one_line(s: Shape) -> i64 { match s { Circle(_) => 1; Rect(_, _) => 2
+74 +     Point => todo
+   |
+
+error[E0130]: `match` does not cover `_`
+  --> E0130-missing-arm.sisu:76:5
+   |
+76 |     match s {}
+   |     ^^^^^
+   |
+help: add a `_ =>` arm
+   |
+76 ~     match s {
+77 +         _ => todo
+78 ~     }
+   |
+
+error[E0130]: `match` does not cover `_`
+  --> E0130-missing-arm.sisu:80:5
+   |
+80 |     match s {}
+   |     ^^^^^
+   |
+help: add a `_ =>` arm
+   |
+80 ~     match s {
+81 +         _ => todo
+82 ~     }
+   |
+
+sisu: 10 errors
+sisu: for more on a code, run `sisu explain <code>`: E0130

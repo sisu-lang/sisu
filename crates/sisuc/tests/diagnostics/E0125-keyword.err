@@ -1,0 +1,39 @@
+error[E0125]: `If` is not a variant here
+  --> E0125-keyword.sisu:10:9
+   |
+10 |         If => print(1)
+   |         ^^
+   |
+   = help: a binding starts with a lower-case letter, but `if` is a keyword; use a different name
+
+error[E0125]: `Import` is not a variant here
+  --> E0125-keyword.sisu:17:9
+   |
+17 |         Import => print(1)
+   |         ^^^^^^
+   |
+   = help: a binding starts with a lower-case letter, but `import` is reserved; use a different name
+
+error[E0125]: `Print` is not a variant here
+  --> E0125-keyword.sisu:24:9
+   |
+24 |         Print => print(1)
+   |         ^^^^^
+   |
+   = help: a binding starts with a lower-case letter
+help: write `print`
+   |
+24 -         Print => print(1)
+24 +         print => print(1)
+   |
+
+error[E0125]: `If` is not a variant here
+  --> E0125-keyword.sisu:30:17
+   |
+30 |     if let Some(If) = x {
+   |                 ^^
+   |
+   = help: a binding starts with a lower-case letter, but `if` is a keyword; use a different name
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0125

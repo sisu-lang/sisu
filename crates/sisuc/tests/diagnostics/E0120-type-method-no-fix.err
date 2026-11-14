@@ -1,0 +1,100 @@
+error[E0018]: a struct method cannot take `mut self` yet
+  --> E0120-type-method-no-fix.sisu:20:11
+   |
+20 |     fn bm(mut self, x: i64) {
+   |           ^^^
+   |
+   = help: take `self` and return the changed copy
+
+error[E0120]: `bumpm` is a method of `Tree`; call it on a value
+  --> E0120-type-method-no-fix.sisu:40:10
+   |
+40 |     Tree.bumpm(1, 1)
+   |          ^^^^^
+
+error[E0120]: `bumpm` is a method of `Tree`; call it on a value
+  --> E0120-type-method-no-fix.sisu:44:10
+   |
+44 |     Tree.bumpm(t, 1)
+   |          ^^^^^
+
+error[E0120]: `bumpm` is a method of `Tree`; call it on a value
+  --> E0120-type-method-no-fix.sisu:48:10
+   |
+48 |     Tree.bumpm()
+   |          ^^^^^
+
+error[E0120]: `bumpm` is a method of `Tree`; call it on a value
+  --> E0120-type-method-no-fix.sisu:52:10
+   |
+52 |     Tree.bumpm(x: 1)
+   |          ^^^^^
+
+error[E0120]: `bumpm` is a method of `Tree`; call it on a value
+  --> E0120-type-method-no-fix.sisu:56:10
+   |
+56 |     Tree.bumpm(t, x: 1)
+   |          ^^^^^
+
+error[E0120]: `b2` is a method of `Tree`; call it on a value
+  --> E0120-type-method-no-fix.sisu:57:10
+   |
+57 |     Tree.b2(t, 1, y: 2)
+   |          ^^
+
+error[E0120]: `takes` is a method of `Tree`; call it on a value
+  --> E0120-type-method-no-fix.sisu:61:10
+   |
+61 |     Tree.takes(mut t, 1)
+   |          ^^^^^
+
+error[E0120]: `bumpm` is a method of `Tree`; call it on a value
+  --> E0120-type-method-no-fix.sisu:65:10
+   |
+65 |     Tree.bumpm<i64>(t, 1)
+   |          ^^^^^
+
+error[E0120]: `g` is a method of `E`; call it on a value
+  --> E0120-type-method-no-fix.sisu:66:7
+   |
+66 |     E.g<i64>(e, 1)
+   |       ^
+
+error[E0137]: `g` takes no type arguments
+  --> E0120-type-method-no-fix.sisu:66:8
+   |
+66 |     E.g<i64>(e, 1)
+   |        ^^^^^
+   |
+help: remove the type arguments
+   |
+66 -     E.g<i64>(e, 1)
+66 +     E.g(e, 1)
+   |
+
+error[E0120]: `bumpm` is a method of `Tree`; call it on a value
+  --> E0120-type-method-no-fix.sisu:70:19
+   |
+70 |     let _m = Tree.bumpm
+   |                   ^^^^^
+
+error[E0105]: `Tree` is a type, not a value
+  --> E0120-type-method-no-fix.sisu:74:5
+   |
+74 |     Tree.h(t, 1)
+   |     ^^^^
+
+error[E0118]: `E` has no variant `k`
+  --> E0120-type-method-no-fix.sisu:75:7
+   |
+75 |     E.k(e)
+   |       ^
+   |
+help: a variant with a similar name exists: `A`
+   |
+75 -     E.k(e)
+75 +     E.A(e)
+   |
+
+sisu: 14 errors
+sisu: for more on a code, run `sisu explain <code>`: E0018, E0105, E0118, E0120, E0137

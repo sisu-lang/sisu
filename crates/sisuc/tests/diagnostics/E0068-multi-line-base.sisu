@@ -1,0 +1,33 @@
+// GIVEN a single index or a `get` with no range, of a string base that runs over more than one line
+// WHEN `sisu check` runs on it
+// THEN it reports E0068 for each index, and E0032 for the `get`
+// AND a base that one line holds when its line breaks go is quoted as that one line
+// AND a base with a statement in a block is not quoted
+fn main() {
+    let t = "abc"
+    let c = true
+    let mut ts = ["ab"]
+    print((t
+        + "d")[0])
+    print({
+        let b = "x"
+        b
+    }[0])
+    print({
+        let b = "x"
+        b
+    }.get(0))
+    ts[{
+        let a = 0
+        a
+    }][0] = "x"
+    print(ts[{
+        let a = 0
+        a
+    }][0])
+    print(if c {
+        "a"
+    } else {
+        "b"
+    }[0])
+}

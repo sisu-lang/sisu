@@ -368,7 +368,10 @@ impl<'a> Checker<'_> {
             return None;
         }
         let uses = self.aliases.uses;
-        let resolved = self.resolve(ty)?;
+        self.extend_head = Some(ty.span.start());
+        let resolved = self.resolve(ty);
+        self.extend_head = None;
+        let resolved = resolved?;
         let form = match resolved.kind() {
             TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..)
                 if !resolved.has_assoc() =>

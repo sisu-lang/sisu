@@ -1,0 +1,14 @@
+error[E0070]: `put` is a method, not a function
+  --> E0070-enum-mut-parameter.sisu:16:5
+   |
+16 |     put(s, a)
+   |     ^^^
+   |
+help: try calling `put` as a method, then fix its arguments
+   |
+16 -     put(s, a)
+16 +     s.put(a)
+   |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0070

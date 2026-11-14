@@ -501,7 +501,7 @@ impl Checker<'_> {
 
     /// What `name` stands for in a read, when it is no local, constant or prelude variant: the
     /// wrong-kind answers. An inner scope wins, so a type parameter comes first.
-    fn value_kind(&self, name: Symbol) -> Resolved {
+    pub(super) fn value_kind(&self, name: Symbol) -> Resolved {
         if let Some(place) = self.body.type_param(name) {
             return Resolved::TypeParam(place);
         }
@@ -511,6 +511,7 @@ impl Checker<'_> {
         let taken = self.names.class(name).is_some()
             || self.names.struct_id(name).is_some()
             || self.names.enum_id(name).is_some()
+            || self.names.alias(name).is_some()
             || self.names.function(name).is_some();
         if !taken && let Some(Declared::Known(id)) = self.names.interface(name) {
             return Resolved::Item(ItemId::Interface(id));

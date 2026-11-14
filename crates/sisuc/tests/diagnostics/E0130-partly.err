@@ -7,9 +7,9 @@ error[E0130]: `match` does not cover `Add(Num(_), _)`
  9 |         Add(Add(a, b), c) => eval(a) + eval(b) + eval(c)
    |         ----------------- `Add(Add(_, _), _)` covers only `Add(_, _), _`
    |
-help: add a `_ =>` arm
+help: add an arm for `Add(Num(_), _)`
    |
-12 +         _ => todo
+12 +         Add(Num(_), _) => todo
    |
 
 sisu: 1 error

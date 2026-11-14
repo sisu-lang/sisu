@@ -1,0 +1,30 @@
+// GIVEN a method of a struct with a `mut` parameter, called as a function in a method of the struct, as `put(self, mut a)`
+// AND a `mut` argument is a value or a name that cannot change, or `mut` stands at a parameter that has none
+// WHEN `sisu check` runs on it
+// THEN it reports E0070 for each call, with an unsafe fix that calls the method on `self`
+// AND the fix is unsafe since the fixed call does not check
+struct St {
+    n: i64
+
+    fn put(self, mut x: i64) {
+        x = 1
+    }
+
+    fn plain(self, x: i64) {}
+
+    fn literal(self) {
+        put(self, mut 1)
+    }
+
+    fn let_name(self) {
+        let a = 1
+        put(self, mut a)
+    }
+
+    fn extra_mut(self) {
+        let mut a = 1
+        plain(self, mut a)
+    }
+}
+
+fn main() {}

@@ -1,6 +1,6 @@
 // GIVEN the method `put` of a generic struct, with a `mut` parameter
-// WHEN it is called on the type, as `G.put(c.m.v)`
-// THEN the value at the `mut` parameter gets the `if let` help (20:11), as a place does
+// WHEN it is called on the type, as `G.put(0, c.m.v)`
+// THEN the value at the `mut` parameter gets the `if let` help (20:14), as a place does
 class Leaf {
     mut v: i64
 }
@@ -17,7 +17,7 @@ struct G<T> {
 }
 
 fn row(c: Tree??) {
-    G.put(c.m.v)
+    G.put(0, c.m.v)
 }
 
 fn main() {

@@ -217,7 +217,10 @@ impl Checker<'_> {
                 }
             },
             ExprKind::Field { base, name, safe } => {
-                if !safe && let Some(checked) = self.type_path(e.span, base, name, None, expected) {
+                if !safe
+                    && let Some(checked) =
+                        self.type_path(e.span, base, name, None, (expected, false))
+                {
                     return checked;
                 }
                 self.member(e.span, *safe, base, name, |c, checked| {

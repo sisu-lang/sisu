@@ -782,15 +782,19 @@ impl Checker<'_> {
     }
 
     /// `A.member`, or `A.member(args)` when `call` gives the arguments and the span of their
-    /// parentheses, where `site` writes the alias `A`: the variant of the enum that it names, or of
-    /// `Option` for an optional. `None` when `A` is no alias, or names a type that has no
-    /// variant.
+    /// parentheses. `site` writes the alias `A`. The result is one of these:
+    /// - the variant of the enum that `A` names, or of `Option` for an optional;
+    /// - the error of a method of the struct that `A` names.
+    ///
+    /// `None` when `A` is no alias, or names a type that has no such member. `typed` is whether
+    /// the member is written with type arguments.
     pub(super) fn alias_path(
         &mut self,
         span: Span,
         site: Site<'_>,
         member: &ast::Ident,
         call: Option<(&[ast::Arg], Span)>,
+        typed: bool,
     ) -> Option<Checked> {
         match self.through_site(site.name, site.written, site.angles) {
             Via::Not => None,
@@ -801,7 +805,8 @@ impl Checker<'_> {
                 // An enum with no parameter binds none of the alias's, which is reported once the
                 // variant checks; a generic enum binds them in `enum_path`.
                 TypeKind::Enum(id, _) if self.enums[id.0].type_params.is_empty() => {
-                    let checked = self.enum_path(span, id, member, call, site, Some(&through));
+                    let checked =
+                        self.enum_path(span, id, member, call, (site, typed), Some(&through));
                     if checked.is_ok() && !through.params.is_empty() {
                         let reported = self.report_unbound_alias(
                             site,
@@ -813,11 +818,12 @@ impl Checker<'_> {
                     Some(checked)
                 }
                 TypeKind::Enum(id, _) => {
-                    Some(self.enum_path(span, id, member, call, site, Some(&through)))
+                    Some(self.enum_path(span, id, member, call, (site, typed), Some(&through)))
                 }
                 TypeKind::Optional(_) => {
                     Some(self.optional_alias_path(span, site, &through, member, call))
                 }
+                TypeKind::Struct(id, _) => self.struct_path(id, member, call, (site, typed)),
                 _ => None,
             },
         }
