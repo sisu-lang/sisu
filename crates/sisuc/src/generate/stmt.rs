@@ -260,30 +260,104 @@ impl Gen<'_> {
         self.effect = effect;
     }
 
+    /// A `unit` value: half the time a call of a `unit` function, when there is one, and else `{}`.
+    fn unit_value(&mut self) {
+        if !self.callees(&Ty::Unit, 0).is_empty() && self.pick(2) == 0 {
+            self.call(&Ty::Unit, 0);
+        } else {
+            self.w.text("{}");
+        }
+    }
+
+    /// `break` after `target`, a loop label or nothing: bare, or with `{}` or `u`, or with `last`.
+    fn unit_break(&mut self, target: &str, last: Option<&str>) {
+        let value = last.unwrap_or_else(|| ["", " {}", " u"][self.unit_pick(3)]);
+        self.w.text(&format!("break{target}{value}"));
+    }
+
+    /// `({ let mut c = 1; loop { if c == 0 { break } c -= 1 ... } })`, a `loop` of `unit` that
+    /// counts down as `loop_stmt`'s does. Bare `break`s and `break`s of a `unit` value end it, in
+    /// any order. Now and then they leave an inner loop through the label of the outer one. A bare
+    /// `break` gives a `unit` too. The last `break` gives `last`, if any. It draws from its own
+    /// stream and writes no call, so each other choice of the seed stays where it was.
+    fn unit_loop(&mut self, last: Option<&str>) {
+        let counter = self.scope.fresh("v");
+        let cond = ["true", "false"][self.unit_pick(2)];
+        let label = (self.unit_pick(2) == 0).then(|| self.scope.fresh("l"));
+        let head = label
+            .as_ref()
+            .map_or(String::new(), |label| format!("{label}: "));
+        self.w.text(&format!(
+            "({{ let mut {counter} = 1; {head}loop {{ if {counter} == 0 {{ "
+        ));
+        self.unit_break("", None);
+        self.w.text(&format!(" }}; {counter} -= 1; "));
+        let target = match &label {
+            Some(label) => {
+                let inner = self.scope.fresh("v");
+                self.w.text(&format!(
+                    "let mut {inner} = 1; loop {{ if {inner} == 0 {{ break }}; {inner} -= 1; "
+                ));
+                format!(" {label}")
+            }
+            None => String::new(),
+        };
+        self.w.text(&format!("if {cond} {{ "));
+        self.unit_break(&target, None);
+        self.w.text(" }; ");
+        self.unit_break(&target, last);
+        self.w
+            .text(if label.is_some() { " } } })" } else { " } })" });
+    }
+
+    /// A block that binds a `()`: of `{}`, a block with no tail or a call of a `unit` function.
+    /// Then it prints, stores or compares it. Now and then a `unit` loop (`unit_loop`) follows
+    /// as a statement, binds the `()` again, or stands for an operand.
+    fn printed_unit(&mut self) {
+        let tails = [
+            "[u, u]",
+            "[u, u] == [u]",
+            "[u] != [u]",
+            "Some(u) == Some(u)",
+            "u < u",
+            "u >= u",
+        ];
+        let tail = tails[self.pick(tails.len())];
+        self.w.text("{ let u = ");
+        self.unit_value();
+        self.w.text("; ");
+        match self.unit_pick(4) {
+            0 => self.w.text(tail),
+            1 => {
+                self.unit_loop(None);
+                self.w.text(&format!("; {tail}"));
+            }
+            2 => {
+                self.w.text("let u = ");
+                self.unit_loop(Some(" u"));
+                self.w.text(&format!("; {tail}"));
+            }
+            _ => {
+                // A `$` is the loop.
+                let operands = ["[$, u]", "Some($) == Some(u)", "$ < u"];
+                let (before, after) = operands[self.unit_pick(operands.len())]
+                    .split_once('$')
+                    .expect("each operand form should hold a `$`");
+                self.w.text(before);
+                self.unit_loop(None);
+                self.w.text(after);
+            }
+        }
+        self.w.text(" }");
+    }
+
     /// A value for `print`, in a `form` from 0 to 4: as it is, interpolated alone, interpolated
     /// with a width, through `to_string`, or a value from a `unit`. Each of the first four
     /// writes the same text for any type. An optional in the first three forms warns (W0015),
     /// and `to_string` of it does not.
     fn printed_value(&mut self, form: usize) {
         if form == 4 {
-            // A block binds a `()`: of `{}`, a block with no tail, or of a call of a `unit`
-            // function. Then it prints, stores or compares it.
-            let tails = [
-                "[u, u]",
-                "[u, u] == [u]",
-                "[u] != [u]",
-                "Some(u) == Some(u)",
-                "u < u",
-                "u >= u",
-            ];
-            let tail = tails[self.pick(tails.len())];
-            self.w.text("{ let u = ");
-            if !self.callees(&Ty::Unit, 0).is_empty() && self.pick(2) == 0 {
-                self.call(&Ty::Unit, 0);
-            } else {
-                self.w.text("{}");
-            }
-            self.w.text(&format!("; {tail} }}"));
+            self.printed_unit();
             return;
         }
         if form == 3 {
