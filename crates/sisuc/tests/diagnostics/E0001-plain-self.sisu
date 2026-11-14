@@ -1,0 +1,30 @@
+// GIVEN a struct method with plain `self` that calls a `mut self` method on `self`
+// AND a method with plain `self` that calls it on a field of `self`
+// WHEN `sisu check` runs on it
+// THEN it reports E0001 on the receiver of each call, with the unsafe fix "take `mut self`"
+struct Point {
+    x: i64
+    y: i64
+
+    fn move_by(mut self, dx: i64, dy: i64) {
+        self.x += dx
+        self.y += dy
+    }
+
+    fn home(self) {
+        self.move_by(-1, -1)
+    }
+}
+
+struct Ship {
+    at: Point
+
+    fn dock(self) {
+        self.at.move_by(1, 1)
+    }
+}
+
+fn main() {
+    Point(x: 1, y: 2).home()
+    Ship(at: Point(x: 1, y: 2)).dock()
+}

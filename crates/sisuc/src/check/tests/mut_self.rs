@@ -1014,7 +1014,7 @@ type PlainSelfRow = (&'static str, &'static str, Wanted, Option<(usize, usize)>)
 /// requirement binds has the help to copy `self`. A class has its own text.
 #[test]
 fn assignment_to_plain_self_should_give_the_help_of_its_kind() {
-    let rows: [PlainSelfRow; 6] = [
+    let rows: [PlainSelfRow; 5] = [
         (
             "a struct",
             "struct T {\n    n: i64\n    fn f(self) { self = T(n: 1) }\n}\nfn main() {}",
@@ -1045,16 +1045,27 @@ fn assignment_to_plain_self_should_give_the_help_of_its_kind() {
             (AssignToSelf, (5, 18)),
             None,
         ),
-        (
-            "a class body",
-            "class C {\n    mut n: i64\n    fn f(self) { self = C(n: 1) }\n}\nfn main() {}",
-            (AssignToSelf, (3, 18)),
-            None,
-        ),
     ];
     for (row, src, wanted, take) in rows {
         plain_self_error(row, src, wanted, take);
     }
+    // A class body is a parse error of E0073 alone, with its own help and no fix.
+    let src = "class C {\n    mut n: i64\n    fn f(self) { self = C(n: 1) }\n}\nfn main() {}";
+    let parsed = crate::parser::parse(
+        crate::lexer::lex(src).expect("the source should lex"),
+        false,
+    );
+    let found: Vec<_> = (parsed.diagnostics.iter())
+        .map(|d| {
+            (
+                d.code(),
+                at(src, d.span()),
+                d.fixes().len(),
+                d.help().is_some(),
+            )
+        })
+        .collect();
+    assert_eq!(found, [(AssignToSelf, (3, 18), 0, true)], "a class body");
     // A built-in holder has E0155 alone, whatever its `mut self` method writes.
     let src = "extend i64 {\n    fn inc(mut self) { self += 1 }\n}\nfn main() {}";
     let (_, ds) = checked(src);

@@ -4,7 +4,10 @@ error[E0001]: cannot assign to a part of `self`
 5 |         self.n = 1
   |         ^^^^^^^^^^
   |
-  = help: copy `self` into a `let mut` variable
+help: take `mut self`
+  |
+4 |     fn a(mut self) {
+  |          +++
 
 error[E0073]: cannot assign to `self`
  --> struct_self.sisu:9:9
@@ -12,7 +15,10 @@ error[E0073]: cannot assign to `self`
 9 |         self = P(n: 2)
   |         ^^^^
   |
-  = help: copy `self` into a `let mut` variable
+help: take `mut self`
+  |
+8 |     fn b(mut self) {
+  |          +++
 
 sisu: 2 errors
 sisu: for more on a code, run `sisu explain <code>`: E0001, E0073

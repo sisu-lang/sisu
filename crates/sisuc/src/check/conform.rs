@@ -709,6 +709,8 @@ impl Checker<'_> {
             let found = self.written_method(p.source, name);
             if let Some(Declared::Known(f)) = found {
                 self.named_for_requirement.insert(f);
+                // Every requirement has a plain `self` for now.
+                self.plain_self_requirement.insert(f);
             }
             let elsewhere = others
                 .iter()

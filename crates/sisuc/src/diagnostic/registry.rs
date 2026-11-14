@@ -517,12 +517,14 @@ pub(crate) enum DiagnosticKind {
     },
     /// The second `mut` argument of a call, at `second`, that is the place of the first, at
     /// `first`, or holds it, or is held by it. `shown` is the text of the place that is inside
-    /// the other, and `inside` the text of the other, for the second form.
+    /// the other, and `inside` the text of the other, for the second form. When the first is the
+    /// receiver of a call of the `mut self` method, `receiver` names it and says how they meet.
     MutPlaceTwice {
         first: Span,
         second: Span,
         shown: String,
         inside: Option<String>,
+        receiver: Option<(Symbol, ReceiverForm)>,
     },
     /// The `else` block of a `let ... else`, whose `}` is at `at`, which can reach its end.
     LetElseCanFinish { at: Span },
@@ -1036,8 +1038,9 @@ pub(crate) enum DiagnosticKind {
     },
     /// The first byte at `at` that is not UTF-8, which the text shown in its place replaces.
     InvalidUtf8 { at: Span },
-    /// An assignment to the `self` at `at`, the `self` of a struct method when `struct_self`.
-    AssignToSelf { at: Span, struct_self: bool },
+    /// An assignment to the `self` at `at`. A struct or an enum method has the `take` of its
+    /// `self`, and a class method has none.
+    AssignToSelf { at: Span, take: Option<SelfTake> },
     /// An assignment to `name`, at `at`, which is a function.
     AssignToFunction { name: String, at: Span },
     /// A `let` that binds the `_` at `at`. The fix removes `remove`: the `mut` and the white
@@ -3140,8 +3143,8 @@ pub(crate) enum NotMutForm {
 pub(crate) enum NotPlace {
     /// A binding or a field that cannot change.
     Immutable(Immutable),
-    /// `self`, where `class` says that its type is a class.
-    SelfValue { class: bool },
+    /// `self`, with the `take` of a struct or an enum method, and none for a class.
+    SelfValue(Option<SelfTake>),
     /// A value that is no place: a call, a literal.
     Temporary,
     /// A range index of the kind of value `SliceOf` says.
@@ -3209,8 +3212,28 @@ pub(crate) enum Immutable {
     Constant {
         declared: Span,
     },
-    /// The plain `self` of a struct method.
-    StructSelf,
+    /// The plain `self` of a struct or an enum method.
+    StructSelf(SelfTake),
+}
+
+/// How an argument that is passed `mut` meets the receiver of a `mut self` call.
+#[derive(Clone, Copy)]
+pub(crate) enum ReceiverForm {
+    /// The argument is the receiver's place.
+    Same,
+    /// The argument is inside the receiver.
+    ArgumentInside,
+    /// The receiver is inside the argument.
+    ReceiverInside,
+}
+
+/// How the plain `self` of a struct or an enum method can change.
+#[derive(Clone, Copy)]
+pub(crate) enum SelfTake {
+    /// The method takes `mut self`: its `self` is at the span.
+    Fix(Span),
+    /// A plain `self` requirement binds the method, so it keeps its `self`: it copies it.
+    Copy,
 }
 
 /// The kind of value that a `?.` takes out of an optional, when a `mut self` call follows it.
@@ -4316,6 +4339,32 @@ impl From<DiagnosticKind> for Diagnostic {
                 second,
                 shown,
                 inside,
+                receiver: Some((method, form)),
+            } => {
+                // `shown` is inside `outer`, or both are the same place.
+                let outer = inside.as_ref().unwrap_or(&shown);
+                let (own, other, tail) = match form {
+                    ReceiverForm::Same => (&shown, &shown, ""),
+                    ReceiverForm::ArgumentInside => (outer, &shown, ", which is inside it,"),
+                    ReceiverForm::ReceiverInside => (&shown, outer, ", which holds it,"),
+                };
+                Diagnostic::coded(
+                    code,
+                    second,
+                    format!("`{method}` can change `{own}`, and this call also passes `{other}`{tail} as `mut`"),
+                )
+                .with_label("passed `mut` here")
+                .with_secondary(
+                    first,
+                    format!("`{method}` takes `mut self`, so it can change `{own}`"),
+                )
+            }
+            DiagnosticKind::MutPlaceTwice {
+                first,
+                second,
+                shown,
+                inside,
+                receiver: None,
             } => {
                 let message = match inside {
                     Some(outer) => {
@@ -5506,12 +5555,12 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, "source is not valid UTF-8")
                     .with_help("save the file as UTF-8")
             }
-            DiagnosticKind::AssignToSelf { at, struct_self } => {
-                Diagnostic::coded(code, at, "cannot assign to `self`").with_help(if struct_self {
-                    STRUCT_SELF_HELP
-                } else {
-                    "an object is shared: `self` can already write every `mut` field"
-                })
+            DiagnosticKind::AssignToSelf { at, take } => {
+                let d = Diagnostic::coded(code, at, "cannot assign to `self`");
+                match take {
+                    Some(take) => take_self(d, take),
+                    None => d.with_help(CLASS_SELF_HELP),
+                }
             }
             DiagnosticKind::AssignToFunction { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` is a function, not a variable"))
@@ -6999,7 +7048,7 @@ fn immutable_cause(d: Diagnostic, name: &str, element: bool, cause: &Immutable) 
             d.with_label("cannot assign")
         }
         .with_secondary(declared, "declared with `const` here"),
-        Immutable::StructSelf => d.with_help(STRUCT_SELF_HELP),
+        Immutable::StructSelf(take) => take_self(d, take),
     }
 }
 
@@ -7030,7 +7079,7 @@ pub(crate) fn copy_help(
             "`{root}` is a plain parameter{}: delete the write, or return the changed copy",
             so(" here")
         ),
-        Some(Immutable::StructSelf) => format!(
+        Some(Immutable::StructSelf(_)) => format!(
             "`self` cannot change in this method{}: delete the write, or return the changed copy",
             so(" here")
         ),
@@ -7044,8 +7093,24 @@ pub(crate) fn copy_help(
     })
 }
 
-/// The help of a write through the plain `self` of a struct method.
+/// The help of a write through the plain `self` of a method that a plain `self` requirement binds.
 const STRUCT_SELF_HELP: &str = "copy `self` into a `let mut` variable";
+
+/// The help of an assignment to the `self` of a class method.
+const CLASS_SELF_HELP: &str = "an object is shared: `self` can already write every `mut` field";
+
+/// `d`, a report of a change through plain `self`. It has the unsafe fix "take `mut self`". When
+/// a requirement binds the method, it has the help to copy `self` instead.
+fn take_self(d: Diagnostic, take: SelfTake) -> Diagnostic {
+    match take {
+        SelfTake::Fix(at) => d.with_fix(unsafe_fix(
+            "take `mut self`",
+            Span::new(at.start(), at.start()),
+            "mut ",
+        )),
+        SelfTake::Copy => d.with_help(STRUCT_SELF_HELP),
+    }
+}
 
 /// The indefinite article before the type `ty`: "an" before a vowel letter, except the types
 /// `u8` and the like, which say "you".
@@ -7077,10 +7142,10 @@ fn mut_not_place(d: Diagnostic, name: &str, cause: &NotPlace) -> Diagnostic {
     let d = d.with_label(label);
     match *cause {
         NotPlace::Range(_) | NotPlace::Temporary => d,
-        NotPlace::SelfValue { class: true } => {
-            d.with_help("an object is shared: `self` can already write every `mut` field")
+        NotPlace::SelfValue(None) => d.with_help(CLASS_SELF_HELP),
+        NotPlace::SelfValue(Some(take)) | NotPlace::Immutable(Immutable::StructSelf(take)) => {
+            take_self(d, take)
         }
-        NotPlace::SelfValue { class: false } => d.with_help(copy),
         NotPlace::Immutable(Immutable::Let {
             declared,
             redeclared,
@@ -7106,7 +7171,6 @@ fn mut_not_place(d: Diagnostic, name: &str, cause: &NotPlace) -> Diagnostic {
         NotPlace::Immutable(Immutable::Constant { declared }) => {
             d.with_secondary(declared, "declared with `const` here")
         }
-        NotPlace::Immutable(Immutable::StructSelf) => d.with_help(STRUCT_SELF_HELP),
     }
 }
 

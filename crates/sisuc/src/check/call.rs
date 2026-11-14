@@ -865,7 +865,7 @@ impl Checker<'_> {
         let ty = read.ty;
         let path = try_unread(read, receiver_expr)
             .expect("the place that `method_expr` kept should read as its path");
-        let (temp, parts) = self.receiver_slot(receiver_expr, path, ty);
+        let (temp, parts) = self.receiver_slot(receiver_expr, method.name, path, ty);
         self.invoke(span, func, Some(Ok(temp)), site, args, parts)
     }
 

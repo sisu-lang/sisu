@@ -1,0 +1,38 @@
+// GIVEN `mut self` methods that also take a `mut` argument
+// WHEN a call passes the receiver's own place, a place inside it, or a place that holds it as `mut`
+// THEN it reports E0171 on the argument of each call
+// AND the message says which method can change which place
+struct Pile {
+    n: i64
+
+    fn change(mut self, mut other: Pile) {
+        self.n = 1
+        other.n = 1
+    }
+}
+
+struct Stone {
+    n: i64
+
+    fn change(mut self, mut wall: Wall) {
+        self.n = 1
+        wall.s.n = 1
+    }
+}
+
+struct Wall {
+    s: Stone
+
+    fn change(mut self, mut s: Stone) {
+        self.s.n = 1
+        s.n = 1
+    }
+}
+
+fn main() {
+    let mut pile = Pile(n: 0)
+    pile.change(mut pile)
+    let mut wall = Wall(s: Stone(n: 0))
+    wall.change(mut wall.s)
+    wall.s.change(mut wall)
+}

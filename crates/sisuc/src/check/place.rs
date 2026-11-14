@@ -13,7 +13,9 @@ use super::{
     block_expr, known_type, payload, type_of,
 };
 use crate::ast;
-use crate::diagnostic::{DiagnosticKind, Immutable, IndexUsage, UnwrapHelp, ValueKind, Written};
+use crate::diagnostic::{
+    DiagnosticKind, Immutable, IndexUsage, SelfTake, UnwrapHelp, ValueKind, Written,
+};
 use crate::parser::{is_place, is_range_target};
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -1157,13 +1159,13 @@ impl Checker<'_> {
             }
             (None, None)
         } else if change.holds() {
-            self.forbid(change, "self".to_string(), span, Immutable::StructSelf)
+            self.forbid(change, "self".to_string(), span, self.struct_self())
         } else {
-            // The help of a struct's own body differs from that of an enum or an `extend`.
-            let struct_self = matches!(ty.kind(), TypeKind::Struct(..)) && !self.in_extension();
+            // A class method keeps the text of an object that is shared.
+            let take = (!matches!(ty.kind(), TypeKind::Class(..))).then(|| self.self_take());
             let d = DiagnosticKind::AssignToSelf {
                 at: target.span,
-                struct_self,
+                take,
             };
             (None, Some(self.error(d)))
         };
@@ -1177,9 +1179,20 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether the body is a method of an `extend` block.
-    fn in_extension(&self) -> bool {
-        matches!(self.body.owner, Some(Owner::Func(func)) if self.signatures[func.0].extension.is_some())
+    /// How the plain `self` of this method can change: by taking `mut self`, unless a plain `self`
+    /// requirement binds the method.
+    pub(super) fn self_take(&self) -> SelfTake {
+        match self.body.owner {
+            Some(Owner::Func(func)) if !self.plain_self_requirement.contains(&func) => {
+                (self.signatures[func.0].self_span).map_or(SelfTake::Copy, SelfTake::Fix)
+            }
+            _ => SelfTake::Copy,
+        }
+    }
+
+    /// Why the plain `self` of this method cannot change.
+    pub(super) fn struct_self(&self) -> Immutable {
+        Immutable::StructSelf(self.self_take())
     }
 
     /// The field `name` of the base of a place, a value of type `ty`, as `find_field` finds it. It
@@ -1583,7 +1596,7 @@ impl Checker<'_> {
             // The `self` of a `mut self` method can change.
             (Root::Local(_), _) if self.body.self_mut => (true, None, None, None),
             (Root::Local(_), _) => {
-                let cause = Immutable::StructSelf;
+                let cause = self.struct_self();
                 if change == Change::MutArg {
                     (true, None, Some(cause), None)
                 } else {
@@ -1845,7 +1858,7 @@ impl Checker<'_> {
                 b.reassigned |= b.kind == BindingKind::Var;
                 binding_cause(b)
             }
-            StructRoot::SelfValue => (!self.body.self_mut).then_some(Immutable::StructSelf),
+            StructRoot::SelfValue => (!self.body.self_mut).then(|| self.struct_self()),
             StructRoot::Other => None,
         }
     }
@@ -1860,7 +1873,7 @@ impl Checker<'_> {
             StructRoot::Binding(root) => (root, binding_cause(self.binding(root)?)),
             StructRoot::SelfValue => (
                 Symbol::intern("self"),
-                (!self.body.self_mut).then_some(Immutable::StructSelf),
+                (!self.body.self_mut).then(|| self.struct_self()),
             ),
             StructRoot::Other => return None,
         };

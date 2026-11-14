@@ -252,6 +252,8 @@ struct Signature {
     /// Whether a method of a struct or an enum takes `mut self`. A class method's `mut self` is
     /// E0018, and leaves this false.
     self_mut: bool,
+    /// The `self` of a method, where a fix writes `mut` before it.
+    self_span: Option<Span>,
     /// The name of each of `params`.
     param_names: Vec<ast::Ident>,
     ret: Option<Type>,
@@ -738,6 +740,9 @@ struct Checker<'src> {
     /// The methods that a conformance names for a requirement, also those that do not meet it. A
     /// `mut` parameter of one is the requirement's, or E0152 reports it: W0002 leaves it alone.
     named_for_requirement: FxHashSet<tir::FuncId>,
+    /// The methods that meet a requirement whose `self` is plain. They keep their plain `self`, so
+    /// a change through it gets the help to copy `self`, not the fix "take `mut self`".
+    plain_self_requirement: FxHashSet<tir::FuncId>,
     /// The name of each method that takes `mut self`. A method call of one of these names checks
     /// its receiver as a place, and decides when the method resolves.
     mut_self_names: FxHashSet<Symbol>,
@@ -1448,6 +1453,7 @@ impl<'src> Checker<'src> {
             interfaces: Vec::new(),
             meets: FxHashMap::default(),
             named_for_requirement: FxHashSet::default(),
+            plain_self_requirement: FxHashSet::default(),
             mut_self_names: FxHashSet::default(),
             declaring: FxHashMap::default(),
             declaring_assoc: FxHashMap::default(),
@@ -2185,6 +2191,7 @@ impl Checker<'_> {
             params,
             muts: f.params.iter().map(|p| p.mutable).collect(),
             self_mut,
+            self_span: f.self_param,
             param_names: f.params.iter().map(|p| p.name.clone()).collect(),
             ret,
             anys,

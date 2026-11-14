@@ -1,0 +1,30 @@
+// GIVEN a struct method with plain `self` that assigns to `self`
+// AND a method with plain `self` that assigns to `self` and meets a plain `self` requirement
+// WHEN `sisu check` runs on it
+// THEN it reports E0073 on each `self`
+// AND the first has the unsafe fix "take `mut self`"
+// AND the second has the help to copy `self` into a `let mut` variable
+struct Counter {
+    n: i64
+
+    fn reset(self) {
+        self = Counter(n: 0)
+    }
+}
+
+interface Reset {
+    fn reset(self)
+}
+
+struct Clock: Reset {
+    ticks: i64
+
+    fn reset(self) {
+        self = Clock(ticks: 0)
+    }
+}
+
+fn main() {
+    Counter(n: 1).reset()
+    Clock(ticks: 1).reset()
+}

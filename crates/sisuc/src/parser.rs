@@ -4245,7 +4245,7 @@ impl<'a> Parser<'a> {
         if matches!(target.kind, ExprKind::SelfValue) && !checked_self {
             return Err(DiagnosticKind::AssignToSelf {
                 at: target.span,
-                struct_self: false,
+                take: None,
             }
             .into());
         }
