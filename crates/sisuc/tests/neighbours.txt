@@ -126,6 +126,12 @@ fn take<T>(mut x: T?) { x = None }
 fn take2<T>(mut x: T?, n: i64) { x = None }
 fn keep<T>(mut x: T?) -> T? { x }
 fn opt<T>(v: T?) -> T? { v }
+fn g() {}
+enum Lg {
+    A
+    fn log(self) {}
+}
+fn olg() -> Lg? { None }
 fn generic<U: Named, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?, st: St) {
     let mut mq: (any Pet)? = op
     {stmt}
@@ -286,6 +292,9 @@ Am(n: 1)
 ocs()?.s.n
 ocs()?.s.xs
 ocs()?.s.xs[0]
+# A `unit` value, and a `unit?` value: a safe call of a method that returns `unit`.
+g()
+olg()?.log()
 
 [failed values]
 # A type parameter read: in the function whose bound failed, `u` is unknown.
@@ -474,3 +483,8 @@ let _r: Result<u8, bool> = Ok($ + 1)
 let _r: Result<u8, bool> = Ok(-$)
 let _r: Result<[u8], bool> = Ok([1, $])
 let _x = k == id($)
+# A comparison, and contexts that discard the value: a branch beside an empty `else`, and an arm
+# beside a `None` arm of a `match` that is a statement.
+$ < 1
+if c { $ } else {}
+match k { 0 => $; _ => None }

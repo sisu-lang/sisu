@@ -175,16 +175,22 @@ fn reports(src: &str) -> Vec<(Code, (usize, usize), bool)> {
 
 /// Checks each row of `rows` in `with_names`, and lists every row that is red.
 fn use_rows(rows: &[UseRow<'_>]) {
+    rows_in(rows, with_names, 14);
+}
+
+/// Checks each row of `rows` in `template`, which puts the use on `line`, and lists every row
+/// that is red.
+fn rows_in(rows: &[UseRow<'_>], template: fn(&str) -> String, line: usize) {
     with_prelude();
     let mut red = Vec::new();
     for (row, used, wanted) in rows {
         let wanted: Vec<_> = (wanted.iter())
             .map(|&(code, text, note)| {
                 let offset = used.rfind(text).expect("each wanted text is in its use");
-                (code, (14, 5 + offset), note)
+                (code, (line, 5 + offset), note)
             })
             .collect();
-        let found = reports(&with_names(used));
+        let found = reports(&template(used));
         if found != wanted {
             red.push(format!("row `{row}`: found {found:?}, wanted {wanted:?}"));
         }
@@ -383,4 +389,129 @@ fn a_valueless_if_should_keep_its_reports_where_no_value_is_used() {
     ] {
         assert_eq!(reports(src), [(wanted.0, wanted.1, false)], "row `{row}`");
     }
+}
+
+/// A `main` that has `used` on line 12, after the declarations that the rows share: an enum `U`
+/// with two variants and a method `log`, a function `g` that returns `unit`, and four bindings.
+/// `o?.log()` is a `unit?`.
+fn with_safe_call(used: &str) -> String {
+    format!(
+        "enum U {{\n    A\n    B\n    fn log(self) {{}}\n}}\nfn g() {{}}\nfn main() {{\n    let o: U? = None\n    let c = true\n    let n = 1\n    let u = U.A\n    {used}\n}}"
+    )
+}
+
+/// A statement discards a `unit?` branch or arm beside a block with no value or a `None` arm. It
+/// also discards a `unit?` that is the `break` value of its `loop`. Each checks clean, as a `unit`.
+#[test]
+fn a_discarded_optional_unit_should_check_clean_beside_a_block_with_no_value() {
+    with_prelude();
+    let in_main = [
+        ("empty else", "if c { o?.log() } else {}"),
+        ("else with no tail", "if c { o?.log() } else { let z = 1 }"),
+        ("empty then", "if c {} else { o?.log() }"),
+        ("if let", "if let Some(v) = o { o?.log() } else {}"),
+        ("else if", "if c { o?.log() } else if c {} else {}"),
+        ("match on an i64", "match n { 1 => o?.log(); _ => {} }"),
+        ("match on an enum", "match u { U.A => o?.log(); U.B => {} }"),
+        ("block arm", "match n { 1 => { o?.log() }; _ => {} }"),
+        ("while body", "while c { if c { o?.log() } else {}; break }"),
+        ("for body", "for i in [1] { if c { o?.log() } else {} }"),
+        ("written Some", "if c { Some(g()) } else {}"),
+        ("local", "let x: unit? = None; if c { x } else {}"),
+        ("None arm", "match n { 1 => o?.log(); _ => None }"),
+        (
+            "None arm in a for body",
+            "for i in [1] { match n { 1 => o?.log(); _ => None } }",
+        ),
+        ("loop", "loop { break o?.log() }"),
+        (
+            "loop with a None break",
+            "loop { if c { break o?.log() } else { break None } }",
+        ),
+        ("inner loop", "loop { loop { break o?.log() }; break }"),
+        (
+            "loop in a branch",
+            "if c { loop { break o?.log() } } else {}",
+        ),
+        (
+            "loop in an arm",
+            "match n { 1 => loop { break o?.log() }; _ => {} }",
+        ),
+        ("while with a bare break", "while c { if c { break } }"),
+    ];
+    for (row, used) in in_main {
+        clean_row(row, &with_safe_call(used));
+    }
+    let tail = "fn f(o: U?, n: i64) {\n    match n { 1 => o?.log(); _ => None }\n}";
+    clean_row(
+        "None arm as a tail",
+        &format!("{}\n{tail}", with_safe_call("")),
+    );
+}
+
+/// A comparison of a `unit` holds the other operands to `unit`, in either order. A `unit?`, a
+/// `None` or a `[]` is E0032 at that operand. Only an operand whose type takes no `unit` makes
+/// each `unit` operand E0043.
+#[test]
+fn a_comparison_of_a_unit_should_hold_the_other_operands_to_unit() {
+    let rows: Vec<UseRow<'_>> = vec![
+        (
+            "unit and Some",
+            "let a = g() < Some(g())".into(),
+            vec![(Code::Mismatch, "Some(g())", false)],
+        ),
+        (
+            "Some and unit",
+            "let a = Some(g()) < g()".into(),
+            vec![(Code::Mismatch, "Some(g())", false)],
+        ),
+        (
+            "unit and a unit? local",
+            "let x = Some(g()); print(g() < x)".into(),
+            vec![(Code::Mismatch, "x", false)],
+        ),
+        (
+            "unit? local and unit",
+            "let x = Some(g()); let a = x < g()".into(),
+            vec![(Code::Mismatch, "x <", false)],
+        ),
+        (
+            "unit and None",
+            "let a = g() < None".into(),
+            vec![(Code::Mismatch, "None", false)],
+        ),
+        (
+            "None and unit",
+            "let a = None < g()".into(),
+            vec![(Code::Mismatch, "None", false)],
+        ),
+        (
+            "unit and an empty array",
+            "let a = g() < []".into(),
+            vec![(Code::Mismatch, "[]", false)],
+        ),
+        (
+            "empty array and unit",
+            "let a = [] < g()".into(),
+            vec![(Code::Mismatch, "[]", false)],
+        ),
+        (
+            "unit and an i64",
+            "let a = g() < 1".into(),
+            vec![(Code::NoValue, "g()", true)],
+        ),
+        (
+            "i64 and unit",
+            "let a = 1 < g()".into(),
+            vec![(Code::NoValue, "g()", true)],
+        ),
+        (
+            "unit equal to an i64",
+            "let a = g() == 1".into(),
+            vec![(Code::NoValue, "g()", true)],
+        ),
+        ("two units", "let a = g() < g()".into(), vec![]),
+        ("two units equal", "let a = g() == g()".into(), vec![]),
+    ];
+    rows_in(&rows, with_safe_call, 12);
 }
