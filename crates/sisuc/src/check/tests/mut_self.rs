@@ -5,7 +5,7 @@ use super::*;
 use Code::{
     AssignToExpression, AssignToImmutable, AssignToSelf, CannotInfer, ConformanceBody, Expected,
     MayBeNone, Mismatch, MutArgumentNotPlace, MutMarkerMissing, MutPlaceTwice, MutSelf,
-    NeverReassigned, SelfOutsideMethod, UnusedMember,
+    NeverReassigned, SelfOutsideMethod, UnusedMember, UnusedVariable,
 };
 
 /// `Point` with the `mut self` method `move_by`, in eight lines.
@@ -44,6 +44,17 @@ fn mut_self_call_should_report_no_unused_warning() {
         "{POINT}fn main() {{\n    let mut p = Point(x: 1, y: 2)\n    p.move_by(3, 4)\n    print(p)\n}}\n"
     );
     codes(&src, &[]);
+}
+
+/// GIVEN `struct P` with `fn show(mut self)`, `let p = P(x: 1)` and `let mut q = p`. WHEN `main`
+/// writes `q.x = 2`, calls `q.show()` and prints `p.x`. THEN `sisu check` reports W0014 at `q`
+/// only: the call writes the copy, so no W0016 says that the write is lost.
+#[test]
+fn mut_self_call_should_count_as_a_write_of_its_copy() {
+    judge_unused();
+    let src = "struct P { x: i64; fn show(mut self) { print(self.x); self.x = 0 } }\n\
+               fn main() { let p = P(x: 1); let mut q = p; q.x = 2; q.show(); print(p.x) }";
+    codes(src, &[(UnusedVariable, (2, 38))]);
 }
 
 /// GIVEN `Point` with `move_by`, `struct L { p: Point; ps: [Point] }`, `let ps = [...]`,
@@ -431,6 +442,19 @@ fn plain_method_with_a_mut_self_name_should_keep_its_receiver_rules() {
         [(CannotInfer, on(src, 5, "len"))],
         "with `A`"
     );
+    // The other named change: a literal argument of such a method takes its default type.
+    let src = "struct Bx { v: i64; fn m<U>(self, u: U) -> U { u } }\nfn id<T>(t: T) -> T { t }\n\
+               fn main() {\n    let b = Bx(v: 1)\n    let u: u8 = id(b.m(1))\n    print(u)\n}\n";
+    let (_, ds) = checked(src);
+    assert_eq!(errors(src, &ds), [], "without `A`");
+    let a_m = "struct A { n: i64; fn m(mut self) { self.n = 1 } }\n";
+    let both = format!("{src}{a_m}");
+    let (_, ds) = checked(&both);
+    assert_eq!(
+        errors(&both, &ds),
+        [(Mismatch, on(src, 5, "b.m(1)"))],
+        "with `A`"
+    );
     // A generated `eq` and `less`, and an array's `get` with a range, read the receiver that a
     // `mut self` method of the same name parks.
     let ops = "struct A { n: i64; fn eq(mut self, o: i64) -> bool { self.n += o; true }; fn less(mut self, o: i64) -> bool { self.n += o; false }; fn get(mut self, i: i64) -> i64 { self.n += i; self.n } }\n";
@@ -497,6 +521,7 @@ fn plain_method_with_a_mut_self_name_should_keep_its_receiver_rules() {
 /// WHEN the program is checked. THEN `mut self` has no error where it has meaning, and each
 /// other form keeps its code.
 #[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows")]
 fn mut_self_should_parse_where_it_has_meaning() {
     let assign = |decl: &str, holder: &str, value: &str, recv: &str| {
         format!(
@@ -584,6 +609,20 @@ fn mut_self_should_parse_where_it_has_meaning() {
             "`self[0] = 1` in a struct body",
             "struct T {\n    n: i64\n    fn f(self) { self[0] = 1 }\n}\nfn main() {}".to_string(),
             vec![(AssignToExpression, (3, 18))],
+        ),
+        (
+            "an `extend` of an alias of a struct",
+            "struct P { x: i64 }\ntype A = P\nextend A { fn m(mut self) { self.x += 1 } }\n\
+             fn main() { let mut p = P(x: 1); p.m(); print(p.x) }"
+                .to_string(),
+            vec![],
+        ),
+        (
+            "an `extend` of an alias of a class",
+            "class C { mut n: i64 }\ntype CA = C\nextend CA { fn m(mut self) {} }\n\
+             fn main() { let c = C(n: 1); print(c.n) }"
+                .to_string(),
+            vec![(MutSelf, (3, 18))],
         ),
         (
             "`self[0] = 1` in a free function",

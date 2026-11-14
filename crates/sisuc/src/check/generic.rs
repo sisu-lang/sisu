@@ -4128,8 +4128,9 @@ impl Checker<'_> {
         // shortcut: a method named `push` that a class writes with type parameters of its own, on
         // a field, is not ranked as a waiting call; upgrade if such a call needs the context.
         // The receiver of a call that may take `mut self` is such a place too.
-        // shortcut: a plain generic method that shares a `mut self` name is not ranked; upgrade
-        // by testing the receiver's declared type when such a call needs the context.
+        // shortcut: a plain generic method that shares a `mut self` name is not ranked, and a
+        // literal argument of such a method takes its default type (E0032); upgrade by testing
+        // the receiver's declared type when such a call needs the context.
         if let K::MethodCall {
             receiver,
             method,
