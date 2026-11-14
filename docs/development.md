@@ -556,8 +556,8 @@ A sweep that stops early still writes the shapes that it measured, then a line
 your machine, use `make scaling`. In the job, each script has a total time
 bound. The job gives `--time-bound 300` to step 1 and `--time-bound 3600` to
 the sweep. A script that runs over exits with code 1. The bound is a guard
-against a hang. A local `make scaling` has the same bound of 3600 seconds, the
-default of `scripts/scaling.py`.
+against a hang. In a local `make scaling`, the sweep has the same bound of 3600
+seconds, the default of `scripts/scaling.py`. The build before it has no bound.
 
 The scheduled run starts only from the default branch. After a change to the
 workflow, start it once by hand from the Actions tab. GitHub disables a
