@@ -1087,7 +1087,7 @@ type HiddenRow<'a> = (&'a str, &'a str, &'a str, Option<&'a str>, Vec<Wanted>);
 #[test]
 #[expect(clippy::too_many_lines, reason = "one table of rows")]
 fn an_assignment_to_a_hidden_name_should_report_what_a_read_reports() {
-    const SOURCE: &str = "interface I { type Item; fn m(self) }\nfn Item() {}\nclass C: I { type Item = i64; fn m(self) { %% } }\nfn main() { Item() }";
+    const SOURCE: &str = "interface I { type Item; fn m(self) }\nfn Item() {}\nstruct C: I { type Item = i64; fn m(self) { %% } }\nfn main() { Item() }";
     const TYPE_PARAM: Code = Code::TypeAsValue;
     // `%%` is the statement of the row, in its program.
     let rows: [HiddenRow<'_>; 18] = [
@@ -1117,14 +1117,14 @@ fn an_assignment_to_a_hidden_name_should_report_what_a_read_reports() {
             SOURCE,
             "Item = 1",
             Some("let _a = Item"),
-            vec![(TYPE_PARAM, (3, 44))],
+            vec![(TYPE_PARAM, (3, 45))],
         ),
         (
             "p639-assoc-element",
             SOURCE,
             "Item[0] = 1",
             Some("let _a = Item[0]"),
-            vec![(TYPE_PARAM, (3, 44))],
+            vec![(TYPE_PARAM, (3, 45))],
         ),
         (
             "p639-prelude",
@@ -1141,8 +1141,8 @@ fn an_assignment_to_a_hidden_name_should_report_what_a_read_reports() {
             vec![(TYPE_PARAM, (1, 13))],
         ),
         (
-            "p639-class",
-            "class T {}\nfn q<T>() { %% }\nfn main() {}",
+            "p639-struct",
+            "struct T { n: i64 }\nfn q<T>() { %% }\nfn main() {}",
             "T = 1",
             Some("let _a = T"),
             vec![(TYPE_PARAM, (2, 13))],
@@ -1162,18 +1162,18 @@ fn an_assignment_to_a_hidden_name_should_report_what_a_read_reports() {
             vec![(Code::NeverReassigned, (2, 10)), (TYPE_PARAM, (3, 19))],
         ),
         (
-            "a type parameter of a class",
-            "fn T() {}\nclass C<T> { fn m(self) { %% } }\nfn main() {}",
+            "a type parameter of a struct",
+            "fn T() {}\nstruct C<T> { fn m(self) { %% } }\nfn main() {}",
             "T = 1",
             Some("let _a = T"),
-            vec![(TYPE_PARAM, (2, 27))],
+            vec![(TYPE_PARAM, (2, 28))],
         ),
         (
             "a type parameter of a method",
-            "fn T() {}\nclass C { fn m<T>(self) { %% } }\nfn main() {}",
+            "fn T() {}\nstruct C { fn m<T>(self) { %% } }\nfn main() {}",
             "T = 1",
             Some("let _a = T"),
-            vec![(TYPE_PARAM, (2, 27))],
+            vec![(TYPE_PARAM, (2, 28))],
         ),
         (
             "a function with a failed type",
@@ -1191,10 +1191,10 @@ fn an_assignment_to_a_hidden_name_should_report_what_a_read_reports() {
         ),
         (
             "a local beside the write to an associated type",
-            "interface I { type Item; fn m(self) }\nclass C: I { type Item = i64; fn m(self) { let mut z = 1; %%; print(z) } }\nfn main() {}",
+            "interface I { type Item; fn m(self) }\nstruct C: I { type Item = i64; fn m(self) { let mut z = 1; %%; print(z) } }\nfn main() {}",
             "Item = 1",
             None,
-            vec![(TYPE_PARAM, (2, 59))],
+            vec![(TYPE_PARAM, (2, 60))],
         ),
         (
             "p639-const",
