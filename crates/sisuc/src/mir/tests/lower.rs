@@ -1705,3 +1705,13 @@ fn a_string_that_is_not_a_literal_should_keep_its_trim() {
         }
     }
 }
+
+/// GIVEN a `unit` local that a statement reads and drops
+/// WHEN the mir of `main` is built
+/// THEN the read lowers to no statement: a `unit` has no value to compute
+#[test]
+fn dropped_unit_read_should_lower_to_no_statement() {
+    let printed = built("fn main() {\n    let u = {}\n    u\n    print(u)\n}");
+    let main = function(&printed, "main");
+    assert!(!main.lines().any(|line| line.trim() == "()"), "{main}");
+}

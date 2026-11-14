@@ -52,6 +52,21 @@ fn mut_local_should_move_into_the_call() {
     );
 }
 
+/// GIVEN `fn set(mut x: unit)` and a `unit` local
+/// WHEN the mir of `set(mut u)` is built
+/// THEN the certifier accepts it, and no `out` follows the call: a `unit` has no value to copy
+/// back
+#[test]
+fn mut_unit_argument_should_need_no_out() {
+    let printed = built(
+        "fn set(mut x: unit) {\n    x = {}\n}\n\
+         fn main() {\n    let mut u = {}\n    set(mut u)\n    print(u)\n}",
+    );
+    has(&printed, "main", &["call set("]);
+    let main = function(&printed, "main");
+    assert!(!main.contains("out 0"), "{main}");
+}
+
 /// GIVEN S10's `replace`, whose `mut` parameter is the `nodes` field of a `Bag`
 /// WHEN the mir of `main` is built
 /// THEN the store-back takes the old `nodes` out, stores the new value into the field, and only
