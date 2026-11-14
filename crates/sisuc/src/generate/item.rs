@@ -275,10 +275,13 @@ struct Marked {
     kind: Kind,
 }
 
-/// A requirement `fn name(self, p: T, ...) -> R`. It may take one more parameter `mut p: i64`:
-/// each method writes a value of its own to it, and each call passes a place and prints it.
+/// A requirement `fn name(self, p: T, ...) -> R`. It may take `mut self`. A method of an enum
+/// meets it with `mut self` or with plain `self`, and a method of a class with plain `self`. It
+/// may take one more parameter `mut p: i64`: each method writes a value of its own to it, and each
+/// call passes a place and prints it.
 struct Requirement {
     name: String,
+    mut_self: bool,
     params: Vec<Param>,
     ret: Option<RequirementType>,
 }
@@ -363,9 +366,17 @@ impl Requirement {
     /// A method of `ty` that meets the requirement of the interface with `arg` for its parameter:
     /// `fn r(self, _p: T) -> R { value }`. A result `i64` or `string` has the value of `values`
     /// for the method. A `mut` parameter `p` is written first, with a value of its own:
-    /// `fn r(self, mut p: i64) -> R { p = 10; value }`.
-    fn method(&self, arg: Option<&'static str>, ty: &str, values: &mut Values) -> String {
-        let mut method = format!("fn {}(self", self.name);
+    /// `fn r(self, mut p: i64) -> R { p = 10; value }`. With `by_mut`, the method takes `mut self`
+    /// and writes it before that: `fn r(mut self) -> R { self = N.A; value }`. Only the enum `ty`
+    /// has `by_mut`, and its first variant is `A`.
+    fn method(
+        &self,
+        arg: Option<&'static str>,
+        ty: &str,
+        values: &mut Values,
+        by_mut: bool,
+    ) -> String {
+        let mut method = format!("fn {}({}self", self.name, if by_mut { "mut " } else { "" });
         for param in &self.params {
             if param.mutable {
                 write!(method, ", mut {}: i64", param.name)
@@ -379,9 +390,17 @@ impl Requirement {
             let number = values.value(ty, &self.written_key(param), arg, Kind::Integer);
             format!("{} = {number}", param.name)
         });
-        let body = |value: String| match &write_back {
-            Some(write) => format!("{write}; {value}"),
-            None => value,
+        let writes: Vec<String> = by_mut
+            .then(|| format!("self = {ty}.A"))
+            .into_iter()
+            .chain(write_back)
+            .collect();
+        let body = |value: String| {
+            if writes.is_empty() {
+                value
+            } else {
+                format!("{}; {value}", writes.join("; "))
+            }
         };
         match (&self.ret, self.kind(arg)) {
             (Some(ret), Some(kind)) => {
@@ -403,7 +422,11 @@ impl Requirement {
                 .expect("writing to a `String` should succeed");
             }
             (None, _) => {
-                let body = write_back.map_or_else(String::new, |write| format!(" {write} "));
+                let body = if writes.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {} ", writes.join("; "))
+                };
                 write!(method, " {{{body}}}").expect("writing to a `String` should succeed");
             }
         }
@@ -712,7 +735,7 @@ impl Gen<'_> {
             if self.pick(2) == 0 {
                 self.constant();
             } else {
-                self.function(None, false);
+                self.function(None, false, false);
                 self.w.line();
             }
             items += 1;
@@ -946,41 +969,41 @@ impl Gen<'_> {
     }
 
     /// `fn f(depth: i64, params) -> R { if depth <= 0 { return default } ... value }`, or a
-    /// method `fn m(self, depth: i64, ...)` of the class `owner`. With `mut_params`, either has
-    /// `mut` parameters.
-    fn function(&mut self, owner: Option<Ty>, mut_params: bool) {
+    /// method `fn m(self, depth: i64, ...)` of the class, struct or enum `owner`. With
+    /// `mut_params`, either has `mut` parameters. With `mut_self`, a method of a struct or an enum
+    /// takes `mut self` and writes it before its other statements, as W0002 asks.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one function writes the signature, the scope and the body of each function"
+    )]
+    fn function(&mut self, owner: Option<&Ty>, mut_params: bool, mut_self: bool) {
         let name = self.scope.fresh(if owner.is_some() { "m" } else { "f" });
-        let mut params = Vec::new();
-        let count = if mut_params {
-            1 + self.pick(MAX_PARAMS)
-        } else {
-            self.pick(MAX_PARAMS + 1)
-        };
-        for _ in 0..count {
-            let ty = self.any_type();
-            // The first is, so that the function has one.
-            let mutable = mut_params && (params.is_empty() || self.pick(2) == 0);
-            // A `mut` parameter takes the largest place that a local of a mutable value may hold.
-            let size = self.size_for(&ty, if mutable { &[SIZES[2]] } else { &SIZES });
-            let adds = mutable.then(|| self.mut_adds(&ty));
-            params.push((self.scope.fresh("v"), ty, size, adds));
-        }
+        let params = self.draw_params(mut_params);
         let ret = if self.pick(Ty::VALUES.len() + 1) == 0 {
             Ty::Unit
         } else {
             self.any_type()
         };
         let ret_size = self.size_for(&ret, &SIZES);
-        let receiver = if owner.is_some() { "self, " } else { "" };
+        // A `mut self` takes the largest place that a local of a mutable value may hold, as a
+        // `mut` parameter does.
+        let receiver_size = owner
+            .filter(|_| mut_self)
+            .map(|own| self.size_for(own, &[SIZES[2]]));
+        let receiver = match (owner, mut_self) {
+            (None, _) => "",
+            (Some(_), false) => "self, ",
+            (Some(_), true) => "mut self, ",
+        };
         self.w.text(&format!("fn {name}({receiver}depth: i64"));
         for (param, ty, _, adds) in &params {
-            let written = self.spelled_in(ty, owner.as_ref());
+            let written = self.spelled_in(ty, owner);
             let keyword = if adds.is_some() { "mut " } else { "" };
             self.w.text(&format!(", {keyword}{param}: {written}"));
         }
         self.w.text(")");
         if ret != Ty::Unit {
-            let written = self.spelled_in(&ret, owner.as_ref());
+            let written = self.spelled_in(&ret, owner);
             self.w.text(&format!(" -> {written}"));
         }
         self.w.text(" ");
@@ -991,7 +1014,8 @@ impl Gen<'_> {
         );
         self.scope.funcs.push(Func {
             name,
-            owner: owner.clone(),
+            owner: owner.cloned(),
+            mut_self: receiver_size,
             params: params
                 .iter()
                 .map(|(_, ty, size, _)| (ty.clone(), *size))
@@ -1003,10 +1027,13 @@ impl Gen<'_> {
         });
         self.scope.func = Some(self.scope.funcs.len() - 1);
         self.scope.open();
-        let plain = self.plain_owner(owner.as_ref());
+        let plain = self.plain_owner(owner);
         if let Some(class) = owner {
-            let size = class.floor();
-            self.scope.vars.push(param("self".to_string(), class, size));
+            let name = "self".to_string();
+            self.scope.vars.push(match receiver_size {
+                Some(size) => mut_param(name, class.clone(), size, Adds::default()),
+                None => param(name, class.clone(), class.floor()),
+            });
         }
         self.scope.vars.push(param("depth".to_string(), Ty::I64, 0));
         for (name, ty, size, adds) in params {
@@ -1027,6 +1054,9 @@ impl Gen<'_> {
             self.w.text(&format!(" {value}"));
         }
         self.w.close();
+        if let (true, Some(own)) = (mut_self, owner) {
+            self.write_self(own);
+        }
         self.mut_uses_first();
         self.stmts(false);
         if ret != Ty::Unit {
@@ -1053,6 +1083,54 @@ impl Gen<'_> {
             .cost = cost;
     }
 
+    /// The parameters of a function after `depth`: each name, type, the most size an argument
+    /// may take, and what a `mut` parameter adds. With `mut_params`, the first is `mut`.
+    fn draw_params(&mut self, mut_params: bool) -> Vec<(String, Ty, u64, Option<Adds>)> {
+        let mut params = Vec::new();
+        let count = if mut_params {
+            1 + self.pick(MAX_PARAMS)
+        } else {
+            self.pick(MAX_PARAMS + 1)
+        };
+        for _ in 0..count {
+            let ty = self.any_type();
+            // The first is, so that the function has one.
+            let mutable = mut_params && (params.is_empty() || self.pick(2) == 0);
+            // A `mut` parameter takes the largest place that a local of a mutable value may hold.
+            let size = self.size_for(&ty, if mutable { &[SIZES[2]] } else { &SIZES });
+            let adds = mutable.then(|| self.mut_adds(&ty));
+            params.push((self.scope.fresh("v"), ty, size, adds));
+        }
+        params
+    }
+
+    /// The first statements of a method that takes `mut self`, after its early return: `self =
+    /// e`, so that its `mut` changes something (W0002), and a `mut` call of the method itself on
+    /// `self`.
+    fn write_self(&mut self, own: &Ty) {
+        self.w.line();
+        self.cost.statement();
+        self.statement(|g| {
+            g.w.text("self = ");
+            g.expr(own, own.floor());
+        });
+        let itself = self.scope.funcs.len() - 1;
+        self.mut_self_recursion(itself);
+    }
+
+    /// A method of the struct or enum `owner` that takes `mut self`. It is written from streams
+    /// and with fuel of its own, so no choice of the type that holds it moves. Its body may hold
+    /// a `mut` call, as the body of a `mut` function does: a call may name `self`.
+    fn mut_self_method(&mut self, owner: &Ty) {
+        let fuel = std::mem::replace(&mut self.fuel, MUT_FUEL);
+        self.swap_own_streams();
+        self.mut_fn = true;
+        self.function(Some(owner), false, true);
+        self.mut_fn = false;
+        self.swap_own_streams();
+        self.fuel = fuel;
+    }
+
     /// Now and then, up to two functions with `mut` parameters, after the others. Each is a
     /// function, or, as often, a method in an `extend K<n>` or `extend S<n>` block. The block is
     /// of a class or a struct that is no instance of a generic one. They are written from the
@@ -1075,10 +1153,10 @@ impl Gen<'_> {
                 self.w.text(&format!("extend {ty} "));
                 self.w.open();
                 self.w.line();
-                self.function(Some(ty), true);
+                self.function(Some(&ty), true, false);
                 self.w.close();
             } else {
-                self.function(None, true);
+                self.function(None, true, false);
             }
             self.mut_fn = false;
             self.w.line();
@@ -1226,48 +1304,7 @@ impl Gen<'_> {
             }
             let mut requirements = Vec::new();
             for _ in 0..self.pick(MAX_REQUIREMENTS + 1) {
-                let name = self.scope.fresh("r");
-                let mut signature = format!("fn {name}(self");
-                let mut params = Vec::new();
-                for _ in 0..self.pick(3) {
-                    let name = self.scope.fresh("p");
-                    let ty = self.requirement_type(takes, None);
-                    params.push(Param {
-                        name,
-                        ty,
-                        mutable: false,
-                    });
-                }
-                // The spare stream draws the `mut` parameter, so no other choice moves.
-                if self.mut_pick(2) == 1 {
-                    let at = self.mut_pick(params.len() + 1);
-                    params.insert(
-                        at,
-                        Param {
-                            name: self.scope.fresh("p"),
-                            ty: RequirementType {
-                                written: "i64".to_string(),
-                                value: "0".to_string(),
-                            },
-                            mutable: true,
-                        },
-                    );
-                }
-                for param in &params {
-                    let mutable = if param.mutable { "mut " } else { "" };
-                    write!(signature, ", {mutable}{}: {}", param.name, param.ty.written)
-                        .expect("writing to a `String` should succeed");
-                }
-                signature += ")";
-                let ret =
-                    has_result(self.pick(3)).then(|| self.requirement_type(takes, assoc.as_ref()));
-                if let Some(ty) = &ret {
-                    write!(signature, " -> {}", ty.written)
-                        .expect("writing to a `String` should succeed");
-                }
-                self.w.line();
-                self.w.text(&signature);
-                requirements.push(Requirement { name, params, ret });
+                requirements.push(self.requirement(takes, assoc.as_ref()));
             }
             self.w.close();
             self.w.line();
@@ -1280,6 +1317,59 @@ impl Gen<'_> {
             });
         }
         shapes
+    }
+
+    /// A requirement of an interface, written to its body. `takes` says whether the interface
+    /// takes a parameter, and `assoc` is its associated type. The spare stream draws the `mut`
+    /// parameter and `mut self`, so no other choice moves.
+    fn requirement(&mut self, takes: bool, assoc: Option<&Assoc>) -> Requirement {
+        let name = self.scope.fresh("r");
+        let mut params = Vec::new();
+        for _ in 0..self.pick(3) {
+            let name = self.scope.fresh("p");
+            let ty = self.requirement_type(takes, None);
+            params.push(Param {
+                name,
+                ty,
+                mutable: false,
+            });
+        }
+        // The spare stream draws the `mut` parameter, so no other choice moves.
+        if self.mut_pick(2) == 1 {
+            let at = self.mut_pick(params.len() + 1);
+            params.insert(
+                at,
+                Param {
+                    name: self.scope.fresh("p"),
+                    ty: RequirementType {
+                        written: "i64".to_string(),
+                        value: "0".to_string(),
+                    },
+                    mutable: true,
+                },
+            );
+        }
+        // The spare stream draws `mut self` too, after the `mut` parameter.
+        let mut_self = self.mut_pick(2) == 1;
+        let mut signature = format!("fn {name}({}self", if mut_self { "mut " } else { "" });
+        for param in &params {
+            let mutable = if param.mutable { "mut " } else { "" };
+            write!(signature, ", {mutable}{}: {}", param.name, param.ty.written)
+                .expect("writing to a `String` should succeed");
+        }
+        signature += ")";
+        let ret = has_result(self.pick(3)).then(|| self.requirement_type(takes, assoc));
+        if let Some(ty) = &ret {
+            write!(signature, " -> {}", ty.written).expect("writing to a `String` should succeed");
+        }
+        self.w.line();
+        self.w.text(&signature);
+        Requirement {
+            name,
+            mut_self,
+            params,
+            ret,
+        }
     }
 
     /// A type a requirement of an interface may name: `Self`, `T` when it has a parameter, its
@@ -1392,9 +1482,11 @@ impl Gen<'_> {
                     single.to_vec()
                 };
                 let listed = heads(self.pick(2));
-                let entries =
+                let (entries, mutated) =
                     self.conforming_type(class, &ty, &roots, declared, listed, &mut calls);
-                calls.push(format!("let {var} = {value}"));
+                // A method that takes `mut self` changes `var`.
+                let keyword = if mutated { "let mut" } else { "let" };
+                calls.push(format!("{keyword} {var} = {value}"));
                 // The requirements of the interface, and of those it inherits.
                 Self::direct_calls(declared, &entries, &var, &ty, &mut calls);
                 calls.push(format!("print({var}.plain())"));
@@ -1991,7 +2083,7 @@ impl Gen<'_> {
             for requirement in &declared[entry.interface].requirements {
                 self.w.line();
                 self.w
-                    .text(&requirement.method(entry.arg, &class, &mut calls.values));
+                    .text(&requirement.method(entry.arg, &class, &mut calls.values, false));
             }
             self.w.close();
             self.w.line();
@@ -2024,7 +2116,9 @@ impl Gen<'_> {
     /// A class `ty` or an enum, if not `class`, that conforms to the interfaces `roots`: in its
     /// declaration list, which holds the methods, or in a block for each interface it conforms
     /// to, with a plain `extend` block. A type that conforms to one interface twice has the
-    /// blocks, as a body holds one method of a name. Gives the interfaces it conforms to.
+    /// blocks, as a body holds one method of a name. A method of an enum that meets a requirement
+    /// with `mut self` takes `mut self` as often as not. Gives the interfaces it conforms to, and
+    /// whether one method takes `mut self`.
     fn conforming_type(
         &mut self,
         class: bool,
@@ -2033,8 +2127,9 @@ impl Gen<'_> {
         declared: &[Shape],
         listed: bool,
         calls: &mut Calls,
-    ) -> Vec<Conformed> {
+    ) -> (Vec<Conformed>, bool) {
         let entries = conformed_closure(declared, roots);
+        let mut mutated = false;
         let listed = listed && !repeats(&entries);
         let keyword = if class { "class" } else { "enum" };
         let conformance = if listed {
@@ -2058,8 +2153,11 @@ impl Gen<'_> {
         self.w.text(if class { "v: i64" } else { "A\n    B(i64)" });
         if listed {
             for (requirement, arg) in requirements_of(declared, &entries) {
+                let by_mut = !class && requirement.mut_self && self.mut_pick(2) == 1;
+                mutated |= by_mut;
                 self.w.line();
-                self.w.text(&requirement.method(arg, ty, &mut calls.values));
+                self.w
+                    .text(&requirement.method(arg, ty, &mut calls.values, by_mut));
             }
         }
         self.w.close();
@@ -2074,9 +2172,11 @@ impl Gen<'_> {
                     self.w.text(&assoc.choice(ty));
                 }
                 for requirement in &declared[entry.interface].requirements {
+                    let by_mut = !class && requirement.mut_self && self.mut_pick(2) == 1;
+                    mutated |= by_mut;
                     self.w.line();
                     self.w
-                        .text(&requirement.method(entry.arg, ty, &mut calls.values));
+                        .text(&requirement.method(entry.arg, ty, &mut calls.values, by_mut));
                 }
                 self.w.close();
                 self.w.line();
@@ -2088,7 +2188,7 @@ impl Gen<'_> {
         self.w.text("fn plain(self) -> i64 { 1 }");
         self.w.close();
         self.w.line();
-        entries
+        (entries, mutated)
     }
 
     /// `fn pick<n><T: I<n>>(_x: T, y: T.A<n>) -> T.A<n> { y }`: the associated type of the
@@ -2111,8 +2211,16 @@ impl Gen<'_> {
         self.w.open();
         let mut marks = Vec::new();
         if assoc.bounded {
+            // A requirement with `mut self` changes its receiver, which a plain parameter is not.
+            let receiver = if declared[k].requirements.iter().any(|r| r.mut_self) {
+                self.w.line();
+                self.w.text("let mut z = y");
+                "z"
+            } else {
+                "y"
+            };
             for requirement in &declared[k].requirements {
-                let (lines, called) = requirement.call("y", bound.arg, &mut calls.marks);
+                let (lines, called) = requirement.call(receiver, bound.arg, &mut calls.marks);
                 for line in lines {
                     self.w.line();
                     self.w.text(&line);
@@ -2139,9 +2247,17 @@ impl Gen<'_> {
         let param = if requirements.is_empty() { "_x" } else { "x" };
         self.w.text(&format!("fn {name}<T: {bounds}>({param}: T) "));
         self.w.open();
+        // A requirement with `mut self` changes its receiver, which a plain parameter is not.
+        let receiver = if requirements.iter().any(|(r, _)| r.mut_self) {
+            self.w.line();
+            self.w.text("let mut y = x");
+            "y"
+        } else {
+            "x"
+        };
         let mut marks = Vec::new();
         for (requirement, arg) in requirements {
-            let (lines, called) = requirement.call("x", *arg, &mut calls.marks);
+            let (lines, called) = requirement.call(receiver, *arg, &mut calls.marks);
             for line in lines {
                 self.w.line();
                 self.w.text(&line);
@@ -2270,7 +2386,7 @@ impl Gen<'_> {
                 break;
             }
             self.w.line();
-            self.function(Some(ty.clone()), false);
+            self.function(Some(&ty), false, false);
         }
         if id % 3 == 1 {
             self.w.line();
@@ -2301,9 +2417,10 @@ impl Gen<'_> {
     }
 
     /// `struct S { f: T ... fn m(self, ...) ... }`: fields of types declared before, each with a
-    /// cap on its size, then methods, which take plain `self` and may give the struct itself. A
-    /// struct may list `Display` or `Eq`, which the compiler writes; one in three writes a
-    /// method `to_string`, which is its `Display`, and one in five writes `eq`, which is its `Eq`.
+    /// cap on its size, then methods, which take plain `self` and may give the struct itself.
+    /// Every other struct also has a method that takes `mut self`. A struct may list `Display` or
+    /// `Eq`, which the compiler writes. One in three writes a method `to_string`, which is its
+    /// `Display`, and one in five writes `eq`, which is its `Eq`.
     pub(crate) fn structure(&mut self) {
         let id = self.scope.structs.len();
         // The body goes into a piece, so the header can name what the compiler writes for it.
@@ -2346,7 +2463,13 @@ impl Gen<'_> {
                 break;
             }
             self.w.line();
-            self.function(Some(ty.clone()), false);
+            self.function(Some(&ty), false, false);
+        }
+        // Every other struct also has a method that takes `mut self`. The parity of `id` decides,
+        // so no draw moves for it.
+        if id.is_multiple_of(2) {
+            self.w.line();
+            self.mut_self_method(&ty);
         }
         if id % 3 == 1 {
             self.w.line();
@@ -2466,7 +2589,8 @@ impl Gen<'_> {
 
     /// `enum E { V ... fn m(self, _other: Self) -> bool { true } }`: variants with no payload,
     /// with fields, or with labeled fields. The first holds only types declared before; a later
-    /// one may hold the enum itself, which a value built finite ends in the first.
+    /// one may hold the enum itself, which a value built finite ends in the first. Every other
+    /// enum also has a method that takes `mut self`.
     pub(crate) fn enumeration(&mut self) {
         let id = self.scope.enums.len();
         // The body goes into a piece, so the header can name what the compiler writes for it.
@@ -2535,6 +2659,12 @@ impl Gen<'_> {
             applied: None,
         });
         self.scope.types.push(Ty::enumeration(id, least));
+        // Every other enum also has a method that takes `mut self`. The parity of `id` decides,
+        // so no draw moves for it.
+        if id.is_multiple_of(2) {
+            self.w.line();
+            self.mut_self_method(&Ty::enumeration(id, least));
+        }
         self.w.close();
         let body = self.w.swap(header);
         // An enum with no class in it lists `Eq`, which the compiler writes for it; every other

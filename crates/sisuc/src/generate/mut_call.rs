@@ -295,19 +295,27 @@ impl Gen<'_> {
         places
     }
 
-    /// What each `mut` parameter of the function `callee` takes.
+    /// What each `mut` parameter of the function `callee` takes. The receiver of a method that
+    /// takes `mut self` comes first: it is the first `mut` part of the call.
     fn mut_wants(&self, callee: usize) -> Vec<Want> {
         let func = &self.scope.funcs[callee];
+        let receiver = func
+            .mut_self
+            .zip(func.owner.as_ref())
+            .map(|(size, owner)| Want {
+                ty: owner.clone(),
+                size,
+                adds: Adds::default(),
+            });
         let params = func.params.iter().zip(&func.muts);
-        params
-            .filter_map(|((ty, size), adds)| {
-                adds.map(|adds| Want {
-                    ty: ty.clone(),
-                    size: *size,
-                    adds,
-                })
+        let params = params.filter_map(|((ty, size), adds)| {
+            adds.map(|adds| Want {
+                ty: ty.clone(),
+                size: *size,
+                adds,
             })
-            .collect()
+        });
+        receiver.into_iter().chain(params).collect()
     }
 
     /// The functions that a `mut` call may name now: each has a place for every `mut` parameter.
@@ -427,12 +435,15 @@ impl Gen<'_> {
             }
             let fuel = std::mem::replace(&mut self.fuel, MUT_FUEL);
             self.swap_streams();
-            // A local for each parameter that adds something, so that a place for it is there.
-            for want in self.mut_wants(callee) {
+            // A local for each parameter that adds something, so that a place for it is there. The
+            // receiver of a method that takes `mut self` gets one too.
+            let receiver = self.scope.funcs[callee].mut_self.is_some();
+            for (slot, want) in self.mut_wants(callee).into_iter().enumerate() {
                 // A local may not have the room that the parameter adds to, so up to 3 are tried.
                 for _ in 0..MAX_LOCALS {
                     let wanted = [want.clone()];
-                    if want.adds.is_none() || placeable(&wanted, &self.mut_places(), &[]) {
+                    let needs_local = !want.adds.is_none() || (receiver && slot == 0);
+                    if !needs_local || placeable(&wanted, &self.mut_places(), &[]) {
                         break;
                     }
                     self.w.line();
@@ -441,13 +452,61 @@ impl Gen<'_> {
                 }
             }
             self.deep_element_local(callee);
-            if placeable(&self.mut_wants(callee), &self.mut_places(), &[]) {
+            self.class_field_local(callee);
+            // The calls before it may have taken the budget that a call at depth 0 needs.
+            let fits = self.cost.times() <= self.budget;
+            if fits && placeable(&self.mut_wants(callee), &self.mut_places(), &[]) {
                 self.w.line();
                 self.cost.statement();
                 self.statement(|g| g.mut_call_of(Some(callee)));
             }
             self.swap_streams();
             self.fuel = fuel;
+        }
+    }
+
+    /// In the body of the method `callee`, which takes `mut self`: a `mut` call of the method
+    /// itself on `self`, as `self.m(depth - 1, ...)`. It reaches a `mut self` method through the
+    /// place `self`, a `mut` parameter. It ends at `depth`.
+    pub(crate) fn mut_self_recursion(&mut self, callee: usize) {
+        if placeable(&self.mut_wants(callee), &self.mut_places(), &[]) {
+            self.w.line();
+            self.cost.statement();
+            self.statement(|g| g.mut_call_of(Some(callee)));
+        }
+    }
+
+    /// For a callee with a `mut` part that takes the type of a `mut` field of a class: a local of
+    /// that class, if no place of that kind fits yet. So the call may name the field of an
+    /// object, as in `mut k.g`, or `k.g.m()` for a method that takes `mut self`.
+    fn class_field_local(&mut self, callee: usize) {
+        let wants = self.mut_wants(callee);
+        let held = |g: &Self| {
+            let places = g.mut_places();
+            wants.iter().any(|want| {
+                places
+                    .iter()
+                    .any(|p| matches!(p.kind, Kind::Field(..)) && p.fits(want))
+            })
+        };
+        if held(self) {
+            return;
+        }
+        let found = (0..self.scope.classes.len()).find(|&id| {
+            let class = &self.scope.classes[id];
+            class.applied.is_none()
+                && class.fields.iter().any(|field| {
+                    self.scope.target_field(field)
+                        && wants
+                            .iter()
+                            .any(|want| field.ty == want.ty && field.cap <= want.size)
+                })
+        });
+        if let Some(id) = found {
+            let ty = self.scope.class_ty(id);
+            self.w.line();
+            self.cost.statement();
+            self.statement(|g| g.let_typed(ty, false));
         }
     }
 
@@ -480,7 +539,8 @@ impl Gen<'_> {
     }
 
     /// `f(depth, mut place, ...)`, or `let _ = f(...)` of a function with a result, or the same
-    /// of a method, `((o)).m(depth, mut place, ...)`; or `let _ = exchange(mut place, e)`. A
+    /// of a method, `((o)).m(depth, mut place, ...)`, or `place.m(depth, ...)` of a method that
+    /// takes `mut self`; or `let _ = exchange(mut place, e)`. A
     /// plain argument may be a `mut` call too. Now and then, the rewritten copy copies each local
     /// in and out (decision 2), but not that of a call with a `mut` call in an argument.
     pub(crate) fn mut_call(&mut self) {
@@ -730,6 +790,7 @@ mod tests {
         g.scope.funcs.push(Func {
             name: "f1".to_string(),
             owner: None,
+            mut_self: None,
             params: vec![(ty, 100)],
             muts: vec![Some(adds)],
             ret: Ty::Unit,
@@ -1040,6 +1101,7 @@ mod tests {
             g.scope.funcs.push(Func {
                 name: "f2".to_string(),
                 owner: None,
+                mut_self: None,
                 params: vec![(Ty::I64, 0)],
                 muts: vec![None],
                 ret: Ty::Unit,
@@ -1151,6 +1213,7 @@ mod tests {
         g.scope.funcs.push(Func {
             name: "f2".to_string(),
             owner: None,
+            mut_self: None,
             params: vec![(Ty::I64, 100)],
             muts: vec![Some(Adds::default())],
             ret: Ty::I64,
@@ -1281,6 +1344,7 @@ mod tests {
             g.scope.funcs.push(Func {
                 name: "f1".to_string(),
                 owner: None,
+                mut_self: None,
                 params: vec![(Ty::I64, 100)],
                 muts: vec![Some(Adds::default())],
                 ret: Ty::Unit,

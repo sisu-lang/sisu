@@ -501,9 +501,17 @@ mod tests {
                     // The call starts with `((` of a method, or with `f<n>`; the removed text
                     // ends the arguments.
                     let call = &g.program[m.errors[0].1..];
-                    let callee = call
-                        .strip_prefix('f')
-                        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
+                    let numbered = |name: &str, prefix: char| {
+                        name.strip_prefix(prefix)
+                            .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+                    };
+                    // A method that takes `mut self` starts with its receiver, a place, then
+                    // `.m<n>(`.
+                    let on_place = call
+                        .split_once('(')
+                        .and_then(|(head, _)| head.rsplit_once('.'))
+                        .is_some_and(|(_, name)| numbered(name, 'm'));
+                    let callee = numbered(call, 'f') || on_place;
                     (text.starts_with(", ")
                         || text == "depth - 1"
                         || text.bytes().all(|b| b.is_ascii_digit()))

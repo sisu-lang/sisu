@@ -392,6 +392,40 @@ def mut_call_width(k: int) -> str:
     )
 
 
+def mut_self_calls(k: int) -> str:
+    """Return a program with `k` calls of a `mut self` method, each on a field of one struct."""
+    # Each call names a `mut self` method on its own field of `r`. So the copy-in, the write check
+    # and the store-back of a receiver grow with `k`, and so does the parked place of the checker.
+    # `main` builds a `Cell` and writes `r` and `total` itself, so that size 0 has no W0012 or
+    # W0002.
+    fields = "".join(f"    c{tag(i)}: Cell\n" for i in range(k))
+    built = "".join(f", c{tag(i)}: Cell(x: 0)" for i in range(k))
+    calls = "".join(f"    r.c{tag(i)}.bump()\n" for i in range(k))
+    shown = "".join(f"    total += r.c{tag(i)}.x\n" for i in range(k))
+    return (
+        "struct Cell {\n    x: i64\n\n    fn bump(mut self) {\n        self.x += 1\n    }\n}\n\n"
+        f"struct Row {{\n    n: i64\n{fields}}}\n\n"
+        "fn main() {\n    let mut total = 0\n    let mut one = Cell(x: 1)\n    one.bump()\n"
+        f"    total += one.x\n    let mut r = Row(n: 1{built})\n    r.n = 2\n"
+        f'{calls}    total += r.n\n{shown}    print("{{total}}")\n}}\n'
+    )
+
+
+def mut_self_chain(k: int) -> str:
+    """Return a program with a chain of `k + 1` calls of a `mut self` method."""
+    # `a.f.m().f.m()...`: `m` takes `mut self` and gives a `Box`, a class object whose `mut` field
+    # `f` holds the struct again. Each step has a receiver that goes through the result of the step
+    # before, so the checker parks one more place at each step. Size 0 is one call.
+    chain = "a.f" + ".m().f" * k + ".m()"
+    return (
+        "class Box {\n    mut f: Item\n}\n\n"
+        "struct Item {\n    n: i64\n\n    fn m(mut self) -> Box {\n        self.n += 1\n"
+        "        Box(f: self)\n    }\n}\n\n"
+        f"fn main() {{\n    let a = Box(f: Item(n: 0))\n    let d = {chain}\n"
+        '    print("{d.f.n}")\n}\n'
+    )
+
+
 def mut_exits(k: int) -> str:
     """Return a program with a function that has `k` `mut` parameters and `k` early returns."""
     # `many` has k `mut` parameters and k early returns, and each return stores every `mut`
@@ -652,6 +686,10 @@ SHAPES = {
     "mut parameters": (250, mut_parameters),
     "mut returns": (250, mut_returns),
     "mut call width": (1000, mut_call_width),
+    "mut self calls": (250, mut_self_calls),
+    # n = 15: 8n steps of two levels each stay under the nesting limit of 256 (E0071). At n = 10 and
+    # n = 12, the few lexer instructions of the base give a step of the token array a ratio of 2.37.
+    "mut self chain": (15, mut_self_chain),
     "mut exits": (25, mut_exits),
     "owned exits": (25, owned_exits),
     "alias chain": (12, alias_chain),
