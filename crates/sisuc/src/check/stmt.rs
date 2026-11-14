@@ -1514,8 +1514,16 @@ impl Checker<'_> {
             }
         }
         if let (Some(at), Some(valued)) = (frame.bare, frame.valued) {
-            let reported = self.error(DiagnosticKind::BareBreak { at, valued });
-            frame.failed.get_or_insert(reported);
+            // A bare `break` gives a `unit`, so it joins `unit` values and `unit?` values.
+            match (frame.first, &mut checked) {
+                (Some((ty, _)), Ok(body)) if ty == Type::UNIT || optional_unit(ty) => {
+                    body.each_expr_mut(&mut |e| fill_bare_breaks(e, 0, ty));
+                }
+                _ => {
+                    let reported = self.error(DiagnosticKind::BareBreak { at, valued });
+                    frame.failed.get_or_insert(reported);
+                }
+            }
         }
         let ty = frame.loop_type();
         match (checked, ty) {
@@ -2282,6 +2290,29 @@ fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool, widened
         if !crossed {
             super::WIDENED_BREAKS.set(super::WIDENED_BREAKS.get() + 1);
         }
+    }
+}
+
+/// Gives each bare `break` in `e` that ends the loop `depth` loops out from `e` a `unit` value,
+/// wrapped into `ty` when that is `unit?`. It enters each nested loop, as a labelled `break` in one
+/// can end an outer loop.
+fn fill_bare_breaks(e: &mut tir::Expr, depth: usize, ty: Type) {
+    let inner = depth + usize::from(matches!(e.kind, ExprKind::Loop(_)));
+    e.each_child_mut(&mut |child| fill_bare_breaks(child, inner, ty));
+    let span = e.span;
+    if let ExprKind::Break {
+        depth: target,
+        value: value @ None,
+    } = &mut e.kind
+        && *target == depth
+    {
+        let unit = tir::Expr::new(ExprKind::Unit, Type::UNIT, span);
+        let filled = if ty == Type::UNIT {
+            unit
+        } else {
+            super::wrap(unit, ty)
+        };
+        *value = Some(Box::new(filled));
     }
 }
 
