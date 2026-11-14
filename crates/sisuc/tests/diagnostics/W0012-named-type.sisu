@@ -1,0 +1,127 @@
+struct Live {
+    n: i64
+}
+fn live_fn(x: Live?) -> bool {
+    x == None
+}
+struct Dead {
+    n: i64
+}
+fn dead_fn(x: Dead) -> i64 {
+    x.n
+}
+struct Aliased {
+    n: i64
+}
+type AliasedB = Aliased
+struct Chained {
+    n: i64
+}
+type ChainA = Chained
+type ChainB = ChainA
+struct Generic<T> {
+    n: T
+}
+type GenericB = Generic<i64>
+enum Enumd {
+    A
+}
+type EnumB = Enumd
+struct Structd {
+    n: i64
+}
+type StructB = Structd
+struct AliasLive {
+    n: i64
+}
+type AliasLiveB = AliasLive
+fn alias_live_fn(x: AliasLiveB?) -> bool {
+    x == None
+}
+struct Own {
+    next: [Own]
+}
+enum OwnE {
+    A
+    fn g(self) -> OwnE {
+        OwnE.A
+    }
+}
+struct Ext {
+    n: i64
+}
+extend Ext {
+    fn g(self) -> i64 {
+        1
+    }
+    fn h(self) -> Ext? {
+        None
+    }
+}
+struct Built {
+    n: i64
+}
+fn built_fn(x: Built?) -> bool {
+    x == None
+}
+struct TArg {
+    n: i64
+}
+fn tag<T>() -> i64 {
+    1
+}
+struct LetType {
+    n: i64
+}
+struct Req {
+    n: i64
+}
+interface Needs {
+    fn req(self) -> Req?
+}
+struct Arr {
+    n: i64
+}
+fn arr_fn(_x: [Arr?]) -> i64 {
+    1
+}
+struct Param {
+    n: i64
+}
+type Wrap<T> = [T]
+type WrapB = Wrap<Param>
+struct Other {
+    n: i64
+}
+struct Holder {
+    n: i64
+    fn g(self, x: Other) -> i64 {
+        1
+    }
+}
+enum Both {
+    A
+}
+fn both_fn() -> Both {
+    Both.A
+}
+struct Order {
+    n: i64
+}
+fn order_fn(x: Order?) -> bool {
+    x == None
+}
+type OrderB = Order
+fn main() {
+    print(live_fn(None))
+    print(alias_live_fn(None))
+    let b = Built(n: 1)
+    print(b.n)
+    print(built_fn(b))
+    print(tag<TArg>())
+    let x: LetType? = None
+    print(x == None)
+    print(arr_fn([]))
+    print(Holder(n: 1).n)
+    print(order_fn(None))
+}

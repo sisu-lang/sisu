@@ -1,0 +1,12 @@
+// GIVEN a struct with a field `v` and no method `v`, and an alias of it
+// WHEN the field is read through the alias, as `A.v`
+// THEN `sisu check` reports E0105, not E0120, since a field is not a method
+struct Node {
+    v: i64
+}
+
+type A = Node
+
+fn main() {
+    let _x = A.v
+}

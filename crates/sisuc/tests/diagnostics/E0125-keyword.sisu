@@ -1,0 +1,40 @@
+// GIVEN an upper-case name in a pattern where no enum is expected
+// AND its lower-case form is a keyword, a reserved word, or a name that is no keyword
+// AND one name is inside `Some(...)` in an `if let`
+// WHEN `sisu check` runs on it
+// THEN it reports E0125 at 10:9, 17:9, 24:9 and 30:17
+// AND the help of a keyword or a reserved word says so, and gives no fix
+// AND the help of a name that is no keyword gives the fix that writes it in lower case
+fn keyword() {
+    match 1 {
+        If => print(1)
+        _ => print(2)
+    }
+}
+
+fn reserved() {
+    match 1 {
+        Import => print(1)
+        _ => print(2)
+    }
+}
+
+fn no_keyword() {
+    match 1 {
+        Print => print(1)
+        _ => print(2)
+    }
+}
+
+fn inside_some(x: i64?) {
+    if let Some(If) = x {
+        print(1)
+    }
+}
+
+fn main() {
+    keyword()
+    reserved()
+    no_keyword()
+    inside_some(None)
+}

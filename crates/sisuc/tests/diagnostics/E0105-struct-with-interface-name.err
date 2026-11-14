@@ -1,0 +1,14 @@
+error[E0026]: `Eq` is a built-in interface
+ --> E0105-struct-with-interface-name.sisu:1:8
+  |
+1 | struct Eq {}
+  |        ^^
+
+error[E0105]: `Eq` is a type, not a value
+ --> E0105-struct-with-interface-name.sisu:2:22
+  |
+2 | fn main() { let _a = Eq }
+  |                      ^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0026, E0105

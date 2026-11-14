@@ -6,9 +6,9 @@ error[E0130]: `match` does not cover `Num(_)`
  8 |         Num(0) => 0
    |         ------ `Num(0)` covers only `0`
    |
-help: add a `_ =>` arm
+help: add an arm for `Num(_)`
    |
-10 +         _ => todo
+10 +         Num(_) => todo
    |
 
 sisu: 1 error

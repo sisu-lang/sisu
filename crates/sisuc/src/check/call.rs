@@ -5,6 +5,7 @@ use std::fmt;
 
 use super::alias::{Through, Via};
 use super::expr::{fits, no_member, option_written, path, postfix};
+use super::extend::method_holder;
 use super::generic::{GenericSig, Site, mark, mismatched, written_args};
 use super::interface::{Bounds, LangPath};
 use super::member::{FieldOwner, Found};
@@ -14,14 +15,14 @@ use super::prelude::PRELUDE;
 use super::reports::Reported;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, Declared, Expectation, Lowered, Origin, Poisoned, block_expr, own_args,
-    type_of,
+    Checked, Checker, Declared, Expectation, Holder, Lowered, Origin, Poisoned, block_expr,
+    own_args, type_of,
 };
 use super::{array, number, string};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
     BlockBound, Code, Definition, Diagnostic, DiagnosticKind, MethodReceiver, ReceiverArgument,
-    Suggestion, alias, suggestion,
+    Suggestion, TypeReceiver, alias, suggestion,
 };
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
@@ -100,7 +101,14 @@ impl Checker<'_> {
                 let (id, _) = self
                     .result_variant(callee.name)
                     .expect("a prelude variant other than `Some` should be `Ok` or `Err`");
-                self.enum_path(span, id, callee, Some((args, callee.span)), site, None)
+                self.enum_path(
+                    span,
+                    id,
+                    callee,
+                    Some((args, callee.span)),
+                    (site, false),
+                    None,
+                )
             }
             _ => match self.bare_variant(callee.name, callee.span) {
                 Some(d) => {
@@ -190,25 +198,8 @@ impl Checker<'_> {
                         Some((self.idiom_of(callee.name, ty)?, ty, optional))
                     });
                 if let Some((idiom, ty, optional)) = idiom {
-                    // The rewrite deletes the text before the receiver and between it and the next
-                    // argument, except each comment in it.
-                    let receiver = first.value.span;
-                    let head = Span::new(callee.span.start(), receiver.start());
-                    let gap = Span::new(
-                        receiver.end(),
-                        rest.first()
-                            .map_or_else(|| receiver.end(), |arg| arg.value.span.start()),
-                    );
-                    let (takes, bound) = self.idiom_call(&idiom, name, ty, rest);
-                    // A comment before the receiver keeps its line break, which must stay in
-                    // brackets.
-                    let argument = ReceiverArgument {
-                        wrap: !postfix(&first.value)
-                            || self.label_starts_receiver(callee, first)
-                            || self.comment_in(&[head.range()]),
-                        head: self.source.removal_parts(head),
-                        gap: self.source.removal_parts(gap),
-                    };
+                    let (argument, takes, bound) =
+                        self.receiver_call(callee.span, &idiom, name, ty, first, rest);
                     let receiver = if optional {
                         MethodReceiver::Optional {
                             argument,
@@ -371,15 +362,120 @@ impl Checker<'_> {
         }
     }
 
-    /// Whether the receiver `first` of the idiom call `callee(first, ...)` starts with an open
-    /// loop label, and the call starts the value of an unlabeled `break`: the fix then writes
-    /// the label there, unless it wraps the receiver in parentheses.
-    fn label_starts_receiver(&self, callee: &ast::Ident, first: &ast::Arg) -> bool {
+    /// Whether the receiver `first` of the call `callee(first, ...)` starts with an open loop
+    /// label, and the call starts the value of an unlabeled `break`. `callee` is the span where
+    /// the call starts. The fix then writes the label there, unless it wraps the receiver in
+    /// parentheses.
+    fn label_starts_receiver(&self, callee: Span, first: &ast::Arg) -> bool {
         let text = self.source.rest(first.value.span.start());
         let end = text
             .find(|c: char| !(c.is_alphanumeric() || c == '_'))
             .unwrap_or(text.len());
-        self.starts_break_value(callee.span) && self.is_open_label(&text[..end])
+        self.starts_break_value(callee) && self.is_open_label(&text[..end])
+    }
+
+    /// The rewrite of the call `callee(first, rest...)` to the call of the method `name` on
+    /// `first`, a value of type `ty`. `callee` is the span where the call starts. It gives the
+    /// receiver argument, whether the method takes `rest`, and the bound of its block that `ty`
+    /// does not meet, if any. The rewrite deletes the text before the receiver and between it and
+    /// the next argument, except each comment in it. Checks `rest` once, and not `first`.
+    fn receiver_call(
+        &mut self,
+        callee: Span,
+        idiom: &Idiom,
+        name: &str,
+        ty: Type,
+        first: &ast::Arg,
+        rest: &[ast::Arg],
+    ) -> (ReceiverArgument, bool, Option<BlockBound>) {
+        let receiver = first.value.span;
+        let head = Span::new(callee.start(), receiver.start());
+        // The gap ends where the next argument starts, at its `mut` when it has one, so that
+        // the fix keeps that `mut`.
+        let gap = Span::new(
+            receiver.end(),
+            rest.first().map_or_else(
+                || receiver.end(),
+                |arg| arg.mut_keyword.unwrap_or(arg.value.span).start(),
+            ),
+        );
+        let (takes, bound) = self.idiom_call(idiom, name, ty, rest);
+        // A comment before the receiver keeps its line break, which must stay in brackets.
+        let argument = ReceiverArgument {
+            wrap: !postfix(&first.value)
+                || self.label_starts_receiver(callee, first)
+                || self.comment_in(&[head.range()]),
+            head: self.source.removal_parts(head),
+            gap: self.source.removal_parts(gap),
+        };
+        (argument, takes, bound)
+    }
+
+    /// `Type.member`, or `Type.member(args)`, where `member` is the method `func` of the struct or
+    /// enum `holder`, which `site` writes as `type_name`: E0120. When the first argument is a
+    /// value of the type, the fix calls the method on it, as `unknown_call` does. A label, a
+    /// `mut` on the first argument, or a type argument of the method (`typed`) leaves no fix. The
+    /// fix is safe when the fixed program checks: the method takes the other arguments, and its
+    /// result meets the type that `site` expects. Checks each argument once.
+    pub(super) fn method_through_type(
+        &mut self,
+        func: tir::FuncId,
+        holder: Holder,
+        member: &ast::Ident,
+        (site, type_name, typed): (Site<'_>, &str, bool),
+        args: &[ast::Arg],
+    ) -> Reported {
+        // An argument at a `mut` parameter gets the help of a place. `muts` holds no `self`, so
+        // the receiver is not one of them.
+        let muts = self.signatures[func.0].muts.clone();
+        self.stamp_mut_params(args.get(1..).unwrap_or_default(), &muts);
+        let unlabeled = args.iter().all(|arg| arg.label.is_none());
+        let receiver = match args.split_first() {
+            Some((first, rest)) if unlabeled && !typed && first.mut_keyword.is_none() => {
+                let ty = (self.expr(&first.value, Expectation::Poisoned).ok())
+                    .map(|checked| checked.ty)
+                    .filter(|ty| method_holder(*ty) == Some(holder));
+                if let Some(ty) = ty {
+                    let owner = self.owner_args(func, ty);
+                    let idiom = Idiom::Method(func, owner);
+                    // A method of the declaration has no block, so no bound that `ty` fails.
+                    let (argument, takes, _) = self.receiver_call(
+                        site.name.span,
+                        &idiom,
+                        member.name.as_str(),
+                        ty,
+                        first,
+                        rest,
+                    );
+                    // The fixed call is the method call, so its result must meet the context.
+                    // A result that is not known does not.
+                    let result =
+                        (self.signatures[func.0].ret).and_then(|ret| self.subst(ret, owner.get()));
+                    let expected = site.expected.ty();
+                    let meets = expected.is_none()
+                        || (result.is_some() && self.result_meets((expected, result)));
+                    Some(TypeReceiver {
+                        argument,
+                        takes,
+                        safe: takes && meets,
+                    })
+                } else {
+                    self.stray(rest);
+                    None
+                }
+            }
+            _ => {
+                self.stray(args);
+                None
+            }
+        };
+        self.error(DiagnosticKind::MemberKind {
+            name: member.name.to_string(),
+            type_name: type_name.to_string(),
+            method: true,
+            at: member.span,
+            receiver,
+        })
     }
 
     /// Checks the arguments `rest` after the receiver, of type `ty`, of the idiom call of the
@@ -416,8 +512,9 @@ impl Checker<'_> {
     /// first one when it is checked already. `owner` is the type arguments of the method's class
     /// or enum. The method call takes them when there are as many as the method has parameters.
     /// Each must fit its parameter type, with `owner` in it, as a call `receiver.method(args)`
-    /// checks. A method with type parameters of its own takes none of them as written, as they
-    /// are not known.
+    /// checks. An argument has `mut` exactly when its parameter has. Then it is a place that can
+    /// change, with no `?.` along it and the parameter's type, as `mut_arg` takes it. A method with
+    /// type parameters of its own takes none of them as written, as they are not known.
     fn method_arguments(
         &mut self,
         func: tir::FuncId,
@@ -435,7 +532,11 @@ impl Checker<'_> {
             self.stray(&args[usize::from(first.is_some())..]);
             return false;
         }
-        let mut takes = args.len() == sig.params.len();
+        // The method call needs the `mut` that the parameter has, so an argument without it
+        // cannot be taken as written (E0166).
+        let mut takes = args.len() == sig.params.len()
+            && (args.iter().zip(&sig.muts))
+                .all(|(arg, &at_mut)| at_mut == arg.mut_keyword.is_some());
         // The checks below borrow `self` again. Only the parameters that have an argument are
         // made, so that a call with few arguments costs little.
         let params: Vec<_> = sig
@@ -453,10 +554,25 @@ impl Checker<'_> {
                 function: Origin::id(func.0),
                 index: Origin::id(i),
             };
-            let checked = first
-                .take()
-                .unwrap_or_else(|| self.expr(&arg.value, Expectation::or_poisoned(want, origin)));
-            takes &= want.is_some_and(|want| checked.is_ok_and(|checked| fits(want, checked.ty)));
+            if let Some(checked) = first.take() {
+                takes &=
+                    want.is_some_and(|want| checked.is_ok_and(|checked| fits(want, checked.ty)));
+            } else if arg.mut_keyword.is_some() && muts.get(i) == Some(&true) {
+                // The call takes a `mut` argument as `mut_arg` does: a place that can change, with
+                // no `?.` along it, and exactly the type of the parameter.
+                takes &= match self.mut_place(&arg.value) {
+                    Ok(place) => {
+                        place.path.is_some()
+                            && place.chain.is_none()
+                            && want.is_some_and(|want| place.ty == Some(want))
+                    }
+                    Err(_) => false,
+                };
+            } else {
+                let checked = self.expr(&arg.value, Expectation::or_poisoned(want, origin));
+                takes &=
+                    want.is_some_and(|want| checked.is_ok_and(|checked| fits(want, checked.ty)));
+            }
         }
         takes
     }
@@ -540,9 +656,13 @@ impl Checker<'_> {
         // Whether the list is reported only once the member is found: a path's, or a built-in's.
         let mut deferred = path;
         let checked = if !safe
-            && let Some(checked) =
-                self.type_path(span, receiver, method, Some((args, parens)), site.expected)
-        {
+            && let Some(checked) = self.type_path(
+                span,
+                receiver,
+                method,
+                Some((args, parens)),
+                (site.expected, !types.is_empty()),
+            ) {
             checked
         } else {
             // The receiver of a `push` is a place, checked once and held for the call.

@@ -1,5 +1,7 @@
 //! The registry: every diagnostic code, and the message, labels, help and fixes of each.
 
+use rustc_hash::FxHashSet;
+
 use super::{Diagnostic, Edit, Fix, Severity, Suggestion};
 use crate::conformance::CHOICE_DEPTH_LIMIT;
 use crate::payload_limit::{self, PAYLOAD_LIMIT_GIB};
@@ -974,17 +976,19 @@ pub(crate) enum DiagnosticKind {
     /// index into one that is neither an array nor a string.
     CannotIndex { ty: String, at: Span, range: bool },
     /// A single index into the string at `at`: a string takes a range index only. `base` is the
-    /// string as written, and `usage` says whether the index reads or is the target of a write.
+    /// string as written on one line, or `None` when it has no such text. `usage` says whether the
+    /// index reads or is the target of a write.
     StringIndex {
         at: Span,
-        base: String,
+        base: Option<String>,
         usage: IndexUsage,
     },
     /// The argument at `at` of a string's `get`, which is no range written in the call: `base` is
-    /// the receiver as written, and `call` how the call is written.
+    /// the receiver as written on one line, or `None` when it has no such text, and `call` how the
+    /// call is written.
     StringGetNeedsRange {
         at: Span,
-        base: String,
+        base: Option<String>,
         call: GetCall,
     },
     /// The range at `at`, given to an array's `get`, which takes an `i64`. `base` is the receiver
@@ -1226,13 +1230,17 @@ pub(crate) enum DiagnosticKind {
         held: bool,
         at: Span,
     },
-    /// The member `name`, at `at`, of the enum `enum_name`, used as the other kind of member: a
-    /// `method` named through the enum, or else a variant called on a value.
+    /// The member `name`, at `at`, of the type `type_name`, used as the other kind of member: a
+    /// `method` named through its struct or enum, or else a variant called on a value. A method
+    /// that a call names through its type has `receiver` when the first argument is a value of the
+    /// type: the argument and whether the method call takes the other arguments. The fix calls
+    /// the method on that value.
     MemberKind {
         name: String,
-        enum_name: String,
+        type_name: String,
         method: bool,
         at: Span,
+        receiver: Option<TypeReceiver>,
     },
     /// The field at `at`, read or assigned on a value of the enum `enum_name`.
     EnumField { enum_name: String, at: Span },
@@ -1242,11 +1250,12 @@ pub(crate) enum DiagnosticKind {
     PatternForm { form: ForeignPattern, at: Span },
     /// The scrutinee at `at`, of type `ty`, which `match` cannot take.
     CannotMatch { ty: String, at: Span },
-    /// The upper-case name `name`, at `at`, in a pattern where no enum is expected. `binding` is
-    /// the name with its first letter in lower case, or `None` when that spells a keyword.
+    /// The upper-case name `name`, at `at`, in a pattern where no enum is expected. `lower` is the
+    /// name with its first letter in lower case, and what that spells: a binding, which the fix
+    /// writes, or a keyword or a reserved word, which no binding can be.
     NotVariantHere {
         name: String,
-        binding: Option<String>,
+        lower: LowerName,
         at: Span,
     },
     /// The constant `name`, at `at`, written as a pattern. `guard` is the guard the help shows:
@@ -1287,9 +1296,10 @@ pub(crate) enum DiagnosticKind {
     /// first arm with `missing`'s variant at the top: its span, its pattern and its payload.
     /// `guarded` is whether a guarded arm may not match it, and `gap` whether it is a gap in an
     /// integer, `char` or `string` type, which only `_ =>` closes for good.
-    /// The fix writes a `_ =>` arm, indented by `indent`, in place of `insert`: an empty span,
-    /// or the space between the last arm and a `}` on its line. `close` is the indentation of
-    /// that `}`, which the fix moves to a line of its own.
+    /// The fix writes an arm for `missing`, indented by `indent`, in place of `insert`: an empty
+    /// span, or the space between the last arm and a `}` on its line. The arm is `_ =>` when
+    /// `gap`, or when `missing` is `_`, an empty `match`: neither has a pattern of its own.
+    /// `close` is the indentation of that `}`, which the fix moves to a line of its own.
     NonExhaustive {
         missing: String,
         partly: Option<(Span, String, String)>,
@@ -1414,11 +1424,13 @@ pub(crate) enum DiagnosticKind {
     },
     /// The function, method, class, enum or constant `name` (its `kind`), whose name in its
     /// declaration is at `at`, which no live code uses; `uses` are up to three uses in dead code,
-    /// each with the kind and name of its dead user.
+    /// each with the kind and name of its dead user. `named` is, for a struct or an enum, the
+    /// first place outside its declaration where a type names it.
     UnusedItem {
         kind: Definition,
         name: String,
         at: Span,
+        named: Option<Span>,
         uses: Vec<(Span, UsedBy, String)>,
     },
     /// The `extend` block of the type written `name`, whose header is at `at`, which no live code
@@ -1627,6 +1639,26 @@ impl ReceiverArgument {
         let mut edits = part_edits(&self.head, open);
         edits.extend(part_edits(&self.gap, &format!("{close}{access}")));
         edits
+    }
+}
+
+/// The first argument of a call through a type, which becomes the receiver of the method call.
+/// `takes` is whether the method call takes the other arguments. `safe` is whether the fixed
+/// program checks: the method call takes them and its result meets the context of the call.
+pub(crate) struct TypeReceiver {
+    pub(crate) argument: ReceiverArgument,
+    pub(crate) takes: bool,
+    pub(crate) safe: bool,
+}
+
+/// The message of the fix that calls the method `name` on the first argument of a call written as
+/// a function. `takes` is whether the method call takes the other arguments: when it does not,
+/// the message says that they need a fix.
+fn method_form_message(name: &str, takes: bool) -> String {
+    if takes {
+        format!("call `{name}` as a method")
+    } else {
+        format!("try calling `{name}` as a method, then fix its arguments")
     }
 }
 
@@ -1965,19 +1997,24 @@ impl Definition {
 }
 
 /// The W0012 or W0013 of the item or member `name`, whose name is at `at`. `shown` is the `dbg`
-/// call that shows it.
+/// call that shows it. `named` is the first type that names a struct or an enum.
 fn unused_name(
     code: Code,
     kind: Definition,
     name: &str,
     at: Span,
     shown: Option<Span>,
+    named: Option<Span>,
     uses: Vec<(Span, UsedBy, String)>,
 ) -> Diagnostic {
     let verb = kind.unused_verb();
     // A variant cannot take a `_` name (E0113).
     let help = if kind == Definition::Variant {
         "delete it".to_string()
+    } else if named.is_some() {
+        format!(
+            "delete it and each type that names it, directly or through an alias, or name it `_{name}` everywhere if it is kept on purpose"
+        )
     } else {
         format!("delete it, or name it `_{name}` if it is kept on purpose")
     };
@@ -1993,6 +2030,10 @@ fn unused_name(
             call,
             format!("`dbg` can show `{name}` here, but `dbg` is not a read"),
         ),
+        None => d,
+    };
+    let d = match named {
+        Some(at) => d.with_secondary(at, "named here"),
         None => d,
     };
     cite_uses(d, uses)
@@ -2308,6 +2349,8 @@ pub(crate) struct Peel {
     pub(crate) member: String,
     /// How many `?? None` the help puts around the receiver.
     pub(crate) layers: usize,
+    /// Whether the diagnostic has the peel help. The peeled member may fail too.
+    pub(crate) help: bool,
 }
 
 /// What the help of a `MayBeNone` tells the user to unwrap with `if let`.
@@ -2355,6 +2398,39 @@ fn unwrap_text(unwrap: UnwrapHelp, fix: bool) -> Option<String> {
         UnwrapHelp::Replace(base) => Some(replace_text(&base)),
         UnwrapHelp::Nothing => None,
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many words `string_index_names` has put into its set or looked up, on this thread.
+    pub(crate) static NAME_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The names `bs`, `cs` and `i` that the help of a single index of a string writes. A name that
+/// `base` holds as a whole word gets the first number from 2 that `base` does not hold. So the
+/// help does not name `base` twice.
+pub(crate) fn string_index_names(base: &str) -> [String; 3] {
+    let words: FxHashSet<&str> = base
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .inspect(|_| {
+            #[cfg(test)]
+            NAME_STEPS.set(NAME_STEPS.get() + 1);
+        })
+        .collect();
+    ["bs", "cs", "i"].map(|name| {
+        let mut fresh = name.to_owned();
+        let mut number = 1;
+        while {
+            #[cfg(test)]
+            NAME_STEPS.set(NAME_STEPS.get() + 1);
+            words.contains(fresh.as_str())
+        } {
+            number += 1;
+            fresh = format!("{name}{number}");
+        }
+        fresh
+    })
 }
 
 /// The help that replaces the optional struct value `base`, as written.
@@ -2500,14 +2576,20 @@ pub(crate) enum RangeForm {
         missing: MissingBound,
         place: RangePlace,
     },
-    /// `start..=` with no end in an index or a string's `get`, which is no range there: `range` is
-    /// its source text.
-    NoEnd { range: String, start: String },
-    /// `base[..]` or `base[..=]`: the whole of `base`, which is `base`.
-    NoBounds { base: String, inclusive: bool },
+    /// `start..=` with no end in an index or a string's `get`, which is no range there: `quote` is
+    /// its source text and the source text of `start`, each on one line, or `None` when one of
+    /// them has no such text.
+    NoEnd { quote: Option<(String, String)> },
+    /// `base[..]` or `base[..=]`: the whole of `base`, which is `base`. `base` is `None` when it
+    /// has no one-line text.
+    NoBounds {
+        base: Option<String>,
+        inclusive: bool,
+    },
     /// `base.get(..)` or `base.get(..=)`, a string's `get` of its whole value, written as `call`.
+    /// `base` is `None` when it has no one-line text.
     NoBoundsGet {
-        base: String,
+        base: Option<String>,
         inclusive: bool,
         call: GetCall,
     },
@@ -2584,19 +2666,33 @@ impl RangeForm {
                     .with_label(label)
                     .with_help(help)
             }
-            Self::NoEnd { range, start } => {
-                Diagnostic::coded(code, at, format!("`{range}` has no end"))
+            Self::NoEnd { quote: None } => {
+                Diagnostic::coded(code, at, "this `..=` range has no end")
                     .with_label("this range has no end")
-                    .with_help(format!("write `{start}..`"))
+                    .with_help("a `..=` range must have an end")
             }
+            Self::NoEnd {
+                quote: Some((range, start)),
+            } => Diagnostic::coded(code, at, format!("`{range}` has no end"))
+                .with_label("this range has no end")
+                .with_help(format!("write `{start}..`")),
             Self::NoBounds { base, inclusive } => {
                 let dots = if inclusive { "..=" } else { ".." };
-                let help = if inclusive {
-                    format!("write `{base}`")
-                } else {
-                    format!("`{base}[..]` is `{base}`; write `{base}`")
+                let (message, help) = match base {
+                    None => (
+                        format!("`[{dots}]` has no bounds"),
+                        format!("`[{dots}]` gives the whole value, so it has no effect"),
+                    ),
+                    Some(base) if inclusive => (
+                        format!("`{base}[{dots}]` has no bounds"),
+                        format!("write `{base}`"),
+                    ),
+                    Some(base) => (
+                        format!("`{base}[{dots}]` has no bounds"),
+                        format!("`{base}[..]` is `{base}`; write `{base}`"),
+                    ),
                 };
-                Diagnostic::coded(code, at, format!("`{base}[{dots}]` has no bounds"))
+                Diagnostic::coded(code, at, message)
                     .with_label("this range has no bounds")
                     .with_help(help)
             }
@@ -2606,6 +2702,10 @@ impl RangeForm {
                 call: how,
             } => {
                 let dots = if inclusive { "..=" } else { ".." };
+                let Some(base) = base else {
+                    return Diagnostic::coded(code, at, format!("`get({dots})` has no bounds"))
+                        .with_label("this range has no bounds");
+                };
                 let (call, value) = match how {
                     GetCall::Plain => (format!("{base}.get"), Some(format!("Some({base})"))),
                     GetCall::Safe => (format!("{base}?.get"), Some(base)),
@@ -2710,6 +2810,16 @@ impl RangeTarget {
             RangeWrite::Temporary => format!("store `{base}` in a `let mut` variable first"),
         })
     }
+}
+
+/// The name of `NotVariantHere` with its first letter in lower case, and what that spells.
+pub(crate) enum LowerName {
+    /// No keyword: a binding. `true` and `false` are here too, as they are patterns.
+    Binding(String),
+    /// A keyword other than `true` and `false`.
+    Keyword(String),
+    /// A reserved word.
+    Reserved(String),
 }
 
 /// The guard the help of `BoundTwice` or `ConstantInPattern` suggests.
@@ -5143,14 +5253,21 @@ impl From<DiagnosticKind> for Diagnostic {
                     left,
                     member,
                     layers,
+                    help,
                 }),
                 ..
-            } => Diagnostic::coded(
-                code,
-                at,
-                format!("`{receiver}?.` leaves a `{left}`, which may be `None`"),
-            )
-            .with_help(peel_text("other", &receiver, &member, layers)),
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{receiver}?.` leaves a `{left}`, which may be `None`"),
+                );
+                if help {
+                    d.with_help(peel_text("other", &receiver, &member, layers))
+                } else {
+                    d
+                }
+            }
             DiagnosticKind::MayBeNone {
                 value,
                 at,
@@ -5278,14 +5395,22 @@ impl From<DiagnosticKind> for Diagnostic {
                 })
             }
             DiagnosticKind::StringIndex { at, base, usage } => {
-                // `string` takes no `[u8]`, so a write has no bytes form.
-                let help = match usage {
-                    IndexUsage::Read => format!(
-                        "for bytes, write `let bs = {base}.bytes()` once, then `bs[i]`; for characters, write `let cs = {base}.chars()` once, then `cs[i]`"
-                    ),
-                    IndexUsage::Write => format!(
-                        "to change a character, write `let mut cs = {base}.chars()`, change `cs[i]`, then write `{base} = string(cs)`"
-                    ),
+                // `string` takes no `[u8]`, so a write has no bytes form. A base with no one-line
+                // text has no code to repeat, so the help states the steps.
+                let help = match (base, usage) {
+                    (Some(base), usage) => {
+                        let [bs, cs, i] = string_index_names(&base);
+                        match usage {
+                            IndexUsage::Read => format!(
+                                "for bytes, write `let {bs} = {base}.bytes()` once, then `{bs}[{i}]`; for characters, write `let {cs} = {base}.chars()` once, then `{cs}[{i}]`"
+                            ),
+                            IndexUsage::Write => format!(
+                                "to change a character, write `let mut {cs} = {base}.chars()`, change `{cs}[{i}]`, then write `{base} = string({cs})`"
+                            ),
+                        }
+                    }
+                    (None, IndexUsage::Read) => "for bytes, put `bytes()` of the string in a `let`, then index it; for characters, do the same with `chars()`".to_owned(),
+                    (None, IndexUsage::Write) => "to change a character, put `chars()` of the string in a `let mut`, change it, then write `string(...)` back".to_owned(),
                 };
                 Diagnostic::coded(code, at, "a string has no single index")
                     .with_label("this is a string")
@@ -5293,10 +5418,11 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::StringGetNeedsRange { at, base, call } => {
                 // A call after a failed `?.` fails again, so its help names the range only.
-                let example = match call {
-                    GetCall::Plain => format!("{base}.get(1..3)"),
-                    GetCall::Safe => format!("{base}?.get(1..3)"),
-                    GetCall::SafeFailed | GetCall::Payload => "1..3".to_owned(),
+                let example = match (call, base) {
+                    (GetCall::Plain, Some(base)) => format!("{base}.get(1..3)"),
+                    (GetCall::Safe, Some(base)) => format!("{base}?.get(1..3)"),
+                    (GetCall::SafeFailed | GetCall::Payload, _)
+                    | (GetCall::Plain | GetCall::Safe, None) => "1..3".to_owned(),
                 };
                 Diagnostic::coded(code, at, "a string's `get` takes a range")
                     .with_label("this is not a range")
@@ -5376,11 +5502,7 @@ impl From<DiagnosticKind> for Diagnostic {
                         }],
                     ),
                     MethodReceiver::Argument { argument, safe } => (
-                        if safe {
-                            format!("call `{name}` as a method")
-                        } else {
-                            format!("try calling `{name}` as a method, then fix its arguments")
-                        },
+                        method_form_message(&name, safe),
                         safe,
                         argument.edits(&format!(".{name}(")),
                     ),
@@ -6016,16 +6138,29 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::MemberKind {
                 name,
-                enum_name,
+                type_name,
                 method,
                 at,
+                receiver,
             } => {
                 let message = if method {
-                    format!("`{name}` is a method of `{enum_name}`; call it on a value")
+                    format!("`{name}` is a method of `{type_name}`; call it on a value")
                 } else {
-                    format!("`{name}` is a variant; build it with `{enum_name}.{name}`")
+                    format!("`{name}` is a variant; build it with `{type_name}.{name}`")
                 };
-                Diagnostic::coded(code, at, message)
+                let d = Diagnostic::coded(code, at, message);
+                match receiver {
+                    Some(TypeReceiver {
+                        argument,
+                        takes,
+                        safe,
+                    }) => d.with_fix(Fix {
+                        message: method_form_message(&name, takes),
+                        safe,
+                        edits: argument.edits(&format!(".{name}(")),
+                    }),
+                    None => d,
+                }
             }
             DiagnosticKind::EnumField { enum_name, at } => Diagnostic::coded(
                 code,
@@ -6114,12 +6249,19 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, format!("cannot `match` on `{ty}`"))
                     .with_help("`match` takes enums, optionals, integers, `bool`, `char` and `string`")
             }
-            DiagnosticKind::NotVariantHere { name, binding, at } => {
-                let d = Diagnostic::coded(code, at, format!("`{name}` is not a variant here"))
-                    .with_help("a binding starts with a lower-case letter");
-                match binding {
-                    Some(lower) => d.with_fix(unsafe_fix(&format!("write `{lower}`"), at, &lower)),
-                    None => d,
+            DiagnosticKind::NotVariantHere { name, lower, at } => {
+                let d = Diagnostic::coded(code, at, format!("`{name}` is not a variant here"));
+                let help = "a binding starts with a lower-case letter";
+                match lower {
+                    LowerName::Binding(lower) => d
+                        .with_help(help)
+                        .with_fix(unsafe_fix(&format!("write `{lower}`"), at, &lower)),
+                    LowerName::Keyword(lower) => d.with_help(format!(
+                        "{help}, but `{lower}` is a keyword; use a different name"
+                    )),
+                    LowerName::Reserved(lower) => d.with_help(format!(
+                        "{help}, but `{lower}` is reserved; use a different name"
+                    )),
                 }
             }
             DiagnosticKind::ConstantInPattern { name, at, guard } => {
@@ -6203,11 +6345,16 @@ impl From<DiagnosticKind> for Diagnostic {
                     }
                     None => d,
                 };
-                let arm = match close {
-                    Some(close) => format!("\n{indent}_ => todo\n{close}"),
-                    None => format!("{indent}_ => todo\n"),
+                let (pattern, message) = if gap || missing == "_" {
+                    ("_", "add a `_ =>` arm".to_string())
+                } else {
+                    (missing.as_str(), format!("add an arm for `{missing}`"))
                 };
-                d.with_fix(unsafe_fix("add a `_ =>` arm", insert, &arm))
+                let arm = match close {
+                    Some(close) => format!("\n{indent}{pattern} => todo\n{close}"),
+                    None => format!("{indent}{pattern} => todo\n"),
+                };
+                d.with_fix(unsafe_fix(&message, insert, &arm))
             }
             DiagnosticKind::UnreachableArm {
                 at,
@@ -6515,15 +6662,16 @@ impl From<DiagnosticKind> for Diagnostic {
                 kind,
                 name,
                 at,
+                named,
                 uses,
-            } => unused_name(code, kind, &name, at, None, uses),
+            } => unused_name(code, kind, &name, at, None, named, uses),
             DiagnosticKind::UnusedMember {
                 kind,
                 name,
                 at,
                 shown,
                 uses,
-            } => unused_name(code, kind, &name, at, shown, uses),
+            } => unused_name(code, kind, &name, at, shown, None, uses),
             DiagnosticKind::UnusedBlock { name, at, uses } => {
                 let d = Diagnostic::coded(
                     code,

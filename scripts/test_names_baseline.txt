@@ -464,7 +464,6 @@ crates/sisuc/src/check/tests/patterns.rs::match_coverage
 crates/sisuc/src/check/tests/patterns.rs::match_join
 crates/sisuc/src/check/tests/patterns.rs::match_lowers
 crates/sisuc/src/check/tests/patterns.rs::match_spills
-crates/sisuc/src/check/tests/patterns.rs::non_exhaustive_note_and_fix
 crates/sisuc/src/check/tests/patterns.rs::one_named_field_per_arm_checks_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::pattern_bindings_are_immutable
 crates/sisuc/src/check/tests/patterns.rs::pattern_names

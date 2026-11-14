@@ -1,0 +1,18 @@
+// GIVEN a method of a struct with a `mut` parameter, called as a function, as `put(self, mut a)`
+// WHEN `sisu check` runs on it
+// THEN it reports E0070 at 14:9 with a safe fix
+// AND the fix calls the method on the receiver, and keeps the `mut` of the argument
+struct St {
+    n: i64
+
+    fn put(self, mut x: i64) {
+        x = 1
+    }
+
+    fn on_self(self) {
+        let mut a = 1
+        put(self, mut a)
+    }
+}
+
+fn main() {}

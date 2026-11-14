@@ -4,9 +4,9 @@ error[E0130]: `match` does not cover `Mul(_, _)`
  7 |     match e {
    |     ^^^^^
    |
-help: add a `_ =>` arm
+help: add an arm for `Mul(_, _)`
    |
-10 +         _ => todo
+10 +         Mul(_, _) => todo
    |
 
 sisu: 1 error

@@ -1,0 +1,262 @@
+error[E0120]: `put` is a method of `St`; call it on a value
+  --> E0062-type-method-mut-position.sisu:43:8
+   |
+43 |     St.put(1, w.n)
+   |        ^^^
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:43:15
+   |
+43 |     St.put(1, w.n)
+   |               ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0120]: `put` is a method of `St`; call it on a value
+  --> E0062-type-method-mut-position.sisu:48:8
+   |
+48 |     St.put(w.t, mut a)
+   |        ^^^
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:48:12
+   |
+48 |     St.put(w.t, mut a)
+   |            ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+48 |     St.put(w?.t, mut a)
+   |             +
+
+error[E0120]: `put` is a method of `St`; call it on a value
+  --> E0062-type-method-mut-position.sisu:52:8
+   |
+52 |     St.put(w.t)
+   |        ^^^
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:52:12
+   |
+52 |     St.put(w.t)
+   |            ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+52 |     St.put(w?.t)
+   |             +
+
+error[E0120]: `bumpm` is a method of `St`; call it on a value
+  --> E0062-type-method-mut-position.sisu:57:8
+   |
+57 |     St.bumpm(w.t, a)
+   |        ^^^^^
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:57:14
+   |
+57 |     St.bumpm(w.t, a)
+   |              ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+57 |     St.bumpm(w?.t, a)
+   |               +
+
+error[E0120]: `put3` is a method of `St`; call it on a value
+  --> E0062-type-method-mut-position.sisu:61:8
+   |
+61 |     St.put3(1, w.n, w.m)
+   |        ^^^^
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:61:16
+   |
+61 |     St.put3(1, w.n, w.m)
+   |                ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+61 |     St.put3(1, w?.n, w.m)
+   |                 +
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:61:21
+   |
+61 |     St.put3(1, w.n, w.m)
+   |                     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0120]: `put` is a method of `St`; call it on a value
+  --> E0062-type-method-mut-position.sisu:65:8
+   |
+65 |     St.put(St(n: 1), x: w.n)
+   |        ^^^
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:65:25
+   |
+65 |     St.put(St(n: 1), x: w.n)
+   |                         ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0120]: `put` is a method of `St`; call it on a value
+  --> E0062-type-method-mut-position.sisu:69:8
+   |
+69 |     St.put(mut w.t, w.n)
+   |        ^^^
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:69:16
+   |
+69 |     St.put(mut w.t, w.n)
+   |                ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:69:21
+   |
+69 |     St.put(mut w.t, w.n)
+   |                     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0120]: `put` is a method of `Bx`; call it on a value
+  --> E0062-type-method-mut-position.sisu:73:8
+   |
+73 |     Bx.put(1, w.n)
+   |        ^^^
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:73:15
+   |
+73 |     Bx.put(1, w.n)
+   |               ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0120]: `put` is a method of `Bx`; call it on a value
+  --> E0062-type-method-mut-position.sisu:78:8
+   |
+78 |     Bx.put(w.b, mut a)
+   |        ^^^
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:78:12
+   |
+78 |     Bx.put(w.b, mut a)
+   |            ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+78 |     Bx.put(w?.b, mut a)
+   |             +
+
+error[E0120]: `put` is a method of `Bx`; call it on a value
+  --> E0062-type-method-mut-position.sisu:82:8
+   |
+82 |     Bx.put(w.b)
+   |        ^^^
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:82:12
+   |
+82 |     Bx.put(w.b)
+   |            ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+82 |     Bx.put(w?.b)
+   |             +
+
+error[E0120]: `bumpm` is a method of `Bx`; call it on a value
+  --> E0062-type-method-mut-position.sisu:87:8
+   |
+87 |     Bx.bumpm(w.b, a)
+   |        ^^^^^
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:87:14
+   |
+87 |     Bx.bumpm(w.b, a)
+   |              ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+87 |     Bx.bumpm(w?.b, a)
+   |               +
+
+error[E0120]: `put3` is a method of `Bx`; call it on a value
+  --> E0062-type-method-mut-position.sisu:91:8
+   |
+91 |     Bx.put3(1, w.n, w.m)
+   |        ^^^^
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:91:16
+   |
+91 |     Bx.put3(1, w.n, w.m)
+   |                ^
+   |
+   = help: to use the value only when it is present, unwrap it with `if let`, `let ... else` or `?? return`
+help: if a `None` result is fine, use `?.`
+   |
+91 |     Bx.put3(1, w?.n, w.m)
+   |                 +
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:91:21
+   |
+91 |     Bx.put3(1, w.n, w.m)
+   |                     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0120]: `put` is a method of `Bx`; call it on a value
+  --> E0062-type-method-mut-position.sisu:95:8
+   |
+95 |     Bx.put(Bx.A(1), x: w.n)
+   |        ^^^
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:95:24
+   |
+95 |     Bx.put(Bx.A(1), x: w.n)
+   |                        ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0120]: `put` is a method of `Bx`; call it on a value
+  --> E0062-type-method-mut-position.sisu:99:8
+   |
+99 |     Bx.put(mut w.b, w.n)
+   |        ^^^
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:99:16
+   |
+99 |     Bx.put(mut w.b, w.n)
+   |                ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `w` may be `None`
+  --> E0062-type-method-mut-position.sisu:99:21
+   |
+99 |     Bx.put(mut w.b, w.n)
+   |                     ^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+sisu: 32 errors
+sisu: for more on a code, run `sisu explain <code>`: E0062, E0120

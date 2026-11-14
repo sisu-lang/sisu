@@ -5,6 +5,7 @@ use std::rc::Rc;
 use super::array::{innermost, is_optional_array, must_unwrap, optional_element};
 use super::expr::{if_some, literal_type, local, operator};
 use super::member::{Access, FieldOwner, FoundField, safe_value};
+use super::names::{Resolved, Site};
 use super::operator::Operator;
 use super::reports::Reported;
 use super::unused_names::{Copied, Used};
@@ -133,9 +134,10 @@ impl Change {
     }
 
     /// How the index that this change reaches uses its element: an assignment writes it, when
-    /// it is the whole target. A `push` and a deeper index only read it.
-    fn index_usage(self) -> IndexUsage {
-        if self == Change::Assign {
+    /// it is the whole target and its place `changes`. A `push`, a deeper index and a place that
+    /// cannot change only read it.
+    fn index_usage(self, changes: bool) -> IndexUsage {
+        if self == Change::Assign && changes {
             IndexUsage::Write
         } else {
             IndexUsage::Read
@@ -340,6 +342,17 @@ impl Checker<'_> {
             }
             &ast::ExprKind::Name(name) => self.lookup(name).is_some(),
             _ => true,
+        }
+    }
+
+    /// Whether the root of the place `e` is a binding that a write can change, a `let mut` or a
+    /// `mut` parameter. A constant, `self` and a value that a call gives are not.
+    pub(super) fn root_can_change(&self, e: &ast::Expr) -> bool {
+        match &place_root(e).kind {
+            &ast::ExprKind::Name(name) => self
+                .binding(name)
+                .is_some_and(|b| binding_cause(b).is_none()),
+            _ => false,
         }
     }
 
@@ -980,22 +993,27 @@ impl Checker<'_> {
                 return place;
             }
             // A poisoned item's own error is reported, and the name is no typo for a binding.
-            let reported = if let Some(reported) = self.use_poison(name, target.span) {
-                reported
+            let (reported, typo) = if let Some(reported) = self.use_poison(name, target.span) {
+                (reported, false)
+            } else if let Some(wrong) = self.hidden_name(name, target.span) {
+                // A type parameter or an associated type holds the name, with or without a
+                // function of that name, as in a read. The name may be a typo of a binding.
+                (wrong, true)
             } else if self.is_function(name) {
-                self.error(DiagnosticKind::AssignToFunction {
+                let reported = self.error(DiagnosticKind::AssignToFunction {
                     name: name.to_string(),
                     at: target.span,
-                })
+                });
+                (reported, false)
             } else {
-                let reported = self.not_found(name, target.span);
-                // The name may have meant any open binding; none of them warns as
-                // unassigned.
+                (self.not_found(name, target.span), true)
+            };
+            if typo {
+                // The name may have meant any open binding; none of them warns as unassigned.
                 for b in self.body.scopes.iter_mut().flat_map(|s| s.values_mut()) {
                     b.reassigned = true;
                 }
-                reported
-            };
+            }
             return CheckedPlace::failed(Some(reported));
         };
         if let Some(stamp) = stamp {
@@ -1024,6 +1042,17 @@ impl Checker<'_> {
             reported,
             temporary: None,
         }
+    }
+
+    /// The error for a write to `name`, at `at`, when a type parameter or an associated type holds
+    /// the name: it is no value, as in a read.
+    fn hidden_name(&mut self, name: Symbol, at: Span) -> Option<Reported> {
+        let answer = self.value_kind(name);
+        if !matches!(answer, Resolved::TypeParam(_) | Resolved::AssocType) {
+            return None;
+        }
+        self.wrong_kind(name, at, Site::value(true), answer)
+            .map(|wrong| self.error(wrong))
     }
 
     /// The field `name` of the base of a place, a value of type `ty`, as `find_field` finds it. It
@@ -1100,12 +1129,14 @@ impl Checker<'_> {
                 let inner = self.place(span, base, inner_change);
                 // The array of an optional array is no place, but its element has a type.
                 let optional = inner.value_ty().filter(|&ty| is_optional_array(ty));
+                // A root that failed or cannot change has no write to help with.
+                let usage = change.index_usage(inner.reported.is_none() && inner.writable);
                 let (element, element_report) = match optional {
                     Some(ty) => {
                         let reported = self.optional_array_target(base, &inner);
                         (optional_element(ty), Some(reported))
                     }
-                    None => self.element(base, (inner.value_ty(), false), change.index_usage()),
+                    None => self.element(base, (inner.value_ty(), false), usage),
                 };
                 // The index is not part of the chain that it ends.
                 self.body.indexed = false;

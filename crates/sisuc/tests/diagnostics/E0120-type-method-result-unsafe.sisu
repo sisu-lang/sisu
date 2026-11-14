@@ -1,0 +1,79 @@
+// GIVEN a method of a struct or of an enum, called through its type, as `St.m(s)`
+// AND the first argument is a value of that type, and the method takes the other arguments
+// AND the result of the method does not fit where the call stands
+// WHEN `sisu check` runs on it
+// THEN it reports E0120 for each call, with an unsafe fix that moves the first argument before the `.`
+// AND the fix is unsafe since the fixed call does not check
+interface Sh {
+    fn area(self) -> i64
+}
+
+struct Round: Sh {
+    r: i64
+
+    fn area(self) -> i64 {
+        self.r
+    }
+}
+
+struct St {
+    n: i64
+
+    fn m(self) -> i64 {
+        1
+    }
+
+    fn k(self) {}
+
+    fn c(self) -> Round {
+        Round(r: 1)
+    }
+}
+
+enum En {
+    A
+
+    fn m(self) -> i64 {
+        1
+    }
+
+    fn c(self) -> Round {
+        Round(r: 1)
+    }
+}
+
+struct Bx<T> {
+    v: T
+
+    fn get(self) -> T {
+        self.v
+    }
+}
+
+fn take(x: string) {}
+
+fn struct_string(s: St) -> string {
+    St.m(s)
+}
+
+fn enum_string(e: En) -> string {
+    En.m(e)
+}
+
+fn typed_let(s: St) {
+    let _x: string = St.m(s)
+}
+
+fn argument(s: St) {
+    take(St.m(s))
+}
+
+fn no_result(s: St) {
+    let _x: i64 = St.k(s)
+}
+
+fn generic_string(b: Bx<i64>) -> string {
+    Bx.get(b)
+}
+
+fn main() {}

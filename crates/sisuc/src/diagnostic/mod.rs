@@ -12,15 +12,17 @@ pub(crate) use registry::{
     BoundSite, BuiltIn, CannotExtendForm, ChainForm, ChainLabel, ClashForm, ClashKind, Code,
     ColonBound, ConformanceForm, Conversion, Definition, DiagnosticKind, Earlier, ElseOf, Expected,
     ForeignPattern, ForeignRange, GetCall, GuardHelp, Hop, Immutable, Implied, IndexUsage,
-    InterfaceBodyForm, Join, LetField, Literal, LiteralKind, MainForm, Make, MatchIdiomForm,
-    MathFix, Member, MethodReceiver, MismatchFix, MismatchOrigin, MissingBound, MissingFix,
-    MutDiffers, NanFix, NestingForm, NeverReassignedForm, NoOperatorForm, NotAny, NotConformForm,
-    NotInterface, NotMutForm, NotPlace, Operand, Owner, Panic, Peel, PeelIs, PeelLayers, Plain,
-    PowerFix, PrecisionHelp, PrintProblem, RETIRED, RangeForm, RangePlace, RangePush, RangeTarget,
-    RangeWrite, ReceiverArgument, SliceOf, SpecForm, SpecLimit, Spelled, TypedLiteral, Unbuilt,
-    Ungenerated, UnknownForm, Unwrap, UnwrapHelp, UsedBy, VariantLabels, WideKind, Written,
-    copy_help, invisible,
+    InterfaceBodyForm, Join, LetField, Literal, LiteralKind, LowerName, MainForm, Make,
+    MatchIdiomForm, MathFix, Member, MethodReceiver, MismatchFix, MismatchOrigin, MissingBound,
+    MissingFix, MutDiffers, NanFix, NestingForm, NeverReassignedForm, NoOperatorForm, NotAny,
+    NotConformForm, NotInterface, NotMutForm, NotPlace, Operand, Owner, Panic, Peel, PeelIs,
+    PeelLayers, Plain, PowerFix, PrecisionHelp, PrintProblem, RETIRED, RangeForm, RangePlace,
+    RangePush, RangeTarget, RangeWrite, ReceiverArgument, SliceOf, SpecForm, SpecLimit, Spelled,
+    TypeReceiver, TypedLiteral, Unbuilt, Ungenerated, UnknownForm, Unwrap, UnwrapHelp, UsedBy,
+    VariantLabels, WideKind, Written, copy_help, invisible,
 };
+#[cfg(test)]
+pub(crate) use registry::{NAME_STEPS, string_index_names};
 pub(crate) use suggest::{Suggestion, alias, closest, suggestion};
 
 use crate::source::Span;

@@ -229,7 +229,7 @@ impl Checker<'_> {
             let reported = failed.unwrap_or_else(|| {
                 self.error(DiagnosticKind::StringGetNeedsRange {
                     at: arg.value.span,
-                    base: self.source.line_text(receiver_expr.span),
+                    base: self.source.quote(receiver_expr.span),
                     call,
                 })
             });
@@ -302,20 +302,18 @@ impl Checker<'_> {
         range: &ast::Range,
         get: Option<GetCall>,
     ) -> Diagnostic {
-        let text = |e: &ast::Expr| self.source.text(e.span).to_string();
         let form = match (&range.start, &range.end) {
             (None, None) if let Some(call) = get => RangeForm::NoBoundsGet {
-                base: text(base),
+                base: self.source.quote(base.span),
                 inclusive: range.inclusive,
                 call,
             },
             (None, None) => RangeForm::NoBounds {
-                base: text(base),
+                base: self.source.quote(base.span),
                 inclusive: range.inclusive,
             },
             (Some(start), None) if range.inclusive => RangeForm::NoEnd {
-                range: self.source.text(range.span).to_string(),
-                start: text(start),
+                quote: (self.source.quote(range.span)).zip(self.source.quote(start.span)),
             },
             _ => RangeForm::Anywhere,
         };
@@ -383,22 +381,24 @@ impl Checker<'_> {
                 Some(_) => RangeWrite::Other,
             },
             // An element of a substring is a single index of a string. The write help names the
-            // base, so it fits only when the base is a place, that element is the whole target and
-            // the range starts at the base start, as in `s[..b][i] = v`. A range counts bytes and
-            // `chars()` counts characters, so no other start has a correct index in the help.
+            // base. It fits only when the base is a place whose root can change. That element
+            // must be the whole target, and the range must start at the base start, as in
+            // `s[..b][i] = v`. A range counts bytes and `chars()` counts characters, so no other
+            // start has a correct index in the help.
             _ if ty == Type::STRING => {
                 let whole = place
                     && found
                         .parent
                         .is_some_and(|parent| parent.span == target.span);
-                let (base, usage) = if whole && found.range.start.is_none() {
-                    (found.base, IndexUsage::Write)
-                } else {
-                    (found.index, IndexUsage::Read)
-                };
+                let (base, usage) =
+                    if whole && found.range.start.is_none() && self.root_can_change(found.base) {
+                        (found.base, IndexUsage::Write)
+                    } else {
+                        (found.index, IndexUsage::Read)
+                    };
                 return DiagnosticKind::StringIndex {
                     at: found.index.span,
-                    base: self.source.line_text(base.span),
+                    base: self.source.quote(base.span),
                     usage,
                 }
                 .into();

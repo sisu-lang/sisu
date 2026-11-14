@@ -1,0 +1,11 @@
+interface Source { type Item; fn get(self) }
+fn T() {}
+fn Item() {}
+fn read<T>() { let a = T }
+fn write<T>() { T = 1 }
+fn element<T>() { T[0] = 1 }
+fn compound<T>() { T += 1 }
+fn prelude<print>() { print = 1 }
+struct Box<T> { v: T; fn set(self) { T = 1 } }
+struct Holder: Source { n: i64; type Item = i64; fn get(self) { Item = 1 } }
+fn main() { T(); Item() }
