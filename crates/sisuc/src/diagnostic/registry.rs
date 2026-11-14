@@ -1228,13 +1228,17 @@ pub(crate) enum DiagnosticKind {
         held: bool,
         at: Span,
     },
-    /// The member `name`, at `at`, of the enum `enum_name`, used as the other kind of member: a
-    /// `method` named through the enum, or else a variant called on a value.
+    /// The member `name`, at `at`, of the type `type_name`, used as the other kind of member: a
+    /// `method` named through its struct or enum, or else a variant called on a value. A method
+    /// that a call names through its type has `receiver` when the first argument is a value of the
+    /// type: the argument and whether the method call takes the other arguments. The fix calls
+    /// the method on that value.
     MemberKind {
         name: String,
-        enum_name: String,
+        type_name: String,
         method: bool,
         at: Span,
+        receiver: Option<(ReceiverArgument, bool)>,
     },
     /// The field at `at`, read or assigned on a value of the enum `enum_name`.
     EnumField { enum_name: String, at: Span },
@@ -1629,6 +1633,16 @@ impl ReceiverArgument {
         let mut edits = part_edits(&self.head, open);
         edits.extend(part_edits(&self.gap, &format!("{close}{access}")));
         edits
+    }
+}
+
+/// The message of the fix that calls the method `name` on the first argument of a call written as
+/// a function. `safe` is whether the method call takes the other arguments.
+fn method_form_message(name: &str, safe: bool) -> String {
+    if safe {
+        format!("call `{name}` as a method")
+    } else {
+        format!("try calling `{name}` as a method, then fix its arguments")
     }
 }
 
@@ -5439,11 +5453,7 @@ impl From<DiagnosticKind> for Diagnostic {
                         }],
                     ),
                     MethodReceiver::Argument { argument, safe } => (
-                        if safe {
-                            format!("call `{name}` as a method")
-                        } else {
-                            format!("try calling `{name}` as a method, then fix its arguments")
-                        },
+                        method_form_message(&name, safe),
                         safe,
                         argument.edits(&format!(".{name}(")),
                     ),
@@ -6079,16 +6089,25 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::MemberKind {
                 name,
-                enum_name,
+                type_name,
                 method,
                 at,
+                receiver,
             } => {
                 let message = if method {
-                    format!("`{name}` is a method of `{enum_name}`; call it on a value")
+                    format!("`{name}` is a method of `{type_name}`; call it on a value")
                 } else {
-                    format!("`{name}` is a variant; build it with `{enum_name}.{name}`")
+                    format!("`{name}` is a variant; build it with `{type_name}.{name}`")
                 };
-                Diagnostic::coded(code, at, message)
+                let d = Diagnostic::coded(code, at, message);
+                match receiver {
+                    Some((argument, safe)) => d.with_fix(Fix {
+                        message: method_form_message(&name, safe),
+                        safe,
+                        edits: argument.edits(&format!(".{name}(")),
+                    }),
+                    None => d,
+                }
             }
             DiagnosticKind::EnumField { enum_name, at } => Diagnostic::coded(
                 code,

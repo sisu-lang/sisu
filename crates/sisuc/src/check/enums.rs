@@ -12,7 +12,7 @@ use super::mut_args::Callee;
 use super::reports::Reported;
 use super::unused_names::Used;
 use super::{
-    Checked, Checker, ClassInfo, Declared, Definition, DiagnosticKind, Expectation, Origin,
+    Checked, Checker, ClassInfo, Declared, Definition, DiagnosticKind, Expectation, Holder, Origin,
     Poisoned, SelfType, own_args,
 };
 use crate::ast;
@@ -301,31 +301,29 @@ impl Checker<'_> {
     /// `Enum.member`, or `Enum.member(args)` when `call` gives the arguments and the span of their
     /// parentheses, where `Enum` is the enum `id`, which `site` writes: the variant `member`
     /// built, or an error. Through an alias, the variant has the type that the alias names, and
-    /// the alias's parameters are the type arguments that the arguments bind.
+    /// the alias's parameters are the type arguments that the arguments bind. `typed` is whether
+    /// the member is written with type arguments.
     pub(super) fn enum_path(
         &mut self,
         span: Span,
         id: EnumId,
         member: &ast::Ident,
         call: Option<(&[ast::Arg], Span)>,
-        site: Site<'_>,
+        (site, typed): (Site<'_>, bool),
         through: Option<&Through>,
     ) -> Checked {
         let info = &self.enums[id.0];
         let enum_name = qualifier(site, member, info.name.name);
         let enum_name = enum_name.as_str();
         let Some(&variant) = info.index.get(&member.name) else {
+            let args = call.map_or(&[][..], |(args, _)| args);
             let reported = match info.methods.get(&member.name) {
                 Some(&Declared::Known(func)) => {
-                    // An argument at a `mut` parameter gets the help of a place.
-                    let muts = self.signatures[func.0].muts.clone();
-                    self.stamp_mut_params(call.map_or(&[], |(args, _)| args), &muts);
-                    self.error(DiagnosticKind::MemberKind {
-                        name: member.name.to_string(),
-                        enum_name: enum_name.to_string(),
-                        method: true,
-                        at: member.span,
-                    })
+                    // The call checks its arguments.
+                    let site = (site, enum_name, typed);
+                    let reported =
+                        self.method_through_type(func, Holder::Enum(id), member, site, args);
+                    return Err(Poisoned::untyped(reported));
                 }
                 // The method's own error is reported.
                 Some(&Declared::Poisoned(reported)) => reported,
@@ -343,7 +341,7 @@ impl Checker<'_> {
                     })
                 }
             };
-            self.stray(call.map_or(&[], |(args, _)| args));
+            self.stray(args);
             return Err(Poisoned::untyped(reported));
         };
         self.record(Used::Variant(id, variant), span);

@@ -590,9 +590,10 @@ impl Checker<'_> {
                 if info.index.contains_key(&name.name) {
                     DiagnosticKind::MemberKind {
                         name: name.name.to_string(),
-                        enum_name: self.type_name(ty),
+                        type_name: self.type_name(ty),
                         method: false,
                         at: name.span,
+                        receiver: None,
                     }
                     .into()
                 } else {

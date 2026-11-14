@@ -88,12 +88,15 @@ pub(super) fn constant_named(name: &str) -> Option<&'static str> {
 impl Checker<'_> {
     /// `base.member`, or `base.member(args)` when `call` gives the arguments and the span of their
     /// parentheses, where `base` names an enum, whatever local tried to take its name: the enum's
-    /// variant `member`, or an error. Otherwise, where `base` names no local:
+    /// variant `member`, or an error. Where `base` names a struct, or an alias of one, that has the
+    /// method `member`: the error of a method named through its type. Otherwise, where `base`
+    /// names no local:
     /// - a built-in type: the `f64` constant `member`, or, for any other member, an error whose
     ///   candidates are that type's constants (only `f64` has any);
     /// - `math` or `Math`, or `f64` in a call: the math idiom of another language, reported.
     ///
     /// `None` when `base` is no such name, or `member` is no constant or method of the idiom.
+    /// `typed` is whether the member is written with type arguments, as `Tree.m<T>(x)`.
     #[expect(
         clippy::too_many_lines,
         reason = "one arm per kind of base, so the rules read in one place"
@@ -104,7 +107,7 @@ impl Checker<'_> {
         base: &ast::Expr,
         member: &ast::Ident,
         call: Option<(&[ast::Arg], Span)>,
-        expected: Expectation,
+        (expected, typed): (Expectation, bool),
     ) -> Option<Checked> {
         let (ident, written, angles) = match &base.kind {
             ast::ExprKind::Name(name) => (
@@ -140,7 +143,7 @@ impl Checker<'_> {
                 if let Some(angles) = angles.filter(|_| !generic) {
                     self.not_generic(name, angles);
                 }
-                return Some(self.enum_path(span, id, member, call, site, None));
+                return Some(self.enum_path(span, id, member, call, (site, typed), None));
             }
             Resolved::Poisoned(_, reported) => {
                 self.stray(call.map_or(&[], |(args, _)| args));
@@ -152,7 +155,13 @@ impl Checker<'_> {
             }
             // An alias is the type that it names, unless a local takes the name.
             Resolved::Item(ItemId::Alias(_))
-                if let Some(checked) = self.alias_path(span, site, member, call) =>
+                if let Some(checked) = self.alias_path(span, site, member, call, typed) =>
+            {
+                return Some(checked);
+            }
+            // A struct's method named through the struct is no value.
+            Resolved::Item(ItemId::Struct(id))
+                if let Some(checked) = self.struct_path(id, member, call, (site, typed)) =>
             {
                 return Some(checked);
             }
