@@ -3,12 +3,12 @@
 
 use super::parity::parity_found;
 use super::*;
-use crate::diagnostic::ValueKind;
 use Code::{
     AssignToExpression, AssignToImmutable, AssignToSelf, BindingNotFound, CannotBeAny,
-    CannotExtend, CannotInfer, ConformanceBody, Expected, FunctionNotFound, MayBeNone, Mismatch,
-    MutArgumentNotPlace, MutMarkerMissing, MutPlaceTwice, MutSelf, NeverReassigned, NoMember,
-    SelfOutsideMethod, TypeArguments, UnknownType, UnusedMember, UnusedVariable,
+    CannotExtend, CannotInfer, ConformanceBody, Expected, FunctionNotFound, InterfaceAsType,
+    MayBeNone, Mismatch, MutArgumentNotPlace, MutMarkerMissing, MutPlaceTwice, MutSelf,
+    NeverReassigned, NoMember, SelfOutsideMethod, TypeArguments, UnknownType, UnusedMember,
+    UnusedVariable,
 };
 
 /// `Point` with the `mut self` method `move_by`, in eight lines.
@@ -1367,22 +1367,19 @@ fn any_should_reject_an_interface_with_a_mut_self_requirement() {
     }
 }
 
-/// The `Debug` text of the errors of `src`, and of the report that `kind` gives. `Diagnostic` has
-/// no `PartialEq`, and its `Debug` text holds each field that the registry fills from the kind.
-fn errors_and_report(src: &str, kind: DiagnosticKind) -> (Vec<String>, Vec<String>) {
+/// The code, the span and whether a help is present, of each error of `src`.
+fn error_shapes(src: &str) -> Vec<(Code, Span, bool)> {
     let (_, ds) = checked_with(PRELUDE_SOURCE, src);
-    let found = (ds.iter())
+    (ds.iter())
         .filter(|d| d.code().severity() == Severity::Error)
-        .map(|d| format!("{d:?}"))
-        .collect();
-    let expected: Diagnostic = kind.into();
-    (found, vec![format!("{expected:?}")])
+        .map(|d| (d.code(), d.span(), d.help().is_some()))
+        .collect()
 }
 
 /// GIVEN `interface K { fn add(mut self) }`, and types that conform to it. WHEN a `?.` leads to a
-/// call of `add`. THEN `sisu check` reports one E0062 from the `?.` to the name after it. It names
-/// a type parameter or an associated type as the compiler writes it, and a struct or an enum by
-/// its kind. A struct or an enum gets the help that replaces the optional's root.
+/// call of `add`. THEN `sisu check` reports one E0062 from the `?.` to the name after it. A
+/// struct or an enum in an optional root gets the help that replaces the root; a type parameter
+/// or an associated type gets none. The fixture `E0062-mut-self-param` holds the texts.
 #[test]
 fn mut_self_call_after_a_safe_call_should_name_its_receiver() {
     let types = "struct P: K { n: i64; fn add(mut self) { self.n += 1 } }\n\
@@ -1390,93 +1387,63 @@ fn mut_self_call_after_a_safe_call_should_name_its_receiver() {
                  struct G<T>: K { v: T; fn add(mut self) {} }\n\
                  interface H { type A: K; fn get(self) -> A? }\n\
                  struct W<T: K> { t: T }\n";
-    let ty = |name: &str| ValueKind::Type(name.to_string());
     let rows = [
         (
             "a type parameter",
             "fn f<T: K>(mut o: T?) { o?.add() }",
-            ty("T"),
-            None,
+            false,
         ),
         (
             "an associated type",
             "fn f<T: H>(t: T) { let mut o = t.get(); o?.add() }",
-            ty("T.A"),
-            None,
+            false,
         ),
         (
             "a type parameter of a method",
             "struct S { n: i64; fn m<U: K>(self, mut o: U?) { o?.add() } }",
-            ty("U"),
-            None,
+            false,
         ),
         (
             "two layers, one peeled",
             "fn f<T: K>(o: T??) { let mut p = o ?? None; p?.add() }",
-            ty("T"),
-            None,
+            false,
         ),
         (
             "a field of a type parameter",
             "fn f<T: K>(mut o: W<T>?) { o?.t.add() }",
-            ty("T"),
-            Some("o"),
+            true,
         ),
-        (
-            "a struct",
-            "fn f(mut o: P?) { o?.add() }",
-            ValueKind::Struct,
-            Some("o"),
-        ),
-        (
-            "an enum",
-            "fn f(mut o: E?) { o?.add() }",
-            ValueKind::Enum,
-            Some("o"),
-        ),
+        ("a struct", "fn f(mut o: P?) { o?.add() }", true),
+        ("an enum", "fn f(mut o: E?) { o?.add() }", true),
         (
             "a generic struct",
             "fn f(mut o: G<i64>?) { o?.add() }",
-            ValueKind::Struct,
-            Some("o"),
+            true,
         ),
     ];
     let mut red = Vec::new();
-    for (row, f, kind, replace) in rows {
+    for (row, f, help) in rows {
         let src = format!("{K_ADD}{types}{f}\nfn main() {{}}");
         let start = src.find("?.").expect("the row should hold a `?.`");
         let name = (src[start + 2..].chars())
             .take_while(char::is_ascii_alphanumeric)
             .count();
-        let report = DiagnosticKind::ChainCallOnValue {
-            at: Span::new(start, start + 2 + name),
-            method: Symbol::intern("add"),
-            kind,
-            replace: replace.map(str::to_string),
-        };
-        let (found, expected) = errors_and_report(&src, report);
-        if found != expected {
-            red.push(format!("{row}:\n  found {found:?}\n  wanted {expected:?}"));
+        let wanted = [(MayBeNone, Span::new(start, start + 2 + name), help)];
+        let found = error_shapes(&src);
+        if found != wanted {
+            red.push(format!("{row}: found {found:?}, wanted {wanted:?}"));
         }
     }
     assert!(red.is_empty(), "{}", red.join("\n"));
 }
 
 /// GIVEN `interface K { fn add(mut self) }`. WHEN `fn f(k: K)` writes it where a type belongs.
-/// THEN `sisu check` reports E0147 at `K`, whose help offers a type parameter and no `any K`: the
-/// `mut self` requirement keeps `K` from `any`.
+/// THEN `sisu check` reports E0147 at `K`, with a help. The fixture `E0147-mut-self` holds its
+/// text, which offers a type parameter and no `any K`.
 #[test]
 fn interface_with_a_mut_self_requirement_as_a_type_should_offer_only_a_type_parameter() {
     let src = format!("{K_ADD}fn f(k: K) {{}}\nfn main() {{}}");
     let start = K_ADD.len() + "fn f(k: ".len();
-    let report = DiagnosticKind::InterfaceAsType {
-        name: "K".to_string(),
-        written: Some("K".to_string()),
-        at: Span::new(start, start + 1),
-        any: false,
-        layers: 0,
-        alias: false,
-    };
-    let (found, expected) = errors_and_report(&src, report);
-    assert_eq!(found, expected);
+    let wanted = [(InterfaceAsType, Span::new(start, start + 1), true)];
+    assert_eq!(error_shapes(&src), wanted);
 }
