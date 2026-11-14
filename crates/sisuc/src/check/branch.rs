@@ -483,10 +483,13 @@ impl Checker<'_> {
             let (at, tail, want, got) = self.reported(&sources[i], &blocks[i], want, got);
             self.leaves_any(at, tail, want, got, origin)
         };
-        let unit = !wants_unit(expected);
         match expected.ty() {
-            _ if unit && first_ty == Type::UNIT => sources[first].no_value().into(),
-            _ if unit && other_ty == Type::UNIT => sources[other].no_value().into(),
+            _ if first_ty == Type::UNIT && !wants_unit(expected) => {
+                sources[first].no_value().into()
+            }
+            _ if other_ty == Type::UNIT && !wants_unit(expected) => {
+                sources[other].no_value().into()
+            }
             Some(want) if fits(want, first_ty) => report(other, want, other_ty, expected.origin()),
             Some(want) => report(first, want, first_ty, expected.origin()),
             None => report(other, first_ty, other_ty, given),
@@ -508,8 +511,8 @@ impl Checker<'_> {
             return None;
         }
         // A branch with no value is the mistake first, as in `join_mismatch`.
-        if !wants_unit(expected)
-            && let Some(&(i, _)) = members.iter().find(|&&(_, t)| t == Type::UNIT)
+        if let Some(&(i, _)) = members.iter().find(|&&(_, t)| t == Type::UNIT)
+            && !wants_unit(expected)
         {
             return Some(sources[i].no_value().into());
         }
