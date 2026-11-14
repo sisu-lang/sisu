@@ -313,6 +313,11 @@ const REACH: &[&str] = &[
     "reach: `?.push` follows a field",
     "reach: `?.push` follows an index",
     "reach: an assignment goes through `?.`",
+    "reach: a `mut self` method on a struct",
+    "reach: a `mut self` method on an enum",
+    "reach: a `mut self` call on a local, a field, an element and an element of a field",
+    "reach: a `mut self` requirement met by `mut self` and by plain `self`",
+    "reach: a `mut self` call through a bound",
 ];
 
 /// The keys that the forms of `Gen::gap_forms` mark. `Generated::plain` leaves the forms out, so
