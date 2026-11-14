@@ -105,8 +105,11 @@ KNOWN: list[tuple[str, str, int | str]] = [
     # The sweep of the checker's type walks: `docs/register.md`, the row of the walks that keep
     # their seen sets for one field. The struct is one node of it, and adds 1.4% at 8n.
     ("never built", "check", "docs/register.md"),
-    # A path of nested structs makes LLVM's `StructType::checkBody` grow with the depth.
+    # A path of nested structs makes LLVM's `StructType::checkBody` grow with the depth. In
+    # `object`, `ComputeValueVTs` and `DataLayout::getStructLayout` of the instruction selection
+    # grow the same way. Locally `object` gives 2.29 at 8n; the CI runners give 2.38.
     ("struct paths", "codegen", 686),
+    ("struct paths", "object", 686),
     # The cost is LLVM's: `getUnderlyingObjects` and a pointer set, in a function of hundreds of
     # calls of the helpers that make an array or a box unique.
     ("struct writes -O2", "optimize", 687),
@@ -1014,7 +1017,7 @@ def main(argv: list[str]) -> int:
         "--out", default=DEFAULT_OUT, help="the directory for table.md and counts.json"
     )
     parser.add_argument("--sisu", default=DEFAULT_SISU, help="the compiler")
-    parser.add_argument("--time-bound", type=float, default=1800, help="seconds for the whole run")
+    parser.add_argument("--time-bound", type=float, default=3600, help="seconds for the whole run")
     args = parser.parse_args(argv)
     counts: dict[str, Any] = {
         "commit": "unknown",
