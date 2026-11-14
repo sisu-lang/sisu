@@ -2200,7 +2200,8 @@ pub(crate) enum MismatchOrigin {
     /// The earlier alternative's binding of `name`, at `at`, which gave it the type wanted.
     Alternative { name: String, at: Span },
     /// The `break` at `at`, the first of its `loop` with a value, gave the loop the type `ty`.
-    Break { at: Span, ty: String },
+    /// `outer` is set when that loop is around the loop that reports.
+    Break { at: Span, ty: String, outer: bool },
     /// `function` declares its parameter `param` as `ty`, written at `at`.
     Parameter {
         at: Span,
@@ -2246,10 +2247,13 @@ impl MismatchOrigin {
         match self {
             Self::Concat(operand) => (Some(operand), "`+` joins this `string`".to_string()),
             Self::Alternative { name, at } => (Some(at), format!("`{name}` is {want} here")),
-            Self::Break { at, ty } => (
-                Some(at),
-                format!("this `break` gave the loop the type `{ty}`"),
-            ),
+            Self::Break { at, ty, outer } => {
+                let which = if outer { "the outer loop" } else { "the loop" };
+                (
+                    Some(at),
+                    format!("this `break` gave {which} the type `{ty}`"),
+                )
+            }
             Self::Parameter {
                 at,
                 function,

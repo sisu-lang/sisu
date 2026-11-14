@@ -1,0 +1,92 @@
+error[E0032]: expected `M`, found `string`
+  --> E0032-origin-generic-construct.sisu:14:24
+   |
+11 |     n: M
+   |        - `n` is declared as `M`
+...
+14 |     let p = P(a: 1, n: "x")
+   |                        ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-generic-construct.sisu:22:24
+   |
+19 |     n: i64
+   |        --- `n` is declared as `i64`
+...
+22 |     let p = K(a: 1, n: "x")
+   |                        ^^^
+
+error[E0032]: expected `M`, found `string`
+  --> E0032-origin-generic-construct.sisu:29:20
+   |
+26 |     A(U, M)
+   |          - `A` holds `M`
+...
+29 |     let e = E.A(1, "x")
+   |                    ^^^
+
+error[E0032]: expected `M`, found `string`
+  --> E0032-origin-generic-construct.sisu:36:26
+   |
+33 |     A(a: U, n: M)
+   |                - `A` holds `M`
+...
+36 |     let e = L.A(a: 1, n: "x")
+   |                          ^^^
+
+error[E0032]: expected `M`, found `string`
+  --> E0032-origin-generic-construct.sisu:41:24
+   |
+41 |     let p = Q(a: 1, n: "x")
+   |                        ^^^
+   |
+  ::: E0032-origin-generic-construct.sisu:11:8
+   |
+11 |     n: M
+   |        - `n` is declared as `M`
+
+error[E0032]: expected `M`, found `string`
+  --> E0032-origin-generic-construct.sisu:46:20
+   |
+46 |     let e = F.A(1, "x")
+   |                    ^^^
+   |
+  ::: E0032-origin-generic-construct.sisu:26:10
+   |
+26 |     A(U, M)
+   |          - `A` holds `M`
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-generic-construct.sisu:54:25
+   |
+51 |     n: [M]
+   |        --- `n` is declared as `[M]`
+...
+54 |     let p = R(a: 1, n: ["x"])
+   |                         ^^^
+
+error[E0032]: expected `M`, found `string`
+  --> E0032-origin-generic-construct.sisu:58:32
+   |
+58 |     let p: P<i64> = P(a: 1, n: "x")
+   |                                ^^^
+   |
+  ::: E0032-origin-generic-construct.sisu:11:8
+   |
+11 |     n: M
+   |        - `n` is declared as `M`
+
+error[E0032]: expected `string`, found `i64`
+  --> E0032-origin-generic-construct.sisu:66:21
+   |
+66 |     let p = Same(a: 1, b: "x")
+   |                     ^     --- this argument gives `U` the type `string`
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-generic-construct.sisu:70:24
+   |
+70 |     let o: i64? = Some("x")
+   |                        ^^^
+
+sisu: 10 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

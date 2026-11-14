@@ -2,6 +2,7 @@
 //! a call, and what a value of a type parameter may not do.
 
 use std::hash::Hash;
+use std::rc::Rc;
 use std::sync::LazyLock;
 use std::{fmt, iter};
 
@@ -1682,9 +1683,51 @@ pub(super) struct GenericSig<'a> {
     /// The callee's `mut` parameters, when it has any: an argument at one is a place, checked
     /// before the others.
     pub(super) mut_site: Option<&'a MutSite<'a>>,
-    /// The function or method, which declares `params`; none for a constructor, a variant or a
-    /// requirement of an interface.
-    pub(super) function: Option<tir::FuncId>,
+    /// What declares `params`.
+    pub(super) declarer: Declarer,
+}
+
+/// What declares the parameters of a generic callee. It gives the origin and the shown text of
+/// the type of each argument: argument `i` is parameter `i` of a function, field `i` of a class
+/// or a struct, or payload field `i` of a variant. A call writes the fields and the payload in
+/// declaration order (see `Checker::shaped`).
+#[derive(Clone, Copy)]
+pub(super) enum Declarer {
+    /// Nothing that a report names: a prelude variant, or a requirement of an interface.
+    None,
+    /// The function or method.
+    Function(tir::FuncId),
+    /// The class or struct that a constructor builds.
+    Fields(FieldOwner),
+    /// The variant, by its index, of the enum.
+    Variant(tir::EnumId, usize),
+}
+
+impl Declarer {
+    /// The origin of the type of argument `i`.
+    fn origin(self, i: usize) -> Origin {
+        let index = Origin::id(i);
+        match self {
+            Self::None => Origin::None,
+            Self::Function(f) => Origin::Parameter {
+                function: Origin::id(f.0),
+                index,
+            },
+            Self::Fields(FieldOwner::Class(class)) => Origin::Field {
+                class: Origin::id(class.0),
+                index,
+            },
+            Self::Fields(FieldOwner::Struct(id)) => Origin::StructField {
+                id: Origin::id(id.0),
+                index,
+            },
+            Self::Variant(id, variant) => Origin::Payload {
+                enum_: Origin::id(id.0),
+                variant: Origin::id(variant),
+                field: index,
+            },
+        }
+    }
 }
 
 /// The shape of a variant that a call of a generic enum builds: the type that it builds, its
@@ -1761,8 +1804,8 @@ pub(super) struct Inference<'s> {
     /// The place of each `mut` argument that checked, by its place among the arguments, until
     /// `mut_final` compares it with the parameter's final type.
     pub(super) mut_shapes: Vec<(usize, PlaceShape)>,
-    /// The function or method that the call calls (see `GenericSig::function`).
-    function: Option<tir::FuncId>,
+    /// What declares the parameters (see `GenericSig::declarer`).
+    declarer: Declarer,
     /// The call's arguments, for the one that bound a parameter (see `inferred_origin`).
     args: &'s [ast::Arg],
     /// The place among `args` of the argument that the call checks now, which a binding in it
@@ -2432,7 +2475,7 @@ impl Checker<'_> {
             early: Early::of(sig),
             bound: Vec::new(),
             mut_shapes: Vec::new(),
-            function: sig.function,
+            declarer: sig.declarer,
             args,
             arg: None,
         };
@@ -3352,6 +3395,18 @@ impl Checker<'_> {
         }
     }
 
+    /// The type of argument `i` as `declarer` writes it, when it names an alias.
+    fn declared_text(&self, declarer: Declarer, i: usize) -> Option<Rc<str>> {
+        match declarer {
+            Declarer::None => None,
+            Declarer::Function(f) => self.signatures[f.0].param_shown.get(i)?.clone(),
+            Declarer::Fields(owner) => self.owner_info(owner).fields.get(i)?.shown.clone(),
+            Declarer::Variant(id, variant) => {
+                self.enums[id.0].variants[variant].shown.get(i)?.clone()
+            }
+        }
+    }
+
     /// Checks `e`, the argument at `i` for `param`: against `param` once the call binds what it
     /// names, and otherwise on its own, which binds what its type fixes. `context` is what
     /// `call_context` gave, the expected type of `e` while `param` names an unbound parameter.
@@ -3375,10 +3430,12 @@ impl Checker<'_> {
                 .then(|| self.call_context(call, e, pattern))
                 .flatten()
         });
-        let origin = call.function.map_or(Origin::None, |f| Origin::Parameter {
-            function: Origin::id(f.0),
-            index: Origin::id(i),
-        });
+        let origin = call.declarer.origin(i);
+        // A mismatch shows the type as its declaration writes it. The text exists only for a type
+        // that names no type parameter (see `resolve_field`), so `pattern` is that type.
+        if let Some(text) = self.declared_text(call.declarer, i) {
+            self.show(e.span, pattern, &text);
+        }
         let outer = call.arg.replace(i);
         let checked = read_jump(self.infer_value(call, e, (pattern, origin), context));
         call.arg = outer;

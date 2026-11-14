@@ -6,7 +6,7 @@ use std::fmt;
 use super::alias::{Through, Via};
 use super::expr::{fits, no_member, option_written, path, postfix};
 use super::extend::method_holder;
-use super::generic::{GenericSig, Site, mark, mismatched, written_args};
+use super::generic::{Declarer, GenericSig, Site, mark, mismatched, written_args};
 use super::interface::{Bounds, LangPath};
 use super::member::{FieldOwner, Found};
 use super::mut_args::{Callee, MutParts, MutSite, site_of};
@@ -1164,7 +1164,7 @@ impl Checker<'_> {
                 ret,
                 bounds: &bounds,
                 mut_site: (!muts.is_empty()).then_some(&mut_site),
-                function: Some(func),
+                declarer: Declarer::Function(func),
             };
             let written = (written, site.angles);
             self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts)
@@ -1391,7 +1391,7 @@ impl Checker<'_> {
                 ret: Some(ret),
                 bounds,
                 mut_site: None,
-                function: None,
+                declarer: Declarer::Fields(owner),
             };
             // An alias's type arguments, when the call wrote them, are applied already.
             let written = (

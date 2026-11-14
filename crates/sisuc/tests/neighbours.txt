@@ -19,6 +19,15 @@
 # or `assert!` in the checker does.
 #
 # A line that starts with `#` is a comment. Each value and each context is one line.
+#
+# The path of the file is one more neighbour: the renderer repairs the header of a cut line, and
+# the path can hold text that looks like a header. No value or context writes the path, so the unit
+# test `a_header_whose_path_holds_a_line_break_should_give_the_true_column` in
+# `crates/sisuc/src/diagnostic/render.rs` holds its three forms: a path that holds a line break
+# (`long\nname.sisu`), one that holds `-->` (`a --> b.sisu`, `a\n--> b.sisu`) and one that holds
+# `:::` (`a ::: b.sisu`). The tests `source_text_like_a_later_header_should_not_change` and
+# `source_text_like_an_earlier_header_should_not_change` in the same file hold the same text in
+# the source.
 
 [template]
 interface Named {
@@ -299,6 +308,10 @@ id(u)
 Some(u)
 
 [contexts]
+# A `loop` in the `break` value of a loop, and a negated value, where the origin of the expected
+# type is kept for a label (E0032).
+let _a = loop { if c { break 1 }; break loop { break $ } }
+let _a: i64 = -$
 # Array literals beside a hint from another branch, with the value alone, first and last.
 let _a = if c { [Some(p)] } else { [$] }
 let _a = if c { [Some(p)] } else { [$, Some(Some(p))] }

@@ -683,3 +683,103 @@ fn an_index_on_a_base_with_no_element_should_state_no_rule() {
         assert!(mismatch.secondary().is_empty(), "{src}");
     }
 }
+
+/// A fixture in `tests/diagnostics` pins the wording "the outer loop". These rows pin where the
+/// label is: at the first `break` of the loop that gave the type.
+#[test]
+fn a_loop_in_a_break_value_should_label_the_first_break_of_the_outer_loop() {
+    origin_rows(&[
+        (
+            "a loop in the value of a `break`",
+            "fn f(c: bool) {\n    let _a = loop {\n        if c { break 1 }\n        break loop { break \"x\" }\n    }\n}\nfn main() { f(true) }\n",
+            (4, 28),
+            Explained::Label(3, 16),
+        ),
+        // A loop in a `let` is no part of the value: its `break` is of the loop that reports.
+        (
+            "a loop in a `let`",
+            "fn f(c: bool) {\n    let _a = loop {\n        if c { break 1 }\n        let _y = loop { break \"x\" }\n        break \"y\"\n    }\n}\nfn main() { f(true) }\n",
+            (5, 15),
+            Explained::Label(3, 16),
+        ),
+    ]);
+}
+
+#[test]
+fn a_negated_operand_should_keep_the_origin_of_its_context() {
+    origin_rows(&[
+        (
+            "a declared type",
+            "fn main() {\n    let b: i64 = -\"x\"\n    print(b)\n}\n",
+            (2, 19),
+            Explained::Label(2, 12),
+        ),
+        (
+            "a negation of a negation",
+            "fn main() {\n    let b: i64 = -(-\"x\")\n    print(b)\n}\n",
+            (2, 21),
+            Explained::Label(2, 12),
+        ),
+        (
+            "an `f64` context, which names `i64` or `f64`",
+            "fn main() {\n    let b: f64 = -\"x\"\n    print(b)\n}\n",
+            (2, 19),
+            Explained::Nothing,
+        ),
+    ]);
+}
+
+#[test]
+fn a_type_of_a_generic_signature_that_names_no_parameter_should_be_shown_as_written() {
+    origin_rows(&[
+        (
+            "an alias that names no parameter",
+            "type M = i64\nfn f<U>(a: U, n: M) {\n    print(n)\n}\nfn main() {\n    f(1, \"x\")\n}\n",
+            (6, 10),
+            Explained::Label(2, 18),
+        ),
+        // A type that names a parameter keeps no shown text, and gives no label.
+        (
+            "an alias that names a parameter",
+            "type L<X> = [X]\nfn f<U>(a: L<U>) {\n    print(a)\n}\nfn main() {\n    f(\"x\")\n}\n",
+            (6, 7),
+            Explained::Nothing,
+        ),
+    ]);
+}
+
+#[test]
+fn a_generic_constructor_should_give_the_origin_of_each_field() {
+    origin_rows(&[
+        (
+            "a field of a generic struct",
+            "type M = i64\nstruct P<U> {\n    a: U\n    n: M\n}\nfn main() {\n    let p = P(a: 1, n: \"x\")\n    print(p.n)\n}\n",
+            (7, 24),
+            Explained::Label(4, 8),
+        ),
+        (
+            "a payload of a generic enum",
+            "type M = i64\nenum E<U> {\n    A(U, M)\n}\nfn main() {\n    let e = E.A(1, \"x\")\n    print(e)\n}\n",
+            (6, 20),
+            Explained::Label(3, 10),
+        ),
+        (
+            "a labelled payload of a generic enum",
+            "type M = i64\nenum E<U> {\n    A(a: U, n: M)\n}\nfn main() {\n    let e = E.A(a: 1, n: \"x\")\n    print(e)\n}\n",
+            (6, 26),
+            Explained::Label(3, 16),
+        ),
+        (
+            "a field of the type parameter",
+            "struct P<U> {\n    a: U\n    b: U\n}\nfn main() {\n    let p = P(a: 1, b: \"x\")\n    print(p.a)\n}\n",
+            (6, 18),
+            Explained::Label(6, 24),
+        ),
+        (
+            "an optional of another type",
+            "fn main() {\n    let o: i64? = Some(\"x\")\n    print(o ?? 0)\n}\n",
+            (2, 24),
+            Explained::Nothing,
+        ),
+    ]);
+}

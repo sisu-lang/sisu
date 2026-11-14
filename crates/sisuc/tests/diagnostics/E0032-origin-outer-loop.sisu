@@ -1,0 +1,93 @@
+// GIVEN a loop whose first `break` gives it a type, and a later `break` value that holds a loop with a mistake
+// AND the inner loop is a value part of the `break`: its value, a block tail, a branch or an operand
+// WHEN `sisu check` runs on it
+// THEN each E0032 has a secondary label at the first `break` of the outer loop
+// AND the label says that the `break` gave the outer loop its type
+// AND a `break` that names a label and a loop in a `let` keep "the loop", and a loop inside `Some` keeps no label
+fn direct(c: bool) {
+    let _a = loop {
+        if c { break 1 }
+        break loop { break "x" }
+    }
+}
+fn three_levels(c: bool) {
+    let _a = loop {
+        if c { break 1 }
+        break loop { break loop { break "x" } }
+    }
+}
+fn branch(c: bool) {
+    let _a = loop {
+        if c { break 1 }
+        break if c { loop { break "x" } } else { 2 }
+    }
+}
+fn block(c: bool) {
+    let _a = loop {
+        if c { break 1 }
+        break { loop { break "x" } }
+    }
+}
+fn arm(c: bool, k: i64) {
+    let _a = loop {
+        if c { break 1 }
+        break match k { 0 => loop { break "x" }; _ => 2 }
+    }
+}
+fn operand(c: bool) {
+    let _a = loop {
+        if c { break 1 }
+        break 1 + loop { break "x" }
+    }
+}
+fn inner_first(c: bool) {
+    let _a = loop {
+        if c { break 1 }
+        break loop { if c { break 2 }; break "x" }
+    }
+}
+fn after_while(c: bool) {
+    let _a = loop {
+        if c { break 1 }
+        break { while c {}; loop { break "x" } }
+    }
+}
+fn in_let(c: bool) {
+    let _a = loop {
+        if c { break 1 }
+        let _y = loop { break "x" }
+        break "y"
+    }
+}
+fn label_inner(c: bool) {
+    let _a = outer: loop {
+        loop { if c { break outer 1 } }
+        break "x"
+    }
+}
+fn label_outer(c: bool) {
+    let _a = outer: loop {
+        if c { break 1 }
+        loop { break outer "x" }
+    }
+}
+fn in_some(c: bool) {
+    let _a = loop {
+        if c { break Some(1) }
+        break Some(loop { break "x" })
+    }
+}
+fn main() {
+    direct(true)
+    three_levels(true)
+    branch(true)
+    block(true)
+    arm(true, 1)
+    operand(true)
+    inner_first(true)
+    after_while(true)
+    in_let(true)
+    label_inner(true)
+    label_outer(true)
+    in_some(true)
+}
