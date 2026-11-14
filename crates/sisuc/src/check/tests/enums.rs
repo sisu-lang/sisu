@@ -429,6 +429,190 @@ fn a_method_called_through_its_type_should_get_the_method_form_fix() {
     }
 }
 
+/// The fix of E0120 or E0070 that calls a method on its first argument is safe only when the fixed
+/// program checks. The method must take the other arguments. Each `mut` argument must be a place
+/// that can change. The method's result must fit where the call stands. Each row has the place of
+/// the text: an item, or a method of the type `S`. It has the text too. Last, it has the first
+/// error of the fixed program, which is none when the fix is safe. A struct and an enum get each
+/// row.
+#[test]
+#[expect(clippy::too_many_lines, reason = "a table of programs, one row each")]
+fn a_method_form_fix_should_be_safe_only_when_the_fixed_program_checks() {
+    #[derive(Clone, Copy)]
+    enum At {
+        Item,
+        Method,
+    }
+    use At::{Item, Method};
+    const METHODS: &str = "    fn m(self) -> i64 { 1 }\n    fn k(self) {}\n    fn c(self) -> C { C(r: 1) }\n    fn mm(self, mut x: i64) { x = 1 }\n    fn mo(self, mut x: i64?) { x = 1 }\n    fn mp(self, x: i64) {}\n";
+    const ITEMS: &str = "interface Sh {\n    fn area(self) -> i64\n}\nstruct C: Sh {\n    r: i64\n    fn area(self) -> i64 { self.r }\n}\nstruct W { n: i64 }\nstruct B<T> {\n    v: T\n    fn get(self) -> T { self.v }\n}\nfn one() -> i64 { 1 }\nfn g(x: string) {}\n";
+    let rows: [(At, &str, Option<Code>); 25] = [
+        // The result does not fit where the call stands.
+        (
+            Item,
+            "fn f(s: S) -> string { S.m(s) }",
+            Some(Code::Mismatch),
+        ),
+        (
+            Item,
+            "fn f(s: S) { let x: string = S.m(s) }",
+            Some(Code::Mismatch),
+        ),
+        (Item, "fn f(s: S) { g(S.m(s)) }", Some(Code::Mismatch)),
+        (
+            Item,
+            "fn f(s: S) { let x: i64 = S.k(s) }",
+            Some(Code::NoValue),
+        ),
+        (
+            Item,
+            "fn f(b: B<i64>) -> string { B.get(b) }",
+            Some(Code::Mismatch),
+        ),
+        // The result fits, or nothing is expected.
+        (Item, "fn f(s: S) -> i64? { S.m(s) }", None),
+        (Item, "fn f(s: S) -> i64 { S.m(s) }", None),
+        (Item, "fn f(s: S) { S.m(s) }", None),
+        (Item, "fn f(s: S) -> any Sh { S.c(s) }", None),
+        (Item, "fn f(b: B<i64>) -> i64 { B.get(b) }", None),
+        // A `mut` argument that is not a place that can change, or has the wrong type.
+        (
+            Item,
+            "fn f(s: S) { S.mm(s, mut 1) }",
+            Some(Code::MutArgumentNotPlace),
+        ),
+        (
+            Item,
+            "fn f(s: S) { S.mm(s, mut one()) }",
+            Some(Code::MutArgumentNotPlace),
+        ),
+        (
+            Item,
+            "fn f(s: S) {\n    let a = 1\n    S.mm(s, mut a)\n}",
+            Some(Code::MutArgumentNotPlace),
+        ),
+        (
+            Item,
+            "fn f(s: S) {\n    let mut a = 1\n    S.mp(s, mut a)\n}",
+            Some(Code::MutMarkerNotMut),
+        ),
+        (
+            Item,
+            "fn f(s: S) {\n    let mut a = 1\n    S.mo(s, mut a)\n}",
+            Some(Code::MutArgumentType),
+        ),
+        (
+            Item,
+            "fn f(s: S) {\n    let mut w: W? = W(n: 1)\n    S.mm(s, mut w?.n)\n}",
+            Some(Code::MutArgumentType),
+        ),
+        (
+            Item,
+            "fn f(s: S) {\n    let mut a = 1\n    S.mm(s, a)\n}",
+            Some(Code::MutMarkerMissing),
+        ),
+        (
+            Item,
+            "fn f(s: S) {\n    let mut a = 1\n    S.mm(s, mut a)\n}",
+            None,
+        ),
+        // The same, in a call of a method as a function, in a method of the type.
+        (
+            Method,
+            "fn it(self) { mm(self, mut 1) }",
+            Some(Code::MutArgumentNotPlace),
+        ),
+        (
+            Method,
+            "fn it(self) {\n    let a = 1\n    mm(self, mut a)\n}",
+            Some(Code::MutArgumentNotPlace),
+        ),
+        (
+            Method,
+            "fn it(self) {\n    let mut a = 1\n    mm(self, mut a)\n}",
+            None,
+        ),
+        (
+            Method,
+            "fn it(self) {\n    let mut a = 1\n    mp(self, mut a)\n}",
+            Some(Code::MutMarkerNotMut),
+        ),
+        (
+            Method,
+            "fn it(self) {\n    let mut a = 1\n    mm(self, a)\n}",
+            Some(Code::MutMarkerMissing),
+        ),
+        (Method, "fn it(self) { m(self) }", None),
+        (
+            Method,
+            "fn it(self) { mm(self, 1) }",
+            Some(Code::MutMarkerMissing),
+        ),
+    ];
+    let mut red = Vec::new();
+    for kind in ["struct S {\n    n: i64\n", "enum S {\n    A\n"] {
+        for (at, text, wanted) in rows {
+            let (inside, item) = match at {
+                Item => ("", text),
+                Method => (text, ""),
+            };
+            let src = format!("{kind}{METHODS}    {inside}\n}}\n{ITEMS}{item}\nfn main() {{}}");
+            let ds = diags(&src);
+            let forms: Vec<_> = (ds.iter())
+                .filter(|d| matches!(d.code(), Code::MemberKind | Code::MethodAsFunction))
+                .collect();
+            let [form] = forms[..] else {
+                red.push(format!("row `{text}`: wanted one form error in {ds:?}"));
+                continue;
+            };
+            let [fix] = form.fixes() else {
+                red.push(format!("row `{text}`: wanted one fix in {src}"));
+                continue;
+            };
+            let edits: Vec<_> = fix.edits().iter().collect();
+            let result = apply(&src, &edits);
+            let first = (diags(&result).into_iter())
+                .find(|d| d.code().severity() == Severity::Error)
+                .map(|d| d.code());
+            if first != wanted || fix.safe() != wanted.is_none() {
+                red.push(format!(
+                    "row `{text}`: wanted the first error {wanted:?}, safe {}; the fixed program gives {first:?}, the fix is safe: {}\n{result}",
+                    wanted.is_none(),
+                    fix.safe()
+                ));
+            }
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+/// A method whose result type is unknown (E0030) gets an unsafe fix when its call stands where a
+/// type is expected: nothing says that the fixed call fits. The fix is safe where nothing is
+/// expected.
+#[test]
+fn a_method_form_fix_should_be_unsafe_when_the_result_type_is_unknown() {
+    let rows = [("let _x: i64 = S.u(s)", false), ("S.u(s)", true)];
+    for kind in ["struct S {\n    n: i64\n", "enum S {\n    A\n"] {
+        for (call, safe) in rows {
+            let src = format!(
+                "{kind}    fn u(self) -> Nope {{ 1 }}\n}}\nfn f(s: S) {{ {call} }}\nfn main() {{}}"
+            );
+            let ds = diags(&src);
+            let forms: Vec<_> = (ds.iter())
+                .filter(|d| d.code() == Code::MemberKind)
+                .flat_map(Diagnostic::fixes)
+                .map(Fix::safe)
+                .collect();
+            assert_eq!(forms, [safe], "row `{call}` in {src}");
+        }
+    }
+}
+
 /// A construction that fails keeps the enum's type, as a class's construction does. Each row
 /// binds it to a `bool`.
 #[test]

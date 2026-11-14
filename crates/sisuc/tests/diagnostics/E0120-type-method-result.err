@@ -1,0 +1,86 @@
+error[E0120]: `m` is a method of `St`; call it on a value
+  --> E0120-type-method-result.sisu:55:8
+   |
+55 |     St.m(s)
+   |        ^
+   |
+help: call `m` as a method
+   |
+55 -     St.m(s)
+55 +     s.m()
+   |
+
+error[E0120]: `m` is a method of `St`; call it on a value
+  --> E0120-type-method-result.sisu:59:8
+   |
+59 |     St.m(s)
+   |        ^
+   |
+help: call `m` as a method
+   |
+59 -     St.m(s)
+59 +     s.m()
+   |
+
+error[E0120]: `m` is a method of `En`; call it on a value
+  --> E0120-type-method-result.sisu:63:8
+   |
+63 |     En.m(e)
+   |        ^
+   |
+help: call `m` as a method
+   |
+63 -     En.m(e)
+63 +     e.m()
+   |
+
+error[E0120]: `m` is a method of `St`; call it on a value
+  --> E0120-type-method-result.sisu:67:8
+   |
+67 |     St.m(s)
+   |        ^
+   |
+help: call `m` as a method
+   |
+67 -     St.m(s)
+67 +     s.m()
+   |
+
+error[E0120]: `c` is a method of `St`; call it on a value
+  --> E0120-type-method-result.sisu:71:8
+   |
+71 |     St.c(s)
+   |        ^
+   |
+help: call `c` as a method
+   |
+71 -     St.c(s)
+71 +     s.c()
+   |
+
+error[E0120]: `c` is a method of `En`; call it on a value
+  --> E0120-type-method-result.sisu:75:8
+   |
+75 |     En.c(e)
+   |        ^
+   |
+help: call `c` as a method
+   |
+75 -     En.c(e)
+75 +     e.c()
+   |
+
+error[E0120]: `get` is a method of `Bx`; call it on a value
+  --> E0120-type-method-result.sisu:79:8
+   |
+79 |     Bx.get(b)
+   |        ^^^
+   |
+help: call `get` as a method
+   |
+79 -     Bx.get(b)
+79 +     b.get()
+   |
+
+sisu: 7 errors
+sisu: for more on a code, run `sisu explain <code>`: E0120

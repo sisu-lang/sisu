@@ -1,0 +1,26 @@
+error[E0120]: `put` is a method of `St`; call it on a value
+  --> E0120-type-method-mut-place.sisu:38:8
+   |
+38 |     St.put(s, mut a)
+   |        ^^^
+   |
+help: call `put` as a method
+   |
+38 -     St.put(s, mut a)
+38 +     s.put(mut a)
+   |
+
+error[E0120]: `put` is a method of `En`; call it on a value
+  --> E0120-type-method-mut-place.sisu:43:8
+   |
+43 |     En.put(e, mut a)
+   |        ^^^
+   |
+help: call `put` as a method
+   |
+43 -     En.put(e, mut a)
+43 +     e.put(mut a)
+   |
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0120

@@ -2395,6 +2395,12 @@ fn unwrap_text(unwrap: UnwrapHelp, fix: bool) -> Option<String> {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many words `string_index_names` has compared on this thread.
+    pub(crate) static NAME_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The names `bs`, `cs` and `i` that the help of a single index of a string writes. A name that
 /// `base` holds as a whole word gets the first number from 2 that `base` does not hold. So the
 /// help does not name `base` twice.
@@ -2406,7 +2412,11 @@ pub(crate) fn string_index_names(base: &str) -> [String; 3] {
     ["bs", "cs", "i"].map(|name| {
         let mut fresh = name.to_owned();
         let mut number = 1;
-        while words.contains(&fresh.as_str()) {
+        while words.iter().any(|word| {
+            #[cfg(test)]
+            NAME_STEPS.set(NAME_STEPS.get() + 1);
+            *word == fresh
+        }) {
             number += 1;
             fresh = format!("{name}{number}");
         }

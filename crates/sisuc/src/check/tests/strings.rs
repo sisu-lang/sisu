@@ -1,7 +1,7 @@
 //! `string`: literals, `+`, comparison, `len()`, and the operators and tests it does not take.
 
 use super::*;
-use crate::diagnostic::{IndexUsage, string_index_names};
+use crate::diagnostic::{IndexUsage, NAME_STEPS, string_index_names};
 
 /// `src` with an empty `main` after it.
 fn with_main(src: &str) -> String {
@@ -1019,6 +1019,32 @@ fn a_string_index_help_should_name_new_words_that_the_base_does_not_hold() {
     for &(base, names) in rows {
         assert_eq!(string_index_names(base), names, "row `{base}`");
     }
+}
+
+/// The search for a fresh name takes steps in proportion to the words of the base, not to their
+/// square. The base holds the words `bs`, `bs2` and on, so the search for `bs` tries each number.
+/// With N = 100 words, a quadratic search takes 5350, 20700 and 46050 steps for N, 2N and 3N: the
+/// second step adds 25350, and `assert_near_linear` allows 10% above the first, 15350. A linear
+/// search takes about 2N + 3 steps: each step adds 200, and the limit is 220.
+#[test]
+fn the_search_for_a_fresh_name_should_read_each_word_once() {
+    let steps = |n: usize| {
+        let base = (1..=n)
+            .map(|i| {
+                if i == 1 {
+                    "bs".to_owned()
+                } else {
+                    format!("bs{i}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        NAME_STEPS.set(0);
+        let [bs, ..] = string_index_names(&base);
+        assert_eq!(bs, format!("bs{}", n + 1));
+        NAME_STEPS.get()
+    };
+    assert_near_linear(steps(100), steps(200), steps(300));
 }
 
 /// A write to a single index of a string gets the write help only when its place can change: the
