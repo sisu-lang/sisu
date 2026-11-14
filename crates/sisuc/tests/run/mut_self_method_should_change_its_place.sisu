@@ -1,0 +1,28 @@
+// GIVEN `Point` with `move_by`, which moves `self` by `dx` and `dy`
+// WHEN `main` runs `let mut p = Point(x: 1, y: 2)`, `p.move_by(3, 4)` and prints `p`
+// THEN it prints "Point(x: 4, y: 6)"
+// AND `before`, a copy of `p` taken before the call, keeps "Point(x: 1, y: 2)"
+// AND the call stays a real call at `-O2`: the marker checks this
+// o2-calls: main Point.move_by 1
+struct Point {
+    x: i64
+    y: i64
+
+    // Recursive, and to a depth that `main` reads at run time, so that `-O2` keeps the call.
+    fn move_by(mut self, dx: i64, dy: i64) {
+        if dx > 0 {
+            self.move_by(dx - 1, 0)
+            self.x += 1
+        }
+        self.y += dy
+    }
+}
+
+fn main() {
+    let dx = 3 + (read_line() ?? "").len()
+    let mut p = Point(x: 1, y: 2)
+    let before = p
+    p.move_by(dx, 4)
+    print(p)                          // Point(x: 4, y: 6)
+    print(before)                     // Point(x: 1, y: 2)
+}

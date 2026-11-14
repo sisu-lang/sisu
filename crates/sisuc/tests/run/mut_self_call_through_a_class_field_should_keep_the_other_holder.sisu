@@ -1,0 +1,30 @@
+// GIVEN `Point` with `move_by`, `class C { mut ps: [Point] }` and `let c = C(ps: [...])`
+// WHEN `main` takes `let keep = c.ps`, then runs `c.ps[0].move_by(1, 1)`
+// THEN `keep[0].x` stays 1 and `c.ps[0].x` is 2: the call copies the array in through the
+// object and makes it unique before it changes the element
+// o2-calls: main Point.move_by 1
+struct Point {
+    x: i64
+    y: i64
+
+    // Recursive while `x` is below zero, so that `-O2` keeps the call.
+    fn move_by(mut self, dx: i64, dy: i64) {
+        if self.x < 0 {
+            self.move_by(dx, dy)
+        }
+        self.x += dx
+        self.y += dy
+    }
+}
+
+class C {
+    mut ps: [Point]
+}
+
+fn main() {
+    let c = C(ps: [Point(x: 1, y: 2)])
+    let keep = c.ps
+    c.ps[0].move_by(1, 1)
+    print(keep[0].x)                  // 1
+    print(c.ps[0].x)                  // 2
+}

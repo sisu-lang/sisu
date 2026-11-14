@@ -1,0 +1,45 @@
+// GIVEN `struct B { xs: [i64]; name: string }` with two `mut self` methods
+// AND `grow`, which pushes `x` when `x` is not below zero
+// AND `reset`, which replaces `self` with `B(xs: [0], name: "r")`
+// AND `let a = B(xs: [1], name: "a")` and `let mut b = a`
+// WHEN `main` runs `b.grow(2)` and `b.grow(-1)`, and prints `a.xs` and `b.xs`
+// AND runs `b.reset()`, and prints `a.xs`, `b.xs` and `b.name`
+// THEN it prints "[1]", "[1, 2]", "[1]", "[0]" and "r"
+// AND the memory test of the case reports no leak and no error
+// o2-calls: main B.grow 2
+// o2-calls: main B.reset 1
+struct B {
+    xs: [i64]
+    name: string
+
+    // Each method recurses while `name` is empty, so that `-O2` keeps the calls.
+    fn grow(mut self, x: i64) {
+        if x < 0 {
+            return
+        }
+        if self.name == "" {
+            self.grow(x)
+        }
+        self.xs.push(x)
+    }
+
+    fn reset(mut self) {
+        if self.name == "" {
+            self.reset()
+        }
+        self = B(xs: [0], name: "r")
+    }
+}
+
+fn main() {
+    let a = B(xs: [1], name: "a")
+    let mut b = a
+    b.grow(2)
+    b.grow(-1)
+    print(a.xs)                       // [1]
+    print(b.xs)                       // [1, 2]
+    b.reset()
+    print(a.xs)                       // [1]
+    print(b.xs)                       // [0]
+    print(b.name)                     // r
+}

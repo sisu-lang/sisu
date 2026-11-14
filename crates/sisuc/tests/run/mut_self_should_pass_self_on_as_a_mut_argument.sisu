@@ -1,0 +1,34 @@
+// GIVEN `struct T { n: i64 }` with the `mut self` method `f`, which runs `bump(mut self)` and
+// then `self.g()`, where `fn bump(mut t: T)` and the `mut self` method `g` each add 1 to `n`
+// WHEN `main` runs `t.f()` on `let mut t = T(n: 1)`
+// THEN `t.n` is 3
+// AND `before`, a copy of `t` taken before the call, keeps 1
+// o2-calls: main T.f 1
+struct T {
+    n: i64
+
+    // Recursive while `n` is below zero, so that `-O2` keeps the call.
+    fn f(mut self) {
+        if self.n < 0 {
+            self.f()
+        }
+        bump(mut self)
+        self.g()
+    }
+
+    fn g(mut self) {
+        self.n += 1
+    }
+}
+
+fn bump(mut t: T) {
+    t.n += 1
+}
+
+fn main() {
+    let mut t = T(n: 1)
+    let before = t
+    t.f()
+    print(before.n)                   // 1
+    print(t.n)                        // 3
+}

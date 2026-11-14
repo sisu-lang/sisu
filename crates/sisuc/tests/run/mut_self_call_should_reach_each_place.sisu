@@ -1,0 +1,202 @@
+// GIVEN `Point` with `move_by`, `struct L { p: Point; ps: [Point] }`, `struct A { b: B }` and
+// `struct B { a: A?; n: i64; xs: [i64]; fn bump(mut self) }`, where `a` puts a box on the path
+// WHEN each block makes a place with a root that can change, keeps a copy of it, and calls a
+// `mut self` method on the place
+// THEN the block prints the changed place, then the copy, which keeps the old value
+// o2-calls: local Point.move_by 1
+// o2-calls: element_of_a_field Point.move_by 1
+// o2-calls: through_a_box B.bump 1
+// o2-calls: enum_element E.flip 1
+struct Point {
+    x: i64
+    y: i64
+
+    // Recursive, so that `-O2` keeps the calls: each step moves `x` by one.
+    fn move_by(mut self, dx: i64, dy: i64) {
+        if dx > 0 {
+            self.move_by(dx - 1, 0)
+            self.x += 1
+        }
+        self.y += dy
+    }
+}
+
+struct L { p: Point; ps: [Point] }
+
+struct A { b: B }
+
+struct B {
+    a: A?
+    n: i64
+    xs: [i64]
+
+    fn bump(mut self) {
+        if self.n < 0 {
+            self.bump()
+        }
+        self.n += 1
+    }
+}
+
+struct Cell<T> {
+    v: T
+
+    fn set(mut self, v: T) {
+        self.v = v
+    }
+}
+
+enum E {
+    A
+    B
+
+    fn flip(mut self) {
+        if self == E.B {
+            self.flip()
+        }
+        self = E.B
+    }
+}
+
+class D {
+    mut q: Point
+}
+
+extend Point {
+    fn twice(mut self) {
+        self.move_by(1, 1)
+        self.move_by(1, 1)
+    }
+}
+
+extend L {
+    fn shift(mut self) {
+        self.p.move_by(1, 1)
+    }
+}
+
+fn f(mut p: Point) {
+    p.move_by(1, 1)
+}
+
+fn local() {
+    let mut p = Point(x: 1, y: 2)
+    let before = p
+    p.move_by(1, 1)
+    print(p.x)                        // 2
+    print(before.x)                   // 1
+}
+
+fn field() {
+    let mut l = L(p: Point(x: 1, y: 2), ps: [])
+    let before = l
+    l.p.move_by(1, 1)
+    print(l.p.x)                      // 2
+    print(before.p.x)                 // 1
+}
+
+fn element() {
+    let mut ps = [Point(x: 1, y: 2)]
+    let before = ps
+    ps[0].move_by(1, 1)
+    print(ps[0].x)                    // 2
+    print(before[0].x)                // 1
+}
+
+fn element_of_a_field() {
+    let mut l = L(p: Point(x: 1, y: 2), ps: [Point(x: 1, y: 2)])
+    let before = l
+    l.ps[0].move_by(1, 1)
+    print(l.ps[0].x)                  // 2
+    print(before.ps[0].x)             // 1
+}
+
+fn field_of_an_element() {
+    let mut ls = [L(p: Point(x: 1, y: 2), ps: [])]
+    let before = ls
+    ls[0].p.move_by(1, 1)
+    print(ls[0].p.x)                  // 2
+    print(before[0].p.x)              // 1
+}
+
+fn element_of_an_element() {
+    let mut g = [[Point(x: 1, y: 2)]]
+    let before = g
+    g[0][0].move_by(1, 1)
+    print(g[0][0].x)                  // 2
+    print(before[0][0].x)             // 1
+}
+
+fn mut_parameter() {
+    let mut p = Point(x: 1, y: 2)
+    let before = p
+    f(mut p)
+    print(p.x)                        // 2
+    print(before.x)                   // 1
+}
+
+fn mut_self_in_extend() {
+    let mut p = Point(x: 1, y: 2)
+    let before = p
+    p.twice()
+    print(p.x)                        // 3
+    print(before.x)                   // 1
+}
+
+fn field_of_self() {
+    let mut l = L(p: Point(x: 1, y: 2), ps: [])
+    let before = l
+    l.shift()
+    print(l.p.x)                      // 2
+    print(before.p.x)                 // 1
+}
+
+// `a` puts a box on the path from `y` to `b`: the call makes the box unique first.
+fn through_a_box() {
+    let x = A(b: B(a: None, n: 1, xs: [1]))
+    let mut y = x
+    y.b.bump()
+    print(y.b.n)                      // 2
+    print(x.b.n)                      // 1
+}
+
+fn generic_struct() {
+    let mut c = Cell(v: 1)
+    let before = c
+    c.set(5)
+    print(c.v)                        // 5
+    print(before.v)                   // 1
+}
+
+fn enum_element() {
+    let mut es = [E.A]
+    let before = es
+    es[0].flip()
+    print(es[0])                      // B
+    print(before[0])                  // A
+}
+
+// A class object is shared: the `mut` field of a `let` object can change.
+fn class_field() {
+    let d = D(q: Point(x: 1, y: 2))
+    let before = d.q
+    d.q.move_by(1, 1)
+    print(d.q.x)                      // 2
+    print(before.x)                   // 1
+}
+
+fn main() {
+    local()
+    field()
+    element()
+    element_of_a_field()
+    field_of_an_element()
+    element_of_an_element()
+    mut_parameter()
+    mut_self_in_extend()
+    field_of_self()
+    through_a_box()
+    generic_struct()
+    enum_element()
+    class_field()
+}
