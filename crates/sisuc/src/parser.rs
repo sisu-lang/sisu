@@ -2198,6 +2198,7 @@ impl<'a> Parser<'a> {
                     self_param = Some(self.bump().span);
                     // In an `extend`, the annotation of a `mut self` is part of the error the
                     // checker reports. In a struct or an enum, its `:` is E0011, as after `self`.
+                    // The twin in `check/extend.rs` gives E0011 in an `extend` of a struct.
                     if let Some(mut_self) = &mut mut_self
                         && matches!(receiver, Receiver::Extension)
                         && let Some(colon) = self.eat(&TokenKind::Colon)

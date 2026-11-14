@@ -141,7 +141,7 @@ impl<'a> Checker<'_> {
                     });
                 }
                 // A struct or an enum takes `mut self` with no type: the `:` is E0011, as the
-                // parser reports it after `self` in the body.
+                // parser reports it after `self` in the body. The twin is in `Parser::signature`.
                 (
                     Some(ast::MutSelf {
                         annotation: Some(annotation),

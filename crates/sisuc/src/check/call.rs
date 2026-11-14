@@ -824,6 +824,8 @@ impl Checker<'_> {
         let reported = if let Some(chain) = chain {
             let kind = match type_of(&receiver).map(|ty| array::innermost(ty).kind()) {
                 Some(TypeKind::Enum(..)) => ValueKind::Enum,
+                // A struct, or a receiver whose method came through a conformance, as for a type
+                // parameter. Only the enum word differs, so the rest take the struct word.
                 _ => ValueKind::Struct,
             };
             let d = self.chain_call(receiver_expr, chain, (method.name, kind));

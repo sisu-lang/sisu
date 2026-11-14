@@ -117,6 +117,14 @@ pub(super) enum Change {
 }
 
 impl Change {
+    /// The method that a receiver change calls. A `push` has none.
+    fn method(self) -> Option<Symbol> {
+        match self {
+            Change::Receiver(method) => Some(method),
+            _ => None,
+        }
+    }
+
     /// How a field access of this change uses the field.
     fn access(self) -> Access {
         match self {
@@ -159,17 +167,11 @@ impl Change {
     /// E0001 for the root `name`, whose write at `at` its `cause` forbids.
     fn immutable(self, name: String, at: Span, cause: Immutable) -> DiagnosticKind {
         match self {
-            Change::Push => DiagnosticKind::PushToImmutable {
+            Change::Push | Change::Receiver(_) => DiagnosticKind::PushToImmutable {
                 name,
                 at,
                 cause,
-                method: None,
-            },
-            Change::Receiver(method) => DiagnosticKind::PushToImmutable {
-                name,
-                at,
-                cause,
-                method: Some(method),
+                method: self.method(),
             },
             Change::MutArg => {
                 unreachable!("a `mut` argument gives its cause back, and reports none")
@@ -1528,10 +1530,7 @@ impl Checker<'_> {
                     Some(DiagnosticKind::PushToTemporary {
                         at,
                         range: None,
-                        method: match change {
-                            Change::Receiver(method) => Some(method),
-                            _ => None,
-                        },
+                        method: change.method(),
                     }),
                     None,
                     read,
@@ -1555,7 +1554,7 @@ impl Checker<'_> {
                 let named = self.name_place(span, root, root_name, written);
                 (named.writable, named.held, named.refused, named.reported)
             }
-            // The `self` of a struct method: a `mut self`, with its E0018, can change.
+            // The `self` of a `mut self` method can change.
             (Root::Local(_), _) if self.body.self_mut => (true, None, None, None),
             (Root::Local(_), _) => {
                 let cause = Immutable::StructSelf;
