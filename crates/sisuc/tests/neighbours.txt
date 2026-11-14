@@ -52,6 +52,10 @@ class Bx {
     fn none<T>(self) -> T? { None }
     fn put<T>(self, mut x: T?, n: i64) { x = None }
 }
+struct St {
+    n: i64
+    fn put(self, mut x: i64) { x = 1 }
+}
 type M<T> = T?
 type MM<T> = T??
 type OP = (any Pet)??
@@ -122,7 +126,7 @@ fn take<T>(mut x: T?) { x = None }
 fn take2<T>(mut x: T?, n: i64) { x = None }
 fn keep<T>(mut x: T?) -> T? { x }
 fn opt<T>(v: T?) -> T? { v }
-fn generic<U: Named, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?) {
+fn generic<U: Named, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?, st: St) {
     let mut mq: (any Pet)? = op
     {stmt}
 }
@@ -134,7 +138,8 @@ fn main() {
     let p: any Pet = Fox()
     let op: (any Pet)? = Fox()
     let ob: Bx? = Bx()
-    generic(Cat(), Rock(), c, d, k, n, p, op, ob)
+    let st = St(n: 1)
+    generic(Cat(), Rock(), c, d, k, n, p, op, ob, st)
     let mut mq: (any Pet)? = op
     {stmt}
 }
@@ -146,7 +151,7 @@ enum Eb {
 extend Eb: Nope {}
 type Ae = Sa
 extend Ae {}
-fn failed<U: Missing, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?) {
+fn failed<U: Missing, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?, st: St) {
     let mut mq: (any Pet)? = op
     {stmt}
 }
@@ -351,6 +356,10 @@ put(ob, $)
 put(ob, x: $, n: 1)
 Bx.put($, 1)
 Bx.put($)
+# A method of a struct called through its type (E0120): `$` is the receiver in the first line,
+# and the value at the `mut` parameter in the second.
+St.put($, 1)
+St.put(st, $)
 # A `mut` call with an exit in another argument or in the receiver: the call is rebound, and its
 # exit flag follows its new arguments.
 take2(mut $, some(k) ?? return)

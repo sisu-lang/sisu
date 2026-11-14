@@ -358,6 +358,77 @@ fn construction_errors() {
     }
 }
 
+/// A method named through its type, in a call, is E0120 for a struct and an enum. The fix moves
+/// the first argument before the `.`, when that argument has the type. The other arguments make it
+/// safe or not. Each row: the parameters, the statement, the code at the type or its member (E0105
+/// when the type has no such method), and the fix: none, or whether it is safe. The rows with
+/// `Tree.nope`, `Tree.h` (a method of an `extend` block) and `E.g<i64>` give the same before the
+/// fix: no row of the table changes them.
+#[test]
+fn a_method_called_through_its_type_should_get_the_method_form_fix() {
+    let decls = "struct Tree {\n    n: i64\n    fn bumpm(self, x: i64) {}\n    fn b2(self, x: i64, y: i64) {}\n    fn put(self, mut x: i64) { x = 1 }\n    fn one(self) {}\n}\nstruct Bx<T> {\n    v: T\n    fn get(self) -> T { self.v }\n}\nenum E {\n    A\n    fn g(self, x: i64) {}\n}\nextend Tree {\n    fn h(self, x: i64) {}\n}\ntype Tr = Tree\nfn mk() -> Tree { Tree(n: 0) }";
+    let (member, value) = (Code::MemberKind, Code::TypeAsValue);
+    let rows: [(&str, &str, Code, Option<bool>); 22] = [
+        ("t: Tree", "Tree.bumpm(t, 1)", member, Some(true)),
+        ("t: Tree", "Tr.bumpm(t, 1)", member, Some(true)),
+        ("", "Tree.bumpm(mk(), 1)", member, Some(true)),
+        ("t: Tree", "Tree.one(t)", member, Some(true)),
+        ("b: Bx<i64>", "let _x = Bx.get(b)", member, Some(true)),
+        ("e: E", "E.g(e, 1)", member, Some(true)),
+        // A first argument that is no postfix form is wrapped in parentheses.
+        (
+            "a: Tree, b: Tree, c: bool",
+            "Tree.bumpm(if c { a } else { b }, 1)",
+            member,
+            Some(true),
+        ),
+        // The other argument has the wrong type, or no `mut` at a `mut` parameter.
+        ("t: Tree", "Tree.bumpm(t, true)", member, Some(false)),
+        ("t: Tree, a: i64", "Tree.put(t, a)", member, Some(false)),
+        (
+            "t: Tree, mut a: i64",
+            "Tree.put(t, mut a)",
+            member,
+            Some(true),
+        ),
+        ("t: Tree", "Tree.bumpm(1, 1)", member, None),
+        ("t: Tree?", "Tree.bumpm(t, 1)", member, None),
+        ("", "Tree.bumpm()", member, None),
+        ("", "Tree.bumpm(x: 1)", member, None),
+        ("t: Tree", "Tree.bumpm(t, x: 1)", member, None),
+        ("t: Tree", "Tree.b2(t, 1, y: 2)", member, None),
+        ("mut t: Tree", "Tree.put(mut t, 1)", member, None),
+        ("t: Tree", "Tree.bumpm<i64>(t, 1)", member, None),
+        ("e: E", "E.g<i64>(e, 1)", member, None),
+        ("", "let _m = Tree.bumpm", member, None),
+        ("t: Tree", "Tree.nope(t, 1)", value, None),
+        ("t: Tree", "Tree.h(t, 1)", value, None),
+    ];
+    for (params, call, code, fix) in rows {
+        let src = format!("{decls}\nfn f({params}) {{\n    {call}\n}}\nfn main() {{}}");
+        let ds = diags(&src);
+        let of_kind = |d: &&Diagnostic| matches!(d.code(), Code::MemberKind | Code::TypeAsValue);
+        let found: Vec<_> = ds.iter().filter(of_kind).collect();
+        let codes: Vec<_> = found.iter().map(|d| d.code()).collect();
+        assert_eq!(codes, [code], "row `{call}`");
+        let fixes = found[0].fixes();
+        assert_eq!(
+            fixes.iter().map(Fix::safe).collect::<Vec<_>>(),
+            fix.into_iter().collect::<Vec<_>>(),
+            "row `{call}`: the fixes"
+        );
+        if fix.is_some() {
+            let edits: Vec<_> = fixes.iter().flat_map(Fix::edits).collect();
+            let result = apply(&src, &edits);
+            let left: Vec<_> = diags(&result).iter().map(Diagnostic::code).collect();
+            assert!(
+                !left.contains(&Code::MemberKind) && !left.contains(&Code::TypeAsValue),
+                "row `{call}`: {result}: {left:?}"
+            );
+        }
+    }
+}
+
 /// A construction that fails keeps the enum's type, as a class's construction does. Each row
 /// binds it to a `bool`.
 #[test]
