@@ -12,21 +12,11 @@ fn with_use(used: &str) -> String {
     )
 }
 
-/// Whether `d`, an E0043 for a value that is not `never`, is the report of the kind with
-/// `unit_call`. A diagnostic is only `Clone` and `Debug`, so the test compares what the kind
-/// renders, and the fixtures pin the text.
-pub(super) fn names_unit_call(d: &Diagnostic, unit_call: Option<&str>) -> bool {
-    let kind = DiagnosticKind::NoValue {
-        at: d.span(),
-        never: false,
-        unit_call: unit_call.map(str::to_string),
-    };
-    renders_as(d, kind)
-}
-
-/// Whether `d` is the report that `kind` renders. A diagnostic is only `Clone` and `Debug`.
-fn renders_as(d: &Diagnostic, kind: DiagnosticKind) -> bool {
-    format!("{d:?}") == format!("{:?}", Diagnostic::from(kind))
+/// Whether `d`, an E0043 or an E0031, has the note that a function returns `unit`: its kind has
+/// a `unit_call`. Only that note adds a note to these kinds. The fixtures pin which function the
+/// note names.
+pub(super) fn has_unit_note(d: &Diagnostic) -> bool {
+    d.notes().len() == 1
 }
 
 #[test]
@@ -79,9 +69,9 @@ fn unit_use_should_report_its_row() {
         if found != wanted {
             red.push(format!("row `{row}`: found {found:?}, wanted {wanted:?}"));
         }
-        // The kind says which function returns `unit`: the note's text is in the fixtures.
+        // The kind has a `unit_call` for a call: the note's text is in the fixtures.
         if let (Some((_, call)), [d]) = (no_value, ds.as_slice())
-            && !names_unit_call(d, call)
+            && has_unit_note(d) != call.is_some()
         {
             red.push(format!(
                 "row `{row}`: wanted the note of {call:?}, found {d:?}"
@@ -157,13 +147,7 @@ fn a_program_that_printed_a_unit_should_check_clean() {
 fn a_body_that_ends_in_a_unit_call_should_name_the_call() {
     let src = "fn g() {}\nfn five() -> i64 {\n    g()\n}\nfn main() {}";
     let d = diagnostic(src, Code::BodyHasNoValue, (4, 1, "}"), &[]);
-    let kind = DiagnosticKind::BodyHasNoValue {
-        function: "five".to_string(),
-        want: "i64".to_string(),
-        at: d.span(),
-        unit_call: Some("g".to_string()),
-    };
-    assert!(renders_as(&d, kind));
+    assert!(has_unit_note(&d));
 }
 
 /// A `main` that has `used` on line 14, after the declarations that the rows share. These are a

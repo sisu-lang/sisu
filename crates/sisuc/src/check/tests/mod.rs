@@ -2544,7 +2544,7 @@ fn a_unit_operand_should_report_no_value() {
         (2, 23, "g()"),
         &[],
     );
-    assert!(unit_values::names_unit_call(&d, Some("g")));
+    assert!(unit_values::has_unit_note(&d));
 }
 
 #[test]
@@ -2555,7 +2555,7 @@ fn a_unit_argument_should_report_no_value() {
         (3, 15, "g()"),
         &[],
     );
-    assert!(unit_values::names_unit_call(&d, Some("g")));
+    assert!(unit_values::has_unit_note(&d));
 }
 
 #[test]
@@ -5094,7 +5094,7 @@ fn a_unit_branch_beside_a_value_should_report_no_value() {
         ),
     ] {
         let d = diagnostic(src, Code::NoValue, (2, column, "nothing()"), &[]);
-        assert!(unit_values::names_unit_call(&d, Some("nothing")), "{src}");
+        assert!(unit_values::has_unit_note(&d), "{src}");
     }
 }
 

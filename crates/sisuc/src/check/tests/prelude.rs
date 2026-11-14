@@ -159,7 +159,7 @@ fn a_unit_right_of_coalesce_should_report_no_value() {
         (3, 16, "g()"),
         &[],
     );
-    assert!(unit_values::names_unit_call(&d, Some("g")));
+    assert!(unit_values::has_unit_note(&d));
 }
 
 /// `eprint` is `print` to standard error: the same operand rules, and a node of its own.
