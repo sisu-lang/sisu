@@ -933,3 +933,70 @@ fn split_build_should_succeed_when_threads_cannot_start() {
         .collect();
     assert_eq!(left, Vec::<std::ffi::OsString>::new());
 }
+
+/// GIVEN a program that pushes 100 000 `unit` values into each of two `[unit]` arrays
+/// WHEN `sisu build --emit ir -O2` builds it
+/// THEN each array block size that the IR computes multiplies its capacity by an element size of 0
+/// AND each `sisu_alloc`, `sisu_realloc` and `sisu_free` call after the pipeline gets only the
+///   24 bytes of the header
+/// AND no store writes a `unit` element
+#[test]
+fn unit_array_should_allocate_no_payload() {
+    let dir = fixture(
+        "unit_array_should_allocate_no_payload",
+        &[(
+            "units.sisu",
+            include_str!("run/unit_array_should_have_no_storage.sisu"),
+        )],
+    );
+    let ir = emit(&dir, "units", &["--emit", "ir", "-O2"]);
+    let sizes: Vec<&str> = (before_pipeline(&ir).lines())
+        .filter(|line| line.trim_start().starts_with("%elements"))
+        .collect();
+    assert!(
+        !sizes.is_empty(),
+        "the IR should size an array block:\n{ir}"
+    );
+    for line in &sizes {
+        assert!(
+            line.ends_with(", 0"),
+            "an element of `unit` should have no bytes: {line}"
+        );
+    }
+    let heap_calls: Vec<&str> = (after_pipeline(&ir).lines())
+        .filter(|line| {
+            line.contains(" call ")
+                && ["@sisu_alloc(", "@sisu_realloc(", "@sisu_free("]
+                    .iter()
+                    .any(|callee| line.contains(callee))
+        })
+        .collect();
+    assert!(
+        !heap_calls.is_empty(),
+        "the IR should allocate an array:\n{ir}"
+    );
+    for line in &heap_calls {
+        let (_, args) = line.split_once('(').expect("a call has arguments");
+        let ints: Vec<&str> = (args.split(", "))
+            .filter_map(|arg| arg.strip_prefix("i64 "))
+            .map(|int| int.trim_end_matches(')'))
+            .collect();
+        // `sisu_alloc` and `sisu_free` take the size, then the alignment. `sisu_realloc` takes
+        // the old size, the alignment, then the new size.
+        let sizes = if line.contains("@sisu_realloc(") {
+            vec![ints[0], ints[2]]
+        } else {
+            vec![ints[0]]
+        };
+        assert_eq!(
+            sizes,
+            vec!["24"; sizes.len()],
+            "a block of `unit` elements should hold only its header: {line}"
+        );
+    }
+    assert!(
+        !ir.lines()
+            .any(|line| line.trim_start().starts_with("store {}")),
+        "no store should write a `unit` element:\n{ir}"
+    );
+}

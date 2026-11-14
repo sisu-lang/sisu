@@ -1,0 +1,19 @@
+// GIVEN a generic `id` and a `unit` value
+// WHEN the program binds, passes, stores, compares and wraps it
+// THEN each form prints `()` or `true`
+fn id<T>(x: T) -> T { x }
+fn idr<T>(x: T) -> T { return x }
+
+fn main() {
+    let u = print("a")          // a
+    print(id(u))                // ()
+    print(idr(u))               // ()
+    print([u, u])               // [(), ()]
+    print(Some(u))              // Some(())
+    print(u == u)               // true
+    let r: Result<unit, string> = Ok(u)
+    match r {
+        Ok(v) => print(v)       // ()
+        Err(e) => print(e)
+    }
+}

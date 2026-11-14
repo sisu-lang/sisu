@@ -47,10 +47,6 @@ const SEED_LEN: usize = 4_096;
 /// What no generated program holds, and why.
 const EXCLUDED: &[(&str, &str)] = &[
     (
-        "tir::ExprKind::Unit",
-        "a `unit` value has no layout until milestone 12 gives it one",
-    ),
-    (
         "ast::BrokenKind::Function",
         "only an item with a syntax error is broken",
     ),
