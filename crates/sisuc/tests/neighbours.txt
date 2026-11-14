@@ -353,13 +353,17 @@ ob?.ste(mut $)
 # E0052, which does not find the method, so it stamps nothing.
 put(ob, $, 1)
 put(ob, $)
+put(ob, mut $)
 put(ob, x: $, n: 1)
 Bx.put($, 1)
 Bx.put($)
-# A method of a struct called through its type (E0120): `$` is the receiver in the first line,
-# and the value at the `mut` parameter in the second.
+# A method of a struct or an enum called through its type (E0120): `$` is the receiver in the
+# first line of each, and the argument after the receiver in the others. The fix keeps its `mut`.
 St.put($, 1)
 St.put(st, $)
+St.put(st, mut $)
+E.push($, 1)
+E.push(E.A, $)
 # A `mut` call with an exit in another argument or in the receiver: the call is rebound, and its
 # exit flag follows its new arguments.
 take2(mut $, some(k) ?? return)
