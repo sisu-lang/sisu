@@ -1460,8 +1460,9 @@ fn an_interface_that_an_alias_names_should_count_as_used() {
     );
 }
 
-/// The places named `named here` in the warning of the item `item`, as (line, column).
-fn named_at(src: &str, item: &str) -> Vec<(usize, usize)> {
+/// The places of every secondary label in the warning of the item `item`, as (line, column): the
+/// type that names it and each cited use.
+fn secondaries_at(src: &str, item: &str) -> Vec<(usize, usize)> {
     let (_, ds) = checked(src);
     let mut warnings = ds
         .iter()
@@ -1470,12 +1471,11 @@ fn named_at(src: &str, item: &str) -> Vec<(usize, usize)> {
     assert!(warnings.next().is_none(), "one W0012 for `{item}`");
     d.secondary()
         .iter()
-        .filter(|(_, label)| label == "named here")
         .map(|(span, _)| at(src, *span))
         .collect()
 }
 
-/// A row of the table below: the program, the item, and the places of its `named here` labels.
+/// A row of the table below: the program, the item, and the places of its secondary labels.
 type NamedRow = (&'static str, String, &'static str, Vec<(usize, usize)>);
 
 /// A struct or an enum that nothing builds gets a label at the earliest type that names it. The
@@ -1484,7 +1484,7 @@ type NamedRow = (&'static str, String, &'static str, Vec<(usize, usize)>);
 #[test]
 #[expect(
     clippy::too_many_lines,
-    reason = "a table of rows, each one program and its label"
+    reason = "a table of rows, each one program and its labels"
 )]
 fn an_unbuilt_type_that_a_type_names_should_point_at_the_name() {
     judge_unused();
@@ -1548,7 +1548,7 @@ fn an_unbuilt_type_that_a_type_names_should_point_at_the_name() {
             "its own method",
             format!("enum E {{\n    A\n    fn g(self) -> E {{\n        E.A\n    }}\n}}\n{main}"),
             "E",
-            vec![],
+            vec![(4, 9)],
         ),
         (
             "its own extend block",
@@ -1614,7 +1614,7 @@ fn an_unbuilt_type_that_a_type_names_should_point_at_the_name() {
         ),
     ];
     for (row, src, item, want) in rows {
-        assert_eq!(named_at(&src, item), want, "{}", named(row));
+        assert_eq!(secondaries_at(&src, item), want, "{}", named(row));
     }
     // A struct that live code builds gets no warning, whatever names it.
     clean_row(

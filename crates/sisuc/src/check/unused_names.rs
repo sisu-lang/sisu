@@ -192,6 +192,13 @@ impl Used {
     }
 }
 
+/// Keeps `at` in `named` when it is the first place in the source that names the item.
+fn keep_first(named: &mut Option<Span>, at: Span) {
+    if named.is_none_or(|first| at.start() < first.start()) {
+        *named = Some(at);
+    }
+}
+
 /// Marks the interface `i` as used by live code, and queues it to be followed once.
 fn use_interface(used: &mut [bool], queue: &mut Vec<usize>, i: usize) {
     if !std::mem::replace(&mut used[i], true) {
@@ -313,26 +320,31 @@ impl Checker<'_> {
         }
     }
 
-    /// Keeps `at`, where the type `ty` names the struct or the enum `item`, when it is the first
-    /// such place in the source. W0012 then says which type breaks when you delete the item.
+    /// Keeps `at`, where the type `ty` names the struct `id`, when it is the first such place in
+    /// the source. W0012 then says which type breaks when you delete the struct.
+    pub(super) fn note_struct_named(&mut self, id: tir::StructId, ty: &ast::TypeExpr, at: Span) {
+        if self.names_outside_item(Holder::Struct(id), ty, at) {
+            keep_first(&mut self.structs[id.0].named, at);
+        }
+    }
+
+    /// Like `note_struct_named`, for the enum `id`.
+    pub(super) fn note_enum_named(&mut self, id: tir::EnumId, ty: &ast::TypeExpr, at: Span) {
+        if self.names_outside_item(Holder::Enum(id), ty, at) {
+            keep_first(&mut self.enums[id.0].named, at);
+        }
+    }
+
+    /// Whether `at`, where the type `ty` names the struct or the enum `item`, can be the place that
+    /// W0012 shows.
     ///
     /// A name inside the item's own declaration does not count, because a deletion takes it too.
     /// These are the item's fields and methods, its `extend` blocks and the target of each. A name
     /// in the prelude does not count either: the prelude is out of the user's sight.
-    pub(super) fn note_named(&mut self, item: Holder, ty: &ast::TypeExpr, at: Span) {
+    fn names_outside_item(&self, item: Holder, ty: &ast::TypeExpr, at: Span) -> bool {
         let own = self.extend_head == Some(ty.span.start())
             || (self.body.self_type.known()).and_then(holder_of) == Some(item);
-        if own || at.in_prelude() {
-            return;
-        }
-        let named = match item {
-            Holder::Enum(e) => &mut self.enums[e.0].named,
-            Holder::Struct(_) => &mut self.holder_info(item).named,
-            Holder::Class(_) | Holder::Array | Holder::I64 => return,
-        };
-        if named.is_none_or(|first| at.start() < first.start()) {
-            *named = Some(at);
-        }
+        !(own || at.in_prelude())
     }
 
     /// Records a use of the interface of each `any` type in `ty`, written at `at`, by the body

@@ -330,7 +330,8 @@ struct ClassInfo {
     names_to_string: bool,
     /// The associated types the declaration's body chooses.
     assoc: Rc<Choices>,
-    /// For a struct: where a type first names it, outside its own declaration (`note_named`).
+    /// For a struct: where a type first names it, outside its own declaration
+    /// (`Checker::note_struct_named`).
     named: Option<Span>,
 }
 
@@ -2405,7 +2406,7 @@ impl Checker<'_> {
                     .then_some(ty)
             }
             Resolved::Item(ItemId::Struct(id)) => {
-                self.note_named(Holder::Struct(id), ty, ident().span);
+                self.note_struct_named(id, ty, ident().span);
                 let list = if args.is_empty() && self.structs[id.0].type_params.is_empty() {
                     TypeArgs::NONE
                 } else {
@@ -2418,7 +2419,7 @@ impl Checker<'_> {
             }
             Resolved::Item(ItemId::Enum(id)) => {
                 self.reaches_prelude(id.0 >= self.prelude.enums, ident().span);
-                self.note_named(Holder::Enum(id), ty, ident().span);
+                self.note_enum_named(id, ty, ident().span);
                 let list = if args.is_empty() && self.enums[id.0].type_params.is_empty() {
                     TypeArgs::NONE
                 } else {
