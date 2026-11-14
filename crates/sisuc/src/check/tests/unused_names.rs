@@ -109,7 +109,7 @@ fn enum_should_warn_when_nothing_builds_a_variant() {
         "enum E {\n    A\n    B\n    fn name(self) -> i64 {\n        1\n    }\n}\nfn pick(e: E?) -> i64 {\n    e?.name() ?? 0\n}\nfn main() {\n    print(pick(None))\n}",
         W0012,
         (1, 6, "E"),
-        &[],
+        &[(8, 12)],
     );
 }
 
@@ -1069,7 +1069,7 @@ fn interface_should_warn_when_only_dead_code_names_it_in_an_any_type() {
         ),
         [
             (W0012, (1, 11), vec![(3, 18), (3, 30)]),
-            (W0012, (2, 6), vec![]),
+            (W0012, (2, 6), vec![(3, 12)]),
             (W0012, (3, 4), vec![])
         ]
     );
@@ -1436,4 +1436,200 @@ fn shown_by_dbg_should_label_only_the_fields_that_dbg_shows() {
         );
         assert_eq!(row(&src, shown), [(2, label)], "{what}");
     }
+}
+
+/// An alias body that names `any I` uses `I`, also when nothing uses the alias. A body with no
+/// interface is the control: `I` stays unused.
+#[test]
+fn an_interface_that_an_alias_names_should_count_as_used() {
+    judge_unused();
+    let head = "interface I {\n    fn m(self) -> i64\n}\n";
+    for (row, alias) in [
+        ("any", "type B = any I"),
+        ("an array", "type B = [any I]"),
+        ("an optional", "type B = (any I)?"),
+    ] {
+        clean_row(row, &format!("{head}{alias}\nfn main() {{}}"));
+    }
+    diagnostic_row(
+        "no interface",
+        &format!("{head}type B<T> = [T]\nfn main() {{}}"),
+        W0012,
+        (1, 11, "I"),
+        &[],
+    );
+}
+
+/// The places named `named here` in the warning of the item `item`, as (line, column).
+fn named_at(src: &str, item: &str) -> Vec<(usize, usize)> {
+    let (_, ds) = checked(src);
+    let mut warnings = ds
+        .iter()
+        .filter(|d| d.code() == W0012 && &src[d.span().range()] == item);
+    let d = warnings.next().expect("the item should get a W0012");
+    assert!(warnings.next().is_none(), "one W0012 for `{item}`");
+    d.secondary()
+        .iter()
+        .filter(|(_, label)| label == "named here")
+        .map(|(span, _)| at(src, *span))
+        .collect()
+}
+
+/// A row of the table below: the program, the item, and the places of its `named here` labels.
+type NamedRow = (&'static str, String, &'static str, Vec<(usize, usize)>);
+
+/// A struct or an enum that nothing builds gets a label at the earliest type that names it. The
+/// name is outside the item's own declaration. So the help can say that a deletion of the item
+/// takes that type with it.
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a table of rows, each one program and its label"
+)]
+fn an_unbuilt_type_that_a_type_names_should_point_at_the_name() {
+    judge_unused();
+    let c = "struct C {\n    n: i64\n}\n";
+    let e = "enum E {\n    A\n}\n";
+    let main = "fn main() {}";
+    let rows: Vec<NamedRow> = vec![
+        (
+            "a live function",
+            format!(
+                "{c}fn f(x: C?) -> bool {{\n    x == None\n}}\nfn main() {{\n    print(f(None))\n}}"
+            ),
+            "C",
+            vec![(4, 9)],
+        ),
+        (
+            "a dead function",
+            format!("{c}fn f(x: C) -> i64 {{\n    x.n\n}}\n{main}"),
+            "C",
+            vec![(4, 9)],
+        ),
+        (
+            "an alias",
+            format!("{c}type B = C\n{main}"),
+            "C",
+            vec![(4, 10)],
+        ),
+        (
+            "an alias of an alias",
+            format!("{c}type A = C\ntype B = A\n{main}"),
+            "C",
+            vec![(4, 10)],
+        ),
+        (
+            "a generic struct in an alias",
+            format!("struct C<T> {{\n    n: T\n}}\ntype B = C<i64>\n{main}"),
+            "C",
+            vec![(4, 10)],
+        ),
+        (
+            "an enum in an alias",
+            format!("{e}type B = E\n{main}"),
+            "E",
+            vec![(4, 10)],
+        ),
+        (
+            "an alias that a live function names",
+            format!(
+                "{c}type B = C\nfn f(x: B?) -> bool {{\n    x == None\n}}\nfn main() {{\n    print(f(None))\n}}"
+            ),
+            "C",
+            vec![(4, 10)],
+        ),
+        (
+            "its own field",
+            format!("struct C {{\n    next: [C]\n}}\n{main}"),
+            "C",
+            vec![],
+        ),
+        (
+            "its own method",
+            format!("enum E {{\n    A\n    fn g(self) -> E {{\n        E.A\n    }}\n}}\n{main}"),
+            "E",
+            vec![],
+        ),
+        (
+            "its own extend block",
+            format!(
+                "{c}extend C {{\n    fn g(self) -> i64 {{\n        1\n    }}\n    fn h(self) -> C? {{\n        None\n    }}\n}}\n{main}"
+            ),
+            "C",
+            vec![],
+        ),
+        (
+            "a type argument of a call",
+            format!("{c}fn g<T>() -> i64 {{\n    1\n}}\nfn main() {{\n    print(g<C>())\n}}"),
+            "C",
+            vec![(8, 13)],
+        ),
+        (
+            "a typed let",
+            format!("{c}fn main() {{\n    let x: C? = None\n    print(x == None)\n}}"),
+            "C",
+            vec![(5, 12)],
+        ),
+        (
+            "an interface requirement",
+            format!("{c}interface I {{\n    fn g(self) -> C?\n}}\n{main}"),
+            "C",
+            vec![(5, 19)],
+        ),
+        (
+            "an array of optionals",
+            format!("{c}fn f(x: [C?]) -> i64 {{\n    1\n}}\nfn main() {{\n    print(f([]))\n}}"),
+            "C",
+            vec![(4, 10)],
+        ),
+        (
+            "an alias with a parameter",
+            format!("{c}type A<T> = [T]\ntype B = A<C>\n{main}"),
+            "C",
+            vec![(5, 12)],
+        ),
+        (
+            "a method of another struct",
+            format!(
+                "{c}struct D {{\n    n: i64\n    fn g(self, x: C) -> i64 {{\n        1\n    }}\n}}\nfn main() {{\n    print(D(n: 1).n)\n}}"
+            ),
+            "C",
+            vec![(6, 19)],
+        ),
+        (
+            "the first of two names",
+            format!(
+                "{c}fn f(x: C?) -> bool {{\n    x == None\n}}\ntype B = C\nfn main() {{\n    print(f(None))\n}}"
+            ),
+            "C",
+            vec![(4, 9)],
+        ),
+        (
+            "an alias before the function",
+            format!(
+                "{c}type B = C\nfn f(x: C?) -> bool {{\n    x == None\n}}\nfn main() {{\n    print(f(None))\n}}"
+            ),
+            "C",
+            vec![(4, 10)],
+        ),
+    ];
+    for (row, src, item, want) in rows {
+        assert_eq!(named_at(&src, item), want, "{}", named(row));
+    }
+    // A struct that live code builds gets no warning, whatever names it.
+    clean_row(
+        "a built struct",
+        &format!(
+            "{c}fn f(x: C?) -> bool {{\n    x == None\n}}\nfn main() {{\n    let c = C(n: 1)\n    print(c.n)\n    print(f(c))\n}}"
+        ),
+    );
+    // The label comes with the cited use: the type names `E` and the dead function builds it.
+    let src = format!("{e}fn f() -> E {{\n    E.A\n}}\n{main}");
+    assert_eq!(
+        found(&src),
+        [
+            (W0012, (1, 6), vec![(4, 11), (5, 5)]),
+            (W0012, (4, 4), vec![])
+        ]
+    );
 }

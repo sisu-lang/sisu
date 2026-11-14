@@ -2005,7 +2005,7 @@ fn generated_read_should_count_each_shown_field() {
         (
             "a function that nothing calls and a struct that nothing builds",
             main("fn dead(t: T) { print(t) }\n", ""),
-            vec![(UnusedItem, (1, 8), vec![]), (UnusedItem, (2, 4), vec![])],
+            vec![(UnusedItem, (1, 8), vec![(2, 12)]), (UnusedItem, (2, 4), vec![])],
         ),
         (
             "a class prints its name",
