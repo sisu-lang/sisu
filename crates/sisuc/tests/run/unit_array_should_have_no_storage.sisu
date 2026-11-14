@@ -5,6 +5,8 @@
 fn g() {}
 
 fn main() {
+    // The count is large: if an element took storage, the pushes would grow the buffer many
+    // times, and a write past its end would show under Valgrind.
     let mut xs: [unit] = []
     let mut ys: [unit] = []
     for _i in 0..100000 {

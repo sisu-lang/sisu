@@ -24,21 +24,21 @@ fn bump(mut t: T) {
 fn main() {
     let mut u = {}
     keep(mut u)
-    print(u)
+    print(u)                // ()
     set(mut u)
-    print(u)
+    print(u)                // ()
     let mut s = S(u: {})
     set(mut s.u)
-    print(s.u)
+    print(s.u)              // ()
     let mut xs = [{}]
     set(mut xs[0])
-    print(xs)
+    print(xs)               // [()]
     let mut o: unit? = Some({})
     seto(mut o)
-    print(o.to_string())
+    print(o.to_string())    // None
     let mut t = T(u: {}, n: 1)
     bump(mut t)
-    print(t.n)
+    print(t.n)              // 2
     keep(mut t)
-    print(t.n)
+    print(t.n)              // 2
 }
