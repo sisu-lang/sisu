@@ -3230,7 +3230,7 @@ pub(crate) enum ReceiverForm {
 /// How the plain `self` of a struct or an enum method can change.
 #[derive(Clone, Copy)]
 pub(crate) enum SelfTake {
-    /// The method takes `mut self`: its `self` is at the span.
+    /// The fix makes the method take `mut self`, by writing `mut ` before its `self` at the span.
     Fix(Span),
     /// A plain `self` requirement binds the method, so it keeps its `self`: it copies it.
     Copy,

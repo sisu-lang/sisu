@@ -740,7 +740,7 @@ struct Checker<'src> {
     /// The methods that a conformance names for a requirement, also those that do not meet it. A
     /// `mut` parameter of one is the requirement's, or E0152 reports it: W0002 leaves it alone.
     named_for_requirement: FxHashSet<tir::FuncId>,
-    /// The methods that meet a requirement whose `self` is plain. They keep their plain `self`, so
+    /// The methods named for a requirement whose `self` is plain. They keep their plain `self`, so
     /// a change through it gets the help to copy `self`, not the fix "take `mut self`".
     plain_self_requirement: FxHashSet<tir::FuncId>,
     /// The name of each method that takes `mut self`. A method call of one of these names checks

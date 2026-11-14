@@ -1,26 +1,34 @@
 error[E0171]: `change` can change `pile`, and this call also passes `pile` as `mut`
-  --> E0171-receiver.sisu:34:21
+  --> E0171-receiver.sisu:45:21
    |
-34 |     pile.change(mut pile)
+45 |     pile.change(mut pile)
    |     ----            ^^^^ passed `mut` here
    |     |
    |     `change` takes `mut self`, so it can change `pile`
 
 error[E0171]: `change` can change `wall`, and this call also passes `wall.s`, which is inside it, as `mut`
-  --> E0171-receiver.sisu:36:21
+  --> E0171-receiver.sisu:47:21
    |
-36 |     wall.change(mut wall.s)
+47 |     wall.change(mut wall.s)
    |     ----            ^^^^^^ passed `mut` here
    |     |
    |     `change` takes `mut self`, so it can change `wall`
 
 error[E0171]: `change` can change `wall.s`, and this call also passes `wall`, which holds it, as `mut`
-  --> E0171-receiver.sisu:37:23
+  --> E0171-receiver.sisu:48:23
    |
-37 |     wall.s.change(mut wall)
+48 |     wall.s.change(mut wall)
    |     ------            ^^^^ passed `mut` here
    |     |
    |     `change` takes `mut self`, so it can change `wall.s`
 
-sisu: 3 errors
+error[E0171]: `q` is passed `mut` twice: each `mut` argument needs its own place
+  --> E0171-receiver.sisu:51:25
+   |
+51 |     duo.both(mut q, mut q)
+   |                  -      ^ passed again here
+   |                  |
+   |                  first passed here
+
+sisu: 4 errors
 sisu: for more on a code, run `sisu explain <code>`: E0171

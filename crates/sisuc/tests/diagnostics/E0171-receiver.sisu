@@ -2,6 +2,7 @@
 // WHEN a call passes the receiver's own place, a place inside it, or a place that holds it as `mut`
 // THEN it reports E0171 on the argument of each call
 // AND the message says which method can change which place
+// AND a call that passes one place twice as `mut`, with no relation to the receiver, has the plain message
 struct Pile {
     n: i64
 
@@ -29,10 +30,23 @@ struct Wall {
     }
 }
 
+struct Duo {
+    n: i64
+
+    fn both(mut self, mut a: Pile, mut b: Pile) {
+        self.n = 1
+        a.n = 1
+        b.n = 1
+    }
+}
+
 fn main() {
     let mut pile = Pile(n: 0)
     pile.change(mut pile)
     let mut wall = Wall(s: Stone(n: 0))
     wall.change(mut wall.s)
     wall.s.change(mut wall)
+    let mut duo = Duo(n: 0)
+    let mut q = Pile(n: 0)
+    duo.both(mut q, mut q)
 }
