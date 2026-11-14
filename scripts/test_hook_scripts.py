@@ -143,6 +143,7 @@ class TestWording(unittest.TestCase):
             "    assert_eq!(Diagnostic::help(d), None);\n",
             "    d.label().is_some();\n",
             "    Diagnostic::label(d).is_none();\n",
+            "    assert!(d\n        .label()\n        .is_some());\n",
         ):
             with self.subTest(body=body):
                 self.assertEqual(
@@ -191,6 +192,8 @@ class TestWording(unittest.TestCase):
             ),
             "    d.notes().len();\n",
             "    d.notes().is_empty();\n",
+            "    let n = d\n        .secondary()\n        .len();\n",
+            "    assert!(d\n        .notes()\n        .is_empty());\n",
         ):
             with self.subTest(body=body):
                 self.assertEqual(

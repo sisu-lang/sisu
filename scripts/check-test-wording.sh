@@ -66,9 +66,9 @@ perl -0777 -ne '
       \blet\s*\[\s*$span(?:\s*,\s*$span)*\s*,?\s*\]\s*=\s*$path\.secondary\(\)\s+else\b
     | \bpanic!\(\s*"(?:[^"\\]|\\.)*"\s*,\s*$path\.secondary\(\)\s*\)
   /x;
-  my $count = qr/\.(?:len|is_empty)\(\)/;
+  my $count = qr/\s*\.(?:len|is_empty)\(\)/;
   my $spans = qr/$count|\[[^\]\n]*\]\.0\b|,\s*\[\]|\s*\.iter\(\)\)?\s*\.map\(\|&?$span\|/;
-  while (/(?<ok>$ok)|\.message\(\)|\bDiagnostic::(?:message|secondary|notes)\b|\.secondary\(\)(?!$spans)|\.notes\(\)(?!$count)|(?:\.(?:help|label)\(\)|\bDiagnostic::(?:help|label)\b(?:\([^()]*\))?+)(?!\.is_(?:some|none)\(\)|,\s*None\b)/g) {
+  while (/(?<ok>$ok)|\.message\(\)|\bDiagnostic::(?:message|secondary|notes)\b|\.secondary\(\)(?!$spans)|\.notes\(\)(?!$count)|(?:\.(?:help|label)\(\)|\bDiagnostic::(?:help|label)\b(?:\([^()]*\))?+)(?!\s*\.is_(?:some|none)\(\)|,\s*None\b)/g) {
     next if defined $+{ok};
     my $line = 1 + (substr($_, 0, $-[0]) =~ tr/\n//);
     print "$ARGV:$line: a unit test reads diagnostic wording; assert the code, and pin the text in a tests/diagnostics fixture\n";
