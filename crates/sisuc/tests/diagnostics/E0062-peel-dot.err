@@ -280,8 +280,6 @@ error[E0062]: `xs` may be `None`
     |
 145 |     xs.push(1)
     |     ^^
-    |
-    = help: unwrap it with `if let`, `let ... else` or `?? return`
 
 error[E0062]: `c` may be `None`
    --> E0062-peel-dot.sisu:149:5

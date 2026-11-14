@@ -6,7 +6,7 @@
 // AND an index, a slice or a `for` subject after the `.` gets the `if let` help instead
 // AND so does an argument with `mut`, or at a `mut` parameter, also in a call that fails
 // AND so does one at a `mut` parameter of a method that a call written as a function names
-// AND a `push` onto `[i64]??` gets the `if let` help and no fix: the peeled `push` gives E0021
+// AND a `push` onto `[i64]??` gets no help and no fix: an unwrap gives a copy, and the peeled `push` gives E0021
 class Node {
     v: i64
     mut ys: [i64]

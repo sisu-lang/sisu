@@ -4188,13 +4188,26 @@ fn push_onto_an_optional_array_should_offer_unwrap_help_only_for_a_stored_array(
 }
 
 /// `?.` takes one layer only, so a `push` onto an optional array of an optional gets no `?.` fix.
-/// Its help says what to do instead.
+/// An unwrap gives a copy, which the `push` does not change, and the peeled `push` gives E0021:
+/// so it gets no help either. A `.` and a `?.` get none, on a local and on a struct field.
 #[test]
-fn push_onto_a_double_optional_array_should_give_the_unwrap_help_and_no_fix() {
-    let src = "fn main() {\n    let mut xs: [i64]?? = Some(Some([1]))\n    xs.push(2)\n}";
-    let d = diagnostic(src, Code::MayBeNone, (3, 5, "xs"), &[]);
-    assert!(d.help().is_some());
-    assert_eq!(fixes(src, &d), []);
+fn a_push_onto_a_double_optional_array_should_get_no_unwrap_help() {
+    let local = "fn main() {\n    let mut xs: [i64]?? = Some(Some([1]))\n    xs.push(2)\n}";
+    let local_safe = local.replace("xs.push", "xs?.push");
+    let field =
+        "struct Node {\n    yy: [i64]??\n}\nfn f(mut n: Node) {\n    n.yy.push(2)\n}\nfn main() {}";
+    let field_safe = field.replace("n.yy.push", "n.yy?.push");
+    let rows = [
+        ("local dot", local, (3, 5, "xs")),
+        ("local safe", local_safe.as_str(), (3, 5, "xs")),
+        ("field dot", field, (5, 5, "n.yy")),
+        ("field safe", field_safe.as_str(), (5, 5, "n.yy")),
+    ];
+    for (row, src, pos) in rows {
+        let d = diagnostic_row(row, src, Code::MayBeNone, pos, &[]);
+        assert!(d.help().is_none(), "{row}: {d:?}");
+        assert_eq!(fixes(src, &d), [], "{row}");
+    }
 }
 
 /// A read keeps its unwrap help: a copy is right for a read.

@@ -612,8 +612,6 @@ error[E0062]: `xs` may be `None`
     |
 174 |     xs.push(1)
     |     ^^
-    |
-    = help: unwrap it with `if let`, `let ... else` or `?? return`
 
 error[E0001]: cannot change `xs`
    --> E0062-member-on-payload.sisu:174:5

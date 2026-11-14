@@ -1,0 +1,44 @@
+// GIVEN a `.push` or a `?.push` on an optional of an optional array, in a function for each case
+// WHEN `sisu check` runs on it
+// THEN it reports E0062 with no `?.` fix, and no help that an unwrap makes: an unwrap gives a copy, so the `push` changes nothing
+// AND the `?.push` says that `?.` leaves a `[i64]?`, with no help: the peeled `push` gives E0021
+// AND a read on the same value keeps its peel help, because a read can use a copy
+// AND a `push` onto an optional that has one layer keeps its `?.` fix
+struct Node {
+    yy: [i64]??
+}
+
+fn local_dot(k: [i64]??) {
+    let mut xs = k
+    xs.push(1)
+}
+
+fn local_safe(k: [i64]??) {
+    let mut xs = k
+    xs?.push(1)
+}
+
+fn local_read(k: [i64]??) {
+    let xs = k
+    print(xs?.len())
+}
+
+fn local_single(k: [i64]?) {
+    let mut xs = k
+    xs.push(1)
+}
+
+fn field_parameter(mut n: Node) {
+    n.yy.push(1)
+}
+
+fn field_local(k: Node) {
+    let mut n = k
+    n.yy.push(1)
+}
+
+fn field_safe(mut n: Node) {
+    n.yy?.push(1)
+}
+
+fn main() {}
