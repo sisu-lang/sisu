@@ -143,7 +143,30 @@ struct Ms {
         self.push(1)
         let _ = id(self.bump())
     }
+    fn eq(mut self, o: Ms) -> bool {
+        self.n = o.n
+        true
+    }
+    fn less(mut self, o: Ms) -> bool {
+        self.n = o.n
+        false
+    }
+    fn get(mut self, i: i64) -> i64 {
+        self.n = i
+        i
+    }
+    fn len(mut self) -> i64 {
+        self.n = 0
+        0
+    }
 }
+// `Ms` takes `mut self` in `eq`, `less`, `get` and `len`, whose names an array or a generated
+// method shares. `olp()` gives an optional `Lp`, whose fields hold `Ms` in arrays.
+struct Lp {
+    ps: [Ms]
+    pss: [[Ms]]
+}
+fn olp() -> Lp? { None }
 enum Me {
     A
     B
@@ -329,6 +352,8 @@ ocs()?.s.xs
 ocs()?.s.xs[0]
 # A bare `self` in `main` and in a generic function, where it is no place and has no value.
 self
+# An optional struct whose fields hold arrays of `Ms`.
+olp()
 
 [failed values]
 # A type parameter read: in the function whose bound failed, `u` is unknown.
@@ -357,6 +382,14 @@ $[0].bump()
 $?.bump()
 $.p.bump()
 id($.none())
+# A generated `eq` and `less`, and an array's `get` with a range, whose names `mut self` methods of
+# `Ms` share. A `mut self` call on an element after a `?.`, and an array's own `len` on an element
+# of an array of arrays, beside the `mut self` `len` of `Ms`.
+$.eq($)
+$.less($)
+$.get(0..1)
+$?.ps[0].bump()
+$.pss[0].len()
 # Array literals beside a hint from another branch, with the value alone, first and last.
 let _a = if c { [Some(p)] } else { [$] }
 let _a = if c { [Some(p)] } else { [$, Some(Some(p))] }

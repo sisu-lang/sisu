@@ -5,7 +5,7 @@ use super::*;
 use Code::{
     AssignToExpression, AssignToImmutable, AssignToSelf, CannotInfer, ConformanceBody, Expected,
     MayBeNone, Mismatch, MutArgumentNotPlace, MutMarkerMissing, MutPlaceTwice, MutSelf,
-    NeverReassigned, SelfOutsideMethod, TypeArguments, UnusedMember, UnusedVariable,
+    NeverReassigned, NoMember, SelfOutsideMethod, TypeArguments, UnusedMember, UnusedVariable,
 };
 
 /// `Point` with the `mut self` method `move_by`, in eight lines.
@@ -222,21 +222,20 @@ fn mut_self_call_through_an_optional_value_should_be_e0062() {
         ),
     ];
     for (row, src) in &rows {
-        let (_, ds) = checked(src);
-        assert_eq!(errors(src, &ds), [(MayBeNone, (17, 6))], "row `{row}`");
+        assert_eq!(all_codes(src), [(MayBeNone, (17, 6))], "row `{row}`");
     }
     // A write through `?.` of a field of a `mut self`.
     let src = "struct In { n: i64 }\nfn bump(mut x: i64) { x = 1 }\n\
                struct P { n: i64; xs: [i64]; i: In; o: In? }\n\
                extend P {\n    fn m(mut self) { self.o?.n = 2 }\n}\nfn main() {}";
-    let (_, ds) = checked(src);
     assert_eq!(
-        errors(src, &ds),
+        all_codes(src),
         [(MayBeNone, (5, 28))],
         "a write through `?.`"
     );
     // A receiver whose own check failed at a `?.` has its report: the call adds none. The
-    // payload that a `.` on an optional checks the call on is no failure of its own.
+    // payload that a `.` on an optional checks the call on is no failure of its own. The call
+    // writes the root, as the write of a field does, so the root has no W0002.
     let chained = [
         (
             "an index after the `?.`",
@@ -273,10 +272,60 @@ fn mut_self_call_through_an_optional_value_should_be_e0062() {
             "struct S { n: i64; fn push(mut self, k: i64) { self.n += k } }\nstruct H { s: S }\nfn main() { let mut o: H? = None; o?.s.push(1); print(o != None) }",
             (MayBeNone, (3, 36)),
         ),
+        (
+            "`?.` on an optional of an optional enum",
+            "enum E { A; B; fn flip(mut self) { self = E.B } }\nfn main() { let mut q: E?? = Some(Some(E.A)); q?.flip(); print(q != None) }",
+            (MayBeNone, (2, 47)),
+        ),
+        (
+            "an element of a `mut` parameter after the `?.`",
+            "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nstruct L { ps: [P] }\nfn f(mut o: L?) { o?.ps[0].m() }\nfn main() { let mut x: L? = None; f(mut x) }",
+            (MayBeNone, (3, 19)),
+        ),
+        (
+            "an element of an array of arrays before the `?.`",
+            "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nstruct L { ps: [P] }\nfn main() { let mut a: [[L?]] = [[None]]; a[0][0]?.ps[0].m(); print(a.len()) }",
+            (MayBeNone, (3, 43)),
+        ),
     ];
     for (row, src, wanted) in chained {
-        let (_, ds) = checked(src);
-        assert_eq!(errors(src, &ds), [wanted], "row `{row}`");
+        assert_eq!(all_codes(src), [wanted], "row `{row}`");
+    }
+    // A field that is missing after the `?.` has its own error, and the call writes the root.
+    let rows = [
+        (
+            "after the `?.`",
+            "struct P { x: i64; fn bump(mut self) { self.x += 1 } }\nstruct L { p: P }\nfn main() { let mut o: L? = None; o?.zz.bump(); print(o != None) }",
+            vec![(NoMember, (3, 38))],
+        ),
+        (
+            "after an element",
+            "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nstruct L { ps: [P] }\nfn main() { let mut o: L? = None; o?.ps[0].zz.m(); print(o != None) }",
+            vec![(MayBeNone, (3, 35)), (NoMember, (3, 44))],
+        ),
+    ];
+    for (row, src, wanted) in rows {
+        assert_eq!(all_codes(src), wanted, "a missing field {row}");
+    }
+    // A range index gives a copy, so the call writes no root and its W0002 stays.
+    let rows = [
+        (
+            "after the `?.`",
+            "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nstruct L { ps: [P] }\nfn main() { let mut o: L? = None; o?.ps[0..1][0].m(); print(o != None) }",
+            (3, 35),
+        ),
+        (
+            "before the `?.`",
+            "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nstruct L { ps: [P] }\nfn main() { let mut ls: [L?] = [None]; ls[0..1][0]?.ps[0].m(); print(ls.len()) }",
+            (3, 40),
+        ),
+    ];
+    for (row, src, pos) in rows {
+        assert_eq!(
+            all_codes(src),
+            [(NeverReassigned, (3, 21)), (MayBeNone, pos)],
+            "a range index {row}"
+        );
     }
     // An optional element after the `?.` has an E0062 of its own, as for a plain method.
     // The call writes `o`, as a field write does, so `o` has no W0002.
@@ -364,6 +413,30 @@ fn mut_self_call_through_an_optional_value_should_be_e0062() {
             (3, 35),
             replace_o,
         ),
+        (
+            "an element of an element of a field",
+            "struct P { x: i64; fn len(mut self) -> i64 { self.x = 1; 1 } }\nstruct L { pss: [[P]] }\nfn main() { let mut o: L? = None; print(o.pss[0][0].len()) }",
+            (3, 41),
+            "struct P { x: i64 }\nstruct L { pss: [[P]] }\nfn main() { let mut o: L? = None; o.pss[0][0].x = 2; print(o != None) }",
+        ),
+        (
+            "a field of a field",
+            "struct P { x: i64; fn len(mut self) -> i64 { self.x = 1; 1 } }\nstruct Q { p: P; ps: [P] }\nstruct L { q: Q }\nfn main() { let mut o: L? = None; print(o.q.p.len()) }",
+            (4, 41),
+            replace_o,
+        ),
+        (
+            "an element of a field of a field",
+            "struct P { x: i64; fn len(mut self) -> i64 { self.x = 1; 1 } }\nstruct Q { p: P; ps: [P] }\nstruct L { q: Q }\nfn main() { let mut o: L? = None; print(o.q.ps[0].len()) }",
+            (4, 41),
+            replace_o,
+        ),
+        (
+            "a `push` onto an array field of a field",
+            "struct P { x: i64; fn len(mut self) -> i64 { self.x = 1; 1 } }\nstruct Q { p: P; ps: [P] }\nstruct L { q: Q }\nfn main() { let mut o: L? = None; o.q.ps.push(P(x: 1)); print(o != None) }",
+            (4, 35),
+            replace_o,
+        ),
     ];
     for (row, src, pos, twin) in dotted {
         assert_eq!(all_codes(src), [(MayBeNone, pos)], "row `{row}`");
@@ -446,6 +519,89 @@ fn plain_method_with_a_mut_self_name_should_keep_its_receiver_rules() {
     for (row, src, wanted) in &rows {
         assert_eq!(all_codes(src), *wanted, "row `{row}` without `A`");
         assert_eq!(codes_without(src, a), *wanted, "row `{row}` with `A`");
+    }
+    // `P` has `fn len(mut self)`. An array's own `len` on a path of an optional is a read. It has
+    // the codes, the help and the fixes of the twin where `P` has no `len`.
+    let no_len = |src: &str| src.replace("; fn len(mut self) -> i64 { self.x = 1; 1 }", "");
+    let p = "struct P { x: i64; fn len(mut self) -> i64 { self.x = 1; 1 } }\n";
+    let rows = [
+        (
+            "an element of an array of arrays",
+            format!(
+                "{p}struct L {{ pss: [[P]] }}\nfn main() {{ let mut o: L? = None; print(o.pss[0].len()) }}"
+            ),
+            vec![(NeverReassigned, (3, 21)), (MayBeNone, (3, 41))],
+        ),
+        (
+            "an element of an array of arrays in a `let`",
+            format!(
+                "{p}struct L {{ pss: [[P]] }}\nfn main() {{ let o: L? = None; print(o.pss[0].len()) }}"
+            ),
+            vec![(MayBeNone, (3, 37))],
+        ),
+        (
+            "an element of an element of an array of three",
+            format!(
+                "{p}struct L {{ psss: [[[P]]] }}\nfn main() {{ let mut o: L? = None; print(o.psss[0][0].len()) }}"
+            ),
+            vec![(NeverReassigned, (3, 21)), (MayBeNone, (3, 41))],
+        ),
+        (
+            "an element of an array of arrays in a parameter",
+            format!(
+                "{p}struct L {{ pss: [[P]] }}\nfn f(o: L?) -> i64 {{ o.pss[0].len() }}\nfn main() {{ print(f(None)) }}"
+            ),
+            vec![(MayBeNone, (3, 22))],
+        ),
+        (
+            "an array of arrays",
+            format!(
+                "{p}struct L {{ pss: [[P]] }}\nfn main() {{ let mut o: L? = None; print(o.pss.len()) }}"
+            ),
+            vec![(NeverReassigned, (3, 21)), (MayBeNone, (3, 41))],
+        ),
+        (
+            "a range of an array",
+            format!(
+                "{p}struct L {{ ps: [P] }}\nfn main() {{ let mut o: L? = None; print(o.ps[0..1].len()) }}"
+            ),
+            vec![(NeverReassigned, (3, 21)), (MayBeNone, (3, 41))],
+        ),
+        (
+            "a range of an element of an array of arrays",
+            format!(
+                "{p}struct L {{ pss: [[P]] }}\nfn main() {{ let mut o: L? = None; print(o.pss[0][0..1].len()) }}"
+            ),
+            vec![(NeverReassigned, (3, 21)), (MayBeNone, (3, 41))],
+        ),
+        (
+            "an array field of a field",
+            format!(
+                "{p}struct Q {{ ps: [P] }}\nstruct L {{ q: Q }}\nfn main() {{ let mut o: L? = None; print(o.q.ps.len()) }}"
+            ),
+            vec![(NeverReassigned, (4, 21)), (MayBeNone, (4, 41))],
+        ),
+        (
+            "an array field of an element of a field",
+            format!(
+                "{p}struct Q {{ ps: [P] }}\nstruct L {{ qs: [Q] }}\nfn main() {{ let mut o: L? = None; print(o.qs[0].ps.len()) }}"
+            ),
+            vec![(NeverReassigned, (4, 21)), (MayBeNone, (4, 41))],
+        ),
+    ];
+    let shape = |src: &str| {
+        let d = only(src, MayBeNone);
+        (d.help().is_some(), d.fixes().len())
+    };
+    for (row, src, wanted) in &rows {
+        let twin = no_len(src);
+        assert_eq!(all_codes(&twin), *wanted, "row `{row}` without `len`");
+        assert_eq!(all_codes(src), *wanted, "row `{row}`");
+        assert_eq!(
+            shape(src),
+            shape(&twin),
+            "row `{row}`: the help and the fixes"
+        );
     }
     // The shortcut's named change: a plain generic method that shares the name loses the
     // context of the outer call.
