@@ -436,7 +436,7 @@ impl Checker<'_> {
     /// method that the type of the receiver finds takes `mut self`. Each index takes one array
     /// layer off, and a range index none. A built-in type has no such method. A type parameter,
     /// or a path that the types do not decide, may find one.
-    fn receiver_writes(&mut self, receiver: &ast::Expr, method: Symbol) -> bool {
+    pub(super) fn receiver_writes(&mut self, receiver: &ast::Expr, method: Symbol) -> bool {
         let Ok((_, ty)) = self.struct_walk(receiver) else {
             return true;
         };

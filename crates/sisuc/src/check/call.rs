@@ -818,10 +818,8 @@ impl Checker<'_> {
         };
         let chain = match dot {
             _ if failed => {
-                // The call writes the root that its `?.` leads from, as a field write does.
-                if matches!(dot, Dot::Safe) || first_safe(receiver_expr).is_some() {
-                    self.reassign_chain_root(receiver_expr);
-                }
+                // The call writes the root of its receiver, as a field write does.
+                self.reassign_chain_root(receiver_expr);
                 None
             }
             Dot::Safe => first_safe(receiver_expr).or(Some((receiver_expr, method))),
@@ -874,11 +872,16 @@ impl Checker<'_> {
     /// Stamps the arguments of `Name.method(args)`, whose receiver has no type. E0105 reports a
     /// class or an interface there, and a failed local can have its name. An argument at a `mut`
     /// parameter of the method, or of the requirement, gets the help of a place. A name that is
-    /// none of them, or has no such method, stamps nothing. Some paths after a `?.` have no type,
-    /// such as one with a missing field. When a `mut self` method has the name, the root of such a
-    /// path is stamped as written, as a field write stamps it.
+    /// none of them, or has no such method, stamps nothing. A field or index path that failed has
+    /// no type either, such as one with a missing field. When a `mut self` method has the name, the
+    /// root of such a path is stamped as written, as a field write stamps it. The declared types
+    /// can say that the call only reads it: then nothing is stamped.
     fn stamp_type_call(&mut self, receiver: &ast::Expr, method: Symbol, args: &[ast::Arg]) {
-        if self.mut_self_names.contains(&method) && first_safe(receiver).is_some() {
+        let path = matches!(
+            receiver.kind,
+            ExprKind::Field { .. } | ExprKind::Index { .. }
+        );
+        if path && self.mut_self_names.contains(&method) && self.receiver_writes(receiver, method) {
             self.reassign_chain_root(receiver);
         }
         let ExprKind::Name(name) = receiver.kind else {
