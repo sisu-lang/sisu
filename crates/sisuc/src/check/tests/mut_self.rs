@@ -1584,3 +1584,50 @@ fn mut_self_call_on_a_field_should_read_the_field() {
     );
     codes(&src, &[]);
 }
+
+/// GIVEN `struct P` with `fn bump(mut self)`, and a `struct T` with the fields `o: P?` and `l: L`.
+/// `L` has `o: P?`. WHEN a `mut self` method of `T` calls `bump`, or writes a field of `P`,
+/// through a `?.` on a part of `self`. The same holds in an `if` or a `while`. THEN `sisu check`
+/// reports one E0062 at the `?.` and no W0002. The call counts as a change of `self`.
+#[test]
+fn mut_self_call_through_an_optional_part_of_self_should_report_only_e0062() {
+    let rows = [
+        ("a field", "self.o?.bump()"),
+        ("a field of a field", "self.l.o?.bump()"),
+        ("in an `if`", "if self.n > 0 { self.o?.bump() }"),
+        ("in a `while`", "while self.n > 0 { self.o?.bump(); break }"),
+        ("a write of a field", "self.o?.x = 2"),
+        ("a write in an `if`", "if self.n > 0 { self.o?.x = 2 }"),
+    ];
+    for (row, body) in rows {
+        let src = format!(
+            "struct P {{\n    x: i64\n    fn bump(mut self) {{ self.x += 1 }}\n}}\nstruct L {{\n    o: P?\n}}\n\
+             struct T {{\n    n: i64\n    o: P?\n    l: L\n    fn f(mut self) {{ {body} }}\n}}\nfn main() {{}}\n"
+        );
+        assert_eq!(
+            all_codes(&src),
+            [(MayBeNone, on(&src, 12, "?."))],
+            "row `{row}`"
+        );
+    }
+}
+
+/// GIVEN `struct T` whose `mut self` method `f` has the body `todo`. WHEN `sisu check` runs on it.
+/// THEN it reports W0003 for the `todo` and no W0002: the body is a stub, as for a `mut` parameter.
+#[test]
+fn mut_self_method_with_a_todo_body_should_get_no_unused_warning() {
+    let src = "struct T {\n    n: i64\n    fn f(mut self) { todo }\n}\nfn main() {\n    let mut t = T(n: 1)\n    t.f()\n    print(t.n)\n}\n";
+    let found: Vec<_> = all_codes(src)
+        .into_iter()
+        .map(|(code, _)| code.as_str())
+        .collect();
+    assert_eq!(found, ["W0003"]);
+}
+
+/// GIVEN `extend Q { fn g(mut self: Q) { print(self.x) } }`. WHEN `sisu check` runs on it. THEN it
+/// reports E0011 at the `:` and no W0002: the annotation is the one mistake.
+#[test]
+fn mut_self_with_a_type_should_report_only_the_expected_paren() {
+    let src = "struct Q { x: i64 }\nextend Q {\n    fn g(mut self: Q) { print(self.x) }\n}\nfn main() {}\n";
+    assert_eq!(all_codes(src), [(Expected, on(src, 3, ":"))]);
+}
