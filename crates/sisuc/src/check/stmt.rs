@@ -79,7 +79,7 @@ fn optional_unit(ty: Type) -> bool {
 
 /// Rewrites `e`, a value that a statement discards, so that no `unit?` stays in it: `o?.log()`
 /// runs for its effect only, as a `unit`. A branch or arm tail of a discarded `if`, `match` or
-/// block is discarded too.
+/// block is discarded too, and so is a `break` value of a discarded `loop`.
 fn drop_optional_unit(e: &mut tir::Expr) {
     if !is_silent(e.ty) {
         return;
@@ -103,35 +103,116 @@ fn drop_optional_unit(e: &mut tir::Expr) {
             else_block,
             ..
         } => {
-            drop_optional_tail(then_block);
+            drop_optional_tail(then_block, false);
             if let Some(block) = else_block {
-                drop_optional_tail(block);
+                drop_optional_tail(block, false);
             }
         }
         ExprKind::Match { arms, .. } => {
+            // An arm keeps a value: `collect` reads the value of an expression arm.
             for arm in arms {
-                drop_optional_tail(&mut arm.body);
+                drop_optional_tail(&mut arm.body, true);
             }
         }
-        ExprKind::Block(block) => drop_optional_tail(block),
-        _ => return,
+        ExprKind::Block(block) => drop_optional_tail(block, false),
+        // Only a `unit?` loop has `break` values to rewrite.
+        ExprKind::Loop(body) if optional_unit(e.ty) => {
+            body.each_expr_mut(&mut |child| drop_optional_breaks(child, 0));
+        }
+        // Each of these keeps its type: it has no tail or `break` value that it gives.
+        ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Char(_)
+        | ExprKind::Str(_)
+        | ExprKind::None
+        | ExprKind::Unit
+        | ExprKind::Local(_)
+        | ExprKind::Call { .. }
+        | ExprKind::InterfaceCall { .. }
+        | ExprKind::New { .. }
+        | ExprKind::Variant { .. }
+        | ExprKind::Field { .. }
+        | ExprKind::Struct { .. }
+        | ExprKind::StructField { .. }
+        | ExprKind::Wrap(_)
+        | ExprKind::ToAny(_)
+        | ExprKind::DynCall { .. }
+        | ExprKind::Convert(_)
+        | ExprKind::Print { .. }
+        | ExprKind::Dbg { .. }
+        | ExprKind::Panic(_)
+        | ExprKind::ReadLine
+        | ExprKind::ArrayLit(_)
+        | ExprKind::ArrayFill { .. }
+        | ExprKind::Index { .. }
+        | ExprKind::Slice { .. }
+        | ExprKind::Len(_)
+        | ExprKind::Chars(_)
+        | ExprKind::Bytes(_)
+        | ExprKind::Words(_)
+        | ExprKind::FromChars(_)
+        | ExprKind::Math { .. }
+        | ExprKind::Unary { .. }
+        | ExprKind::Binary { .. }
+        | ExprKind::Interpolate { .. }
+        | ExprKind::Concat { .. }
+        | ExprKind::Compare { .. }
+        | ExprKind::Equal { .. }
+        | ExprKind::Is { .. }
+        | ExprKind::Loop(_)
+        | ExprKind::Break { .. }
+        | ExprKind::Continue { .. }
+        | ExprKind::Return(_)
+        | ExprKind::MutCall { .. } => return,
     }
     if optional_unit(e.ty) {
         e.ty = Type::UNIT;
     }
 }
 
-/// `drop_optional_unit` of the tail of `block`; a `None` tail of type `unit?` goes.
-fn drop_optional_tail(block: &mut tir::Block) {
+/// `drop_optional_unit` of the tail of `block`. A `None` tail of type `unit?` goes, unless `keep`
+/// says that the block keeps a value: then it becomes a `unit`.
+fn drop_optional_tail(block: &mut tir::Block, keep: bool) {
     if let Some(value) = &mut block.value {
-        if matches!(value.kind, ExprKind::None) && optional_unit(value.ty) {
-            block.value = None;
+        if keep || !optional_none(value) {
+            drop_optional_value(value);
         } else {
-            drop_optional_unit(value);
+            block.value = None;
         }
     }
     if optional_unit(block.ty) {
         block.ty = Type::UNIT;
+    }
+}
+
+/// Whether `value` is a `None` of type `unit?`.
+fn optional_none(value: &tir::Expr) -> bool {
+    matches!(value.kind, ExprKind::None) && optional_unit(value.ty)
+}
+
+/// `drop_optional_unit` of `value`, a tail or a `break` value that is discarded and kept. A
+/// `None` of type `unit?` becomes a `unit`.
+fn drop_optional_value(value: &mut tir::Expr) {
+    if optional_none(value) {
+        *value = tir::Expr::new(ExprKind::Unit, Type::UNIT, value.span);
+    } else {
+        drop_optional_unit(value);
+    }
+}
+
+/// `drop_optional_value` of each `break` value in `e` that ends the loop `depth` loops out from
+/// `e`. It enters each nested loop, as a labelled `break` in one can end an outer loop.
+fn drop_optional_breaks(e: &mut tir::Expr, depth: usize) {
+    let inner = depth + usize::from(matches!(e.kind, ExprKind::Loop(_)));
+    e.each_child_mut(&mut |child| drop_optional_breaks(child, inner));
+    if let ExprKind::Break {
+        depth: target,
+        value: Some(value),
+    } = &mut e.kind
+        && *target == depth
+    {
+        drop_optional_value(value);
     }
 }
 
@@ -384,7 +465,7 @@ impl Checker<'_> {
 
     /// `discard` of the value of `block`, whose checked form is `checked`, if it has one.
     pub(super) fn discard_tail(&mut self, block: &ast::Block, checked: &mut tir::Block) {
-        drop_optional_tail(checked);
+        drop_optional_tail(checked, false);
         let mut unused = Vec::new();
         self.collect_tail(block, checked, &mut unused);
         self.report_unused(unused);
