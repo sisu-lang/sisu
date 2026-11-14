@@ -1,16 +1,21 @@
 // A `unit?` value that a statement discards runs for its effect only, as a `unit` does.
 // GIVEN an enum `U` whose method `log` prints `log`, and a function `run`. `run` discards
 //   `o?.log()` beside an empty branch, and in a `match` arm beside an empty block or a `None` arm.
-//   It also discards it in a `while` or `for` body, and as the `break` value of a `loop`
+//   It also discards it in a `while` or `for` body, and as the `break` value of a `loop`.
+//   A loop also has a bare `break` beside a `break` of `g()` or of `o?.log()`.
 // WHEN `main` calls `run` with `o` as `None`, as `Some(U.A)`, and as `Some(U.B)` with `c` false
 // THEN `log` runs once for each form whose branch runs when `o` holds a value, and never when
-//   `o` is `None`
+//   `o` is `None`. `g` prints `g` each time that its `break` runs.
 enum U {
     A
     B
     fn log(self) {
         print("log")
     }
+}
+
+fn g() {
+    print("g")
 }
 
 // The `match` is the tail of a function that returns `unit`.
@@ -37,10 +42,16 @@ fn run(o: U?, u: U, c: bool, n: i64) {
     for _x in [1] { if c { o?.log() } else {} }               // log when c is true
     for _x in [1] { match n { 1 => o?.log(); _ => None } }    // log when n is 1
     loop { break o?.log() }                                   // log
+    loop { if c { break o?.log() } else { break None } }      // log when c is true
+    outer: loop { loop { break outer o?.log() } }             // log
+    print("bare")
+    loop { if c { break g() }; break }                        // g when c is true
+    loop { if c { break o?.log() }; break }                   // log when c is true
+    for _i in 0..2 { loop { if c { break g() }; break } }     // g twice when c is true
 }
 
 fn main() {
-    run(None, U.A, true, 1)        // if, match, loops
-    run(Some(U.A), U.A, true, 1)   // if, 2 logs, match, 4 logs, loops, 4 logs
-    run(Some(U.B), U.B, false, 2)  // if, 1 log, match, loops, 1 log
+    run(None, U.A, true, 1)        // if, match, loops, bare, 3 g
+    run(Some(U.A), U.A, true, 1)   // if, 2 logs, match, 4 logs, loops, 6 logs, bare, g, log, 2 g
+    run(Some(U.B), U.B, false, 2)  // if, 1 log, match, loops, 2 logs, bare
 }

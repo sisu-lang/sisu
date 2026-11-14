@@ -515,3 +515,55 @@ fn a_comparison_of_a_unit_should_hold_the_other_operands_to_unit() {
     ];
     rows_in(&rows, with_safe_call, 12);
 }
+
+/// A bare `break` beside a `break` whose value is a `unit` gives the loop a `unit`, so the loop is
+/// a `unit`. Beside a `unit?` value, the loop is a `unit?`. A bare `break` beside a value of
+/// another type stays E0043. A `let w` of the written type proves the type of `x`.
+#[test]
+fn a_bare_break_beside_a_unit_break_should_give_the_loop_a_unit() {
+    with_prelude();
+    for (row, used) in [
+        (
+            "unit value first",
+            "let x = loop { if c { break g() }; break }\n    let w: unit = x",
+        ),
+        (
+            "bare break first",
+            "let x = loop { if c { break }; break g() }\n    let w: unit = x",
+        ),
+        (
+            "unit? value",
+            "let x = loop { if c { break o?.log() }; break }\n    let w: unit? = x",
+        ),
+        ("statement", "loop { if c { break g() }; break }"),
+        ("unit? statement", "loop { if c { break o?.log() }; break }"),
+        (
+            "labelled outer loop",
+            "outer: loop { loop { if c { break outer g() }; break outer } }",
+        ),
+        (
+            "for body",
+            "for i in 0..2 { loop { if c { break g() }; break } }",
+        ),
+    ] {
+        clean_row(row, &with_safe_call(used));
+    }
+    let rows: Vec<UseRow<'_>> = vec![
+        (
+            "i64 value first",
+            "let x = loop { if c { break 5 }; break }".into(),
+            vec![(Code::NoValue, "break }", false)],
+        ),
+        (
+            "bare break before an i64",
+            "loop { if c { break }; break 5 }".into(),
+            vec![(Code::NoValue, "break }", false)],
+        ),
+        (
+            "i64? value first",
+            "let x = loop { if c { break Some(1) }; break }".into(),
+            vec![(Code::NoValue, "break }", false)],
+        ),
+    ];
+    rows_in(&rows, with_safe_call, 12);
+}
