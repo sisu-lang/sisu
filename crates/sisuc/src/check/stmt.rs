@@ -1246,7 +1246,10 @@ impl Checker<'_> {
                 self.body.break_start = outer;
                 checked.map(Box::new)
             })
-            .transpose()?;
+            .transpose()
+            // `break_value` gave the loop what it needs. The `break` is still `never`, as a failed
+            // `return` is, so a branch beside it with no value is no error.
+            .map_err(|failed| Poisoned::typed(Type::NEVER, failed.reported))?;
         let frame = self.frame(target);
         if value.is_none() && keyword == "break" && frame.kind == LoopKind::Loop {
             frame.bare.get_or_insert(span);

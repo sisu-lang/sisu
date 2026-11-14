@@ -587,6 +587,64 @@ fn a_typed_poisoned_first_break_should_set_the_type_of_the_loop() {
     )]);
 }
 
+/// GIVEN a branch that ends in a `break` whose value is typed and poisoned, or untyped
+/// AND another branch with no value, or with a value of another type
+/// WHEN the program is checked
+/// THEN the `break` is `never`, so the branch with no value is no error
+/// AND an `if` with a value takes the type of the other branch
+/// AND only the failed value and a true error report
+#[test]
+fn a_break_with_a_failed_value_should_be_never_in_its_branch() {
+    let call: Wanted = (ArgumentCount, (4, 33));
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "if",
+            typed_break_program("let a = loop { if c { break h() } else { let b = 1 } }; print(a)"),
+            vec![call],
+        ),
+        (
+            "else if",
+            typed_break_program(
+                "let a = loop { if c { break h() } else if c { let b = 1 } else { let d = 2 } }; print(a)",
+            ),
+            vec![call],
+        ),
+        (
+            "match",
+            typed_break_program(
+                "let a = loop { match c {\n        true => { break h() }\n        false => { let b = 1 }\n    } }; print(a)",
+            ),
+            vec![(ArgumentCount, (5, 25))],
+        ),
+        (
+            "a block value with a failed statement",
+            typed_break_program(
+                "let a = loop { if c { break { print(missing); true } } else { let b = 1 } }; print(a)",
+            ),
+            vec![(BindingNotFound, (4, 41))],
+        ),
+        (
+            "a struct with an unknown name",
+            "struct S { g: bool }\nfn main() {\n    let c = true\n    let a = loop { if c { break S(g: missing) } else { let b = 1 } }\n    print(a.g)\n}\n"
+                .into(),
+            vec![(BindingNotFound, (4, 38))],
+        ),
+        (
+            "an untyped value",
+            typed_break_program("let a = loop { if c { break missing } else { let b = 1 } }"),
+            vec![(BindingNotFound, (4, 33))],
+        ),
+        // The `if` joins `never` and `i64` to `i64`, so `x + true` is a true error.
+        (
+            "the value of the if",
+            "struct S { g: bool }\nfn main() {\n    let c = true\n    loop {\n        let x = if c { break S(g: missing) } else { 5 }\n        print(x + true)\n    }\n}\n"
+                .into(),
+            vec![(BindingNotFound, (5, 35)), (Mismatch, (6, 19))],
+        ),
+    ];
+    error_rows(&rows);
+}
+
 /// GIVEN a `loop` with a `break` of a value that is untyped
 /// AND other rows: a typed value outside a loop, a block that never ends, a value after a `None`
 /// WHEN the program is checked
