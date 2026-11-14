@@ -588,10 +588,11 @@ fn a_typed_poisoned_first_break_should_set_the_type_of_the_loop() {
 }
 
 /// GIVEN a branch that ends in a `break` whose value is typed and poisoned, or untyped
-/// AND another branch with no value
+/// AND another branch with no value, or with a value of another type
 /// WHEN the program is checked
 /// THEN the `break` is `never`, so the branch with no value is no error
-/// AND only the failed value reports
+/// AND an `if` with a value takes the type of the other branch
+/// AND only the failed value and a true error report
 #[test]
 fn a_break_with_a_failed_value_should_be_never_in_its_branch() {
     let call: Wanted = (ArgumentCount, (4, 33));
@@ -627,6 +628,18 @@ fn a_break_with_a_failed_value_should_be_never_in_its_branch() {
             "struct S { g: bool }\nfn main() {\n    let c = true\n    let a = loop { if c { break S(g: missing) } else { let b = 1 } }\n    print(a.g)\n}\n"
                 .into(),
             vec![(BindingNotFound, (4, 38))],
+        ),
+        (
+            "an untyped value",
+            typed_break_program("let a = loop { if c { break missing } else { let b = 1 } }"),
+            vec![(BindingNotFound, (4, 33))],
+        ),
+        // The `if` joins `never` and `i64` to `i64`, so `x + true` is a true error.
+        (
+            "the value of the if",
+            "struct S { g: bool }\nfn main() {\n    let c = true\n    loop {\n        let x = if c { break S(g: missing) } else { 5 }\n        print(x + true)\n    }\n}\n"
+                .into(),
+            vec![(BindingNotFound, (5, 35)), (Mismatch, (6, 19))],
         ),
     ];
     error_rows(&rows);
