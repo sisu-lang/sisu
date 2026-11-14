@@ -26,6 +26,17 @@ pub(super) fn failed_join(ty: Result<Type, Poisoned>, part: Option<Reported>) ->
     })
 }
 
+/// `span`, the span of an `if` with no `else`, when its `then` block has a value: such an `if` has
+/// none (see `Poisoned::valueless`).
+fn valueless_join(
+    span: Span,
+    else_block: Option<&ast::Block>,
+    then: &CheckedBlock,
+) -> Option<Span> {
+    let value = block_type(then).is_some_and(|ty| !matches!(ty, Type::UNIT | Type::NEVER));
+    (else_block.is_none() && value).then_some(span)
+}
+
 /// The proof of the first failed branch among `blocks`, of a join that failed by a branch.
 fn failed_branch(blocks: &[CheckedBlock]) -> Reported {
     (blocks.iter().find_map(|block| block.as_ref().err()))
@@ -52,7 +63,7 @@ impl Checker<'_> {
             |_| None,
             |c, expected| c.block(then_block, expected),
         );
-        self.note_valueless(span, else_block, &then);
+        let valueless = valueless_join(span, else_block, &then);
         let part = (cond.as_ref().err())
             .or_else(|| then.as_ref().err())
             .or_else(|| other.as_ref().and_then(|other| other.as_ref().err()))
@@ -67,7 +78,10 @@ impl Checker<'_> {
                 ty,
                 span,
             )),
-            (.., ty) => failed_join(ty, part),
+            (.., ty) => failed_join(ty, part).map_err(|failed| Poisoned {
+                valueless,
+                ..failed
+            }),
         }
     }
 
@@ -103,7 +117,7 @@ impl Checker<'_> {
             });
         let bound = checked.expect("`branches` should check the first block, which sets it");
         let ty = ty?;
-        self.note_valueless(span, else_block, &then);
+        let valueless = valueless_join(span, else_block, &then);
         let kind = match (scrutinee, then, other.transpose(), bound) {
             (Ok(scrutinee), Ok(then_block), Ok(else_block), LetPattern::Some { bind }) => {
                 tir::ExprKind::IfSome {
@@ -132,21 +146,13 @@ impl Checker<'_> {
                     .or_else(|| other.err().map(|p| p.reported()))
                     .or(pattern)
                     .expect("a failed `if let` should have a failed part");
-                return Err(Poisoned::typed(ty, part));
+                return Err(Poisoned {
+                    valueless,
+                    ..Poisoned::typed(ty, part)
+                });
             }
         };
         Ok(tir::Expr::new(kind, ty, span))
-    }
-
-    /// Records the `if` at `span` as valueless. It has no `else`, and its `then` block has a
-    /// value that is not `unit` or `never`, as in `if c { 1 }`. Such an `if` is a statement.
-    /// E0043 reports it where a value is used (see `value`).
-    fn note_valueless(&mut self, span: Span, else_block: Option<&ast::Block>, then: &CheckedBlock) {
-        if else_block.is_none()
-            && block_type(then).is_some_and(|ty| !matches!(ty, Type::UNIT | Type::NEVER))
-        {
-            self.body.valueless.insert(span);
-        }
     }
 
     /// The blocks of an `if` or `if let`, `then` checking the first, and their type:

@@ -974,7 +974,7 @@ fn a_never_part_of_a_literal_as_an_argument_should_be_underlined_at_the_part() {
         (r#"eprint("p{return 1}q")"#, &[(P, "return 1")]),
         (r#"foo(["a{return 1}b"])"#, &[(V, "return 1")]),
         (r#"foo([1, "a{return 1}b"])"#, &[(V, "return 1")]),
-        ("foo([print(1)])", &[(V, "print(1)")]),
+        ("foo([print(1)])", &[]),
         (r#"dbg("p{return 1}q")"#, &[(P, "return 1")]),
         (r#"let x = Cell(v: "a{return 1}b")"#, &[(T, "return 1")]),
         (

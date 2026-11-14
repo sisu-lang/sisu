@@ -3,7 +3,7 @@
 //! `todo`, a keyword that panics as `panic` does, is checked here too.
 
 use super::array::pair;
-use super::expr::{path, read_jump, typed, unlabeled};
+use super::expr::{missing_value, path, read_jump, typed, unlabeled};
 use super::mut_args::Callee;
 use super::reports::Reported;
 use super::{Checked, Checker, Expectation, Origin, Poisoned, type_of};
@@ -120,14 +120,14 @@ impl Checker<'_> {
                 function,
                 at: self.never_at(arg.value.span),
             },
-            Some(ty) if self.unit_unwanted(&arg.value, ty, Expectation::None) => {
-                DiagnosticKind::NoValue {
-                    at: arg.value.span,
+            _ => match missing_value(&arg.value, &checked, Expectation::None) {
+                Some((at, unit_call)) => DiagnosticKind::NoValue {
+                    at,
                     never: false,
-                    unit_call: None,
-                }
-            }
-            _ => return Ok((arg, checked, labeled)),
+                    unit_call,
+                },
+                None => return Ok((arg, checked, labeled)),
+            },
         };
         Err(Err(Poisoned::new(ret, self.diagnostics.error(error))))
     }

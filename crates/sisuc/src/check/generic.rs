@@ -35,6 +35,16 @@ use crate::tir::{self, Type, TypeArgs, TypeKind};
 use crate::types::{HOLE_INDEX, Head, REJECTED_INDEX};
 
 /// Whether `ty` is `want`, where a hole of `want` meets any part of `ty`.
+/// Whether a parameter of type `param` takes a `unit` argument: it is `unit`, or a type parameter
+/// of the callee that the `unit` binds, or an optional of either.
+fn binds_unit(param: Type) -> bool {
+    match param.kind() {
+        TypeKind::Unit | TypeKind::Param(..) => true,
+        TypeKind::Optional(payload) => binds_unit(payload),
+        _ => false,
+    }
+}
+
 fn meets(ty: Type, want: Type) -> bool {
     meets_in(ty, want, &mut WalkMemo::default())
 }
@@ -2544,7 +2554,7 @@ impl Checker<'_> {
             let param = sig.params[i];
             // A `unit` binds a parameter that is a bare type parameter, and fits one that
             // another `unit` bound; it is no value for a parameter of another shape.
-            let takes = ty == Type::NEVER || param.is_some_and(takes_unit);
+            let takes = ty == Type::NEVER || param.is_some_and(binds_unit);
             if let Some(param) = param
                 && takes
                 && self.known_in(&call, param).is_none()
@@ -3395,6 +3405,8 @@ impl Checker<'_> {
         let outer = call.arg.replace(i);
         let checked = read_jump(self.infer_value(call, e, (pattern, origin), context));
         call.arg = outer;
+        // A valueless `if` binds nothing: it has no value.
+        let checked = self.refuse_valueless(checked);
         if unbound && let Some(ty @ (Type::UNIT | Type::NEVER)) = type_of(&checked) {
             let at = self.never_at(e.span);
             call.last.push((i, ty, at));
@@ -3578,12 +3590,17 @@ impl Checker<'_> {
     /// variable or `None`, refuses every level above it, and no level walks the type below it.
     /// Else each element makes its context again, and if the literal is not accepted, asks
     /// `takes_context`: an element that takes no context is checked on its own, and the others
-    /// keep theirs. An element of type `unit` or `never` has no value, which is reported at
-    /// once, and binds nothing.
+    /// keep theirs. An element of type `never` has no value, which is reported at once, and binds
+    /// nothing. A `unit` element binds after the others that have their own type, and before a
+    /// `None` or a `[]` (see `bind_units`).
     ///
     /// Gives the checked literal, and the type that `known_in` gives for `element` after the
     /// elements, if the elements bind all it names. An enclosing literal takes its bound element
     /// type from it, with no walk of its own element type.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the waves and the `unit` passes share the slots and the bound type of one literal"
+    )]
     fn inferred_array(
         &mut self,
         call: &mut Inference<'_>,
@@ -3601,7 +3618,18 @@ impl Checker<'_> {
         // `element`, so the work does not grow with elements times its depth.
         let mut bound: Option<(Type, Span)> = None;
         let ranks: Vec<Rank> = elements.iter().map(|e| self.sibling_rank(e)).collect();
+        // The `unit` elements that bound nothing.
+        let mut units = Vec::new();
         for wave in [Rank::Concrete, Rank::Literal, Rank::Waits] {
+            if wave == Rank::Waits {
+                self.bind_units(
+                    call,
+                    (elements, element),
+                    &mut units,
+                    &mut slots,
+                    &mut bound,
+                );
+            }
             for (i, e) in elements
                 .iter()
                 .enumerate()
@@ -3671,17 +3699,30 @@ impl Checker<'_> {
                     Err(Poisoned::untyped(reported))
                 };
                 // An element has a value: `infer_value` leaves `unit` and `never` for
-                // `infer_arg`, which an element has not.
-                let checked = read_jump(checked);
+                // `infer_arg`, which an element has not. A `unit` element binds `element` after
+                // the concrete and literal elements. So an element of another type beside it is
+                // the type, and the `unit` is the mistake.
+                let checked = self.refuse_valueless(read_jump(checked));
                 slots[i] = Some(match type_of(&checked) {
-                    Some(ty @ (Type::UNIT | Type::NEVER)) => {
+                    Some(Type::NEVER) => {
                         let at = self.never_at(e.span);
-                        Err(Poisoned::untyped(self.no_value(at, ty, unit_call(e))))
+                        Err(Poisoned::untyped(self.no_value(at, Type::NEVER, None)))
+                    }
+                    Some(Type::UNIT) => {
+                        units.push(i);
+                        checked
                     }
                     _ => checked,
                 });
             }
         }
+        self.bind_units(
+            call,
+            (elements, element),
+            &mut units,
+            &mut slots,
+            &mut bound,
+        );
         let Some((bound, _)) = bound else {
             // An element that binds nothing failed, and holds the proof, else the call failed.
             let reported = first_failed(&slots).or_else(|| failure(call));
@@ -3697,6 +3738,40 @@ impl Checker<'_> {
             .map(|slot| slot.expect("the three waves should check every element, one rank each"))
             .collect();
         (self.array(span, bound, checked, mismatched), Some(bound))
+    }
+
+    /// Checks each `unit` element of `elements` at `units` against `element`, which the first of
+    /// them binds when no other element bound it, and empties `units`. A `unit` where the bound
+    /// type takes none is E0043. `slots` and `bound` are those of `inferred_array`. It runs
+    /// before the elements that wait, so a `None` or a `[]` meets the type it binds.
+    fn bind_units(
+        &mut self,
+        call: &mut Inference<'_>,
+        (elements, element): (&[ast::Expr], Type),
+        units: &mut Vec<usize>,
+        slots: &mut [Option<Checked>],
+        bound: &mut Option<(Type, Span)>,
+    ) {
+        for i in units.drain(..) {
+            let e = &elements[i];
+            if bound.is_none() && self.bind_param(call, element, Type::UNIT, e.span) {
+                *bound = self.known_in(call, element).map(|ty| (ty, e.span));
+            }
+            let slot = slots[i]
+                .take()
+                .expect("a `unit` element should have its slot");
+            slots[i] = Some(match *bound {
+                Some((want, at)) if takes_unit(want) => {
+                    let origin = Origin::Element { at, ty: want };
+                    mark(self.against(e, slot, Expectation::Required(want, origin)))
+                }
+                _ => Err(Poisoned::untyped(self.no_value(
+                    e.span,
+                    Type::UNIT,
+                    unit_call(e),
+                ))),
+            });
+        }
     }
 
     /// `Bindings::unify`, reporting at `at` each parameter it binds to a type that no type

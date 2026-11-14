@@ -8,7 +8,7 @@ use std::fmt::Write;
 
 use super::array::pair;
 use super::call::Dot;
-use super::expr::{local, no_member, path, postfix, typed, unlabeled};
+use super::expr::{local, missing_value, no_member, path, postfix, typed, unlabeled};
 use super::mut_args::Callee;
 use super::{Checked, Checker, Expectation, Origin, Poisoned, block_expr, is_jumped, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
@@ -82,44 +82,40 @@ impl Checker<'_> {
             let value = self.expr(part, Expectation::None);
             // Every type interpolates but `never`; an optional warns. An `if` without an `else`
             // whose branch has a value has no value to write.
-            match type_of(&value).map(Type::kind) {
-                Some(TypeKind::Unit) if self.unit_unwanted(part, Type::UNIT, Expectation::None) => {
-                }
-                Some(TypeKind::Never) => {
-                    if ty != Type::NEVER {
-                        // A part that is a never literal gives the part inside it.
-                        #[cfg(test)]
-                        super::reached("never_at for a part of a string");
-                        never_at = Some(self.never_at(part.span));
-                        jumped = is_jumped(&value);
-                    }
-                    ty = Type::NEVER;
-                    checked.push(value);
-                    continue;
-                }
-                _ => {
-                    // A spec error or a precision error is the one report of the part: it gets
-                    // no warning.
-                    let mut reported = *bad_spec;
-                    if let (Some(spec), Some(found)) = (spec, type_of(&value)) {
-                        let (format, error) = self.format(i, part, spec, found);
-                        if !format.is_plain() {
-                            formats.push(format);
-                        }
-                        reported = error;
-                    }
-                    if !reported {
-                        self.warn_if_optional(part, &value);
-                    }
-                    if let Some(found) = type_of(&value) {
-                        self.record_shown(found, self.lang.display);
-                    }
-                    checked.push(value);
-                    continue;
-                }
+            if let Some((at, _)) = missing_value(part, &value, Expectation::None) {
+                let reported = self.no_value(at, Type::UNIT, None);
+                checked.push(Err(Poisoned::untyped(reported)));
+                continue;
             }
-            let reported = self.no_value(part.span, Type::UNIT, None);
-            checked.push(Err(Poisoned::untyped(reported)));
+            if type_of(&value) == Some(Type::NEVER) {
+                if ty != Type::NEVER {
+                    // A part that is a never literal gives the part inside it.
+                    #[cfg(test)]
+                    super::reached("never_at for a part of a string");
+                    never_at = Some(self.never_at(part.span));
+                    jumped = is_jumped(&value);
+                }
+                ty = Type::NEVER;
+                checked.push(value);
+                continue;
+            }
+            // A spec error or a precision error is the one report of the part: it gets no
+            // warning.
+            let mut reported = *bad_spec;
+            if let (Some(spec), Some(found)) = (spec, type_of(&value)) {
+                let (format, error) = self.format(i, part, spec, found);
+                if !format.is_plain() {
+                    formats.push(format);
+                }
+                reported = error;
+            }
+            if !reported {
+                self.warn_if_optional(part, &value);
+            }
+            if let Some(found) = type_of(&value) {
+                self.record_shown(found, self.lang.display);
+            }
+            checked.push(value);
         }
         if let Some(at) = never_at {
             self.body.never_part = Some((span, at));
@@ -421,6 +417,8 @@ impl Checker<'_> {
             Expectation::None
         };
         let checked = self.value(&arg.value, expected);
+        // No conversion takes a `unit`, and a scalar one expects no type.
+        let checked = self.refuse_unit(&arg.value, checked);
         let fails = matches!(to, Type::U8 | Type::CHAR)
             || (to == Type::I64 && type_of(&checked) == Some(Type::F64));
         // The head, `to(`, and the tail, `)`, are the text a rewrite of the call deletes.

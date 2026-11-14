@@ -5,7 +5,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::any::{AnyJoin, SEED, is_target, widen};
 use super::array::must_unwrap;
 use super::enums::unwrapped;
-use super::expr::{fits, local, unit_call};
+use super::expr::{fits, local, missing_value};
 use super::generic::Ahead;
 use super::pattern::LetPattern;
 use super::prelude::PRELUDE;
@@ -72,6 +72,69 @@ fn is_silent(ty: Type) -> bool {
         || matches!(ty.kind(), TypeKind::Optional(payload) if payload == Type::UNIT)
 }
 
+/// Whether `ty` is `unit?`.
+fn optional_unit(ty: Type) -> bool {
+    matches!(ty.kind(), TypeKind::Optional(payload) if payload == Type::UNIT)
+}
+
+/// Rewrites `e`, a value that a statement discards, so that no `unit?` stays in it: `o?.log()`
+/// runs for its effect only, as a `unit`. A branch or arm tail of a discarded `if`, `match` or
+/// block is discarded too.
+fn drop_optional_unit(e: &mut tir::Expr) {
+    if !is_silent(e.ty) {
+        return;
+    }
+    match &mut e.kind {
+        ExprKind::Wrap(inner) if optional_unit(e.ty) && inner.ty == Type::UNIT => {
+            let inner = std::mem::replace(
+                &mut **inner,
+                tir::Expr::new(ExprKind::Unit, Type::UNIT, e.span),
+            );
+            *e = inner;
+            return;
+        }
+        ExprKind::If {
+            then_block,
+            else_block,
+            ..
+        }
+        | ExprKind::IfSome {
+            then_block,
+            else_block,
+            ..
+        } => {
+            drop_optional_tail(then_block);
+            if let Some(block) = else_block {
+                drop_optional_tail(block);
+            }
+        }
+        ExprKind::Match { arms, .. } => {
+            for arm in arms {
+                drop_optional_tail(&mut arm.body);
+            }
+        }
+        ExprKind::Block(block) => drop_optional_tail(block),
+        _ => return,
+    }
+    if optional_unit(e.ty) {
+        e.ty = Type::UNIT;
+    }
+}
+
+/// `drop_optional_unit` of the tail of `block`; a `None` tail of type `unit?` goes.
+fn drop_optional_tail(block: &mut tir::Block) {
+    if let Some(value) = &mut block.value {
+        if matches!(value.kind, ExprKind::None) && optional_unit(value.ty) {
+            block.value = None;
+        } else {
+            drop_optional_unit(value);
+        }
+    }
+    if optional_unit(block.ty) {
+        block.ty = Type::UNIT;
+    }
+}
+
 impl Checker<'_> {
     /// `never` once a statement is `never`, else the type of the last statement (`unit` when
     /// there is none). Warns "unreachable code" on the first statement after a `never` one.
@@ -127,6 +190,8 @@ impl Checker<'_> {
                     kept: value.kept && none,
                     // The block is `never` exactly when `ty` is, and then `jumped` says why.
                     jumped,
+                    // A `never` before the tail leaves its `if` unused.
+                    valueless: value.valueless.filter(|_| ty == Some(Type::UNIT)),
                     reported: value.reported,
                 });
             }
@@ -162,9 +227,10 @@ impl Checker<'_> {
             let (checked, invalid_jump) =
                 self.jumps(|c| c.stmt(stmt, if last { expected } else { Expectation::None }));
             let stmt_ty = match checked {
-                Ok(lowered) => {
+                Ok(mut lowered) => {
                     if !last
-                        && let (StmtKind::Expr(source), tir::Stmt::Expr(e)) = (&stmt.kind, &lowered)
+                        && let (StmtKind::Expr(source), tir::Stmt::Expr(e)) =
+                            (&stmt.kind, &mut lowered)
                     {
                         self.discard(source, e);
                     }
@@ -201,7 +267,8 @@ impl Checker<'_> {
     /// `unit` or `never`. An `if`, an `if let`, a `match` or a block is not itself the value: the
     /// tail of each branch or arm is. The warnings of one statement share one fix, which drops
     /// all of its values: a branch with no value beside one with a value is an error.
-    pub(super) fn discard(&mut self, source: &ast::Expr, checked: &tir::Expr) {
+    pub(super) fn discard(&mut self, source: &ast::Expr, checked: &mut tir::Expr) {
+        drop_optional_unit(checked);
         let mut unused = Vec::new();
         self.collect(source, checked, false, &mut unused);
         self.report_unused(unused);
@@ -316,7 +383,8 @@ impl Checker<'_> {
     }
 
     /// `discard` of the value of `block`, whose checked form is `checked`, if it has one.
-    pub(super) fn discard_tail(&mut self, block: &ast::Block, checked: &tir::Block) {
+    pub(super) fn discard_tail(&mut self, block: &ast::Block, checked: &mut tir::Block) {
+        drop_optional_tail(checked);
         let mut unused = Vec::new();
         self.collect_tail(block, checked, &mut unused);
         self.report_unused(unused);
@@ -450,7 +518,8 @@ impl Checker<'_> {
                 let nan = self.body.nans != nans;
                 let frame =
                     LoopFrame::new(LoopKind::While, *keyword, label.clone(), Expectation::None);
-                let (checked, frame) = self.loop_body(frame, |c| c.block(body, Expectation::None));
+                let (mut checked, frame) =
+                    self.loop_body(frame, |c| c.block(body, Expectation::None));
                 let broken = frame.broken;
                 if endless {
                     // Writing `loop` over a failed loop (a failed jump, label or `break` value in
@@ -461,7 +530,7 @@ impl Checker<'_> {
                         fix: frame.failed.is_none(),
                     });
                 }
-                if let Ok(checked) = &checked {
+                if let Ok(checked) = &mut checked {
                     self.discard_tail(body, checked);
                 }
                 let (cond, body) = match (cond, checked) {
@@ -521,10 +590,10 @@ impl Checker<'_> {
                     label.clone(),
                     Expectation::None,
                 );
-                let ((bound, checked), _) = self.loop_body(frame, |c| {
+                let ((bound, mut checked), _) = self.loop_body(frame, |c| {
                     c.let_block(Unwrap::WhileLet, &form, pattern, body, Expectation::None)
                 });
-                if let Ok(checked) = &checked {
+                if let Ok(checked) = &mut checked {
                     self.discard_tail(body, checked);
                 }
                 let (scrutinee, body) = match (scrutinee, checked) {
@@ -724,10 +793,10 @@ impl Checker<'_> {
             ast::ForSource::Range(range) => c.for_range(span, range),
         });
         let frame = LoopFrame::new(LoopKind::For, keyword, label.cloned(), Expectation::None);
-        let ((x, checked), _) = self.loop_body(frame, |c| {
+        let ((x, mut checked), _) = self.loop_body(frame, |c| {
             c.unwrapping_block("for", name, bound, body, Expectation::None)
         });
-        if let Ok(checked) = &checked {
+        if let Ok(checked) = &mut checked {
             self.discard_tail(body, checked);
         }
         let (header, body) = match (header, checked) {
@@ -1531,12 +1600,8 @@ impl Checker<'_> {
             return checked;
         }
         let checked = match type_of(&checked).or(misfit) {
-            Some(Type::UNIT) if self.unit_unwanted(v, Type::UNIT, hint) => {
-                Err(Poisoned::untyped(self.error(DiagnosticKind::NoValue {
-                    at: v.span,
-                    never: false,
-                    unit_call: unit_call(v),
-                })))
+            Some(Type::UNIT) if missing_value(v, &checked, hint).is_some() => {
+                self.refuse_unwanted(v, checked, hint)
             }
             Some(Type::NEVER) | None => checked,
             Some(got) => {

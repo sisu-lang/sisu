@@ -6,8 +6,7 @@ use super::generic::{Site, mismatch_poison};
 use super::names::{self, Resolved};
 use super::reports::Reported;
 use super::{
-    Checked, Checker, Expectation, Origin, Poisoned, SelfType, Uninferred, as_optional, payload,
-    type_of, wrap,
+    Checked, Checker, Expectation, Origin, Poisoned, SelfType, Uninferred, payload, type_of, wrap,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
@@ -16,6 +15,7 @@ use crate::diagnostic::{
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeKind};
+use crate::types::{HOLE_INDEX, REJECTED_INDEX};
 
 /// A jump that failed where its value is read is `Error`, not a `never`: its own diagnostic is
 /// the one report of the mistake, and a `never` would also fail every place that needs a value
@@ -413,16 +413,11 @@ impl Checker<'_> {
     /// type is expected, nor an `if` without an `else` whose branch has a value.
     pub(super) fn value(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
         let checked = read_jump(self.expr(e, expected));
-        match type_of(&checked) {
-            Some(Type::NEVER) => {
-                let at = self.never_at(e.span);
-                Err(Poisoned::untyped(self.no_value(at, Type::NEVER, None)))
-            }
-            Some(ty) if self.unit_unwanted(e, ty, expected) => {
-                Err(Poisoned::untyped(self.no_value(e.span, ty, unit_call(e))))
-            }
-            _ => Self::with_unit(Self::optional_unit(e, checked)),
+        if type_of(&checked) == Some(Type::NEVER) {
+            let at = self.never_at(e.span);
+            return Err(Poisoned::untyped(self.no_value(at, Type::NEVER, None)));
         }
+        Self::with_unit(self.refuse_unwanted(e, checked, expected))
     }
 
     /// `checked`, the value of `e`, or E0043 when it is a `unit`: the context takes no `unit`, and
@@ -438,6 +433,30 @@ impl Checker<'_> {
         checked
     }
 
+    /// `checked`, the value of `e` in a context that expects `expected`, or E0043 when the context
+    /// cannot take it (see `missing_value`).
+    pub(super) fn refuse_unwanted(
+        &mut self,
+        e: &ast::Expr,
+        checked: Checked,
+        expected: Expectation,
+    ) -> Checked {
+        match missing_value(e, &checked, expected) {
+            Some((at, unit_call)) => {
+                Err(Poisoned::untyped(self.no_value(at, Type::UNIT, unit_call)))
+            }
+            None => checked,
+        }
+    }
+
+    /// `checked`, or E0043 at the valueless `if` that gives its value (see `valueless`).
+    pub(super) fn refuse_valueless(&mut self, checked: Checked) -> Checked {
+        match valueless_value(&checked) {
+            Some(at) => Err(Poisoned::untyped(self.no_value(at, Type::UNIT, None))),
+            None => checked,
+        }
+    }
+
     /// `checked`, the value of an expression that is used. A block with no tail gets a `unit` as
     /// its value. A `loop` that a bare `break` ends gets a block around it, which holds one.
     fn with_unit(checked: Checked) -> Checked {
@@ -449,8 +468,10 @@ impl Checker<'_> {
         }
         let unit = |span| Box::new(tir::Expr::new(tir::ExprKind::Unit, Type::UNIT, span));
         match &mut done.kind {
-            tir::ExprKind::Block(block) if block.value.is_none() => {
-                block.value = Some(unit(done.span));
+            tir::ExprKind::Block(block) => {
+                if block.value.is_none() {
+                    block.value = Some(unit(done.span));
+                }
             }
             tir::ExprKind::Loop(_) => {
                 let span = done.span;
@@ -461,63 +482,56 @@ impl Checker<'_> {
                 };
                 done = tir::Expr::new(tir::ExprKind::Block(block), Type::UNIT, span);
             }
-            _ => {}
+            // Each of these has its value, a `unit` too, or is no block or `loop`.
+            tir::ExprKind::Int(_)
+            | tir::ExprKind::Float(_)
+            | tir::ExprKind::Bool(_)
+            | tir::ExprKind::Char(_)
+            | tir::ExprKind::Str(_)
+            | tir::ExprKind::None
+            | tir::ExprKind::Unit
+            | tir::ExprKind::Local(_)
+            | tir::ExprKind::Call { .. }
+            | tir::ExprKind::InterfaceCall { .. }
+            | tir::ExprKind::New { .. }
+            | tir::ExprKind::Variant { .. }
+            | tir::ExprKind::Field { .. }
+            | tir::ExprKind::Struct { .. }
+            | tir::ExprKind::StructField { .. }
+            | tir::ExprKind::Wrap(_)
+            | tir::ExprKind::ToAny(_)
+            | tir::ExprKind::DynCall { .. }
+            | tir::ExprKind::Convert(_)
+            | tir::ExprKind::Print { .. }
+            | tir::ExprKind::Dbg { .. }
+            | tir::ExprKind::Panic(_)
+            | tir::ExprKind::ReadLine
+            | tir::ExprKind::ArrayLit(_)
+            | tir::ExprKind::ArrayFill { .. }
+            | tir::ExprKind::Index { .. }
+            | tir::ExprKind::Slice { .. }
+            | tir::ExprKind::Len(_)
+            | tir::ExprKind::Chars(_)
+            | tir::ExprKind::Bytes(_)
+            | tir::ExprKind::Words(_)
+            | tir::ExprKind::FromChars(_)
+            | tir::ExprKind::Math { .. }
+            | tir::ExprKind::Unary { .. }
+            | tir::ExprKind::Binary { .. }
+            | tir::ExprKind::Interpolate { .. }
+            | tir::ExprKind::Concat { .. }
+            | tir::ExprKind::Compare { .. }
+            | tir::ExprKind::Equal { .. }
+            | tir::ExprKind::Is { .. }
+            | tir::ExprKind::If { .. }
+            | tir::ExprKind::IfSome { .. }
+            | tir::ExprKind::Match { .. }
+            | tir::ExprKind::Break { .. }
+            | tir::ExprKind::Continue { .. }
+            | tir::ExprKind::Return(_)
+            | tir::ExprKind::MutCall { .. } => {}
         }
         Ok(done)
-    }
-
-    /// `checked`, the value of `e`. A safe call of a method with no value is a statement that
-    /// does nothing for `None`. Once its value is used, it is a `unit?`.
-    fn optional_unit(e: &ast::Expr, checked: Checked) -> Checked {
-        let used = match checked {
-            Ok(tir::Expr {
-                kind:
-                    tir::ExprKind::IfSome {
-                        bind,
-                        scrutinee,
-                        then_block:
-                            tir::Block {
-                                stmts,
-                                value: Some(value),
-                                ..
-                            },
-                        else_block: Some(tir::Block { value: None, .. }),
-                    },
-                ty: Type::UNIT,
-                span,
-                ..
-            }) if matches!(e.kind, ExprKind::MethodCall { safe: true, .. }) => {
-                let ty = as_optional(Type::UNIT);
-                let wrapped = tir::Expr::new(tir::ExprKind::Wrap(value), ty, span);
-                let none = tir::Expr::new(tir::ExprKind::None, ty, span);
-                let block = |stmts, value| tir::Block {
-                    stmts,
-                    value: Some(Box::new(value)),
-                    ty,
-                };
-                tir::Expr::new(
-                    tir::ExprKind::IfSome {
-                        bind,
-                        scrutinee,
-                        then_block: block(stmts, wrapped),
-                        else_block: Some(block(Vec::new(), none)),
-                    },
-                    ty,
-                    span,
-                )
-            }
-            other => return other,
-        };
-        Ok(used)
-    }
-
-    /// Whether `e`, of type `ty`, is a `unit` that its context cannot take: the context expects
-    /// another type, or `e` is an `if` without an `else` whose branch has a value, which has no
-    /// value at all. A `unit` fits `unit`, `unit?` and a type parameter of a call.
-    pub(super) fn unit_unwanted(&self, e: &ast::Expr, ty: Type, expected: Expectation) -> bool {
-        ty == Type::UNIT
-            && (self.body.valueless.contains(&e.span)
-                || expected.ty().is_some_and(|want| !takes_unit(want)))
     }
 
     /// Reports a value of `ty`, `unit` or `never`, used at `at`. `unit_call` is the function that
@@ -909,12 +923,119 @@ pub(super) fn if_some(
 }
 
 /// Whether a context that wants `want` takes a `unit`: it wants `unit` or an optional `unit`, or
-/// a type parameter, which a call's own parameters and its holes are.
+/// a hole of a call, which the `unit` binds. A type parameter of the body that is checked is no
+/// hole: a `unit` is no value of it.
 pub(super) fn takes_unit(want: Type) -> bool {
     match want.kind() {
-        TypeKind::Unit | TypeKind::Param(..) => true,
+        TypeKind::Unit | TypeKind::Param(_, HOLE_INDEX | REJECTED_INDEX) => true,
         TypeKind::Optional(payload) => takes_unit(payload),
         _ => false,
+    }
+}
+
+/// Where `checked`, the value of `e` in a context that expects `expected`, has no value that the
+/// context can take. The second part is the function that the note of E0043 names. It is a
+/// valueless `if` at its tail (see `valueless`), or a `unit` where another type is expected.
+pub(super) fn missing_value(
+    e: &ast::Expr,
+    checked: &Checked,
+    expected: Expectation,
+) -> Option<(Span, Option<String>)> {
+    if let Some(at) = valueless_value(checked) {
+        return Some((at, None));
+    }
+    let unwanted =
+        type_of(checked) == Some(Type::UNIT) && expected.ty().is_some_and(|want| !takes_unit(want));
+    unwanted.then(|| (e.span, unit_call(e)))
+}
+
+/// `valueless` of `checked`, or the failed valueless `if` it is (see `Poisoned::valueless`).
+fn valueless_value(checked: &Checked) -> Option<Span> {
+    checked
+        .as_ref()
+        .map_or_else(|failed| failed.valueless, valueless)
+}
+
+/// The span of the `if` without an `else` whose branch has a value, when `e` is one or gives the
+/// value of one: through a block's value, a branch, an arm or a wrap. Such an `if` has no value.
+/// Only a `unit` or a `unit?` can give one, so the walk stops at any other type.
+pub(super) fn valueless(e: &tir::Expr) -> Option<Span> {
+    let unit = e.ty == Type::UNIT;
+    if !unit && !matches!(e.ty.kind(), TypeKind::Optional(payload) if payload == Type::UNIT) {
+        return None;
+    }
+    let tail = |block: &tir::Block| block.value.as_deref().and_then(valueless);
+    // A branch with a value beside no `else`: an `if let` on an enum is a `match` of two arms.
+    let has_value = |block: &tir::Block| !matches!(block.ty, Type::UNIT | Type::NEVER);
+    match &e.kind {
+        tir::ExprKind::If {
+            then_block,
+            else_block,
+            ..
+        }
+        | tir::ExprKind::IfSome {
+            then_block,
+            else_block,
+            ..
+        } => {
+            if else_block.is_none() && has_value(then_block) {
+                return Some(e.span);
+            }
+            tail(then_block).or_else(|| else_block.as_ref().and_then(tail))
+        }
+        tir::ExprKind::Match { arms, .. } => {
+            if unit && arms.iter().any(|arm| has_value(&arm.body)) {
+                return Some(e.span);
+            }
+            arms.iter().find_map(|arm| tail(&arm.body))
+        }
+        tir::ExprKind::Block(block) => tail(block),
+        tir::ExprKind::Wrap(inner) => valueless(inner),
+        // Each of these gives its own value, which no `if` gives.
+        tir::ExprKind::Int(_)
+        | tir::ExprKind::Float(_)
+        | tir::ExprKind::Bool(_)
+        | tir::ExprKind::Char(_)
+        | tir::ExprKind::Str(_)
+        | tir::ExprKind::None
+        | tir::ExprKind::Unit
+        | tir::ExprKind::Local(_)
+        | tir::ExprKind::Call { .. }
+        | tir::ExprKind::InterfaceCall { .. }
+        | tir::ExprKind::New { .. }
+        | tir::ExprKind::Variant { .. }
+        | tir::ExprKind::Field { .. }
+        | tir::ExprKind::Struct { .. }
+        | tir::ExprKind::StructField { .. }
+        | tir::ExprKind::ToAny(_)
+        | tir::ExprKind::DynCall { .. }
+        | tir::ExprKind::Convert(_)
+        | tir::ExprKind::Print { .. }
+        | tir::ExprKind::Dbg { .. }
+        | tir::ExprKind::Panic(_)
+        | tir::ExprKind::ReadLine
+        | tir::ExprKind::ArrayLit(_)
+        | tir::ExprKind::ArrayFill { .. }
+        | tir::ExprKind::Index { .. }
+        | tir::ExprKind::Slice { .. }
+        | tir::ExprKind::Len(_)
+        | tir::ExprKind::Chars(_)
+        | tir::ExprKind::Bytes(_)
+        | tir::ExprKind::Words(_)
+        | tir::ExprKind::FromChars(_)
+        | tir::ExprKind::Math { .. }
+        | tir::ExprKind::Unary { .. }
+        | tir::ExprKind::Binary { .. }
+        | tir::ExprKind::Interpolate { .. }
+        | tir::ExprKind::Concat { .. }
+        | tir::ExprKind::Compare { .. }
+        | tir::ExprKind::Equal { .. }
+        | tir::ExprKind::Is { .. }
+        | tir::ExprKind::Loop(_)
+        | tir::ExprKind::Break { .. }
+        | tir::ExprKind::Continue { .. }
+        | tir::ExprKind::Return(_)
+        | tir::ExprKind::MutCall { .. } => None,
     }
 }
 
@@ -924,7 +1045,36 @@ pub(super) fn unit_call(e: &ast::Expr) -> Option<String> {
     match &e.kind {
         ExprKind::Call { callee, .. } => Some(callee.name.to_string()),
         ExprKind::MethodCall { method, .. } => Some(method.name.to_string()),
-        _ => None,
+        // No call: the note names no function.
+        ExprKind::Int { .. }
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Char(_)
+        | ExprKind::Str(_)
+        | ExprKind::Interpolate(_)
+        | ExprKind::Name(_)
+        | ExprKind::Applied { .. }
+        | ExprKind::Todo { .. }
+        | ExprKind::SelfValue
+        | ExprKind::NoneLit
+        | ExprKind::Field { .. }
+        | ExprKind::Unary { .. }
+        | ExprKind::Binary { .. }
+        | ExprKind::Compare { .. }
+        | ExprKind::Coalesce { .. }
+        | ExprKind::ArrayLit(_)
+        | ExprKind::ArrayFill { .. }
+        | ExprKind::Index { .. }
+        | ExprKind::Range(_)
+        | ExprKind::Is { .. }
+        | ExprKind::If { .. }
+        | ExprKind::IfLet { .. }
+        | ExprKind::Match { .. }
+        | ExprKind::Loop { .. }
+        | ExprKind::Block(_)
+        | ExprKind::Return { .. }
+        | ExprKind::Break { .. }
+        | ExprKind::Continue { .. } => None,
     }
 }
 
