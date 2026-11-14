@@ -490,7 +490,9 @@ fn main() {
 - `unit` has no literal. A `unit` value comes from a call of a function with no return type, such as `print(...)`. A block that does not end in an expression gives one too, and so does a `loop` whose `break`s have no value.
 - `unit` has a `Display`, which writes `()`, and an `Eq` and an `Ord`, under which all `unit` values are equal.
 - `match` on a `unit` value is an error. [E0124](../diagnostics/E0124.md)
-- A `unit` value fits only where `unit` or a type parameter is expected. Where another type is expected, it is an error. [E0043](../diagnostics/E0043.md)
+- A `unit` value fits only where `unit`, `unit?` or a type parameter of the called function is expected. Where another type is expected, it is an error. [E0043](../diagnostics/E0043.md)
+- Where `unit?` is expected, a `unit` value becomes a `Some`, as a `T` becomes a `T?`. So `let x: unit? = g()` gives `Some` of a `unit` when `g` returns `unit`.
+- A statement that does not use a `unit?` value, such as `o?.log()`, gives no warning. [W0004](../diagnostics/W0004.md)
 
 ## Conversions
 

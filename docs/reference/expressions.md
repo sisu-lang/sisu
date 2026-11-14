@@ -170,6 +170,7 @@ fn main() {
 
 - A loop whose `break`s have no value gives a `unit` value. This is also true when the other `break`s have values of the type `never`.
 - A `break` with no value gives `unit`. So a loop that has a `break` with no value and a `break` with a value of another type is an error. [E0043](../diagnostics/E0043.md)
+- A `break` with a `unit?` value is the exception. Then a `break` with no value gives `Some` of a `unit`, and the loop gives a `unit?`. So `loop { if c { break Some(g()) }; break }` is never `None`.
 
 ```sisu
 fn wait(ready: bool) {
@@ -359,7 +360,7 @@ fn main() {
 
 ## Expressions as statements
 
-An expression can stand as a statement, such as a call of `print`. When its value is not used, and its type is not `unit`, the program builds with a warning ([W0004](../diagnostics/W0004.md)).
+An expression can stand as a statement, such as a call of `print`. When its value is not used, and its type is not `unit` or `unit?`, the program builds with a warning ([W0004](../diagnostics/W0004.md)).
 
 ```sisu
 fn main() {
@@ -374,7 +375,7 @@ An expression that has no value cannot be used as a value: as the value of a `le
 - an `if` without an `else` whose branch has a value of a type other than `unit`
 - an expression of the type `never` ([Types](types.md#never))
 
-These expressions give a `unit` value. It fits only where `unit` or a type parameter is expected ([unit](types.md#unit)).
+These expressions give a `unit` value. It fits only where `unit`, `unit?` or a type parameter of the called function is expected ([unit](types.md#unit)).
 
 - a call of a function that has no return type, such as `print(1)`
 - a block that does not end in an expression

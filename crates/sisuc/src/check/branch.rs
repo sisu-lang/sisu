@@ -247,8 +247,8 @@ impl Checker<'_> {
                 kept += 1;
             }
             let block = self.waiting(expected, |c| check(c, i, carried));
-            // The first branch of a known type anchors the rest; a failed or `unit` one only
-            // until then. An `any` branch widens the anchor, which only the hints read.
+            // The first branch of a known type, a `unit` one too, anchors the rest; a failed one
+            // only until then. An `any` branch widens the anchor, which only the hints read.
             match (block_type(&block), anchor) {
                 (Some(Type::NEVER), _) => {}
                 (Some(t), None | Some(None)) => {

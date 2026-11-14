@@ -67,7 +67,8 @@ before milestone 9.
   `loop` that ends at a bare `break`. `let u = print("a")` binds one, and
   `[unit]`, `unit?`, a `unit` field and `Result<unit, E>` work. A `unit`
   value prints as `()`, and all `unit` values are equal. It fits only where
-  `unit` or a type parameter is expected (`E0043`)
+  `unit`, `unit?` or a type parameter of the called function is expected
+  (`E0043`)
 - enums, declared with `enum` and a list of variants, each with no payload,
   labeled fields (`Rect(w: i64, h: i64)`) or unlabeled ones (`Num(i64)`);
   `Expr.Num(2)` builds a value, an enum has methods and compares with `==`,

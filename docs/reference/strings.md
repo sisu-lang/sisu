@@ -162,7 +162,7 @@ fn main() {
 
 ## Text of a value
 
-Interpolation and `print` write a value as text in the same way. They take a value of any type except `never`. A `unit` value writes `()`. A `print` of a `never` value is an error too ([E0061](../diagnostics/E0061.md)). An optional builds with the warning [W0015](../diagnostics/W0015.md), because the text can be `None`. The table lists the scalar types; [Text of other types](#text-of-other-types) lists the others.
+Interpolation and `print` write a value as text in the same way. They take a value of any type except `never`. A `unit` value writes `()`. A `print` of a `never` value is an error ([E0061](../diagnostics/E0061.md)). An optional builds with the warning [W0015](../diagnostics/W0015.md), because the text can be `None`. The table lists the scalar types; [Text of other types](#text-of-other-types) lists the others.
 
 | Type | Text |
 | --- | --- |

@@ -261,6 +261,8 @@ fn main() {
 - The values of the arms follow the rules of the branches of an `if` ([Expressions](expressions.md#match)).
 - When every arm has the type `never`, so has the `match` ([Types](types.md#never)).
 - An arm that gives `unit` and an arm with a value of another type cannot be in one `match`. An arm of the type `never` goes with both. [E0043](../diagnostics/E0043.md)
+- An arm that gives `None` or a `unit?` value is the exception: beside an arm that gives `unit`, the `match` gives a `unit?`. So `match n { 1 => g(); _ => None }` gives `Some` of a `unit` when `n` is 1.
+- Where `unit` or `unit?` is expected, an arm that gives `unit` fits, and an arm with a value of another type is the error. [E0032](../diagnostics/E0032.md)
 - A `match` whose arms give `unit` gives a `unit` value.
 - A `match` statement whose arms have a value gives a warning. [W0004](../diagnostics/W0004.md)
 - Every value of the type must reach an arm ([Coverage](#coverage)).
