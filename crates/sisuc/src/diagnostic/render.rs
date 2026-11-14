@@ -392,16 +392,18 @@ impl Diagnostic {
             Renderer::plain()
         };
         let text = renderer.render(&groups);
+        // The repair comes first: it looks for the header as the renderer wrote it.
+        let text = if excerpts.iter().all(|(e, _)| e.header.is_none()) {
+            text
+        } else {
+            true_headers(&text, path, excerpts.iter().map(|(e, _)| e.header))
+        };
         // Only the plain form is trimmed. The styled form stays as the renderer writes it.
-        let text = if color {
+        if color {
             text
         } else {
             without_trailing_spaces(text)
-        };
-        if excerpts.iter().all(|(e, _)| e.header.is_none()) {
-            return text;
         }
-        true_headers(&text, path, excerpts.iter().map(|(e, _)| e.header))
     }
 }
 
