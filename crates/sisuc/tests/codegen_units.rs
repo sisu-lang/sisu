@@ -92,6 +92,13 @@ fn before_pipeline(unit: &str) -> &str {
     unit.split("\n; after ").next().expect("a split has a head")
 }
 
+/// The right-hand side of the instruction that defines `%name` in `body`, one function of the IR.
+fn definition<'a>(body: &'a str, name: &str) -> Option<&'a str> {
+    let head = format!("%{name} = ");
+    body.lines()
+        .find_map(|line| line.trim_start().strip_prefix(head.as_str()))
+}
+
 /// The stdout of `sisu build <flags> <name>.sisu` run in `dir`, which must succeed.
 fn emit(dir: &Path, name: &str, flags: &[&str]) -> String {
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -936,7 +943,8 @@ fn split_build_should_succeed_when_threads_cannot_start() {
 
 /// GIVEN a program that pushes 100 000 `unit` values into each of two `[unit]` arrays
 /// WHEN `sisu build --emit ir -O2` builds it
-/// THEN each array block size that the IR computes multiplies its capacity by an element size of 0
+/// THEN each size that a `sisu_alloc` or `sisu_realloc` call gets adds the header to a capacity
+///   times an element size of 0
 /// AND each `sisu_alloc`, `sisu_realloc` and `sisu_free` call after the pipeline gets only the
 ///   24 bytes of the header
 /// AND no store writes a `unit` element
@@ -950,17 +958,33 @@ fn unit_array_should_allocate_no_payload() {
         )],
     );
     let ir = emit(&dir, "units", &["--emit", "ir", "-O2"]);
-    let sizes: Vec<&str> = (before_pipeline(&ir).lines())
-        .filter(|line| line.trim_start().starts_with("%elements"))
-        .collect();
+    let mut elements = Vec::new();
+    for body in before_pipeline(&ir).split("\ndefine ").skip(1) {
+        for line in body.lines() {
+            let Some((_, args)) = ["@sisu_alloc(", "@sisu_realloc("]
+                .iter()
+                .find_map(|callee| line.split_once(callee))
+            else {
+                continue;
+            };
+            // A size that is a value, not a constant: `add nuw i64 <mul>, <header>`.
+            for size in args.split(", ").filter_map(|arg| arg.strip_prefix("i64 %")) {
+                let size = size.trim_end_matches(')');
+                let added =
+                    definition(body, size).and_then(|add| add.strip_prefix("add nuw i64 %"));
+                let product = added.and_then(|add| add.split_once(',')).map(|(m, _)| m);
+                elements.extend(product.and_then(|m| definition(body, m)));
+            }
+        }
+    }
     assert!(
-        !sizes.is_empty(),
-        "the IR should size an array block:\n{ir}"
+        !elements.is_empty(),
+        "the IR should size an array block from its capacity:\n{ir}"
     );
-    for line in &sizes {
+    for product in &elements {
         assert!(
-            line.ends_with(", 0"),
-            "an element of `unit` should have no bytes: {line}"
+            product.starts_with("mul ") && product.ends_with(", 0"),
+            "an element of `unit` should have no bytes: {product}"
         );
     }
     let heap_calls: Vec<&str> = (after_pipeline(&ir).lines())

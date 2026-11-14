@@ -560,7 +560,10 @@ impl<'a> Lowering<'a> {
         for (index, arg) in args.iter().enumerate() {
             #[cfg(test)]
             OUT_STEPS.set(OUT_STEPS.get() + 1);
-            if let Some(m) = rest.next_if(|m| local_of(arg) == Some(m.temp)) {
+            // A `unit` temporary holds no value, so no final value comes back into it.
+            if let Some(m) = rest.next_if(|m| local_of(arg) == Some(m.temp))
+                && valued(self.locals[m.temp.0].ty)
+            {
                 self.push(Statement::Assign {
                     dest: Some(m.temp),
                     value: Rvalue::Out { index },
@@ -704,7 +707,7 @@ impl<'a> Lowering<'a> {
         assert_eq!(
             ty,
             Type::UNIT,
-            "the checker should give this expression a value"
+            "an expression that lowers to no local should be a `unit`"
         );
         let temp = self.temp(Type::UNIT);
         self.push(Statement::Assign {
@@ -937,8 +940,10 @@ impl<'a> Lowering<'a> {
     )]
     fn into(&mut self, e: &Expr, dest: Option<LocalId>) -> Lowered {
         let value = match &e.kind {
-            // A `unit` has no value to hold, as a call that returns `unit` has none.
+            // A `unit` has no value to hold, as a call that returns `unit` has none. A read of a
+            // `unit` local has nothing to read.
             ExprKind::Unit => return Some(None),
+            ExprKind::Local(_) if e.ty == Type::UNIT => return Some(None),
             ExprKind::Int(_)
             | ExprKind::Float(_)
             | ExprKind::Bool(_)

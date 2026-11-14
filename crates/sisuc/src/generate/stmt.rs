@@ -261,14 +261,29 @@ impl Gen<'_> {
     }
 
     /// A value for `print`, in a `form` from 0 to 4: as it is, interpolated alone, interpolated
-    /// with a width, through `to_string`, or a `bool` from `unit` values. Each of the first four
+    /// with a width, through `to_string`, or a value from a `unit`. Each of the first four
     /// writes the same text for any type. An optional in the first three forms warns (W0015),
     /// and `to_string` of it does not.
     fn printed_value(&mut self, form: usize) {
         if form == 4 {
-            // A block binds the `()` of `{}`, a block with no tail, and stores and compares it.
-            let compare = ["[u, u] == [u]", "[u] != [u]", "u < u", "u >= u"][self.pick(4)];
-            self.w.text(&format!("{{ let u = {{}}; {compare} }}"));
+            // A block binds a `()`: of `{}`, a block with no tail, or of a call of a `unit`
+            // function. Then it prints, stores or compares it.
+            let tails = [
+                "[u, u]",
+                "[u, u] == [u]",
+                "[u] != [u]",
+                "Some(u) == Some(u)",
+                "u < u",
+                "u >= u",
+            ];
+            let tail = tails[self.pick(tails.len())];
+            self.w.text("{ let u = ");
+            if !self.callees(&Ty::Unit, 0).is_empty() && self.pick(2) == 0 {
+                self.call(&Ty::Unit, 0);
+            } else {
+                self.w.text("{}");
+            }
+            self.w.text(&format!("; {tail} }}"));
             return;
         }
         if form == 3 {
