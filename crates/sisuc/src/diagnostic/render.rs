@@ -315,6 +315,21 @@ impl Diagnostic {
                 "span {span:?} ends with a line break"
             );
         }
+        // `true_headers` takes each line that reads as a header for a true header. So no line of a
+        // text may read as one. The first line is safe: the renderer puts it after a prefix.
+        let texts = [self.message()]
+            .into_iter()
+            .chain(self.label())
+            .chain(self.secondary().iter().map(|(_, t)| t.as_str()))
+            .chain(self.notes().iter().map(|n| &**n))
+            .chain(self.help())
+            .chain(self.fixes().iter().map(Fix::message));
+        for text in texts {
+            debug_assert!(
+                !text.lines().skip(1).any(is_header),
+                "the text {text:?} holds a line that reads as a header"
+            );
+        }
         let level = match self.severity() {
             Severity::Error => Level::ERROR,
             Severity::Warning => Level::WARNING,
@@ -377,6 +392,12 @@ impl Diagnostic {
             Renderer::plain()
         };
         let text = renderer.render(&groups);
+        // The styled form writes its spaces inside the styles, so only the plain form has any.
+        let text = if color {
+            text
+        } else {
+            without_trailing_spaces(text)
+        };
         if excerpts.iter().all(|(e, _)| e.header.is_none()) {
             return text;
         }
@@ -384,8 +405,26 @@ impl Diagnostic {
     }
 }
 
+/// `text` with the spaces at the end of each line removed. The plain renderer writes the marker
+/// `- ` of a removed line, then the text of the line. So an empty line ends in a space.
+/// The text is not copied when no line ends in a space.
+fn without_trailing_spaces(text: String) -> String {
+    if !text.contains(" \n") && !text.ends_with(' ') {
+        return text;
+    }
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let (body, end) = line.strip_suffix('\n').map_or((line, ""), |b| (b, "\n"));
+        out.push_str(body.trim_end_matches(' '));
+        out.push_str(end);
+    }
+    out
+}
+
 /// Whether `line` of the rendered text is the header of a snippet, plain or styled: white space
 /// and ANSI styles, then `-->` or `:::`. A source line starts with its gutter, so it is not one.
+/// The repair in `true_headers` is right only because no later line of a diagnostic text reads as
+/// a header, and `Diagnostic::render` asserts this.
 fn is_header(line: &str) -> bool {
     let mut rest = line.trim_start_matches(' ');
     while let Some(style) = rest.strip_prefix("\u{1b}[") {
@@ -741,6 +780,17 @@ error[E0011]: expected `=`, found end of line
                 text.lines().any(|l| l == "2 |     let n = 0"),
                 "the source line in {text}"
             );
+        }
+    }
+
+    #[test]
+    fn without_trailing_spaces_should_trim_every_line_and_the_end_of_the_text() {
+        for (text, want) in [
+            ("a \n  \n b  ", "a\n\n b"),
+            ("a\n b", "a\n b"),
+            ("a  ", "a"),
+        ] {
+            assert_eq!(super::without_trailing_spaces(text.to_string()), want);
         }
     }
 
