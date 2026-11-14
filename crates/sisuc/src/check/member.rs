@@ -29,8 +29,8 @@ pub(super) enum Access {
     Assign,
     /// The receiver of a `.push`, which may be a class's own `push`.
     Push,
-    /// The receiver of a call of the method that it names, which may take `mut self`.
-    Receiver(Symbol),
+    /// The receiver of a call of a method that may take `mut self` (`Body::receiver_writes`).
+    Receiver,
     /// The place of a `mut` argument, which a `?.` cannot be.
     Mut,
 }
@@ -326,7 +326,7 @@ impl Checker<'_> {
         let write = match access {
             Access::Read => false,
             Access::Assign | Access::Mut => true,
-            Access::Push | Access::Receiver(_) => self.call_writes(inner, name.name, access),
+            Access::Push | Access::Receiver => self.call_writes(inner, name.name, access),
         };
         // A path through `?.` is a place that cannot be a `mut` argument (E0170).
         let fix = payload_fix(payload, self.body.indexed) && !matches!(access, Access::Mut);
@@ -354,12 +354,12 @@ impl Checker<'_> {
     ) -> Reported {
         let chain = match access {
             Access::Read => self.body.write_chain,
-            Access::Assign | Access::Push | Access::Receiver(_) | Access::Mut => None,
+            Access::Assign | Access::Push | Access::Receiver | Access::Mut => None,
         };
         let write = match access {
             Access::Read => chain.is_some_and(|(_, change)| change != Change::MutArg),
             Access::Assign => true,
-            Access::Push | Access::Receiver(_) => {
+            Access::Push | Access::Receiver => {
                 self.call_writes(innermost(payload), name.name, access)
             }
             Access::Mut => false,
@@ -412,18 +412,15 @@ impl Checker<'_> {
     }
 
     /// Whether the call that `access` makes on the field `name` of `ty` writes the field: a
-    /// `push` onto an array, or a call of a method that takes `mut self`. Under an index, the call
-    /// is on an element of the field.
+    /// `push` onto an array or onto a value whose `push` takes `mut self`, or the call whose
+    /// receiver ends at the field, as `Body::receiver_writes` says.
     fn call_writes(&mut self, ty: Type, name: Symbol, access: Access) -> bool {
-        let push = matches!(access, Access::Push);
-        if push && self.field_is_array(ty, name) {
-            return true;
+        match access {
+            Access::Receiver => return self.body.receiver_writes,
+            Access::Push if self.field_is_array(ty, name) => return true,
+            Access::Push => {}
+            Access::Read | Access::Assign | Access::Mut => return false,
         }
-        let method = match access {
-            Access::Receiver(method) => method,
-            _ if push => Symbol::intern("push"),
-            _ => return false,
-        };
         let info = match ty.kind() {
             TypeKind::Class(class, _) => &self.classes[class.0],
             TypeKind::Struct(id, _) => &self.structs[id.0],
@@ -432,15 +429,7 @@ impl Checker<'_> {
         let held = info
             .field(name)
             .and_then(|index| self.field_type(ty, index));
-        let Some(mut held) = held else {
-            return false;
-        };
-        while self.body.indexed
-            && let TypeKind::Array(element) = innermost(held).kind()
-        {
-            held = element;
-        }
-        self.finds_mut_self(held, method)
+        held.is_some_and(|held| self.finds_mut_self(held, Symbol::intern("push")))
     }
 
     /// Whether the call of `name` on a value of type `ty` finds a method that takes `mut self`, as

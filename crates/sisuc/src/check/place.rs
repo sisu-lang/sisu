@@ -129,7 +129,7 @@ impl Change {
     fn access(self) -> Access {
         match self {
             Change::Push => Access::Push,
-            Change::Receiver(method) => Access::Receiver(method),
+            Change::Receiver(_) => Access::Receiver,
             Change::MutArg => Access::Mut,
             Change::Assign | Change::Element | Change::Field => Access::Assign,
         }
@@ -425,8 +425,27 @@ impl Checker<'_> {
     /// place. The place waits in `body.pushed` for the call to find the method. Nothing is stamped
     /// yet: a plain method only reads its receiver.
     pub(super) fn receiver_place(&mut self, receiver: &ast::Expr, method: Symbol) -> Checked {
+        let writes = self.receiver_writes(receiver, method);
+        let outer = std::mem::replace(&mut self.body.receiver_writes, writes);
         let place = self.place(receiver.span, receiver, Change::Receiver(method));
+        self.body.receiver_writes = outer;
         self.park(receiver, place)
+    }
+
+    /// Whether a call of `method` on the place `receiver` writes it, by the declared types: the
+    /// method that the type of the receiver finds takes `mut self`. Each index takes one array
+    /// layer off, and a range index none. A built-in type has no such method. A type parameter,
+    /// or a path that the types do not decide, may find one.
+    fn receiver_writes(&mut self, receiver: &ast::Expr, method: Symbol) -> bool {
+        let Ok((_, ty)) = self.struct_walk(receiver) else {
+            return true;
+        };
+        let ty = innermost(ty);
+        match ty.kind() {
+            TypeKind::Struct(..) | TypeKind::Enum(..) => self.finds_mut_self(ty, method),
+            TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => true,
+            _ => false,
+        }
     }
 
     /// Keeps `place`, the place of `receiver`, in `body.pushed`, and gives the value it holds,
@@ -1319,10 +1338,12 @@ impl Checker<'_> {
             ast::ExprKind::Name(_) => Some(root.span),
             _ => self.body.quiet,
         };
+        // The base of a receiver whose call only reads it is read as any value is.
+        let chain = self.writes(change).then_some((span, change));
         let outer = (
             std::mem::replace(&mut self.body.indexed, indexed),
             std::mem::replace(&mut self.body.quiet, quiet),
-            self.body.write_chain.replace((span, change)),
+            std::mem::replace(&mut self.body.write_chain, chain),
         );
         let checked = self.value(base, Expectation::None);
         (self.body.indexed, self.body.quiet, self.body.write_chain) = outer;
@@ -1365,7 +1386,7 @@ impl Checker<'_> {
                     if let Some(ty) = ty {
                         let _ = self.find_field(ty, base, name, access);
                     }
-                    self.reassign_root(target);
+                    self.reassign_for(target, change);
                     return CheckedPlace::failed(Some(reported));
                 }
             }
@@ -1376,7 +1397,7 @@ impl Checker<'_> {
             match self.field_target(known_type(&checked), base, name, (access, change)) {
                 Ok(found) => found,
                 Err(reported) => {
-                    self.reassign_root(target);
+                    self.reassign_for(target, change);
                     return CheckedPlace::failed(Some(reported));
                 }
             };
@@ -1484,7 +1505,7 @@ impl Checker<'_> {
             Ok(found) => found,
             Err(reported) => {
                 self.read_root(root);
-                self.reassign_root(target);
+                self.reassign_for(target, change);
                 return CheckedPlace::failed(Some(reported));
             }
         };
@@ -1510,7 +1531,7 @@ impl Checker<'_> {
         let untyped = |checker: &mut Self| ty.is_none().then(|| checker.proof(name.span)); // proof: declaration
         if !is_path(&read, base) {
             self.read_root(root);
-            self.reassign_root(target);
+            self.reassign_for(target, change);
             let at = target.span;
             let read = ty.map(|ty| {
                 let kind = ExprKind::StructField {
@@ -1655,7 +1676,7 @@ impl Checker<'_> {
             match self.field_target(known_type(checked), base, name, (change.access(), change)) {
                 Ok(found) => found,
                 Err(reported) => {
-                    self.reassign_root(target);
+                    self.reassign_for(target, change);
                     return CheckedPlace::failed(Some(reported));
                 }
             };
@@ -1707,7 +1728,7 @@ impl Checker<'_> {
         let (owner, index, ty) = match self.find_field(payload, base, name, change.access()) {
             Ok(found) => found,
             Err(reported) => {
-                self.reassign_root(target);
+                self.reassign_for(target, change);
                 return CheckedPlace::failed(Some(reported));
             }
         };
@@ -1881,6 +1902,19 @@ impl Checker<'_> {
             && let Some(b) = self.lookup(name)
         {
             b.reassigned |= b.kind == BindingKind::Var;
+        }
+    }
+
+    /// Whether `change` writes its place. Every change does, except the receiver of a call that
+    /// only reads it (`Body::receiver_writes`).
+    fn writes(&self, change: Change) -> bool {
+        !matches!(change, Change::Receiver(_)) || self.body.receiver_writes
+    }
+
+    /// Marks the root of `target` as reassigned, as `reassign_root` does, when `change` writes.
+    fn reassign_for(&mut self, target: &ast::Expr, change: Change) {
+        if self.writes(change) {
+            self.reassign_root(target);
         }
     }
 
