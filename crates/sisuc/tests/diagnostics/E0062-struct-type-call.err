@@ -1,14 +1,14 @@
 error[E0120]: `put` is a method of `G`; call it on a value
   --> E0062-struct-type-call.sisu:20:7
    |
-20 |     G.put(c.m.v)
+20 |     G.put(0, c.m.v)
    |       ^^^
 
 error[E0062]: `c` may be `None`
-  --> E0062-struct-type-call.sisu:20:11
+  --> E0062-struct-type-call.sisu:20:14
    |
-20 |     G.put(c.m.v)
-   |           ^
+20 |     G.put(0, c.m.v)
+   |              ^
    |
    = help: unwrap it with `if let`, `let ... else` or `?? return`
 

@@ -1,0 +1,14 @@
+error[E0070]: `put` is a method, not a function
+  --> E0070-mut-argument.sisu:14:9
+   |
+14 |         put(self, mut a)
+   |         ^^^
+   |
+help: call `put` as a method
+   |
+14 -         put(self, mut a)
+14 +         self.put(mut a)
+   |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0070

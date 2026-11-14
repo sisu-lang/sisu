@@ -1,0 +1,18 @@
+// GIVEN a method of a struct with a `mut` parameter, called as a function on a receiver that is optional
+// WHEN `sisu check` runs on it
+// THEN it reports E0070 at 14:9 with an unsafe fix, since the call is skipped when the receiver is `None`
+// AND the fix calls the method with `?.`, and keeps the `mut` of the argument
+struct St {
+    n: i64
+
+    fn put(self, mut x: i64) {
+        x = 1
+    }
+
+    fn on_optional(self, o: St?) {
+        let mut a = 1
+        put(o, mut a)
+    }
+}
+
+fn main() {}

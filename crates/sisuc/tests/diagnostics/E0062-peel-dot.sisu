@@ -346,7 +346,7 @@ fn y4<U: Bp & Bq>(u: U, c: Tree??) {
 }
 
 fn n13(c: Tree??) {
-    Sh.grow(c.m.v)
+    Sh.grow(0, c.m.v)
 }
 
 // Each argument below keeps the peel help: no `mut` parameter is known for it.
