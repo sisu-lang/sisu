@@ -1648,7 +1648,7 @@ fn bump_main(body: &str) -> String {
 #[expect(clippy::too_many_lines, reason = "a table of rows")]
 fn call_as_method_fix_should_be_safe_only_when_the_receiver_can_change() {
     let in_f = |s: &str| format!("{BUMP}fn f({s}\nfn main() {{}}\n");
-    let rows: Vec<(&str, String, Code, bool)> = vec![
+    let mut rows: Vec<(&str, String, Code, bool)> = vec![
         (
             "E0120, `let mut`",
             bump_main("    let mut t = T(n: 1)\n    T.bump(t, 1)\n    print(t.n)"),
@@ -1728,6 +1728,23 @@ fn call_as_method_fix_should_be_safe_only_when_the_receiver_can_change() {
             true,
         ),
     ];
+    let flip = |s: &str| {
+        format!(
+            "enum E {{\n    A\n    fn flip(mut self) {{ self = E.A }}\n    {s}\n}}\nfn main() {{}}\n"
+        )
+    };
+    rows.push((
+        "E0120, `self` of an enum `mut self` method",
+        flip("fn h(mut self) { E.flip(self) }"),
+        Code::MemberKind,
+        true,
+    ));
+    rows.push((
+        "E0120, `self` of an enum plain `self` method",
+        flip("fn h(self) { E.flip(self) }"),
+        Code::MemberKind,
+        false,
+    ));
     let mut red = Vec::new();
     for (row, src, code, safe) in &rows {
         let (_, ds) = checked(src);
@@ -1816,6 +1833,10 @@ fn call_as_method_error_should_count_as_a_write_of_a_mut_self_receiver() {
         (
             in_f("mut t: T) { bump(t, 1) }"),
             vec![Code::MethodAsFunction],
+        ),
+        (
+            "enum E {\n    A\n    fn flip(mut self) { self = E.A }\n    fn h(mut self) { E.flip(self) }\n}\nfn main() {}\n".to_string(),
+            vec![Code::MemberKind],
         ),
         (
             bump_main("    let mut t = T(n: 1)\n    T.peek(t, 1)"),

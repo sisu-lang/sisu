@@ -204,6 +204,12 @@ impl Checker<'_> {
                 if let Some((idiom, ty, optional)) = idiom {
                     let (argument, takes, bound) =
                         self.receiver_call(callee.span, &idiom, name, ty, first, rest);
+                    let takes_receiver = match idiom {
+                        Idiom::Method(func, _) => {
+                            self.fixed_receiver_takes(func, Some(&first.value))
+                        }
+                        Idiom::Built => true,
+                    };
                     let receiver = if optional {
                         MethodReceiver::Optional {
                             argument,
@@ -213,7 +219,7 @@ impl Checker<'_> {
                     } else {
                         MethodReceiver::Argument {
                             argument,
-                            safe: takes,
+                            safe: takes && takes_receiver,
                         }
                     };
                     let reported = self.error(DiagnosticKind::MethodAsFunction {
@@ -239,13 +245,14 @@ impl Checker<'_> {
                 && unlabeled
                 && site.written.is_empty();
             let bound = self.method_block_bound(func, owner, name, can_take);
+            let takes_receiver = self.fixed_receiver_takes(func, None);
             let reported = self.error(DiagnosticKind::MethodAsFunction {
                 name: callee.name.to_string(),
                 at: callee.span,
                 receiver: MethodReceiver::SelfValue {
                     // `self.name<T>(args)` keeps the type arguments, which a method call
                     // does not take (E0137).
-                    safe: takes && can_take,
+                    safe: takes && can_take && takes_receiver,
                 },
                 bound,
             });
@@ -420,8 +427,8 @@ impl Checker<'_> {
     /// value of the type, the fix calls the method on it, as `unknown_call` does. A label, a
     /// `mut` on the first argument, or a type argument of the method (`typed`) leaves no fix. The
     /// fix is safe when the fixed program checks: the method takes the other arguments, and its
-    /// result meets the type that `site` expects. A `mut self` method makes it unsafe, since the
-    /// first argument may be no place that can change. Checks each argument once.
+    /// result meets the type that `site` expects, and its receiver can change when it takes
+    /// `mut self` (`fixed_receiver_takes`). Checks each argument once.
     pub(super) fn method_through_type(
         &mut self,
         func: tir::FuncId,
@@ -459,10 +466,11 @@ impl Checker<'_> {
                     let expected = site.expected.ty();
                     let meets = expected.is_none()
                         || (result.is_some() && self.result_meets((expected, result)));
+                    let takes_receiver = self.fixed_receiver_takes(func, Some(&first.value));
                     Some(TypeReceiver {
                         argument,
                         takes,
-                        safe: takes && meets && !self.signatures[func.0].self_mut,
+                        safe: takes && meets && takes_receiver,
                     })
                 } else {
                     self.stray(rest);

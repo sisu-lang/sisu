@@ -1877,6 +1877,30 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether the method `func` takes its receiver in the call that the fix of E0070 or E0120
+    /// writes. `receiver` is the first argument, or `None` for the `self` of the method that
+    /// holds the call. A plain `self` method takes any receiver. A `mut self` method needs a root
+    /// that can change. Its failed call stamps that root as written, as the call would: W0002's
+    /// fix would remove the `mut` that the fixed call needs.
+    pub(super) fn fixed_receiver_takes(
+        &mut self,
+        func: tir::FuncId,
+        receiver: Option<&ast::Expr>,
+    ) -> bool {
+        if !self.signatures[func.0].self_mut {
+            return true;
+        }
+        // `struct_root` finds no root for the `self` of an enum: take it here for both kinds.
+        let receiver = receiver.filter(|r| !matches!(r.kind, ast::ExprKind::SelfValue));
+        let Some(receiver) = receiver else {
+            self.body.self_written = self.write_stamp();
+            return self.body.self_mut;
+        };
+        // A root that `struct_root` does not find, such as a call or a slice, is a temporary.
+        let rooted = !matches!(self.struct_root(receiver), StructRoot::Other);
+        self.chain_root_cause(receiver).is_none() && rooted
+    }
+
     /// Why the root of the place `target` cannot change, when a write through its struct path
     /// reaches it. A path that crosses a class object writes no root. The root binding is
     /// reassigned, and `self` is stamped: W0002's fix would lead to this E0001.
