@@ -158,6 +158,7 @@ impl Checker<'_> {
         end: usize,
     ) {
         let done = so_far.done;
+        let dropped = self.body.dropped == Some(block.span);
         so_far.stmts.reserve(end - done);
         for (i, stmt) in (done..).zip(&block.stmts[done..end]) {
             if so_far.ty == Some(Type::NEVER) && !so_far.warned {
@@ -165,6 +166,11 @@ impl Checker<'_> {
                 so_far.warned = true;
             }
             let last = i + 1 == block.stmts.len();
+            if let StmtKind::Expr(e) = &stmt.kind
+                && (!last || dropped)
+            {
+                self.body.dropped = Some(e.span);
+            }
             let (checked, invalid_jump) =
                 self.jumps(|c| c.stmt(stmt, if last { expected } else { Expectation::None }));
             let stmt_ty = match checked {
@@ -456,7 +462,10 @@ impl Checker<'_> {
                 let nan = self.body.nans != nans;
                 let frame =
                     LoopFrame::new(LoopKind::While, *keyword, label.clone(), Expectation::None);
-                let (checked, frame) = self.loop_body(frame, |c| c.block(body, Expectation::None));
+                let (checked, frame) = self.loop_body(frame, |c| {
+                    c.body.dropped = Some(body.span);
+                    c.block(body, Expectation::None)
+                });
                 let broken = frame.broken;
                 if endless {
                     // Writing `loop` over a failed loop (a failed jump, label or `break` value in
@@ -528,6 +537,7 @@ impl Checker<'_> {
                     Expectation::None,
                 );
                 let ((bound, checked), _) = self.loop_body(frame, |c| {
+                    c.body.dropped = Some(body.span);
                     c.let_block(Unwrap::WhileLet, &form, pattern, body, Expectation::None)
                 });
                 if let Ok(checked) = &checked {
@@ -731,6 +741,7 @@ impl Checker<'_> {
         });
         let frame = LoopFrame::new(LoopKind::For, keyword, label.cloned(), Expectation::None);
         let ((x, checked), _) = self.loop_body(frame, |c| {
+            c.body.dropped = Some(body.span);
             c.unwrapping_block("for", name, bound, body, Expectation::None)
         });
         if let Ok(checked) = &checked {
@@ -1366,7 +1377,10 @@ impl Checker<'_> {
             label.cloned(),
             expected.for_inner_loop(),
         );
-        let (mut checked, mut frame) = self.loop_body(frame, |c| c.block(body, Expectation::None));
+        let (mut checked, mut frame) = self.loop_body(frame, |c| {
+            c.body.dropped = Some(body.span);
+            c.block(body, Expectation::None)
+        });
         self.join_deferred(&mut frame);
         if let Ok(checked) = &mut checked {
             self.discard_tail(body, checked);

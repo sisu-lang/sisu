@@ -123,7 +123,7 @@ impl Checker<'_> {
         let mut own: Vec<Option<Type>> = vec![None; elements.len()];
         let sources: Vec<_> = elements.iter().map(|e| self.value_branch(e)).collect();
         let siblings = (Expectation::None, Some((element, Origin::None)));
-        let (blocks, joined) = self.join(&sources, siblings, |c, i, expected| {
+        let (blocks, joined) = self.join(&sources, siblings, false, |c, i, expected| {
             let checked = c.value(&elements[i], expected);
             own[i] = checked.as_ref().ok().map(|e| {
                 if let tir::ExprKind::Wrap(inner) = &e.kind

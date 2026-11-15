@@ -1054,6 +1054,10 @@ struct Body {
     misfits: Vec<Option<Diagnostic>>,
     /// The safe method call being checked: `receiver?.method(...)` at this span.
     safe_call: Option<Span>,
+    /// The span of the expression or block being checked whose value no code uses: a statement,
+    /// the body of a loop or of a `unit` function, or a branch or arm of such a value. A join
+    /// there wraps a branch with no value to lift, as nothing reads it (see `Checker::join`).
+    dropped: Option<Span>,
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
     /// The last string literal that is `never` because a part is: its span, and the span of the
@@ -2573,6 +2577,9 @@ impl Checker<'_> {
                 Some(ret) => Expectation::Required(ret, c.returns()),
             };
             c.show_value(&f.body, ret);
+            if ret == Some(Type::UNIT) {
+                c.body.dropped = Some(f.body.span);
+            }
             let mut body = c.block(&f.body, expected);
             if let (Some(Type::UNIT), Ok(checked)) = (ret, &body) {
                 c.discard_tail(&f.body, checked);

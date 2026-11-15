@@ -55,11 +55,11 @@ impl Checker<'_> {
         else_block: Option<&ast::Block>,
         expected: Expectation,
     ) -> Checked {
+        let dropped = self.body.dropped == Some(span);
         let (cond, _) = self.operand(cond, Expectation::Required(Type::BOOL, Origin::Condition));
         let (then, other, ty) = self.branches(
-            then_block,
-            else_block,
-            expected,
+            (then_block, else_block),
+            (expected, dropped),
             |_| None,
             |c, expected| c.block(then_block, expected),
         );
@@ -98,6 +98,7 @@ impl Checker<'_> {
         else_block: Option<&ast::Block>,
         expected: Expectation,
     ) -> Checked {
+        let dropped = self.body.dropped == Some(span);
         // Ranking the `if let` for context may have checked its value (see `rank_value`).
         let (scrutinee, form) =
             if let Some((_, Ahead::Let(checked, form))) = self.kept(value.span, false) {
@@ -108,13 +109,17 @@ impl Checker<'_> {
             };
         let mut checked = None;
         let bind = |c: &mut Self| Some(c.bind_pattern(Some(Unwrap::IfLet), &form, pattern, None));
-        let (then, other, ty) =
-            self.branches(then_block, else_block, expected, bind, |c, expected| {
+        let (then, other, ty) = self.branches(
+            (then_block, else_block),
+            (expected, dropped),
+            bind,
+            |c, expected| {
                 let (bound, block) =
                     c.let_block(Unwrap::IfLet, &form, pattern, then_block, expected);
                 checked = Some(bound);
                 block
-            });
+            },
+        );
         let bound = checked.expect("`branches` should check the first block, which sets it");
         let ty = ty?;
         let valueless = valueless_join(span, else_block, &then);
@@ -157,16 +162,17 @@ impl Checker<'_> {
 
     /// The blocks of an `if` or `if let`, `then` checking the first, and their type:
     /// `unit` without an `else`; see `join`. `bind` binds what the first block sees, for the
-    /// ranking of its value.
+    /// ranking of its value. With `dropped`, no code uses the value (see `Body::dropped`).
     fn branches(
         &mut self,
-        then_block: &ast::Block,
-        else_block: Option<&ast::Block>,
-        expected: Expectation,
+        (then_block, else_block): (&ast::Block, Option<&ast::Block>),
+        (expected, dropped): (Expectation, bool),
         bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
         then: impl FnOnce(&mut Self, Expectation) -> CheckedBlock,
     ) -> (CheckedBlock, Option<CheckedBlock>, Result<Type, Poisoned>) {
         let Some(else_block) = else_block else {
+            // Without an `else`, no code uses the value of the `then` block.
+            self.body.dropped = Some(then_block.span);
             return (then(self, Expectation::None), None, Ok(Type::UNIT));
         };
         let (expected, siblings) = expected.split_hint();
@@ -176,13 +182,15 @@ impl Checker<'_> {
                 c.block_branch(then_block, expected, bind),
                 c.block_branch(else_block, expected, |_| None),
             ];
-            c.join(&sources, (expected, siblings), |c, i, expected| {
+            c.join(&sources, (expected, siblings), dropped, |c, i, expected| {
                 if i == 0 {
+                    c.body.dropped = dropped.then_some(then_block.span);
                     let then = then
                         .take()
                         .expect("`join` should check the `then` branch once");
                     then(c, expected)
                 } else {
+                    c.body.dropped = dropped.then_some(else_block.span);
                     c.block(else_block, expected)
                 }
             })
@@ -201,10 +209,12 @@ impl Checker<'_> {
     /// type of the hinted value's siblings, is that first type. A failed or `unit` branch sets
     /// what the branches after it expect only until a branch of another known type is checked.
     /// Then a `never` branch, and after it an `Error` one, takes the others' type. A `T` and a
-    /// `T?` join to `T?`, the `T` branches wrapped; other types that differ are reported. A join
-    /// that fails for a branch that rejected `expected` is a mismatch too. With no branches, the
-    /// type is `never`. A `never` join with a branch that only a failed `break` or `continue`
-    /// makes `never` is `Err` with that mark (see `Poisoned::jumped`): one such branch is enough.
+    /// `T?` join to `T?`, the `T` branches wrapped; other types that differ are reported. A `unit`
+    /// branch that an `if` without an `else` gives has no value to wrap: E0043, unless `dropped`
+    /// says that no code uses the join's value (see `Body::dropped`). A join that fails for a
+    /// branch that rejected `expected` is a mismatch too. With no branches, the type is `never`. A
+    /// `never` join with a branch that only a failed `break` or `continue` makes `never` is `Err`
+    /// with that mark (see `Poisoned::jumped`): one such branch is enough.
     ///
     /// In a poisoned context (`Expectation::Poisoned`), the branches are in the same rank order
     /// as with no expected type. Only a branch of literals expects the type of the first branch.
@@ -217,6 +227,7 @@ impl Checker<'_> {
         &mut self,
         sources: &[Branch<'_>],
         (expected, siblings): (Expectation, Option<(Type, Origin)>),
+        dropped: bool,
         mut check: impl FnMut(&mut Self, usize, Expectation) -> CheckedBlock,
     ) -> (Vec<CheckedBlock>, Result<Type, Poisoned>) {
         let mut order: Vec<usize> = (0..sources.len()).collect();
@@ -292,6 +303,9 @@ impl Checker<'_> {
                         if is_target(ty) {
                             unwrap_some_object(block, ty);
                             self.any_block(block, ty, source.span, Origin::None);
+                        } else if dropped {
+                            // No code reads the value, so a branch with none wraps as well.
+                            super::wrap_block(block, ty, source.span);
                         } else {
                             self.lift_block(block, ty, source.span);
                         }
