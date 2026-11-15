@@ -4749,3 +4749,369 @@ fn a_method_should_check_the_bound_of_an_associated_types_parameter_first() {
         ],
     );
 }
+
+/// Checks each row of a table: its name, its program and the diagnostics that it gives, none when
+/// the program checks clean.
+fn check_rows(rows: &[(&str, &str, &[Wanted])]) {
+    for &(name, src, wanted) in rows {
+        if wanted.is_empty() {
+            clean_row(name, src);
+        } else {
+            codes_row(name, src, wanted);
+        }
+    }
+}
+
+/// The rows of the first test: a program, and then the same program with the interface that is
+/// read written first. A row that names a missing interface has its one error at that interface,
+/// and none for the read.
+const LATER_INTERFACE_ROWS: [(&str, &str, &[Wanted]); 34] = [
+    (
+        "a1, written after",
+        "interface It {\n    type Item\n}\ninterface J: K {\n    fn a(self) -> Self.Item\n}\ninterface K: It {}\nfn main() {}",
+        &[],
+    ),
+    (
+        "a1, written first (green before and after)",
+        "interface It {\n    type Item\n}\ninterface K: It {}\ninterface J: K {\n    fn a(self) -> Self.Item\n}\nfn main() {}",
+        &[],
+    ),
+    (
+        "a2, written after",
+        "interface Conv<A> {}\ninterface Has {\n    type Item\n}\ninterface I<T: J> {\n    type A: Conv<T.Item>\n}\ninterface J: Has {}\nfn main() {}",
+        &[],
+    ),
+    (
+        "a2, written first (green before and after)",
+        "interface Conv<A> {}\ninterface Has {\n    type Item\n}\ninterface J: Has {}\ninterface I<T: J> {\n    type A: Conv<T.Item>\n}\nfn main() {}",
+        &[],
+    ),
+    (
+        "n3, written after",
+        "interface Conv<A> {}\ninterface Has {\n    type Item\n}\ninterface I<T: J, U: Conv<T.Item>> {}\ninterface J: Has {}\nfn main() {}",
+        &[],
+    ),
+    (
+        "n3, written first (green before and after)",
+        "interface Conv<A> {}\ninterface Has {\n    type Item\n}\ninterface J: Has {}\ninterface I<T: J, U: Conv<T.Item>> {}\nfn main() {}",
+        &[],
+    ),
+    (
+        "n4, written after",
+        "interface Has {\n    type Item\n}\ninterface I {\n    fn f<U: J>(self, u: U) -> U.Item\n}\ninterface J: Has {}\nfn main() {}",
+        &[],
+    ),
+    (
+        "n4, written first (green before and after)",
+        "interface Has {\n    type Item\n}\ninterface J: Has {}\ninterface I {\n    fn f<U: J>(self, u: U) -> U.Item\n}\nfn main() {}",
+        &[],
+    ),
+    (
+        "n5, written after",
+        "interface Has {\n    type Item\n}\ninterface I: J {\n    fn f(self, x: Self.Item)\n}\ninterface J: Has {}\nfn main() {}",
+        &[],
+    ),
+    (
+        "n5, written first (green before and after)",
+        "interface Has {\n    type Item\n}\ninterface J: Has {}\ninterface I: J {\n    fn f(self, x: Self.Item)\n}\nfn main() {}",
+        &[],
+    ),
+    (
+        "n6, written after",
+        "interface Conv<A> {}\ninterface Has {\n    type Item\n}\ninterface I: J {\n    type A: Conv<Self.Item>\n}\ninterface J: Has {}\nfn main() {}",
+        &[],
+    ),
+    (
+        "n6, written first (green before and after)",
+        "interface Conv<A> {}\ninterface Has {\n    type Item\n}\ninterface J: Has {}\ninterface I: J {\n    type A: Conv<Self.Item>\n}\nfn main() {}",
+        &[],
+    ),
+    (
+        "n8, written after",
+        "interface It {\n    type Item\n}\ninterface J: K {\n    fn a(self) -> Self.Item\n}\ninterface K: L {}\ninterface L: It {}\nfn main() {}",
+        &[],
+    ),
+    (
+        "n8, written first (green before and after)",
+        "interface It {\n    type Item\n}\ninterface L: It {}\ninterface K: L {}\ninterface J: K {\n    fn a(self) -> Self.Item\n}\nfn main() {}",
+        &[],
+    ),
+    (
+        "n13, written after",
+        "interface Has {\n    type Item\n}\ninterface I<T: J> {\n    fn f(self, x: T.Item)\n}\ninterface J: Has {}\nfn main() {}",
+        &[],
+    ),
+    (
+        "n13, written first (green before and after)",
+        "interface Has {\n    type Item\n}\ninterface J: Has {}\ninterface I<T: J> {\n    fn f(self, x: T.Item)\n}\nfn main() {}",
+        &[],
+    ),
+    (
+        "n16, written after",
+        "interface Has<A> {\n    type Item\n}\ninterface I<T: J> {\n    fn f(self) -> T.Item\n}\ninterface J: Has<Self> {}\nfn main() {}",
+        &[],
+    ),
+    (
+        "n16, written first (green before and after)",
+        "interface Has<A> {\n    type Item\n}\ninterface J: Has<Self> {}\ninterface I<T: J> {\n    fn f(self) -> T.Item\n}\nfn main() {}",
+        &[],
+    ),
+    (
+        "p3, written after",
+        "interface Has {\n    type Inner\n}\ninterface I<T: J> {\n    fn f(self, x: T.Item.Inner)\n}\ninterface J {\n    type Item: Has\n}\nfn main() {}",
+        &[],
+    ),
+    (
+        "p3, written first (green before and after)",
+        "interface Has {\n    type Inner\n}\ninterface J {\n    type Item: Has\n}\ninterface I<T: J> {\n    fn f(self, x: T.Item.Inner)\n}\nfn main() {}",
+        &[],
+    ),
+    (
+        "a3, written after",
+        "interface It {\n    type Item\n}\ninterface J: K {\n    fn a(self) -> Self.Item\n}\ninterface K: Missing {}\nfn main() {}",
+        &[(Code::UnknownType, (7, 14))],
+    ),
+    (
+        "a3, written first (green before and after)",
+        "interface It {\n    type Item\n}\ninterface K: Missing {}\ninterface J: K {\n    fn a(self) -> Self.Item\n}\nfn main() {}",
+        &[(Code::UnknownType, (4, 14))],
+    ),
+    (
+        "n10, written after",
+        "interface It {\n    type Item\n}\ninterface A: B {\n    fn f(self) -> Self.Item\n}\ninterface B: A, It {}\nfn main() {}",
+        &[(Code::InheritanceCycle, (4, 14))],
+    ),
+    (
+        "n10, written first (green before and after)",
+        "interface It {\n    type Item\n}\ninterface B: A, It {}\ninterface A: B {\n    fn f(self) -> Self.Item\n}\nfn main() {}",
+        &[(Code::InheritanceCycle, (4, 14))],
+    ),
+    (
+        "n14, written after",
+        "interface Has {\n    type Item\n}\ninterface I<T: J> {\n    fn f(self) -> [T.Item]\n}\ninterface J: Missing {}\nfn main() {}",
+        &[(Code::UnknownType, (7, 14))],
+    ),
+    (
+        "n14, written first (green before and after)",
+        "interface Has {\n    type Item\n}\ninterface J: Missing {}\ninterface I<T: J> {\n    fn f(self) -> [T.Item]\n}\nfn main() {}",
+        &[(Code::UnknownType, (4, 14))],
+    ),
+    (
+        "n15, written after",
+        "interface Has {\n    type Item\n}\ninterface I: J {\n    fn f(self) -> Self.Item\n}\ninterface J: Has<i64> {}\nfn main() {}",
+        &[(Code::TypeArguments, (7, 17))],
+    ),
+    (
+        "n15, written first (green before and after)",
+        "interface Has {\n    type Item\n}\ninterface J: Has<i64> {}\ninterface I: J {\n    fn f(self) -> Self.Item\n}\nfn main() {}",
+        &[(Code::TypeArguments, (4, 17))],
+    ),
+    (
+        "p4, written after",
+        "interface I<T: J> {\n    fn f(self, x: T.Item.Inner)\n}\ninterface J {\n    type Item: Missing\n}\nfn main() {}",
+        &[(Code::UnknownType, (5, 16))],
+    ),
+    (
+        "p4, written first (green before and after)",
+        "interface J {\n    type Item: Missing\n}\ninterface I<T: J> {\n    fn f(self, x: T.Item.Inner)\n}\nfn main() {}",
+        &[(Code::UnknownType, (2, 16))],
+    ),
+    (
+        "p5, the member bound before its declaration",
+        "interface Has {\n    type Inner\n}\ninterface Conv<A> {}\ninterface I {\n    type A: Conv<Self.B.Inner>\n    type B: Has\n}\nfn main() {}",
+        &[],
+    ),
+    (
+        "p5, the declaration first (green before and after)",
+        "interface Has {\n    type Inner\n}\ninterface Conv<A> {}\ninterface I {\n    type B: Has\n    type A: Conv<Self.B.Inner>\n}\nfn main() {}",
+        &[],
+    ),
+    (
+        "p5, a bound that names no member before the one that does",
+        "interface Has {\n    type Inner\n}\ninterface Conv<A> {}\ninterface Other {}\ninterface I {\n    type A: Other & Conv<Self.B.Inner>\n    type B: Has\n}\nfn main() {}",
+        &[],
+    ),
+    (
+        "p6, written after",
+        "interface Has {\n    type Inner\n}\ninterface I: J {\n    fn f(self) -> Self.Item.Inner\n}\ninterface J {\n    type Item: Has\n}\nfn main() {}",
+        &[],
+    ),
+];
+
+/// A read of an associated type through an interface that stands later in the program gives what
+/// it gives when that interface stands first (#624): the lists of inheritance are all resolved
+/// before any signature. A row for the order that stands first gave the wanted codes before the
+/// fix too.
+#[test]
+fn an_associated_type_read_through_a_later_interface_should_check_as_when_written_first() {
+    check_rows(&LATER_INTERFACE_ROWS);
+}
+
+/// The rows of the second test.
+const MEMBER_ARGUMENT_ROWS: [(&str, &str, &[Wanted]); 20] = [
+    (
+        "n9, written after",
+        "interface It {\n    type Item\n}\ninterface G<X> {}\ninterface J: K, G<Self.Item> {}\ninterface K: It {}\nfn main() {}",
+        &[(Code::InheritedArgument, (5, 19))],
+    ),
+    (
+        "n9, written first",
+        "interface It {\n    type Item\n}\ninterface K: It {}\ninterface G<X> {}\ninterface J: K, G<Self.Item> {}\nfn main() {}",
+        &[(Code::InheritedArgument, (6, 19))],
+    ),
+    (
+        "p1 (green before and after)",
+        "interface G<X> {}\ninterface J: G<Self.Item> {\n    type Item\n}\nfn main() {}",
+        &[(Code::InheritedArgument, (2, 16))],
+    ),
+    (
+        "m1 (green before and after)",
+        "interface Has {\n    type Item\n}\ninterface G<X> {}\ninterface J<T: Has>: G<T.Item> {}\nfn main() {}",
+        &[(Code::InheritedArgument, (5, 24))],
+    ),
+    (
+        "m2, a bare name that is no member (green before and after)",
+        "interface Has {\n    type Item\n}\ninterface G<X> {}\ninterface J: Has, G<Item> {}\ninterface K: G<Item> {\n    type Item\n}\nfn main() {}",
+        &[
+            (Code::UnknownType, (5, 21)),
+            (Code::InheritedArgument, (6, 16)),
+        ],
+    ),
+    (
+        "m4, a member over a class (green before and after)",
+        "interface Has {\n    type Item\n}\nclass C: Has {\n    type Item = i64\n}\ninterface G<X> {}\ninterface J: G<C.Item> {}\nfn f(x: C.Item) -> i64 { x }\nfn main() { print(f(1)) }",
+        &[(Code::UnknownType, (8, 16)), (Code::UnknownType, (9, 9))],
+    ),
+    (
+        "e1, mutual parameters",
+        "interface Has {\n    type Item\n}\ninterface G<X> {}\ninterface A<T: B<T>>: Has, G<T.Item> {}\ninterface B<U: A<U>>: Has, G<U.Item> {}\nfn main() {}",
+        &[
+            (Code::InheritedArgument, (5, 30)),
+            (Code::InheritedArgument, (6, 30)),
+        ],
+    ),
+    (
+        "e2, a member that does not exist",
+        "interface Has {\n    type Item\n}\ninterface G<X> {}\ninterface J<T: Has>: G<T.Nope> {}\nfn main() {}",
+        &[(Code::InheritedArgument, (5, 24))],
+    ),
+    (
+        "e3, an entry that is no interface",
+        "interface Has {\n    type Item\n}\ninterface J: Has, Nope<Self.Item> {}\nfn main() {}",
+        &[(Code::InheritedArgument, (4, 24))],
+    ),
+    (
+        "e4, an array argument (green before and after)",
+        "interface Has {\n    type Item\n}\ninterface G<X, Y> {}\ninterface J<T: Has>: G<T, [T.Item]> {}\nfn main() {}",
+        &[(Code::InheritedArgument, (5, 27))],
+    ),
+    (
+        "e6, a member as an entry",
+        "interface It {\n    type Item\n}\ninterface K: It {}\ninterface J: K, Self.Item {}\nfn main() {}",
+        &[(Code::NotAnInterface, (5, 17))],
+    ),
+    (
+        "e7, an array of a member as an entry",
+        "interface It {\n    type Item\n}\ninterface K: It {}\ninterface J: K, [Self.Item] {}\nfn main() {}",
+        &[(Code::NotAnInterface, (5, 17))],
+    ),
+    (
+        "e9, an optional member as an entry",
+        "interface It {\n    type Item\n}\ninterface K: It {}\ninterface J: K, Self.Item? {}\nfn main() {}",
+        &[(Code::NotAnInterface, (5, 17))],
+    ),
+    (
+        "e10, an `any` entry whose argument is a member",
+        "interface It {\n    type Item\n}\ninterface K: It {}\ninterface G<X> {}\ninterface J: K, any G<Self.Item> {}\nfn main() {}",
+        &[(Code::NotAnInterface, (6, 17))],
+    ),
+    (
+        "e11, a member over an applied base (green before and after)",
+        "interface G<X> {}\nclass Box<T> {\n    v: T\n}\ninterface J<T>: G<Box<T>.Item> {}\nfn main() {}",
+        &[(Code::UnknownType, (5, 19))],
+    ),
+    (
+        "e8, a member of a parameter as an entry, written after",
+        "interface It {\n    type Item\n}\ninterface J<T: K>: T.Item {}\ninterface K: It {}\nfn main() {}",
+        &[(Code::NotAnInterface, (4, 20))],
+    ),
+    (
+        "e8, written first (green before and after)",
+        "interface It {\n    type Item\n}\ninterface K: It {}\ninterface J<T: K>: T.Item {}\nfn main() {}",
+        &[(Code::NotAnInterface, (5, 20))],
+    ),
+    (
+        "x1, a member over a class (green before and after)",
+        "interface Has {\n    type Item\n}\nclass C: Has {\n    type Item = i64\n}\ninterface J: C.Item {}\nfn main() {}",
+        &[(Code::UnknownType, (7, 14))],
+    ),
+    (
+        "x2, a member of an own associated type",
+        "interface Has {\n    type Inner\n}\ninterface G<X> {}\ninterface K: G<Item.Inner> {\n    type Item: Has\n}\nfn main() {}",
+        &[(Code::InheritedArgument, (5, 16))],
+    ),
+    (
+        "x3, a member over an unknown name (green before and after)",
+        "interface J: Nope.Item {}\nfn main() {}",
+        &[(Code::UnknownType, (1, 14))],
+    ),
+];
+
+/// An inherited interface takes no argument that names an associated type of `Self`, of a
+/// parameter or of its own. Such an argument is reported from its text, as E0151. No closure that
+/// is not final is read for it. An entry that is such a type is E0148. A member over any other
+/// base is read as before.
+#[test]
+fn an_inheritance_argument_that_names_a_member_should_be_reported_from_its_text() {
+    check_rows(&MEMBER_ARGUMENT_ROWS);
+}
+
+/// The rows of the third test.
+const QUEUED_CHECK_ROWS: [(&str, &str, &[Wanted]); 3] = [
+    (
+        "m3, an argument that needs the bound of the parameter",
+        "interface O {}\ninterface K<X: O> {}\ninterface J<T: O>: K<T> {}\ninterface L<T>: K<T> {}\nfn main() {}",
+        &[(Code::NotConform, (4, 19))],
+    ),
+    (
+        "q1, an alias that reads a member",
+        "interface Has {\n    type Item\n}\ninterface G<X> {}\ntype Al<T> = T.Item\ninterface J<T: Has>: G<Al<T>> {}\nfn main() {}",
+        &[(Code::InheritedArgument, (6, 24))],
+    ),
+    (
+        "e5, a requirement that applies a class to the parameter",
+        "interface O {}\nclass Box<X: O> {\n    v: X\n}\ninterface K<X: O> {}\ninterface J<T: O>: K<T> {\n    fn f(self, x: Box<T>)\n}\nfn main() {}",
+        &[],
+    ),
+];
+
+/// The checks that the inheritance list of an interface queues wait for every conformance. Such a
+/// check is the bounds of an argument, or the conformance of an alias. It takes the bounds of the
+/// interface's parameters when they are known. Without that, a row gets an extra E0154.
+#[test]
+fn the_checks_that_an_inheritance_list_queues_should_take_the_bounds_of_its_interface() {
+    check_rows(&QUEUED_CHECK_ROWS);
+}
+
+/// The rows of the fourth test.
+const MEMBER_BOUND_ROWS: [(&str, &str, &[Wanted]); 2] = [
+    (
+        "q5-bad, a read through a bound that names a member",
+        "interface Has2<X> {\n    type Inner\n}\ninterface I<T: J> {\n    fn f(self, x: T.A.Inner)\n}\ninterface J {\n    type B\n    type A: Has2<Self.B>\n}\nfn main() {}",
+        &[(Code::UnknownType, (5, 23))],
+    ),
+    (
+        "q5-self, the same inside one interface",
+        "interface Has2<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface J {\n    type C: Conv<Self.A.Inner>\n    type B\n    type A: Has2<Self.B>\n}\nfn main() {}",
+        &[(Code::UnknownType, (6, 25))],
+    ),
+];
+
+/// A read through an associated type whose bound names a member does not panic. The pinned E0030
+/// is the known order limit of #722, and not the rule: the bound `Has2<Self.B>` of `A` resolves
+/// after the interfaces that read `A`, so a read through `A` does not find it yet. A fix of #722
+/// changes the wanted codes of these rows to none.
+#[test]
+fn a_read_through_an_associated_type_whose_bound_names_a_member_should_not_panic() {
+    check_rows(&MEMBER_BOUND_ROWS);
+}
