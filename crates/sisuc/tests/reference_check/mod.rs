@@ -196,7 +196,9 @@ impl Reader {
     ) {
         // Each `sisu` fence is kept, also with a fault in its form, so one fault stays one fault.
         if let CodeBlockKind::Fenced(info) = kind {
-            let (name, words) = info.split_once(' ').unwrap_or((info, ""));
+            let (name, words) = info
+                .split_once(rules::is_stripped_or_blank)
+                .unwrap_or((info, ""));
             if name == "sisu" {
                 self.fences.push((line, is_pending(words)));
             }

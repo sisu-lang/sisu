@@ -1,0 +1,128 @@
+error[E0023]: `(t + "d")[..=]` has no bounds
+  --> E0023-multi-line-base.sisu:12:16
+   |
+12 |         + "d")[..=])
+   |                ^^^ this range has no bounds
+   |
+   = help: write `(t + "d")`
+
+error[E0023]: `(t + "d")[..]` has no bounds
+  --> E0023-multi-line-base.sisu:14:16
+   |
+14 |         + "d")[..])
+   |                ^^ this range has no bounds
+   |
+   = help: `(t + "d")[..]` is `(t + "d")`; write `(t + "d")`
+
+error[E0023]: `(t + "d").get(..)` has no bounds
+  --> E0023-multi-line-base.sisu:16:20
+   |
+16 |         + "d").get(..))
+   |                    ^^ this range has no bounds
+   |
+   = help: `(t + "d").get(..)` is `Some((t + "d"))`
+
+error[E0023]: `[..]` has no bounds
+  --> E0023-multi-line-base.sisu:20:7
+   |
+20 |     }[..])
+   |       ^^ this range has no bounds
+   |
+   = help: `[..]` gives the whole value, so it has no effect
+
+error[E0023]: `[..=]` has no bounds
+  --> E0023-multi-line-base.sisu:24:7
+   |
+24 |     }[..=])
+   |       ^^^ this range has no bounds
+   |
+   = help: `[..=]` gives the whole value, so it has no effect
+
+error[E0023]: `get(..)` has no bounds
+  --> E0023-multi-line-base.sisu:28:11
+   |
+28 |     }.get(..))
+   |           ^^ this range has no bounds
+
+error[E0049]: this value is not optional
+  --> E0023-multi-line-base.sisu:29:11
+   |
+29 |       print({
+   |  ___________^
+30 | |         let b = "x"
+31 | |         b
+32 | |     }?.get(..))
+   | |_____^
+   |
+help: replace `?.` with `.`
+   |
+32 -     }?.get(..))
+32 +     }.get(..))
+   |
+
+error[E0023]: `get(..)` has no bounds
+  --> E0023-multi-line-base.sisu:32:12
+   |
+32 |     }?.get(..))
+   |            ^^ this range has no bounds
+
+error[E0023]: `(1 + 0)..=` has no end
+  --> E0023-multi-line-base.sisu:33:13
+   |
+33 |       print(t[(1
+   |  _____________^
+34 | |         + 0)..=])
+   | |_______________^ this range has no end
+   |
+   = help: write `(1 + 0)..`
+
+error[E0023]: this `..=` range has no end
+  --> E0023-multi-line-base.sisu:35:13
+   |
+35 |       print(t[{
+   |  _____________^
+36 | |         let a = 0
+37 | |         a
+38 | |     }..=])
+   | |________^ this range has no end
+   |
+   = help: a `..=` range must have an end
+
+error[E0023]: this `..=` range has no end
+  --> E0023-multi-line-base.sisu:39:7
+   |
+39 |       u[{
+   |  _______^
+40 | |         let a = 1
+41 | |         a
+42 | |     }..=] = "y"
+   | |________^ this range has no end
+   |
+   = help: a `..=` range must have an end
+
+error[E0023]: `[..]` has no bounds
+  --> E0023-multi-line-base.sisu:46:8
+   |
+46 |     })[..] = "y"
+   |        ^^ this range has no bounds
+   |
+   = help: `[..]` gives the whole value, so it has no effect
+
+error[E0023]: `[..]` has no bounds
+  --> E0023-multi-line-base.sisu:50:8
+   |
+50 |     }][..])
+   |        ^^ this range has no bounds
+   |
+   = help: `[..]` gives the whole value, so it has no effect
+
+error[E0023]: `[..]` has no bounds
+  --> E0023-multi-line-base.sisu:54:7
+   |
+54 |     }[..])
+   |       ^^ this range has no bounds
+   |
+   = help: `[..]` gives the whole value, so it has no effect
+
+sisu: 14 errors
+sisu: for more on a code, run `sisu explain <code>`: E0023, E0049

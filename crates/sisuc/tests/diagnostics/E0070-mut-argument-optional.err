@@ -1,0 +1,15 @@
+error[E0070]: `put` is a method, not a function
+  --> E0070-mut-argument-optional.sisu:14:9
+   |
+14 |         put(o, mut a)
+   |         ^^^
+   |
+   = help: `o` may be `None`: to call `put` only when it is present, unwrap it with `if let`
+help: to skip the call when `o` is `None`, call `put` with `?.`
+   |
+14 -         put(o, mut a)
+14 +         o?.put(mut a)
+   |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0070

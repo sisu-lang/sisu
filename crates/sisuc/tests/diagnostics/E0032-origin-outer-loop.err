@@ -1,0 +1,111 @@
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-outer-loop.sisu:10:28
+   |
+ 9 |         if c { break 1 }
+   |                ------- this `break` gave the outer loop the type `i64`
+10 |         break loop { break "x" }
+   |                            ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-outer-loop.sisu:16:41
+   |
+15 |         if c { break 1 }
+   |                ------- this `break` gave the outer loop the type `i64`
+16 |         break loop { break loop { break "x" } }
+   |                                         ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-outer-loop.sisu:22:35
+   |
+21 |         if c { break 1 }
+   |                ------- this `break` gave the outer loop the type `i64`
+22 |         break if c { loop { break "x" } } else { 2 }
+   |                                   ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-outer-loop.sisu:28:30
+   |
+27 |         if c { break 1 }
+   |                ------- this `break` gave the outer loop the type `i64`
+28 |         break { loop { break "x" } }
+   |                              ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-outer-loop.sisu:34:43
+   |
+33 |         if c { break 1 }
+   |                ------- this `break` gave the outer loop the type `i64`
+34 |         break match k { 0 => loop { break "x" }; _ => 2 }
+   |                                           ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-outer-loop.sisu:40:32
+   |
+39 |         if c { break 1 }
+   |                ------- this `break` gave the outer loop the type `i64`
+40 |         break 1 + loop { break "x" }
+   |                                ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-outer-loop.sisu:46:46
+   |
+45 |         if c { break 1 }
+   |                ------- this `break` gave the outer loop the type `i64`
+46 |         break loop { if c { break 2 }; break "x" }
+   |                                              ^^^
+
+warning[W0011]: the condition of this `while` never changes
+  --> E0032-origin-outer-loop.sisu:52:23
+   |
+52 |         break { while c {}; loop { break "x" } }
+   |                       ^ nothing in the loop changes `c`
+   |
+   = help: `c` can't change, so leave the loop with `break`; write `if` to run the body once, or `loop` to run it forever
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-outer-loop.sisu:52:42
+   |
+51 |         if c { break 1 }
+   |                ------- this `break` gave the outer loop the type `i64`
+52 |         break { while c {}; loop { break "x" } }
+   |                                          ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-outer-loop.sisu:59:15
+   |
+57 |         if c { break 1 }
+   |                ------- this `break` gave the loop the type `i64`
+58 |         let _y = loop { break "x" }
+59 |         break "y"
+   |               ^^^
+
+warning[W0001]: unreachable code
+  --> E0032-origin-outer-loop.sisu:65:9
+   |
+65 |         break "x"
+   |         ^^^^^^^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-outer-loop.sisu:65:15
+   |
+64 |         loop { if c { break outer 1 } }
+   |                       ------------- this `break` gave the loop the type `i64`
+65 |         break "x"
+   |               ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-outer-loop.sisu:71:28
+   |
+70 |         if c { break 1 }
+   |                ------- this `break` gave the loop the type `i64`
+71 |         loop { break outer "x" }
+   |                            ^^^
+
+error[E0032]: expected `i64`, found `string`
+  --> E0032-origin-outer-loop.sisu:77:33
+   |
+77 |         break Some(loop { break "x" })
+   |                                 ^^^
+
+sisu: 12 errors, 2 warnings
+sisu: for more on a code, run `sisu explain <code>`: E0032, W0001, W0011

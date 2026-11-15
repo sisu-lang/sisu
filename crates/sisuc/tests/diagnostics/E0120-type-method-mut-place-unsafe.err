@@ -1,0 +1,122 @@
+error[E0120]: `put` is a method of `St`; call it on a value
+  --> E0120-type-method-mut-place-unsafe.sisu:38:8
+   |
+38 |     St.put(s, mut 1)
+   |        ^^^
+   |
+help: try calling `put` as a method, then fix its arguments
+   |
+38 -     St.put(s, mut 1)
+38 +     s.put(mut 1)
+   |
+
+error[E0120]: `put` is a method of `En`; call it on a value
+  --> E0120-type-method-mut-place-unsafe.sisu:42:8
+   |
+42 |     En.put(e, mut 1)
+   |        ^^^
+   |
+help: try calling `put` as a method, then fix its arguments
+   |
+42 -     En.put(e, mut 1)
+42 +     e.put(mut 1)
+   |
+
+error[E0120]: `put` is a method of `St`; call it on a value
+  --> E0120-type-method-mut-place-unsafe.sisu:46:8
+   |
+46 |     St.put(s, mut one())
+   |        ^^^
+   |
+help: try calling `put` as a method, then fix its arguments
+   |
+46 -     St.put(s, mut one())
+46 +     s.put(mut one())
+   |
+
+error[E0120]: `put` is a method of `St`; call it on a value
+  --> E0120-type-method-mut-place-unsafe.sisu:51:8
+   |
+51 |     St.put(s, mut a)
+   |        ^^^
+   |
+help: try calling `put` as a method, then fix its arguments
+   |
+51 -     St.put(s, mut a)
+51 +     s.put(mut a)
+   |
+
+error[E0120]: `put` is a method of `En`; call it on a value
+  --> E0120-type-method-mut-place-unsafe.sisu:56:8
+   |
+56 |     En.put(e, mut a)
+   |        ^^^
+   |
+help: try calling `put` as a method, then fix its arguments
+   |
+56 -     En.put(e, mut a)
+56 +     e.put(mut a)
+   |
+
+error[E0120]: `plain` is a method of `St`; call it on a value
+  --> E0120-type-method-mut-place-unsafe.sisu:61:8
+   |
+61 |     St.plain(s, mut a)
+   |        ^^^^^
+   |
+help: try calling `plain` as a method, then fix its arguments
+   |
+61 -     St.plain(s, mut a)
+61 +     s.plain(mut a)
+   |
+
+error[E0120]: `put_optional` is a method of `St`; call it on a value
+  --> E0120-type-method-mut-place-unsafe.sisu:66:8
+   |
+66 |     St.put_optional(s, mut a)
+   |        ^^^^^^^^^^^^
+   |
+help: try calling `put_optional` as a method, then fix its arguments
+   |
+66 -     St.put_optional(s, mut a)
+66 +     s.put_optional(mut a)
+   |
+
+error[E0120]: `put` is a method of `St`; call it on a value
+  --> E0120-type-method-mut-place-unsafe.sisu:71:8
+   |
+71 |     St.put(s, mut w?.n)
+   |        ^^^
+   |
+help: try calling `put` as a method, then fix its arguments
+   |
+71 -     St.put(s, mut w?.n)
+71 +     s.put(mut w?.n)
+   |
+
+warning[W0002]: `a` is never reassigned
+  --> E0120-type-method-mut-place-unsafe.sisu:75:13
+   |
+75 |     let mut a = 1
+   |             ^
+   |
+help: declare it with `let`
+   |
+75 -     let mut a = 1
+75 +     let a = 1
+   |
+
+error[E0120]: `put` is a method of `St`; call it on a value
+  --> E0120-type-method-mut-place-unsafe.sisu:76:8
+   |
+76 |     St.put(s, a)
+   |        ^^^
+   |
+help: try calling `put` as a method, then fix its arguments
+   |
+76 -     St.put(s, a)
+76 +     s.put(a)
+   |
+
+sisu: 9 errors, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0120, W0002

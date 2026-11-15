@@ -1,0 +1,24 @@
+// GIVEN a method of a struct, called through its type, as `Tree.bumpm(t, true)`
+// AND another argument has the wrong type, or stands at a `mut` parameter and has no `mut`
+// WHEN `sisu check` runs on it
+// THEN it reports E0120 at 17:10 and 21:10, each with an unsafe fix that moves the first argument before the `.`
+// AND the fix does not say that the call is right: the other arguments still need a fix
+struct Tree {
+    n: i64
+
+    fn bumpm(self, x: i64) {}
+
+    fn put(self, mut x: i64) {
+        x = 1
+    }
+}
+
+fn wrong_argument(t: Tree) {
+    Tree.bumpm(t, true)
+}
+
+fn at_mut_parameter(t: Tree, a: i64) {
+    Tree.put(t, a)
+}
+
+fn main() {}

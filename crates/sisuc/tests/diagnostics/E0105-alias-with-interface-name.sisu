@@ -1,0 +1,8 @@
+type Eq = i64
+type Ord = [i64]
+type Display<T> = T?
+fn read() { let _a = Eq }
+fn other() { let _a = Ord }
+fn write() { Eq = 1 }
+fn generic() { let _a = Display }
+fn main() {}

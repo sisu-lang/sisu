@@ -335,6 +335,9 @@ struct ClassInfo {
     names_to_string: bool,
     /// The associated types the declaration's body chooses.
     assoc: Rc<Choices>,
+    /// For a struct: where a type first names it, outside its own declaration
+    /// (`Checker::note_struct_named`).
+    named: Option<Span>,
 }
 
 impl ClassInfo {
@@ -350,6 +353,7 @@ impl ClassInfo {
             methods: FxHashMap::default(),
             names_to_string: false,
             assoc: Rc::default(),
+            named: None,
         }
     }
 
@@ -584,6 +588,13 @@ impl<'src> Source<'src> {
         self.holding(span.start())
             .line_text(span, self.comments, self.newlines)
             .into_owned()
+    }
+
+    /// `span` as one line, to quote in a message or a help. It is `None` when a line break stays,
+    /// as in a block with statements: see `line_text`.
+    fn quote(&self, span: Span) -> Option<String> {
+        let text = self.line_text(span);
+        (!text.contains('\n')).then_some(text)
     }
 
     /// The parts of `span` that a removal deletes so that each comment in it stays: see
@@ -880,6 +891,9 @@ struct Checker<'src> {
     /// no owner, because a signature is resolved outside a body. No other body is resolved while
     /// it is `Some`: `resolve_aliases` resolves each alias body before `collect_signatures`.
     signature_anys: Option<Vec<(tir::InterfaceId, Span)>>,
+    /// While `extend_target` resolves the target of an `extend` block: where the target starts.
+    /// The type that it names is the block's own, so it is no name of that type for W0012.
+    extend_head: Option<usize>,
     /// Each use of an item that a function, method or constant has, in check order.
     uses: Vec<Use>,
     /// Each binding of a function or a method that nothing reads, in check order.
@@ -1504,6 +1518,7 @@ impl<'src> Checker<'src> {
             parse_errors: Vec::new(),
             body: Body::default(),
             signature_anys: None,
+            extend_head: None,
             uses: Vec::new(),
             pending: Vec::new(),
             instantiates: false,
@@ -1719,6 +1734,7 @@ impl Checker<'_> {
                         index: FxHashMap::default(),
                         methods: FxHashMap::default(),
                         assoc: Rc::default(),
+                        named: None,
                     });
                     if !self.built_in(&e.name)
                         && self.first_callable(&mut first, &mut rejected, Definition::Enum, &e.name)
@@ -2064,8 +2080,7 @@ impl Checker<'_> {
                         scoped = true;
                     }
                     let from = self.queued();
-                    let FieldType { ty, inner, shown } =
-                        self.resolve_field(&field.ty, owner.is_empty());
+                    let FieldType { ty, inner, shown } = self.resolve_field(&field.ty);
                     let queued = from..self.queued();
                     if self.first_definition(
                         &mut first,
@@ -2153,8 +2168,8 @@ impl Checker<'_> {
         self.body.set_bounds(0, owner_bounds);
         let bounds = self.declare_bounds(owner.len(), Vec::new(), &f.type_params);
         let func = tir::FuncId(self.signatures.len());
-        // A mismatch shows an alias as written only where the type is the declaration's own.
-        let plain = type_params.is_empty();
+        // A mismatch shows an alias as written only where the type is the declaration's own: it
+        // names no type parameter, which a call can give another type.
         self.signature_anys = Some(Vec::new());
         let (params, param_shown): (Vec<_>, Vec<_>) = (f.params.iter().enumerate())
             .map(|(i, p)| {
@@ -2162,7 +2177,8 @@ impl Checker<'_> {
                 let uses = self.aliases.uses;
                 let ty = self.resolve(&p.ty);
                 self.keep_at(from..self.queued(), Slot::Param(func, i));
-                (ty, self.shown_text(&p.ty, uses).filter(|_| plain))
+                let shown = self.shown_text(&p.ty, uses);
+                (ty, shown.filter(|_| ty.is_some_and(|ty| !ty.has_param())))
             })
             .unzip();
         let from = self.queued();
@@ -2173,7 +2189,7 @@ impl Checker<'_> {
             .map_or(Some(Type::UNIT), |ty| self.resolve(ty));
         let ret_shown = (f.ret.as_ref())
             .and_then(|ty| self.shown_text(ty, uses))
-            .filter(|_| plain);
+            .filter(|_| ret.is_some_and(|ty| !ty.has_param()));
         self.keep_at(from..self.queued(), Slot::Ret(func));
         let anys = self.signature_anys.take().unwrap_or_default();
         self.body.set_type_params(&[]);
@@ -2411,6 +2427,7 @@ impl Checker<'_> {
                     .then_some(ty)
             }
             Resolved::Item(ItemId::Struct(id)) => {
+                self.note_struct_named(id, ty, ident().span);
                 let list = if args.is_empty() && self.structs[id.0].type_params.is_empty() {
                     TypeArgs::NONE
                 } else {
@@ -2423,6 +2440,7 @@ impl Checker<'_> {
             }
             Resolved::Item(ItemId::Enum(id)) => {
                 self.reaches_prelude(id.0 >= self.prelude.enums, ident().span);
+                self.note_enum_named(id, ty, ident().span);
                 let list = if args.is_empty() && self.enums[id.0].type_params.is_empty() {
                     TypeArgs::NONE
                 } else {

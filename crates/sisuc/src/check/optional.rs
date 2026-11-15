@@ -4,7 +4,7 @@
 
 use super::alias::Through;
 use super::any::is_target;
-use super::generic::{GenericSig, Site, mark, written_args};
+use super::generic::{Declarer, GenericSig, Site, mark, written_args};
 use super::mut_args::Callee;
 use super::{
     Checked, Checker, DiagnosticKind, Expectation, Origin, Poisoned, optional_of, type_of,
@@ -138,7 +138,7 @@ impl Checker<'_> {
                     ret: Some(ret),
                     bounds: &[],
                     mut_site: None,
-                    function: None,
+                    declarer: Declarer::None,
                 };
                 let written = (site.written, site.angles);
                 let (args, list, found) =
@@ -214,7 +214,7 @@ impl Checker<'_> {
                     ret: Some(t.ty),
                     bounds: &[],
                     mut_site: None,
-                    function: None,
+                    declarer: Declarer::None,
                 };
                 let written = (site.written, site.angles);
                 let (_, list, found) =

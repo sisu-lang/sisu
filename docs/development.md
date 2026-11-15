@@ -85,6 +85,12 @@ CI keeps the report of each part of the `Test` job and of the `Coverage` run
 for 14 days. The artifacts are `junit-test-part-<part>` and `junit-coverage`.
 They give the time of each test on a runner.
 
+The `python-tests` hook runs the unit tests of the scripts, `scripts/test_*.py`,
+when a commit changes a file that they read, such as a script. So a commit
+with a red script test fails. A test file imports
+its script by its bare name, so run one test class from `scripts/`:
+`(cd scripts && python3 -m unittest test_hook_scripts.TestWording)`.
+
 The pre-commit hook also runs `crates/sisuc/tests/architecture.rs` when a commit
 changes a file that the test reads. CI's lint job skips that hook, because its
 test job runs the test.
@@ -554,10 +560,10 @@ holds `table.md`, `counts.json` and the program of each shape at each size.
 A sweep that stops early still writes the shapes that it measured, then a line
 `scaling: <message>`. To run the sweep on
 your machine, use `make scaling`. In the job, each script has a total time
-bound. The job gives `--time-bound 300` to step 1 and `--time-bound 1800` to
+bound. The job gives `--time-bound 300` to step 1 and `--time-bound 3600` to
 the sweep. A script that runs over exits with code 1. The bound is a guard
-against a hang. A local `make scaling` has the same bound of 1800 seconds, the
-default of `scripts/scaling.py`.
+against a hang. In a local `make scaling`, the sweep has the same bound of 3600
+seconds, the default of `scripts/scaling.py`. The build before it has no bound.
 
 The scheduled run starts only from the default branch. After a change to the
 workflow, start it once by hand from the Actions tab. GitHub disables a
@@ -1520,7 +1526,7 @@ To add a rule to a joined page:
    unique on its page, and it does not change when the wording of the rule
    changes.
 3. Run `make test`. The `reference::<page>::rules` trial fails. Its message is
-   ``<id> has no test. Add `r[verify <id>@<hash>]` to a test that proves it.``
+   `` `<id>` has no test. Add `r[verify <id>@<hash>]` to a test that proves it. ``
    The message gives the marker with the right hash.
 4. Put the marker in a comment line of the test that proves the rule, alone on
    its line. A `.sisu` case in `crates/sisuc/tests/run` puts it in its header
@@ -1544,13 +1550,13 @@ fault. Put the pending part under its own heading.
 
 When the text of a rule changes, its hash changes. The trial then fails with
 this message, followed by the file and line of each marker:
-``the text of <id> changed. Its hash is now @<hash>. Read these tests again, then change each marker's hash:``
+``the text of `<id>` changed. Its hash is now @<hash>. Read these tests again, then change each marker's hash:``
 Read each test again. Check that it still proves the rule. Then change the hash in
 each marker. No command changes the hashes for you. A rename of the section or a
 change of a link target does not change the hash.
 
 The `reference::markers` trial reads each `.rs` and `.sisu` file under `crates/`.
-It fails with ``no rule has the ID <id>.`` for a marker whose ID is on no joined
+It fails with ``no rule has the ID `<id>`.`` for a marker whose ID is on no joined
 page. It fails with ``this marker has a bad form`` for a marker line that does not
 parse. Delete or move the markers of a rule that you remove.
 

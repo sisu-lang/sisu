@@ -1,0 +1,10 @@
+warning[W0012]: function `stale` is never called
+ --> W0012-alias-interface.sisu:9:4
+  |
+9 | fn stale() {}
+  |    ^^^^^ never called
+  |
+  = help: delete it, or name it `_stale` if it is kept on purpose
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0012

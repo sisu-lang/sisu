@@ -1,0 +1,46 @@
+// GIVEN a method of a struct or of an enum with a `mut` parameter, called through its type
+// AND the first argument is a value of that type, as `St.put(s, mut a)`
+// AND the `mut` argument is a place that can change, with the type of its parameter
+// WHEN `sisu check` runs on it
+// THEN it reports E0120 for each call, with a safe fix that moves the first argument before the `.`
+struct W {
+    n: i64
+}
+
+struct St {
+    n: i64
+
+    fn put(self, mut x: i64) {
+        x = 1
+    }
+
+    fn put_optional(self, mut x: i64?) {
+        x = 1
+    }
+
+    fn plain(self, x: i64) {}
+}
+
+enum En {
+    A
+
+    fn put(self, mut x: i64) {
+        x = 1
+    }
+}
+
+fn one() -> i64 {
+    1
+}
+
+fn let_mut_name(s: St) {
+    let mut a = 1
+    St.put(s, mut a)
+}
+
+fn enum_let_mut_name(e: En) {
+    let mut a = 1
+    En.put(e, mut a)
+}
+
+fn main() {}

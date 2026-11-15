@@ -1,0 +1,249 @@
+warning[W0012]: struct `Live` is never built
+ --> W0012-named-type.sisu:1:8
+  |
+1 | struct Live {
+  |        ^^^^ never built
+...
+4 | fn live_fn(x: Live?) -> bool {
+  |               ---- named here
+  |
+  = help: delete it and each type that names it, directly or through an alias, or name it `_Live` everywhere if it is kept on purpose
+
+warning[W0012]: struct `Dead` is never built
+  --> W0012-named-type.sisu:7:8
+   |
+ 7 | struct Dead {
+   |        ^^^^ never built
+...
+10 | fn dead_fn(x: Dead) -> i64 {
+   |               ---- named here
+   |
+   = help: delete it and each type that names it, directly or through an alias, or name it `_Dead` everywhere if it is kept on purpose
+
+warning[W0012]: function `dead_fn` is never called
+  --> W0012-named-type.sisu:10:4
+   |
+10 | fn dead_fn(x: Dead) -> i64 {
+   |    ^^^^^^^ never called
+   |
+   = help: delete it, or name it `_dead_fn` if it is kept on purpose
+
+warning[W0012]: struct `Aliased` is never built
+  --> W0012-named-type.sisu:13:8
+   |
+13 | struct Aliased {
+   |        ^^^^^^^ never built
+...
+16 | type AliasedB = Aliased
+   |                 ------- named here
+   |
+   = help: delete it and each type that names it, directly or through an alias, or name it `_Aliased` everywhere if it is kept on purpose
+
+warning[W0012]: struct `Chained` is never built
+  --> W0012-named-type.sisu:17:8
+   |
+17 | struct Chained {
+   |        ^^^^^^^ never built
+...
+20 | type ChainA = Chained
+   |               ------- named here
+   |
+   = help: delete it and each type that names it, directly or through an alias, or name it `_Chained` everywhere if it is kept on purpose
+
+warning[W0012]: struct `Generic` is never built
+  --> W0012-named-type.sisu:22:8
+   |
+22 | struct Generic<T> {
+   |        ^^^^^^^ never built
+...
+25 | type GenericB = Generic<i64>
+   |                 ------- named here
+   |
+   = help: delete it and each type that names it, directly or through an alias, or name it `_Generic` everywhere if it is kept on purpose
+
+warning[W0012]: enum `Enumd` is never built
+  --> W0012-named-type.sisu:26:6
+   |
+26 | enum Enumd {
+   |      ^^^^^ never built
+...
+29 | type EnumB = Enumd
+   |              ----- named here
+   |
+   = help: delete it and each type that names it, directly or through an alias, or name it `_Enumd` everywhere if it is kept on purpose
+
+warning[W0012]: struct `Structd` is never built
+  --> W0012-named-type.sisu:30:8
+   |
+30 | struct Structd {
+   |        ^^^^^^^ never built
+...
+33 | type StructB = Structd
+   |                ------- named here
+   |
+   = help: delete it and each type that names it, directly or through an alias, or name it `_Structd` everywhere if it is kept on purpose
+
+warning[W0012]: struct `AliasLive` is never built
+  --> W0012-named-type.sisu:34:8
+   |
+34 | struct AliasLive {
+   |        ^^^^^^^^^ never built
+...
+37 | type AliasLiveB = AliasLive
+   |                   --------- named here
+   |
+   = help: delete it and each type that names it, directly or through an alias, or name it `_AliasLive` everywhere if it is kept on purpose
+
+warning[W0012]: struct `Own` is never built
+  --> W0012-named-type.sisu:41:8
+   |
+41 | struct Own {
+   |        ^^^ never built
+   |
+   = help: delete it, or name it `_Own` if it is kept on purpose
+
+warning[W0012]: enum `OwnE` is never built
+  --> W0012-named-type.sisu:44:6
+   |
+44 | enum OwnE {
+   |      ^^^^ never built
+...
+47 |         OwnE.A
+   |         ------ used here, in `g`, which is never called
+   |
+   = help: delete it, or name it `_OwnE` if it is kept on purpose
+
+warning[W0012]: struct `Ext` is never built
+  --> W0012-named-type.sisu:50:8
+   |
+50 | struct Ext {
+   |        ^^^ never built
+   |
+   = help: delete it, or name it `_Ext` if it is kept on purpose
+
+warning[W0012]: struct `TArg` is never built
+   --> W0012-named-type.sisu:67:8
+    |
+ 67 | struct TArg {
+    |        ^^^^ never built
+    |
+   ::: W0012-named-type.sisu:121:15
+    |
+121 |     print(tag<TArg>())
+    |               ---- named here
+    |
+    = help: delete it and each type that names it, directly or through an alias, or name it `_TArg` everywhere if it is kept on purpose
+
+warning[W0012]: struct `LetType` is never built
+   --> W0012-named-type.sisu:73:8
+    |
+ 73 | struct LetType {
+    |        ^^^^^^^ never built
+    |
+   ::: W0012-named-type.sisu:122:12
+    |
+122 |     let x: LetType? = None
+    |            ------- named here
+    |
+    = help: delete it and each type that names it, directly or through an alias, or name it `_LetType` everywhere if it is kept on purpose
+
+warning[W0012]: struct `Req` is never built
+  --> W0012-named-type.sisu:76:8
+   |
+76 | struct Req {
+   |        ^^^ never built
+   |
+  ::: W0012-named-type.sisu:80:21
+   |
+80 |     fn req(self) -> Req?
+   |                     --- named here
+   |
+   = help: delete it and each type that names it, directly or through an alias, or name it `_Req` everywhere if it is kept on purpose
+
+warning[W0012]: interface `Needs` is never used
+  --> W0012-named-type.sisu:79:11
+   |
+79 | interface Needs {
+   |           ^^^^^ never used
+   |
+   = help: delete it, or name it `_Needs` if it is kept on purpose
+
+warning[W0012]: struct `Arr` is never built
+  --> W0012-named-type.sisu:82:8
+   |
+82 | struct Arr {
+   |        ^^^ never built
+...
+85 | fn arr_fn(_x: [Arr?]) -> i64 {
+   |                --- named here
+   |
+   = help: delete it and each type that names it, directly or through an alias, or name it `_Arr` everywhere if it is kept on purpose
+
+warning[W0012]: struct `Param` is never built
+  --> W0012-named-type.sisu:88:8
+   |
+88 | struct Param {
+   |        ^^^^^ never built
+   |
+  ::: W0012-named-type.sisu:92:19
+   |
+92 | type WrapB = Wrap<Param>
+   |                   ----- named here
+   |
+   = help: delete it and each type that names it, directly or through an alias, or name it `_Param` everywhere if it is kept on purpose
+
+warning[W0012]: struct `Other` is never built
+  --> W0012-named-type.sisu:93:8
+   |
+93 | struct Other {
+   |        ^^^^^ never built
+   |
+  ::: W0012-named-type.sisu:98:19
+   |
+98 |     fn g(self, x: Other) -> i64 {
+   |                   ----- named here
+   |
+   = help: delete it and each type that names it, directly or through an alias, or name it `_Other` everywhere if it is kept on purpose
+
+warning[W0012]: method `g` is never called
+  --> W0012-named-type.sisu:98:8
+   |
+98 |     fn g(self, x: Other) -> i64 {
+   |        ^ never called
+   |
+   = help: delete it, or name it `_g` if it is kept on purpose
+
+warning[W0012]: enum `Both` is never built
+   --> W0012-named-type.sisu:102:6
+    |
+102 | enum Both {
+    |      ^^^^ never built
+...
+105 | fn both_fn() -> Both {
+    |                 ---- named here
+106 |     Both.A
+    |     ------ used here, in `both_fn`, which is never called
+    |
+    = help: delete it and each type that names it, directly or through an alias, or name it `_Both` everywhere if it is kept on purpose
+
+warning[W0012]: function `both_fn` is never called
+   --> W0012-named-type.sisu:105:4
+    |
+105 | fn both_fn() -> Both {
+    |    ^^^^^^^ never called
+    |
+    = help: delete it, or name it `_both_fn` if it is kept on purpose
+
+warning[W0012]: struct `Order` is never built
+   --> W0012-named-type.sisu:108:8
+    |
+108 | struct Order {
+    |        ^^^^^ never built
+...
+111 | fn order_fn(x: Order?) -> bool {
+    |                ----- named here
+    |
+    = help: delete it and each type that names it, directly or through an alias, or name it `_Order` everywhere if it is kept on purpose
+
+sisu: 23 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0012

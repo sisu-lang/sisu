@@ -1,0 +1,51 @@
+error[E0062]: `xs` may be `None`
+  --> E0062-push-double-optional.sisu:13:5
+   |
+13 |     xs.push(1)
+   |     ^^
+
+error[E0062]: `xs?.` leaves a `[i64]?`, which may be `None`
+  --> E0062-push-double-optional.sisu:18:5
+   |
+18 |     xs?.push(1)
+   |     ^^
+
+error[E0062]: `xs?.` leaves a `[i64]?`, which may be `None`
+  --> E0062-push-double-optional.sisu:23:11
+   |
+23 |     print(xs?.len())
+   |           ^^
+   |
+   = help: peel the other layer first: `(xs ?? None)?.len`
+
+error[E0062]: `xs` may be `None`
+  --> E0062-push-double-optional.sisu:28:5
+   |
+28 |     xs.push(1)
+   |     ^^
+   |
+help: to do nothing when it is `None`, use `?.`
+   |
+28 |     xs?.push(1)
+   |       +
+
+error[E0062]: `n.yy` may be `None`
+  --> E0062-push-double-optional.sisu:32:5
+   |
+32 |     n.yy.push(1)
+   |     ^^^^
+
+error[E0062]: `n.yy` may be `None`
+  --> E0062-push-double-optional.sisu:37:5
+   |
+37 |     n.yy.push(1)
+   |     ^^^^
+
+error[E0062]: `n.yy?.` leaves a `[i64]?`, which may be `None`
+  --> E0062-push-double-optional.sisu:41:5
+   |
+41 |     n.yy?.push(1)
+   |     ^^^^
+
+sisu: 7 errors
+sisu: for more on a code, run `sisu explain <code>`: E0062

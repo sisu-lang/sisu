@@ -1,0 +1,74 @@
+error[E0120]: `m` is a method of `St`; call it on a value
+  --> E0120-type-method-result-unsafe.sisu:56:8
+   |
+56 |     St.m(s)
+   |        ^
+   |
+help: call `m` as a method
+   |
+56 -     St.m(s)
+56 +     s.m()
+   |
+
+error[E0120]: `m` is a method of `En`; call it on a value
+  --> E0120-type-method-result-unsafe.sisu:60:8
+   |
+60 |     En.m(e)
+   |        ^
+   |
+help: call `m` as a method
+   |
+60 -     En.m(e)
+60 +     e.m()
+   |
+
+error[E0120]: `m` is a method of `St`; call it on a value
+  --> E0120-type-method-result-unsafe.sisu:64:25
+   |
+64 |     let _x: string = St.m(s)
+   |                         ^
+   |
+help: call `m` as a method
+   |
+64 -     let _x: string = St.m(s)
+64 +     let _x: string = s.m()
+   |
+
+error[E0120]: `m` is a method of `St`; call it on a value
+  --> E0120-type-method-result-unsafe.sisu:68:13
+   |
+68 |     take(St.m(s))
+   |             ^
+   |
+help: call `m` as a method
+   |
+68 -     take(St.m(s))
+68 +     take(s.m())
+   |
+
+error[E0120]: `k` is a method of `St`; call it on a value
+  --> E0120-type-method-result-unsafe.sisu:72:22
+   |
+72 |     let _x: i64 = St.k(s)
+   |                      ^
+   |
+help: call `k` as a method
+   |
+72 -     let _x: i64 = St.k(s)
+72 +     let _x: i64 = s.k()
+   |
+
+error[E0120]: `get` is a method of `Bx`; call it on a value
+  --> E0120-type-method-result-unsafe.sisu:76:8
+   |
+76 |     Bx.get(b)
+   |        ^^^
+   |
+help: call `get` as a method
+   |
+76 -     Bx.get(b)
+76 +     b.get()
+   |
+
+sisu: 6 errors
+sisu: for more on a code, run `sisu explain <code>`: E0120

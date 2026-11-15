@@ -4,9 +4,9 @@ error[E0130]: `match` does not cover `Num(_)`
  7 |     match e {
    |     ^^^^^ a guarded arm may not match
    |
-help: add a `_ =>` arm
+help: add an arm for `Num(_)`
    |
-10 +         _ => todo
+10 +         Num(_) => todo
    |
 
 sisu: 1 error

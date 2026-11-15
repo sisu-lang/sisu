@@ -315,6 +315,21 @@ impl Diagnostic {
                 "span {span:?} ends with a line break"
             );
         }
+        // `true_headers` takes each line that reads as a header for a true header. So no line of a
+        // text may read as one. The first line is safe: the renderer puts it after a prefix.
+        let texts = [self.message()]
+            .into_iter()
+            .chain(self.label())
+            .chain(self.secondary().iter().map(|(_, t)| t.as_str()))
+            .chain(self.notes().iter().map(|n| &**n))
+            .chain(self.help())
+            .chain(self.fixes().iter().map(Fix::message));
+        for text in texts {
+            debug_assert!(
+                !text.lines().skip(1).any(is_header),
+                "the text {text:?} holds a line that reads as a header"
+            );
+        }
         let level = match self.severity() {
             Severity::Error => Level::ERROR,
             Severity::Warning => Level::WARNING,
@@ -377,15 +392,41 @@ impl Diagnostic {
             Renderer::plain()
         };
         let text = renderer.render(&groups);
-        if excerpts.iter().all(|(e, _)| e.header.is_none()) {
-            return text;
+        // The repair comes first: it looks for the header as the renderer wrote it.
+        let text = if excerpts.iter().all(|(e, _)| e.header.is_none()) {
+            text
+        } else {
+            true_headers(&text, path, excerpts.iter().map(|(e, _)| e.header))
+        };
+        // Only the plain form is trimmed. The styled form stays as the renderer writes it.
+        if color {
+            text
+        } else {
+            without_trailing_spaces(text)
         }
-        true_headers(&text, path, excerpts.iter().map(|(e, _)| e.header))
     }
+}
+
+/// `text` with the spaces at the end of each line removed. The plain renderer writes the marker
+/// `- ` of a removed line, then the text of the line. So an empty line ends in a space.
+/// The text is not copied when no line ends in a space.
+fn without_trailing_spaces(text: String) -> String {
+    if !text.contains(" \n") && !text.ends_with(' ') {
+        return text;
+    }
+    let mut out = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        let (body, end) = line.strip_suffix('\n').map_or((line, ""), |b| (b, "\n"));
+        out.push_str(body.trim_end_matches(' '));
+        out.push_str(end);
+    }
+    out
 }
 
 /// Whether `line` of the rendered text is the header of a snippet, plain or styled: white space
 /// and ANSI styles, then `-->` or `:::`. A source line starts with its gutter, so it is not one.
+/// The repair in `true_headers` is right only because no later line of a diagnostic text reads as
+/// a header, and `Diagnostic::render` asserts this.
 fn is_header(line: &str) -> bool {
     let mut rest = line.trim_start_matches(' ');
     while let Some(style) = rest.strip_prefix("\u{1b}[") {
@@ -709,7 +750,65 @@ error[E0011]: expected `=`, found end of line
             let snippet = Snippet::source(source).path(path).patches(patches);
             groups.push(Level::HELP.secondary_title(fix.message()).element(snippet));
         }
-        Renderer::plain().render(&groups)
+        // What plain `render` does to the text: no line ends in a space.
+        Renderer::plain()
+            .render(&groups)
+            .split('\n')
+            .map(|line| line.trim_end_matches(' '))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// A source whose line 2 ends in spaces and whose line 3 holds four spaces only.
+    const BLANK: &str = "fn main() {\n    let n = 0   \n    \n}\n";
+
+    /// An error at the `n` of `BLANK` with `fix` as its only fix.
+    fn blank_with(fix: Fix) -> Diagnostic {
+        error(Span::new(20, 21), "m").with_fix(fix)
+    }
+
+    #[test]
+    fn plain_render_should_end_no_line_with_a_space() {
+        let removed = blank_with(fix(&[(between(BLANK, "let", "    \n}"), "let n = 0")]));
+        let added = blank_with(fix(&[(Span::new(29, 29), "    \n")]));
+        for (d, marker) in [(removed, "3 -"), (added, "3 +")] {
+            let text = d.render("t.sisu", BLANK, &LineIndex::new(BLANK), false);
+            assert!(
+                text.lines().all(|l| !l.ends_with(' ')),
+                "a line ends in a space in {text}"
+            );
+            assert!(text.lines().any(|l| l == marker), "{marker} in {text}");
+            assert!(
+                text.lines().any(|l| l == "2 |     let n = 0"),
+                "the source line in {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn without_trailing_spaces_should_trim_every_line_and_the_end_of_the_text() {
+        for (text, want) in [
+            ("a \n  \n b  ", "a\n\n b"),
+            ("a\n b", "a\n b"),
+            ("a  ", "a"),
+        ] {
+            assert_eq!(super::without_trailing_spaces(text.to_string()), want);
+        }
+    }
+
+    #[test]
+    fn styled_render_should_keep_its_trailing_spaces() {
+        let d = blank_with(fix(&[(between(BLANK, "let", "    \n}"), "let n = 0")]));
+        let text = d.render("t.sisu", BLANK, &LineIndex::new(BLANK), true);
+        assert!(text.contains("\u{1b}[91m-     \u{1b}[0m"), "{text:?}");
+        assert!(text.contains("let n = 0   \n"), "{text:?}");
+    }
+
+    #[test]
+    #[should_panic(expected = "reads as a header")]
+    fn render_should_reject_a_text_line_that_reads_as_a_header() {
+        let d = assign().with_note("a\n --> x.sisu:1:1");
+        d.render("t.sisu", ASSIGN, &LineIndex::new(ASSIGN), false);
     }
 
     /// The span of `from`'s first occurrence in `source` through the end of `to`'s.
@@ -1357,6 +1456,22 @@ error[E0011]: expected `=`, found end of line
                     );
                 }
             }
+        }
+    }
+
+    /// A path with a space before its line break gets the true column too. The plain form then
+    /// loses that space, as it loses each space at the end of a line.
+    #[test]
+    fn a_header_whose_path_ends_a_line_in_a_space_should_give_the_true_column() {
+        let source = format!("{}{}", long_line(), &numbered(10)[3..]);
+        let d = error(ab(&source, 1), "m");
+        let path = "long \nname.sisu";
+        for (color, want) in [
+            (false, "long\nname.sisu:1:1000"),
+            (true, "long \nname.sisu:1:1000"),
+        ] {
+            let text = d.render(path, &source, &LineIndex::new(&source), color);
+            assert!(text.contains(want), "color {color}: {text}");
         }
     }
 

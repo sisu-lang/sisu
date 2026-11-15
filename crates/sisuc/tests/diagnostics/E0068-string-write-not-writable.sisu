@@ -1,0 +1,107 @@
+// GIVEN a write to a single index of a string, in a place that cannot change
+// WHEN `sisu check` runs on it
+// THEN it reports E0068 for each index, and E0001 for a root that cannot change
+// AND the help of the index gives the read help, which names `bytes()` and `chars()`
+// AND the help of a place that can change, with a `let mut` root, gives the write help
+struct O {
+    s: string
+
+    fn change(self) {
+        self.s[0] = "x"
+    }
+}
+
+const T = "ab"
+
+fn constant() {
+    T[0] = "x"
+}
+
+fn for_binding() {
+    for t in ["ab"] {
+        t[0] = "x"
+    }
+}
+
+fn let_substring() {
+    let t = "ab"
+    t[..2][0] = "x"
+}
+
+fn let_without_mut() {
+    let t = "ab"
+    t[0] = "x"
+}
+
+fn parameter(t: string) {
+    t[0] = "x"
+}
+
+fn struct_in_let() {
+    let o = O(s: "a")
+    o.s[0] = "x"
+}
+
+fn if_let_binding(o: string?) {
+    if let x = o {
+        x[0] = "x"
+    }
+}
+
+fn match_binding(o: string?) {
+    match o {
+        Some(x) => {
+            x[0] = "x"
+        }
+        None => {}
+    }
+}
+
+fn compound() {
+    let t = "ab"
+    t[0] += "x"
+}
+
+fn nested_index() {
+    let ts = ["ab"]
+    ts[0][0] = "x"
+}
+
+fn for_substring() {
+    for t in ["ab"] {
+        t[..1][0] = "x"
+    }
+}
+
+fn parameter_substring(t: string) {
+    t[..1][0] = "x"
+}
+
+fn let_mut_substring() {
+    let mut ss = ["ab"]
+    ss[0][..2][0] = "x"
+}
+
+fn struct_in_let_mut_substring() {
+    let mut o = O(s: "ab")
+    o.s[..1][0] = "x"
+}
+
+fn mut_parameter(mut t: string) {
+    t[0] = "x"
+}
+
+fn struct_in_let_mut() {
+    let mut o = O(s: "a")
+    o.s[0] = "x"
+}
+
+struct P {
+    s: string
+
+    fn change_substring(self) {
+        self.s[..1][0] = "x"
+    }
+}
+
+fn main() {}

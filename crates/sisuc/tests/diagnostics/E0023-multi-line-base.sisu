@@ -1,0 +1,55 @@
+// GIVEN a range with no bounds, or with no end, whose base or start runs over more than one line
+// WHEN `sisu check` runs on it
+// THEN it reports E0023 for each range
+// AND a base that one line holds when its line breaks go is quoted as that one line
+// AND a base with a statement in a block is not quoted
+fn main() {
+    let t = "abc"
+    let mut u = "abc"
+    let ts = ["ab"]
+    let c = true
+    print((t
+        + "d")[..=])
+    print((t
+        + "d")[..])
+    print((t
+        + "d").get(..))
+    print({
+        let b = "x"
+        b
+    }[..])
+    print({
+        let b = "x"
+        b
+    }[..=])
+    print({
+        let b = "x"
+        b
+    }.get(..))
+    print({
+        let b = "x"
+        b
+    }?.get(..))
+    print(t[(1
+        + 0)..=])
+    print(t[{
+        let a = 0
+        a
+    }..=])
+    u[{
+        let a = 1
+        a
+    }..=] = "y"
+    ({
+        let b = "x"
+        b
+    })[..] = "y"
+    print(ts[{
+        let a = 0
+        a
+    }][..])
+    print(match c {
+        true => "a"
+        false => "b"
+    }[..])
+}

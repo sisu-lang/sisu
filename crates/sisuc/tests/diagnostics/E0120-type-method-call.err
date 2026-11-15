@@ -1,0 +1,86 @@
+error[E0120]: `bumpm` is a method of `Tree`; call it on a value
+  --> E0120-type-method-call.sisu:35:10
+   |
+35 |     Tree.bumpm(t, 1)
+   |          ^^^^^
+   |
+help: call `bumpm` as a method
+   |
+35 -     Tree.bumpm(t, 1)
+35 +     t.bumpm(1)
+   |
+
+error[E0120]: `bumpm` is a method of `Tr`; call it on a value
+  --> E0120-type-method-call.sisu:39:8
+   |
+39 |     Tr.bumpm(t, 1)
+   |        ^^^^^
+   |
+help: call `bumpm` as a method
+   |
+39 -     Tr.bumpm(t, 1)
+39 +     t.bumpm(1)
+   |
+
+error[E0120]: `bumpm` is a method of `Tree`; call it on a value
+  --> E0120-type-method-call.sisu:43:10
+   |
+43 |     Tree.bumpm(make(), 1)
+   |          ^^^^^
+   |
+help: call `bumpm` as a method
+   |
+43 -     Tree.bumpm(make(), 1)
+43 +     make().bumpm(1)
+   |
+
+error[E0120]: `one` is a method of `Tree`; call it on a value
+  --> E0120-type-method-call.sisu:47:10
+   |
+47 |     Tree.one(t)
+   |          ^^^
+   |
+help: call `one` as a method
+   |
+47 -     Tree.one(t)
+47 +     t.one()
+   |
+
+error[E0120]: `get` is a method of `Bx`; call it on a value
+  --> E0120-type-method-call.sisu:51:17
+   |
+51 |     let _x = Bx.get(b)
+   |                 ^^^
+   |
+help: call `get` as a method
+   |
+51 -     let _x = Bx.get(b)
+51 +     let _x = b.get()
+   |
+
+error[E0120]: `scaled` is a method of `Shape`; call it on a value
+  --> E0120-type-method-call.sisu:55:11
+   |
+55 |     Shape.scaled(s, 2)
+   |           ^^^^^^
+   |
+help: call `scaled` as a method
+   |
+55 -     Shape.scaled(s, 2)
+55 +     s.scaled(2)
+   |
+
+error[E0120]: `bumpm` is a method of `Tree`; call it on a value
+  --> E0120-type-method-call.sisu:59:10
+   |
+59 |     Tree.bumpm(if c { a } else { b }, 1)
+   |          ^^^^^
+   |
+help: call `bumpm` as a method
+   |
+59 -     Tree.bumpm(if c { a } else { b }, 1)
+59 +     (if c { a } else { b }).bumpm(1)
+   |
+
+sisu: 7 errors
+sisu: for more on a code, run `sisu explain <code>`: E0120

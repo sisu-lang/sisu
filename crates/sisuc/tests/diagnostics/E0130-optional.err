@@ -4,9 +4,9 @@ error[E0130]: `match` does not cover `Square(_)`
  7 |     match s {
    |     ^^^^^
    |
-help: add a `_ =>` arm
+help: add an arm for `Square(_)`
    |
-10 +         _ => todo
+10 +         Square(_) => todo
    |
 
 sisu: 1 error

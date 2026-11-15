@@ -154,7 +154,9 @@ Fix the accepted findings in the target. Fix the class, not only the repro. For 
 The executor compares the probes of every round with `python3 scripts/diag_diff.py BASE_SISU HEAD_SISU RUN/probes`, where `BASE_SISU` is the build before the round. The script compares the codes, the positions, the text and the fixes of each diagnostic; `--codes` compares only codes, positions and crashes, for a round that rewords many diagnostics on purpose. It runs `sisu check`, and prints each program that crashes the head as `crash`. So it finds a panic in the front end with no second run. A panic in codegen or at run time needs a `sisu run` of the probe. A fix to code keeps `make test`
 passing. A fix that changes behavior adds its tests in a commit before the
 fix, red at the round base. The reviewer runs those tests at that commit:
-each must fail, and for the stated cause.
+each must fail, and for the stated cause. A change whose tests are in
+`scripts/test_*.py` has no separate test commit, because the `python-tests`
+pre-commit hook rejects a red test.
 
 A large fix round of a final diff runs one more mutation test ([final-diff.md](final-diff.md), A large fix round).
 

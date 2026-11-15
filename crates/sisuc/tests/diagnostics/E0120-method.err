@@ -3,6 +3,12 @@ error[E0120]: `eval` is a method of `Expr`; call it on a value
    |
 11 |     print(Expr.eval(e))
    |                ^^^^
+   |
+help: call `eval` as a method
+   |
+11 -     print(Expr.eval(e))
+11 +     print(e.eval())
+   |
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0120

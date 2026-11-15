@@ -280,8 +280,6 @@ error[E0062]: `xs` may be `None`
     |
 145 |     xs.push(1)
     |     ^^
-    |
-    = help: unwrap it with `if let`, `let ... else` or `?? return`
 
 error[E0062]: `c` may be `None`
    --> E0062-peel-dot.sisu:149:5
@@ -871,14 +869,14 @@ error[E0062]: `c` may be `None`
 error[E0120]: `grow` is a method of `Sh`; call it on a value
    --> E0062-peel-dot.sisu:349:8
     |
-349 |     Sh.grow(c.m.v)
+349 |     Sh.grow(0, c.m.v)
     |        ^^^^
 
 error[E0062]: `c` may be `None`
-   --> E0062-peel-dot.sisu:349:13
+   --> E0062-peel-dot.sisu:349:16
     |
-349 |     Sh.grow(c.m.v)
-    |             ^
+349 |     Sh.grow(0, c.m.v)
+    |                ^
     |
     = help: unwrap it with `if let`, `let ... else` or `?? return`
 

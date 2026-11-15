@@ -1,0 +1,12 @@
+interface Named {
+    fn name(self) -> string
+}
+type Alias = any Named
+interface Shown {
+    fn show(self) -> string
+}
+fn live(_x: (any Shown)?) {}
+fn stale() {}
+fn main() {
+    live(None)
+}

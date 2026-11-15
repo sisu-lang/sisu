@@ -569,7 +569,7 @@ prints each known case on stdout. It exits with code 1 when:
 
 The pull request that fixes a known case removes its row. The gaps between
 the numbers keep a row from changing between known and fixed when a change
-moves a ratio a little. `KNOWN` has 14 rows. Seven are for the shapes mut
+moves a ratio a little. `KNOWN` has 15 rows. Seven are for the shapes mut
 exits and owned exits (#502), in `mir`, `codegen` and the LLVM stages. Each
 `return` writes its own cleanup, so n exits and n values give n² statements.
 Real programs have few of these: no exit in the benchmark programs or the
@@ -579,9 +579,12 @@ on a C function with n parameters. This is mut call width and mut returns. The
 list scheduler of LLVM's SelectionDAG does it. Float left (#613) is a step,
 not a curve: one size of the sweep falls on a one-time step of LLVM's tables.
 
-The other four rows are for the shapes of structs. Struct paths (#686) is a
+The other five rows are for the shapes of structs. Struct paths (#686) is a
 chain of nested structs. Its `codegen` grows because LLVM's
-`StructType::checkBody` grows with the depth of the chain. Struct writes at
+`StructType::checkBody` grows with the depth of the chain. Its `object` grows
+because `ComputeValueVTs` and `DataLayout::getStructLayout` of the instruction
+selection do the same. Its `object` gives r3 = 2.29 locally and 2.38 on the CI
+runners, so the row keeps the job from failing on the runners. Struct writes at
 `-O2` (#687) is a function with hundreds of writes to struct paths. LLVM's
 passes grow faster than the writes, in `optimize` and in `object`. Never built is a tree of aliases over `k` classes, with `k` enums and one
 struct that hold its root. The `check` stage grows with the product of the enums

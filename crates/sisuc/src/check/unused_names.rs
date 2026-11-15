@@ -12,6 +12,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::cycle::inline_of;
 use super::extend::holder_of;
 use super::{Checker, Declared, Holder, Source};
+use crate::ast;
 use crate::conformance::{applies_written, has_written};
 use crate::diagnostic::{
     Code, Definition, Diagnostic, DiagnosticKind, Immutable, NeverReassignedForm, UsedBy, copy_help,
@@ -191,6 +192,13 @@ impl Used {
     }
 }
 
+/// Keeps `at` in `named` when it is the first place in the source that names the item.
+fn keep_first(named: &mut Option<Span>, at: Span) {
+    if named.is_none_or(|first| at.start() < first.start()) {
+        *named = Some(at);
+    }
+}
+
 /// Marks the interface `i` as used by live code, and queues it to be followed once.
 fn use_interface(used: &mut [bool], queue: &mut Vec<usize>, i: usize) {
     if !std::mem::replace(&mut used[i], true) {
@@ -282,7 +290,8 @@ impl Checker<'_> {
     }
 
     /// Records a use of `to` at `at` by the body being checked, when that is a function's, a
-    /// method's or a constant's.
+    /// method's or a constant's. An interface that an alias body names is recorded in
+    /// `aliases.named_interfaces`.
     ///
     /// A use from the user's file of a function, a class or an enum variant of the prelude
     /// needs that item in the program (see `reaches_prelude`).
@@ -300,9 +309,42 @@ impl Checker<'_> {
         self.reaches_prelude(of_prelude, at);
         if let Some(from) = self.body.owner {
             self.uses.push(Use { from, to, at });
-        } else if let (Some(anys), Used::Interface(interface)) = (&mut self.signature_anys, to) {
-            anys.push((interface, at));
+        } else if let Used::Interface(interface) = to {
+            // An alias body has no owner, and nothing is dead in it: the interface it names counts
+            // as used. A signature keeps its `any` types for `signature`.
+            if self.body.alias.is_some() {
+                self.aliases.named_interfaces.push(interface);
+            } else if let Some(anys) = &mut self.signature_anys {
+                anys.push((interface, at));
+            }
         }
+    }
+
+    /// Keeps `at`, where the type `ty` names the struct `id`, when it is the first such place in
+    /// the source. W0012 then says which type breaks when you delete the struct.
+    pub(super) fn note_struct_named(&mut self, id: tir::StructId, ty: &ast::TypeExpr, at: Span) {
+        if self.names_outside_item(Holder::Struct(id), ty, at) {
+            keep_first(&mut self.structs[id.0].named, at);
+        }
+    }
+
+    /// Like `note_struct_named`, for the enum `id`.
+    pub(super) fn note_enum_named(&mut self, id: tir::EnumId, ty: &ast::TypeExpr, at: Span) {
+        if self.names_outside_item(Holder::Enum(id), ty, at) {
+            keep_first(&mut self.enums[id.0].named, at);
+        }
+    }
+
+    /// Whether `at`, where the type `ty` names the struct or the enum `item`, can be the place that
+    /// W0012 shows.
+    ///
+    /// A name inside the item's own declaration does not count, because a deletion takes it too.
+    /// These are the item's fields and methods, its `extend` blocks and the target of each. A name
+    /// in the prelude does not count either: the prelude is out of the user's sight.
+    fn names_outside_item(&self, item: Holder, ty: &ast::TypeExpr, at: Span) -> bool {
+        let own = self.extend_head == Some(ty.span.start())
+            || (self.body.self_type.known()).and_then(holder_of) == Some(item);
+        !(own || at.in_prelude())
     }
 
     /// Records a use of the interface of each `any` type in `ty`, written at `at`, by the body
@@ -346,8 +388,10 @@ impl Checker<'_> {
     /// builds. A dead block of a type that live code builds is reported, and its methods are not.
     /// Each cites up to three of its uses in dead code. Each pending finding of a live function
     /// is W0014. A pending finding of a dead function gives only the W0002 that it holds, if any.
-    /// The function's warning tells you to delete all of it. An alias is not judged, and the
-    /// interface that its body names as `S.Name` counts as used, also when the alias is dead.
+    /// The function's warning tells you to delete all of it. An alias is not judged. Each interface
+    /// that its body names, as `any I` or as `S.Name`, counts as used, also when the alias is dead.
+    /// W0012 of a struct or an enum holds the first type that names it, outside its own
+    /// declaration. A deletion of the item must take that type with it.
     #[expect(
         clippy::too_many_lines,
         reason = "one report loop for each kind of item, so the warnings read in one place"
@@ -402,41 +446,43 @@ impl Checker<'_> {
                 .collect()
         };
         let mut found = Vec::new();
-        let mut report = |kind: Definition, at: Span, item: usize, shown: Option<Span>| {
-            // The prelude is out of the user's sight, so nothing in it is unused.
-            if at.in_prelude() {
-                return;
-            }
-            let name = self.text(at);
-            if name.starts_with('_') {
-                return;
-            }
-            let uses = describe(&std::mem::take(&mut cited[item]));
-            let name = name.to_string();
-            let d = match kind {
-                Definition::Field | Definition::Variant => DiagnosticKind::UnusedMember {
-                    kind,
-                    name,
-                    at,
-                    shown,
-                    uses,
-                },
-                _ => DiagnosticKind::UnusedItem {
-                    kind,
-                    name,
-                    at,
-                    uses,
-                },
+        let mut report =
+            |kind: Definition, at: Span, item: usize, shown: Option<Span>, named: Option<Span>| {
+                // The prelude is out of the user's sight, so nothing in it is unused.
+                if at.in_prelude() {
+                    return;
+                }
+                let name = self.text(at);
+                if name.starts_with('_') {
+                    return;
+                }
+                let uses = describe(&std::mem::take(&mut cited[item]));
+                let name = name.to_string();
+                let d = match kind {
+                    Definition::Field | Definition::Variant => DiagnosticKind::UnusedMember {
+                        kind,
+                        name,
+                        at,
+                        shown,
+                        uses,
+                    },
+                    _ => DiagnosticKind::UnusedItem {
+                        kind,
+                        name,
+                        at,
+                        named,
+                        uses,
+                    },
+                };
+                found.push(d.into());
             };
-            found.push(d.into());
-        };
         for f in (0..functions).filter(|&f| !reached.live[f]) {
             let held = holders[f].is_none_or(built);
             // A dead block is reported itself, or its type is.
             let dead_block = (self.signatures[f].extension)
                 .is_some_and(|b| !reached.live[self.owner_index(Owner::Block(b))]);
             if held && !dead_block {
-                report(function_kind(f), self.signatures[f].span, f, None);
+                report(function_kind(f), self.signatures[f].span, f, None, None);
             }
         }
         let mut shown = None;
@@ -446,16 +492,34 @@ impl Checker<'_> {
                     if !reached.read[c][f] {
                         let shown = shown.get_or_insert_with(|| self.shown_types(&reached.live));
                         let dbg = shown.classes[c];
-                        report(Definition::Field, field.name.span, slots.fields[c] + f, dbg);
+                        report(
+                            Definition::Field,
+                            field.name.span,
+                            slots.fields[c] + f,
+                            dbg,
+                            None,
+                        );
                     }
                 }
             } else {
-                report(Definition::Class, class.name.span, slots.classes + c, None);
+                report(
+                    Definition::Class,
+                    class.name.span,
+                    slots.classes + c,
+                    None,
+                    None,
+                );
             }
         }
         for (e, info) in self.enums.iter().enumerate() {
             if !reached.enum_built[e] {
-                report(Definition::Enum, info.name.span, slots.enums + e, None);
+                report(
+                    Definition::Enum,
+                    info.name.span,
+                    slots.enums + e,
+                    None,
+                    info.named,
+                );
                 continue;
             }
             for (v, variant) in info.variants.iter().enumerate() {
@@ -465,13 +529,20 @@ impl Checker<'_> {
                         variant.name.span,
                         slots.variants[e] + v,
                         None,
+                        None,
                     );
                 }
             }
         }
         for (s, info) in self.structs.iter().enumerate() {
             if !reached.struct_built[s] {
-                report(Definition::Struct, info.name.span, slots.structs + s, None);
+                report(
+                    Definition::Struct,
+                    info.name.span,
+                    slots.structs + s,
+                    None,
+                    info.named,
+                );
                 continue;
             }
             for (f, field) in info.fields.iter().enumerate() {
@@ -486,6 +557,7 @@ impl Checker<'_> {
                         field.name.span,
                         slots.struct_fields[s] + f,
                         dbg,
+                        None,
                     );
                 }
             }
@@ -497,6 +569,7 @@ impl Checker<'_> {
                     info.name.span,
                     slots.interfaces + i,
                     None,
+                    None,
                 );
             }
         }
@@ -505,7 +578,7 @@ impl Checker<'_> {
             if let Some(span) = *span
                 && !reached.live[owner]
             {
-                report(Definition::Constant, span, owner, None);
+                report(Definition::Constant, span, owner, None, None);
             }
         }
         for (b, block) in self.extensions.iter().enumerate() {
@@ -916,7 +989,8 @@ impl Checker<'_> {
         // The interfaces live code uses, and those not yet followed to the ones they name.
         let mut interfaces = vec![false; self.interfaces.len()];
         let mut to_follow = Vec::new();
-        // An alias body that names `S.Name` has no owner, so no use records its interface.
+        // An alias body has no owner, so no use records the interfaces that it names (`S.Name`,
+        // `any I`).
         for interface in &self.aliases.named_interfaces {
             use_interface(&mut interfaces, &mut to_follow, interface.0);
         }

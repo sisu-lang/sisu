@@ -1,0 +1,20 @@
+// GIVEN a method of a struct with a `mut` parameter, called as a function in a method of the struct, as `put(self, mut a)`
+// AND the `mut` argument is a place that can change, with the type of its parameter
+// WHEN `sisu check` runs on it
+// THEN it reports E0070 with a safe fix that calls the method on `self`
+struct St {
+    n: i64
+
+    fn put(self, mut x: i64) {
+        x = 1
+    }
+
+    fn plain(self, x: i64) {}
+
+    fn let_mut_name(self) {
+        let mut a = 1
+        put(self, mut a)
+    }
+}
+
+fn main() {}

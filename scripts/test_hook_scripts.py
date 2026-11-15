@@ -143,6 +143,57 @@ class TestWording(unittest.TestCase):
             "    assert_eq!(Diagnostic::help(d), None);\n",
             "    d.label().is_some();\n",
             "    Diagnostic::label(d).is_none();\n",
+            "    assert!(d\n        .label()\n        .is_some());\n",
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(
+                    run_hook("check-test-wording.sh", HEADERS[0] + body + "}\n"), (0, "")
+                )
+
+    def test_a_secondary_or_note_text_read_should_fail(self) -> None:
+        for read in (
+            "let (_, text) = &ds[0].secondary()[0];",
+            "d.secondary()[0].1;",
+            "d.secondary().iter().map(|(_, t)| t);",
+            "d.secondary().iter().map(|p| &p.1);",
+            "let s = d.secondary();",
+            'assert_eq!(d.secondary(), [(sp, "x".to_string())]);',
+            "let [(_, text)] = d.secondary() else { return };",
+            "d.notes()[0];",
+            'd.notes().join("");',
+            "ds.iter().map(Diagnostic::secondary);",
+            "Diagnostic::notes(d);",
+        ):
+            with self.subTest(read=read):
+                code, out = run_hook("check-test-wording.sh", HEADERS[0] + f"    {read}\n}}\n")
+                self.assertEqual(code, 1)
+                self.assertIn("f.rs:3: a unit test reads diagnostic wording", out)
+
+    def test_a_secondary_span_or_count_read_should_pass(self) -> None:
+        for body in (
+            "    d.secondary().len();\n",
+            "    d.secondary().is_empty();\n",
+            "    let span = d.secondary()[0].0;\n",
+            "    let span = d.secondary()[i].0;\n",
+            "    assert_eq!(d.secondary(), []);\n",
+            "    let [(a, _), (b, _)] = d.secondary() else { return };\n",
+            "    let [(c, _)] = ds[0].secondary() else { return };\n",
+            "    let [\n        (a, _),\n        (b, _),\n    ] = d.secondary() else {\n        return;\n    };\n",
+            "    d.secondary().iter().map(|(s, _)| at(src, *s));\n",
+            "    d.secondary().iter().map(|&(span, _)| span);\n",
+            (
+                "    let spans: Vec<_> = d\n        .secondary()\n        .iter()\n"
+                "        .map(|(span, _)| span.start)\n        .collect();\n"
+            ),
+            "    let spans = (d.secondary().iter())\n        .map(|(s, _)| s.start);\n",
+            (
+                "    let [(open, _)] = d.secondary() else {\n"
+                '        panic!("one secondary span, got {:?}", d.secondary());\n    };\n'
+            ),
+            "    d.notes().len();\n",
+            "    d.notes().is_empty();\n",
+            "    let n = d\n        .secondary()\n        .len();\n",
+            "    assert!(d\n        .notes()\n        .is_empty());\n",
         ):
             with self.subTest(body=body):
                 self.assertEqual(

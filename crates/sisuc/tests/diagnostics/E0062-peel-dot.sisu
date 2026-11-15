@@ -6,7 +6,7 @@
 // AND an index, a slice or a `for` subject after the `.` gets the `if let` help instead
 // AND so does an argument with `mut`, or at a `mut` parameter, also in a call that fails
 // AND so does one at a `mut` parameter of a method that a call written as a function names
-// AND a `push` onto `[i64]??` gets the `if let` help and no fix: the peeled `push` gives E0021
+// AND a `push` onto `[i64]??` gets no help and no fix: an unwrap gives a copy, and the peeled `push` gives E0021
 class Node {
     v: i64
     mut ys: [i64]
@@ -346,7 +346,7 @@ fn y4<U: Bp & Bq>(u: U, c: Tree??) {
 }
 
 fn n13(c: Tree??) {
-    Sh.grow(c.m.v)
+    Sh.grow(0, c.m.v)
 }
 
 // Each argument below keeps the peel help: no `mut` parameter is known for it.

@@ -1074,3 +1074,188 @@ fn concat_of_another_field_of_the_same_object_should_not_be_an_append() {
         "{printed}"
     );
 }
+
+/// One row of the test below: its name, its program with `%%` for the statement, the write, the
+/// read that must agree with it, and the errors of the write.
+type HiddenRow<'a> = (&'a str, &'a str, &'a str, Option<&'a str>, Vec<Wanted>);
+
+/// A name can be hidden by a type parameter or an associated type. A write to it gives the code
+/// of a read of it in the same place. It does not say that the name is a function. A constant
+/// wins, and a name with no hiding stays as it was. Three rows have no read to agree with:
+/// `p639-const`, `p639-constelem` and `p639-readfn`. A constant cannot be assigned, and `print` is
+/// a function.
+#[test]
+#[expect(clippy::too_many_lines, reason = "one table of rows")]
+fn an_assignment_to_a_hidden_name_should_report_what_a_read_reports() {
+    const SOURCE: &str = "interface I { type Item; fn m(self) }\nfn Item() {}\nstruct C: I { type Item = i64; fn m(self) { %% } }\nfn main() { Item() }";
+    const TYPE_PARAM: Code = Code::TypeAsValue;
+    // `%%` is the statement of the row, in its program.
+    let rows: [HiddenRow<'_>; 18] = [
+        (
+            "p639a",
+            "fn T() {}\nfn q<T>() { %% }\nfn main() {}",
+            "T = 1",
+            Some("let a = T"),
+            vec![(TYPE_PARAM, (2, 13))],
+        ),
+        (
+            "p639-fnelem",
+            "fn T() {}\nfn q<T>() { %% }\nfn main() { T() }",
+            "T[0] = 1",
+            Some("let _a = T[0]"),
+            vec![(TYPE_PARAM, (2, 13))],
+        ),
+        (
+            "p639-fncompound",
+            "fn T() {}\nfn q<T>() { %% }\nfn main() { T() }",
+            "T += 1",
+            Some("let _a = T + 1"),
+            vec![(TYPE_PARAM, (2, 13))],
+        ),
+        (
+            "p639-assoc",
+            SOURCE,
+            "Item = 1",
+            Some("let _a = Item"),
+            vec![(TYPE_PARAM, (3, 45))],
+        ),
+        (
+            "p639-assoc-element",
+            SOURCE,
+            "Item[0] = 1",
+            Some("let _a = Item[0]"),
+            vec![(TYPE_PARAM, (3, 45))],
+        ),
+        (
+            "p639-prelude",
+            "fn q<print>() { %% }\nfn main() {}",
+            "print = 1",
+            Some("let _a = print"),
+            vec![(TYPE_PARAM, (1, 17))],
+        ),
+        (
+            "p639-plain",
+            "fn q<T>() { %% }\nfn main() {}",
+            "T = 1",
+            Some("let _a = T"),
+            vec![(TYPE_PARAM, (1, 13))],
+        ),
+        (
+            "p639-struct",
+            "struct T { n: i64 }\nfn q<T>() { %% }\nfn main() {}",
+            "T = 1",
+            Some("let _a = T"),
+            vec![(TYPE_PARAM, (2, 13))],
+        ),
+        (
+            "p639-fnpush",
+            "fn T() {}\nfn q<T>() { %% }\nfn main() { T() }",
+            "T.push(1)",
+            Some("let _a = T"),
+            vec![(TYPE_PARAM, (2, 13))],
+        ),
+        (
+            "p639-mutarg",
+            "fn T() {}\nfn g(mut x: i64) {}\nfn q<T>() { %% }\nfn main() { T() }",
+            "g(mut T)",
+            Some("let _a = T"),
+            vec![(Code::NeverReassigned, (2, 10)), (TYPE_PARAM, (3, 19))],
+        ),
+        (
+            "a type parameter of a struct",
+            "fn T() {}\nstruct C<T> { fn m(self) { %% } }\nfn main() {}",
+            "T = 1",
+            Some("let _a = T"),
+            vec![(TYPE_PARAM, (2, 28))],
+        ),
+        (
+            "a type parameter of a method",
+            "fn T() {}\nstruct C { fn m<T>(self) { %% } }\nfn main() {}",
+            "T = 1",
+            Some("let _a = T"),
+            vec![(TYPE_PARAM, (2, 28))],
+        ),
+        (
+            "a function with a failed type",
+            "fn T(x: Nope) {}\nfn q<T>() { %% }\nfn main() {}",
+            "T = 1",
+            Some("let _a = T"),
+            vec![(Code::UnknownType, (1, 9)), (TYPE_PARAM, (2, 13))],
+        ),
+        (
+            "a local beside the write",
+            "fn q<T>() { let mut x = 1; %%; print(x) }\nfn main() {}",
+            "T = 1",
+            None,
+            vec![(TYPE_PARAM, (1, 28))],
+        ),
+        (
+            "a local beside the write to an associated type",
+            "interface I { type Item; fn m(self) }\nstruct C: I { type Item = i64; fn m(self) { let mut z = 1; %%; print(z) } }\nfn main() {}",
+            "Item = 1",
+            None,
+            vec![(TYPE_PARAM, (2, 60))],
+        ),
+        (
+            "p639-const",
+            "const T = 1\nfn q<T>() { %% }\nfn main() { print(T) }",
+            "T = 1",
+            None,
+            vec![(Code::AssignToImmutable, (2, 13))],
+        ),
+        (
+            "p639-constelem",
+            "const T = [1]\nfn q<T>() { %% }\nfn main() { print(T) }",
+            "T[0] = 1",
+            None,
+            vec![
+                (Code::ConstantNotKnown, (1, 11)),
+                (Code::AssignToImmutable, (2, 13)),
+            ],
+        ),
+        (
+            "p639-readfn",
+            "fn q() { %% }\nfn main() {}",
+            "print = 1",
+            None,
+            vec![(Code::AssignToFunction, (1, 10))],
+        ),
+    ];
+    let mut failed = Vec::new();
+    for (row, program, write, read, wanted) in rows {
+        let src = program.replace("%%", write);
+        let (_, ds) = checked(&src);
+        let got: Vec<_> = ds.iter().map(|d| (d.code(), at(&src, d.span()))).collect();
+        if got != wanted {
+            failed.push(format!("row `{row}`: found {got:?}, wanted {wanted:?}"));
+        }
+        let Some(read) = read else { continue };
+        let read_src = program.replace("%%", read);
+        let (_, read_ds) = checked(&read_src);
+        let (Some(w), Some(r)) = (
+            ds.iter().find(|d| d.severity() == Severity::Error),
+            read_ds.iter().find(|d| d.severity() == Severity::Error),
+        ) else {
+            failed.push(format!("row `{row}`: the write or the read has no error"));
+            continue;
+        };
+        if w.code() != r.code() {
+            failed.push(format!(
+                "row `{row}`: the write gives {:?}, the read gives {:?}",
+                w.code(),
+                r.code()
+            ));
+        }
+    }
+    // A read of `T` there is the constant, so it checks clean.
+    codes(
+        "const T = 1\nfn q<T>() { let _a = T }\nfn main() { print(T) }",
+        &[],
+    );
+    assert!(
+        failed.is_empty(),
+        "{} red rows:\n{}",
+        failed.len(),
+        failed.join("\n")
+    );
+}

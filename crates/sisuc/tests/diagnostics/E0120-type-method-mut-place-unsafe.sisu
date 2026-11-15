@@ -1,0 +1,79 @@
+// GIVEN a method of a struct or of an enum with a `mut` parameter, called through its type
+// AND the first argument is a value of that type, as `St.put(s, mut a)`
+// AND a `mut` argument is not a place of the parameter's type, or the `mut` marks differ
+// WHEN `sisu check` runs on it
+// THEN it reports E0120 for each call, with an unsafe fix that moves the first argument before the `.`
+// AND the fix is unsafe since the fixed call does not check
+struct W {
+    n: i64
+}
+
+struct St {
+    n: i64
+
+    fn put(self, mut x: i64) {
+        x = 1
+    }
+
+    fn put_optional(self, mut x: i64?) {
+        x = 1
+    }
+
+    fn plain(self, x: i64) {}
+}
+
+enum En {
+    A
+
+    fn put(self, mut x: i64) {
+        x = 1
+    }
+}
+
+fn one() -> i64 {
+    1
+}
+
+fn literal(s: St) {
+    St.put(s, mut 1)
+}
+
+fn enum_literal(e: En) {
+    En.put(e, mut 1)
+}
+
+fn call_result(s: St) {
+    St.put(s, mut one())
+}
+
+fn let_name(s: St) {
+    let a = 1
+    St.put(s, mut a)
+}
+
+fn enum_let_name(e: En) {
+    let a = 1
+    En.put(e, mut a)
+}
+
+fn extra_mut(s: St) {
+    let mut a = 1
+    St.plain(s, mut a)
+}
+
+fn optional_parameter(s: St) {
+    let mut a = 1
+    St.put_optional(s, mut a)
+}
+
+fn through_optional(s: St) {
+    let mut w: W? = W(n: 1)
+    St.put(s, mut w?.n)
+}
+
+fn missing_mut(s: St) {
+    let mut a = 1
+    St.put(s, a)
+}
+
+fn main() {}

@@ -649,7 +649,7 @@ impl Checker<'_> {
             }
             _ if ty == Type::STRING => DiagnosticKind::StringIndex {
                 at: base.span,
-                base: self.source.line_text(base.span),
+                base: self.source.quote(base.span),
                 usage,
             }
             .into(),

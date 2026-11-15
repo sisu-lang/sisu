@@ -19,6 +19,15 @@
 # or `assert!` in the checker does.
 #
 # A line that starts with `#` is a comment. Each value and each context is one line.
+#
+# The path of the file is one more neighbour: the renderer repairs the header of a cut line, and
+# the path can hold text that looks like a header. No value or context writes the path, so the unit
+# test `a_header_whose_path_holds_a_line_break_should_give_the_true_column` in
+# `crates/sisuc/src/diagnostic/render.rs` holds its three forms: a path that holds a line break
+# (`long\nname.sisu`), one that holds `-->` (`a --> b.sisu`, `a\n--> b.sisu`) and one that holds
+# `:::` (`a ::: b.sisu`). The tests `source_text_like_a_later_header_should_not_change` and
+# `source_text_like_an_earlier_header_should_not_change` in the same file hold the same text in
+# the source.
 
 [template]
 interface Named {
@@ -51,6 +60,10 @@ class Bx {
     fn wrap<T>(self, v: T) -> T { v }
     fn none<T>(self) -> T? { None }
     fn put<T>(self, mut x: T?, n: i64) { x = None }
+}
+struct St {
+    n: i64
+    fn put(self, mut x: i64) { x = 1 }
 }
 type M<T> = T?
 type MM<T> = T??
@@ -196,7 +209,7 @@ fn take<T>(mut x: T?) { x = None }
 fn take2<T>(mut x: T?, n: i64) { x = None }
 fn keep<T>(mut x: T?) -> T? { x }
 fn opt<T>(v: T?) -> T? { v }
-fn generic<U: Named, V, W: Km>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?, w: W?) {
+fn generic<U: Named, V, W: Km>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?, w: W?, st: St) {
     let mut mq: (any Pet)? = op
     {stmt}
 }
@@ -208,7 +221,8 @@ fn main() {
     let p: any Pet = Fox()
     let op: (any Pet)? = Fox()
     let ob: Bx? = Bx()
-    generic(Cat(), Rock(), c, d, k, n, p, op, ob, Some(Ms(n: 1)))
+    let st = St(n: 1)
+    generic(Cat(), Rock(), c, d, k, n, p, op, ob, Some(Ms(n: 1)), st)
     let mut mq: (any Pet)? = op
     {stmt}
 }
@@ -220,7 +234,7 @@ enum Eb {
 extend Eb: Nope {}
 type Ae = Sa
 extend Ae {}
-fn failed<U: Missing, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?) {
+fn failed<U: Missing, V>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?, st: St) {
     let mut mq: (any Pet)? = op
     {stmt}
 }
@@ -397,6 +411,10 @@ $.less($)
 $.get(0..1)
 $?.ps[0].bump()
 $.pss[0].len()
+# A `loop` in the `break` value of a loop, and a negated value, where the origin of the expected
+# type is kept for a label (E0032).
+let _a = loop { if c { break 1 }; break loop { break $ } }
+let _a: i64 = -$
 # Array literals beside a hint from another branch, with the value alone, first and last.
 let _a = if c { [Some(p)] } else { [$] }
 let _a = if c { [Some(p)] } else { [$, Some(Some(p))] }
@@ -452,9 +470,22 @@ ob?.ste(mut $)
 # E0052, which does not find the method, so it stamps nothing.
 put(ob, $, 1)
 put(ob, $)
+put(ob, mut $)
+put(self, mut $)
 put(ob, x: $, n: 1)
 Bx.put($, 1)
 Bx.put($)
+# A method of a struct or an enum called through its type (E0120): `$` is the receiver in the
+# first line of each, and the argument after the receiver in the others. The fix keeps its `mut`.
+St.put($, 1)
+St.put(st, $)
+St.put(st, mut $)
+E.push($, 1)
+E.push(E.A, $)
+# The same call where the context expects a type: the result must meet it for a safe fix.
+let _s: string = St.m($)
+return St.m($)
+take(St.m($))
 # A `mut` call with an exit in another argument or in the receiver: the call is rebound, and its
 # exit flag follows its new arguments.
 take2(mut $, some(k) ?? return)

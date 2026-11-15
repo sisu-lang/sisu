@@ -1,0 +1,63 @@
+// GIVEN a method of a struct or of an enum, called through its type, with `mut` on an argument after the first
+// AND the first argument is a value of that type, as `St.put(t, mut a)`
+// WHEN `sisu check` runs on it
+// THEN it reports E0120 at 33:8, 38:8, 43:8, 48:8, 54:8 and 60:8
+// AND each fix moves the first argument before the `.`, and keeps the `mut` of the next argument
+// AND a comment before or after that `mut` stays
+struct St {
+    n: i64
+
+    fn put(self, mut x: i64) {
+        x = 1
+    }
+
+    fn put2(self, y: i64, mut x: i64) {
+        x = y
+    }
+}
+
+enum Bx {
+    A(i64)
+
+    fn put(self, mut x: i64) {
+        x = 1
+    }
+}
+
+struct W {
+    n: i64
+}
+
+fn plain(t: St) {
+    let mut a = 1
+    St.put(t, mut a)
+}
+
+fn enum_method(b: Bx) {
+    let mut a = 1
+    Bx.put(b, mut a)
+}
+
+fn field(t: St) {
+    let mut w = W(n: 1)
+    St.put(t, mut w.n)
+}
+
+fn comment_before(t: St) {
+    let mut a = 1
+    St.put(t, // keep
+        mut a)
+}
+
+fn comment_after(t: St) {
+    let mut a = 1
+    St.put(t, mut // keep
+        a)
+}
+
+fn second(t: St) {
+    let mut a = 1
+    St.put2(t, 2, mut a)
+}
+
+fn main() {}

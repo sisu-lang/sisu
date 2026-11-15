@@ -2,7 +2,7 @@
 //! interfaces that `T`'s bounds give, and is an `InterfaceCall` that `mono` resolves.
 
 use super::call::Dot;
-use super::generic::{GenericSig, Site, mismatched, named_params, written_args};
+use super::generic::{Declarer, GenericSig, Site, mismatched, named_params, written_args};
 use super::interface::Required;
 use super::mut_args::{MutParts, MutSite, site_of};
 use super::place::CheckedPlace;
@@ -132,7 +132,7 @@ impl Checker<'_> {
             ret,
             bounds: &bounds,
             mut_site: (!muts.is_empty()).then_some(&mut_site),
-            function: None,
+            declarer: Declarer::None,
         };
         let written = (site.written, site.angles);
         let result = self.generic_call_mut(span, &sig, written, args, site.expected, &mut parts);

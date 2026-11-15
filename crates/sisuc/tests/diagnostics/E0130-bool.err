@@ -4,9 +4,9 @@ error[E0130]: `match` does not cover `false`
 2 |     match b {
   |     ^^^^^
   |
-help: add a `_ =>` arm
+help: add an arm for `false`
   |
-4 +         _ => todo
+4 +         false => todo
   |
 
 sisu: 1 error

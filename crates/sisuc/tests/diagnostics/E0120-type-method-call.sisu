@@ -1,0 +1,62 @@
+// GIVEN a method of a struct, of an alias of a struct and of an enum, called through its type
+// AND the first argument is a value of that type, as `Tree.bumpm(t, 1)`
+// WHEN `sisu check` runs on it
+// THEN it reports E0120 at 35:10, 39:8 and 55:11, each with the safe fix that moves the first argument before the `.`
+// AND the fix writes a first argument that is no postfix form in parentheses
+struct Tree {
+    n: i64
+
+    fn bumpm(self, x: i64) {}
+
+    fn one(self) {}
+}
+
+struct Bx<T> {
+    v: T
+
+    fn get(self) -> T {
+        self.v
+    }
+}
+
+enum Shape {
+    Circle(i64)
+
+    fn scaled(self, by: i64) {}
+}
+
+type Tr = Tree
+
+fn make() -> Tree {
+    Tree(n: 0)
+}
+
+fn plain(t: Tree) {
+    Tree.bumpm(t, 1)
+}
+
+fn through_alias(t: Tree) {
+    Tr.bumpm(t, 1)
+}
+
+fn from_call() {
+    Tree.bumpm(make(), 1)
+}
+
+fn only_receiver(t: Tree) {
+    Tree.one(t)
+}
+
+fn generic(b: Bx<i64>) {
+    let _x = Bx.get(b)
+}
+
+fn enum_method(s: Shape) {
+    Shape.scaled(s, 2)
+}
+
+fn wrapped(a: Tree, b: Tree, c: bool) {
+    Tree.bumpm(if c { a } else { b }, 1)
+}
+
+fn main() {}

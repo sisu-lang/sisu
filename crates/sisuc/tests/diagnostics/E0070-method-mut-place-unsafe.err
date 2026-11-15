@@ -1,0 +1,38 @@
+error[E0070]: `put` is a method, not a function
+  --> E0070-method-mut-place-unsafe.sisu:16:9
+   |
+16 |         put(self, mut 1)
+   |         ^^^
+   |
+help: try calling `put` as a method, then fix its arguments
+   |
+16 -         put(self, mut 1)
+16 +         self.put(mut 1)
+   |
+
+error[E0070]: `put` is a method, not a function
+  --> E0070-method-mut-place-unsafe.sisu:21:9
+   |
+21 |         put(self, mut a)
+   |         ^^^
+   |
+help: try calling `put` as a method, then fix its arguments
+   |
+21 -         put(self, mut a)
+21 +         self.put(mut a)
+   |
+
+error[E0070]: `plain` is a method, not a function
+  --> E0070-method-mut-place-unsafe.sisu:26:9
+   |
+26 |         plain(self, mut a)
+   |         ^^^^^
+   |
+help: try calling `plain` as a method, then fix its arguments
+   |
+26 -         plain(self, mut a)
+26 +         self.plain(mut a)
+   |
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0070

@@ -1,0 +1,17 @@
+// GIVEN a method of an enum with a `mut` parameter, called as a function, as `put(s, a)`
+// AND the argument `a` at the `mut` parameter has no `mut`
+// WHEN `sisu check` runs on it
+// THEN it reports E0070 at 16:5 with an unsafe fix, `s.put(a)`, since the method call needs `mut a`
+enum Shape {
+    Circle(i64)
+
+    fn put(self, mut x: i64) {
+        x = 1
+    }
+}
+
+fn main() {
+    let s = Shape.Circle(1)
+    let a = 1
+    put(s, a)
+}

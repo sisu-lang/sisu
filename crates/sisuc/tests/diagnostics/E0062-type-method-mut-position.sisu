@@ -1,0 +1,102 @@
+// GIVEN a method of a struct or of an enum, called through its type, as `St.put(w.t, mut a)`
+// AND the method has a `mut` parameter, and the argument `w.n` or `w.t` has an optional `w`
+// WHEN `sisu check` runs on it
+// THEN the receiver, the first argument, stands at no `mut` parameter, so `w.t` gets the two helps and the fix `w?.t`
+// AND an argument after the receiver at a `mut` parameter gets the `if let` help only, and no fix, as a place does
+// AND a plain-parameter argument gets both helps and the fix, also before a `mut` parameter, with a label or a `mut` receiver
+struct St {
+    n: i64
+
+    fn put(self, mut x: i64) {
+        x = 1
+    }
+
+    fn put3(self, y: i64, mut x: i64) {
+        x = y
+    }
+
+    fn bumpm(self, x: i64) {}
+}
+
+enum Bx {
+    A(i64)
+
+    fn put(self, mut x: i64) {
+        x = 1
+    }
+
+    fn put3(self, y: i64, mut x: i64) {
+        x = y
+    }
+
+    fn bumpm(self, x: i64) {}
+}
+
+struct W {
+    t: St
+    b: Bx
+    n: i64
+    m: i64
+}
+
+fn st_stray(w: W?) {
+    St.put(1, w.n)
+}
+
+fn st_receiver(w: W?) {
+    let mut a = 1
+    St.put(w.t, mut a)
+}
+
+fn st_receiver_only(w: W?) {
+    St.put(w.t)
+}
+
+fn st_plain(w: W?) {
+    let a = 1
+    St.bumpm(w.t, a)
+}
+
+fn st_second(w: W?) {
+    St.put3(1, w.n, w.m)
+}
+
+fn st_labeled(w: W?) {
+    St.put(St(n: 1), x: w.n)
+}
+
+fn st_mut_receiver(w: W?) {
+    St.put(mut w.t, w.n)
+}
+
+fn bx_stray(w: W?) {
+    Bx.put(1, w.n)
+}
+
+fn bx_receiver(w: W?) {
+    let mut a = 1
+    Bx.put(w.b, mut a)
+}
+
+fn bx_receiver_only(w: W?) {
+    Bx.put(w.b)
+}
+
+fn bx_plain(w: W?) {
+    let a = 1
+    Bx.bumpm(w.b, a)
+}
+
+fn bx_second(w: W?) {
+    Bx.put3(1, w.n, w.m)
+}
+
+fn bx_labeled(w: W?) {
+    Bx.put(Bx.A(1), x: w.n)
+}
+
+fn bx_mut_receiver(w: W?) {
+    Bx.put(mut w.b, w.n)
+}
+
+fn main() {}

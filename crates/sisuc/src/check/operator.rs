@@ -68,7 +68,8 @@ impl Checker<'_> {
             let reported = self.diagnostics.error(d);
             return Ok((want, (Err(Poisoned::untyped(reported)), true)));
         }
-        let checked = self.against(operand, checked, Expectation::Required(want, Origin::None));
+        let origin = expected.origin_for(Some(want));
+        let checked = self.against(operand, checked, Expectation::Required(want, origin));
         Ok((want, checked))
     }
 
@@ -337,17 +338,6 @@ impl Checker<'_> {
         let compound = operator == (Operator::Plus { compound: true });
         // An `i64` that the context wants holds an `f64` operand to it, in either order.
         let wants_i64 = expected.ty().map(payload) == Some(Type::I64);
-        // An operand held to the type of the context keeps the origin of that type. A branch
-        // hints its type made optional, so an operand held to the branch's own type keeps it too.
-        let (context, context_origin) = (expected.ty(), expected.origin());
-        let origin_of = |want: Option<Type>| {
-            let branch = matches!(context_origin, Origin::Branch { ty, .. } if want == Some(ty));
-            if (want.is_some() && want == context) || branch {
-                context_origin
-            } else {
-                Origin::None
-            }
-        };
         let ranks: Vec<Rank> = operands.iter().map(|e| self.sibling_rank(e)).collect();
         let mut first = None;
         // Whether the operand checked first kept its E0050 (see `Poisoned::kept`).
@@ -476,12 +466,12 @@ impl Checker<'_> {
                     let hint = want.map_or(Expectation::Poisoned, |want| Expectation::Hint {
                         want,
                         siblings: want,
-                        origin: origin_of(Some(want)),
+                        origin: expected.origin_for(Some(want)),
                     });
                     self.value(e, hint)
                 }
                 None if by_char => self.value(e, Expectation::None),
-                None => self.value(e, Expectation::or_poisoned(want, origin_of(want))),
+                None => self.value(e, Expectation::or_poisoned(want, expected.origin_for(want))),
             };
             if ranks[i] != Rank::Concrete {
                 // Held for `restore` below, where a `char` operand may cut them with the operator.
@@ -604,7 +594,8 @@ impl Checker<'_> {
                     (value, false)
                 } else {
                     let start = self.diagnostics.mark();
-                    let settled = self.settled_by(e, value, want, origin_of(want), Some(takes));
+                    let settled =
+                        self.settled_by(e, value, want, expected.origin_for(want), Some(takes));
                     // Held for `restore` below, as above.
                     deferred.absorb(self.diagnostics.take_since(start));
                     settled
@@ -636,7 +627,7 @@ impl Checker<'_> {
             } else {
                 let start = self.diagnostics.mark();
                 let takes = takes.filter(|_| leader == Some(i));
-                let settled = self.settled_by(e, value, want, origin_of(want), takes);
+                let settled = self.settled_by(e, value, want, expected.origin_for(want), takes);
                 // Held for `restore` below, as above.
                 deferred.absorb(self.diagnostics.take_since(start));
                 settled

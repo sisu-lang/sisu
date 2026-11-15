@@ -1,0 +1,26 @@
+error[E0120]: `bumpm` is a method of `Tree`; call it on a value
+  --> E0120-type-method-unsafe.sisu:17:10
+   |
+17 |     Tree.bumpm(t, true)
+   |          ^^^^^
+   |
+help: try calling `bumpm` as a method, then fix its arguments
+   |
+17 -     Tree.bumpm(t, true)
+17 +     t.bumpm(true)
+   |
+
+error[E0120]: `put` is a method of `Tree`; call it on a value
+  --> E0120-type-method-unsafe.sisu:21:10
+   |
+21 |     Tree.put(t, a)
+   |          ^^^
+   |
+help: try calling `put` as a method, then fix its arguments
+   |
+21 -     Tree.put(t, a)
+21 +     t.put(a)
+   |
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0120

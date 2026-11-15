@@ -1,0 +1,82 @@
+// GIVEN a method of a struct, called through its type, with a first argument that cannot be the receiver
+// AND the same with a label, a type argument, or a `mut` on the first argument, and with no call
+// AND a method of an `extend` block, which the type does not hold, and a `mut self` method
+// WHEN `sisu check` runs on it
+// THEN it reports E0120 with no fix at 40:10, 44:10, 48:10, 52:10, 56:10, 57:10, 61:10, 65:10 and 70:19
+// AND it reports E0120 for an enum at 66:7, with E0137 and its own fix for the type argument
+// AND a method of an `extend` block keeps E0105 at 74:5 for a struct, and E0118 for an enum
+// AND a `mut self` method reports its own error, E0018, and no other
+struct Tree {
+    n: i64
+
+    fn bumpm(self, x: i64) {}
+
+    fn b2(self, x: i64, y: i64) {}
+
+    fn takes(self, mut x: i64) {
+        x = 1
+    }
+
+    fn bm(mut self, x: i64) {
+        self.n = x
+    }
+}
+
+enum E {
+    A
+
+    fn g(self, x: i64) {}
+}
+
+extend Tree {
+    fn h(self, x: i64) {}
+}
+
+extend E {
+    fn k(self) {}
+}
+
+fn wrong_type(t: Tree) {
+    Tree.bumpm(1, 1)
+}
+
+fn optional_first(t: Tree?) {
+    Tree.bumpm(t, 1)
+}
+
+fn no_arguments() {
+    Tree.bumpm()
+}
+
+fn label_only() {
+    Tree.bumpm(x: 1)
+}
+
+fn label_after(t: Tree) {
+    Tree.bumpm(t, x: 1)
+    Tree.b2(t, 1, y: 2)
+}
+
+fn mut_first(mut t: Tree) {
+    Tree.takes(mut t, 1)
+}
+
+fn type_arguments(t: Tree, e: E) {
+    Tree.bumpm<i64>(t, 1)
+    E.g<i64>(e, 1)
+}
+
+fn no_call() {
+    let _m = Tree.bumpm
+}
+
+fn extend_methods(t: Tree, e: E) {
+    Tree.h(t, 1)
+    E.k(e)
+}
+
+fn mut_self(t: Tree) {
+    Tree.bm(t, 1)
+}
+
+fn main() {}
