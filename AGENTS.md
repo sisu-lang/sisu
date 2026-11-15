@@ -31,6 +31,8 @@ Once per clone, run `make setup`. It installs LLVM 23 into `.llvm/23`, which `.c
 
 Write all prose in ASD-STE100 Simplified Technical English: diagnostics, comments, docs, commit messages, pull requests and GitHub issues. `CODING_STANDARDS.md` (Writing) has the rules.
 
+When you show Sisu code to the user, fence it as `rust`, which highlighters know, and put compiler output in a plain fence. When the user must decide, ask in your reply, not only in a question dialog. Say the problem, and show example programs with today's output and the wanted output. Then give the root cause, each proposal with its output and its cost, and your recommendation. Then wait for the answer.
+
 ## Specs, plans and tests
 
 A spec states its acceptance tests as Gherkin scenarios with IDs, and a plan maps each scenario to a task and a test. A test name says what should hold: `<subject>_should_<result>`. An end-to-end test has GIVEN, WHEN and THEN lines. `CODING_STANDARDS.md` (Tests, Specs and plans) has the rules.
@@ -64,3 +66,7 @@ To have another model review a spec, a plan or a diff, use the `review-sisu` ski
 ### Docs
 
 Before you open a pull request, run the `update-docs` skill to bring the docs in line with the code. After a merge, run it only when the user asks or the pull request skipped it. Skills live in `.agents/skills/`, where Codex finds them; `.claude/skills/` symlinks each one for Claude Code. An agent without skill support follows `.agents/skills/update-docs/SKILL.md` directly.
+
+### Retro
+
+After the final review of a branch, or before the pull request when the branch had no review, run the `kaizen` skill (`.agents/skills/kaizen/SKILL.md`).

@@ -135,7 +135,7 @@ fn main() {
 
 ## What can change
 
-A write needs a root that can change. The roots that can change are a `let mut`, and a `mut` parameter. The write can have any depth: a field, a field of a field, an element of an array in a field.
+A write needs a root that can change. The roots that can change are a `let mut`, a `mut` parameter and `mut self`. The write can have any depth: a field, a field of a field, an element of an array in a field.
 
 ```sisu
 struct Person {
@@ -175,6 +175,7 @@ fn main() {
 ```
 
 - A `mut` argument is a place with a root that can change, as a write is. On any other place, it is an error. [E0169](../diagnostics/E0169.md)
+- The receiver of a call of a method that takes `mut self` is a place with a root that can change, as a `mut` argument is. [E0001](../diagnostics/E0001.md)
 - A write that stays inside a value that is only a temporary is an error, as `g()[0] = 3` is: nothing could read the change. [E0021](../diagnostics/E0021.md)
 - A write whose path crosses a class object keeps the rule of the class: the `mut` field of the object decides.
 - A write through a struct goes into the value that the struct has when the write occurs. So when an index replaces the struct, the write goes into the new value. A write through a class goes into the object that the path found first ([Assignment](statements.md#assignment)).
@@ -271,7 +272,7 @@ fn main() {}
 
 ## Methods
 
-A method of a struct follows the rules of a [method of a class](classes.md#methods). It has `self` as its first parameter, and `self` is a copy of the value. A method cannot write a field of `self`. A struct method that changes its value returns the changed copy.
+A method of a struct follows the rules of a [method of a class](classes.md#methods). It has `self` as its first parameter. With plain `self`, the method reads a copy of the value. A write to a part of `self`, or an assignment to `self`, is an error. [E0001](../diagnostics/E0001.md) [E0073](../diagnostics/E0073.md) The help offers `mut self`, or you can return the changed copy.
 
 ```sisu
 struct Counter {
@@ -291,6 +292,86 @@ fn main() {
 ```
 
 `extend` adds methods to a struct. An `extend` block can also conform the struct to an interface, as it does for a class or an enum ([Modules](modules.md), [Generics](generics.md#interfaces)).
+
+### mut self
+
+A method can take `mut self`, in the declaration of the struct and in `extend`. Then `self` is a `mut` parameter. A write to `self` or to a part of it changes the place that the method was called on. So does `self = Point(x: 0, y: 0)`.
+
+The call has no mark: `p.move_by(3, 4)`.
+
+```sisu
+struct Point {
+    x: i64
+    y: i64
+
+    fn move_by(mut self, dx: i64, dy: i64) {
+        self.x += dx
+        self.y += dy
+    }
+}
+
+struct Ship {
+    at: Point
+    crew: [Point]
+}
+
+fn main() {
+    let mut p = Point(x: 1, y: 2)
+    let before = p
+    p.move_by(3, 4)
+    print(p)                 // Point(x: 4, y: 6)
+    print(before)            // Point(x: 1, y: 2)
+    let mut ship = Ship(at: p, crew: [p, p])
+    ship.at.move_by(1, 1)
+    ship.crew[1].move_by(2, 2)
+    print(ship.at)           // Point(x: 5, y: 7)
+    print(ship.crew)         // [Point(x: 4, y: 6), Point(x: 6, y: 8)]
+}
+```
+
+**The receiver**
+
+- The receiver is a place with a root that can change. A local, a field, an element, an element of a field and a field of `self` in a `mut self` method are all places. Then the call changes that place.
+- A `let`, a plain parameter and a plain `self` have no root that can change. A call on one is an error, with the help that a write has. [E0001](../diagnostics/E0001.md)
+- A value that is no place is a temporary, such as the result of a call. A call on a temporary, or on a part of one, is an error, because nothing could read the change. [E0021](../diagnostics/E0021.md)
+- A call on a place that crosses a class object keeps the rule of the class: the `mut` field of the object decides.
+
+```sisu
+struct Point {
+    x: i64
+    y: i64
+
+    fn move_by(mut self, dx: i64, dy: i64) {
+        self.x += dx
+        self.y += dy
+    }
+}
+
+fn origin() -> Point {
+    Point(x: 0, y: 0)
+}
+
+fn main() {
+    let p = Point(x: 1, y: 2)
+    p.move_by(1, 1)          // error[E0001]
+    origin().move_by(1, 1)   // error[E0021]
+}
+```
+
+**The order**
+
+- The receiver's own operands run first, once, from left to right. Then the arguments run from left to right. Then the receiver's place is read and goes to the call, as a `mut` argument does. So an argument that reads the root sees the place as it was.
+- The receiver is the first `mut` slot of the call. So `p.change(mut p)` is an error, as a second `mut` argument of one place is. [E0171](../diagnostics/E0171.md)
+- A call on a field or an element copies the value in and out, as a `mut` argument on such a place does. The cost grows with the size of the value. A method that pushes onto an array field costs time in proportion to the array, for each call. A later change of the compiler will remove this cost.
+
+**Until later work**
+
+- A call through `?.` on a struct value is an error for now. `o?.move_by(1, 1)` on a `Point?` is not valid. Replace the whole value instead. [E0062](../diagnostics/E0062.md)
+- An interface with a requirement that takes `mut self` cannot be `any` for now. Use a type parameter. [E0164](../diagnostics/E0164.md)
+
+An interface can require `mut self`. A method with plain `self` meets it, because a read is the smaller demand. A method with `mut self` does not meet a requirement with plain `self`. [E0152](../diagnostics/E0152.md) The [interfaces](generics.md#interfaces) page has an example.
+
+A `mut self` method that never changes `self` builds with a warning, because its `mut` changes nothing. [W0002](../diagnostics/W0002.md) A call of a `mut self` method counts as a change of its root, as a `mut` argument does.
 
 ## Warnings
 

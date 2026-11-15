@@ -1,0 +1,42 @@
+error[E0062]: `?.` cannot call `add` on a value of type `U` yet
+  --> E0062-mut-self-param.sisu:28:10
+   |
+28 |         o?.add()
+   |          ^^^^^
+
+error[E0062]: `?.` cannot call `add` on a value of type `T` yet
+  --> E0062-mut-self-param.sisu:41:6
+   |
+41 |     o?.add()
+   |      ^^^^^
+
+error[E0062]: `?.` cannot call `add` on a value of type `T.Item` yet
+  --> E0062-mut-self-param.sisu:46:9
+   |
+46 |     item?.add()
+   |         ^^^^^
+
+error[E0062]: `?.` cannot call `add` on a value of type `T` yet
+  --> E0062-mut-self-param.sisu:51:6
+   |
+51 |     p?.add()
+   |      ^^^^^
+
+error[E0062]: `?.` cannot call `add` on a value of type `T` yet
+  --> E0062-mut-self-param.sisu:55:6
+   |
+55 |     o?.t.add()
+   |      ^^^
+   |
+   = help: replace the value: `o = Some(...)`
+
+error[E0062]: `?.` cannot call `add` on a struct value yet
+  --> E0062-mut-self-param.sisu:60:6
+   |
+60 |     p?.add()
+   |      ^^^^^
+   |
+   = help: replace the value: `p = Some(...)`
+
+sisu: 6 errors
+sisu: for more on a code, run `sisu explain <code>`: E0062

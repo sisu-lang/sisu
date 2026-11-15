@@ -1848,12 +1848,21 @@ impl Gen<'_> {
         };
         let mut parts = Vec::new();
         let owner = self.scope.funcs[callee].owner.clone();
+        // A method that takes `mut self` has its receiver as the first of the places.
+        let mut_self = self.scope.funcs[callee].mut_self.is_some();
+        let mut remaining = places.iter();
         // A call with `mut` arguments runs the places of the `mut` arguments and spills the other
         // arguments first, and the receiver last (`tir::ExprKind::MutCall`): no rewrite moves it.
         self.effect |= !places.is_empty();
         // Where the call starts: before `((` of a method, else before its name.
         let call = self.here();
-        if let Some(holder @ (Ty::Class { .. } | Ty::Struct { .. })) = &owner {
+        if mut_self {
+            let place = remaining
+                .next()
+                .expect("a `mut self` receiver should have a place");
+            self.write_place(place, locals);
+            self.w.text(".");
+        } else if let Some(holder @ (Ty::Class { .. } | Ty::Struct { .. })) = &owner {
             self.w.text("((");
             parts.push(self.receiver(holder, safe));
             self.w.text(if safe { ")?." } else { ")." });
@@ -1873,7 +1882,6 @@ impl Gen<'_> {
         let muts = self.scope.funcs[callee].muts.clone();
         let nests = !places.is_empty() && !self.nested;
         let plain = self.plain_owner(owner.as_ref());
-        let mut places = places.iter();
         // Where the last `, ` of the arguments starts.
         let mut last_comma = None;
         let args = |g: &mut Self| -> Vec<Info> {
@@ -1882,7 +1890,7 @@ impl Gen<'_> {
                 last_comma = Some(g.here());
                 g.w.text(", ");
                 if mutable.is_some() {
-                    let place = places
+                    let place = remaining
                         .next()
                         .expect("a `mut` parameter should have a place");
                     g.w.text("mut ");
@@ -1907,7 +1915,7 @@ impl Gen<'_> {
         let removed = last_comma.map_or(depth_at..depth_end, |comma| comma..self.here());
         self.record(Kind::Argument, removed, call);
         self.w.text(")");
-        if owner.is_some() {
+        if owner.is_some() && !mut_self {
             self.w.text(")");
         }
         Info::of(&parts, self.scope.funcs[callee].ret_size, false)

@@ -1,0 +1,15 @@
+error[E0001]: cannot change `p`
+  --> E0001-mut-self-call.sisu:17:5
+   |
+16 |     let p = Point(x: 1, y: 2)
+   |         - declared with `let` here
+17 |     p.move_by(1, 1)
+   |     ^ `move_by` changes `p`
+   |
+help: declare it with `let mut`
+   |
+16 |     let mut p = Point(x: 1, y: 2)
+   |         +++
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0001

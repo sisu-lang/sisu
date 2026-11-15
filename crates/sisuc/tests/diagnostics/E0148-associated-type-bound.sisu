@@ -1,0 +1,11 @@
+interface Source {
+    type Item
+}
+
+fn _pick<T: Source, U: T.Item>(_x: T, _y: U) {
+    print(1)
+}
+
+fn main() {
+    print(2)
+}

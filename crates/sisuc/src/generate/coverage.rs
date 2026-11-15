@@ -313,6 +313,12 @@ const REACH: &[&str] = &[
     "reach: `?.push` follows a field",
     "reach: `?.push` follows an index",
     "reach: an assignment goes through `?.`",
+    "reach: a `mut self` method on a struct",
+    "reach: a `mut self` method on an enum",
+    "reach: a `mut self` call on a local, a field, an element and an element of a field",
+    "reach: a `mut self` requirement met by `mut self` and by plain `self`",
+    "reach: a `mut self` call through a bound",
+    "reach: a `mut self` call with a `mut` argument",
 ];
 
 /// The keys that the forms of `Gen::gap_forms` mark. `Generated::plain` leaves the forms out, so
@@ -748,6 +754,16 @@ struct Walk {
     chains: FxHashSet<usize>,
     /// Each enum's variants, by the enum's name.
     variants: FxHashMap<String, Vec<String>>,
+    /// The names of the requirements of the program being walked that take `mut self`.
+    mut_requirements: FxHashSet<String>,
+    /// Over the programs walked: whether a requirement that takes `mut self` is met by a method
+    /// that takes `mut self`, and by one that takes plain `self`.
+    mut_self_met: [bool; 2],
+    /// The methods of the typed tree that take `mut self`, by `FuncId`: a method whose first
+    /// parameter, `self`, can change.
+    mut_self_funcs: FxHashSet<usize>,
+    /// Over the programs walked: the kinds of place that the receiver of a `mut self` call was.
+    mut_self_places: FxHashSet<&'static str>,
     /// The id of the prelude's `Result` in the typed tree.
     result: Option<usize>,
     /// The types each enum's payloads hold, by its id.
@@ -1020,6 +1036,15 @@ impl Walk {
         reason = "one list or arm per kind of item and of broken item"
     )]
     fn ast(&mut self, program: &ast::Program) {
+        self.mut_requirements = (program.items.iter())
+            .filter_map(|item| match item {
+                ast::Item::Interface(interface) => Some(interface),
+                _ => None,
+            })
+            .flat_map(|interface| &interface.methods)
+            .filter(|requirement| requirement.mut_self.is_some())
+            .map(|requirement| requirement.name.name.as_str().to_string())
+            .collect();
         self.funcs = program
             .items
             .iter()
@@ -1205,6 +1230,9 @@ impl Walk {
             if names_self_in(f) {
                 self.mark("reach: an enum method names `Self`");
             }
+            if f.mut_self.is_some() {
+                self.mark("reach: a `mut self` method on an enum");
+            }
             self.ast_function(f);
         }
         self.owner_bounds.clear();
@@ -1273,6 +1301,9 @@ impl Walk {
                     }
                     if names_self_in(f) {
                         self.mark("reach: a struct method names `Self`");
+                    }
+                    if f.mut_self.is_some() {
+                        self.mark("reach: a `mut self` method on a struct");
                     }
                     self.ast_function(f);
                 }
@@ -1373,6 +1404,12 @@ impl Walk {
     }
 
     fn ast_function(&mut self, f: &ast::Function) {
+        if self.mut_requirements.contains(f.name.name.as_str()) {
+            self.mut_self_met[usize::from(f.mut_self.is_none())] = true;
+            if self.mut_self_met == [true; 2] {
+                self.mark("reach: a `mut self` requirement met by `mut self` and by plain `self`");
+            }
+        }
         let own = written_bounds(&f.type_params);
         self.signatures.push((
             f.name.name.as_str().to_string(),
@@ -1648,9 +1685,17 @@ impl Walk {
             ast::ExprKind::Field { base, name, .. } => (base, name, None),
             _ => return None,
         };
-        let variants = self.variants.get(enum_name(receiver)?)?;
+        let receiver = enum_name(receiver)?;
         let built = built.name.as_str();
-        if !variants.iter().any(|v| v == built) {
+        // An alias names the enum of the chain: the program checks, so the pattern and the
+        // assignment that walk the chain fit it.
+        let known = self.aliases.contains(receiver)
+            || self
+                .variants
+                .get(receiver)?
+                .iter()
+                .any(|variant| variant == built);
+        if !known {
             None
         } else if built == variant {
             Some(1 + self.nodes(next?, variant)?)
@@ -2541,6 +2586,12 @@ impl Walk {
         if !again.is_empty() {
             self.mark("reach: a generic interface has two conformances on one type");
         }
+        self.mut_self_funcs = (program.functions.iter().enumerate())
+            .filter(|(_, f)| {
+                f.owner.is_some() && f.params.first().is_some_and(|&p| f.locals[p.0].mutable)
+            })
+            .map(|(i, _)| i)
+            .collect();
         self.generic_blocks = (program.functions.iter().enumerate())
             .filter(|(_, f)| f.owner_params > 0 && f.name.contains('<'))
             .map(|(i, _)| i)
@@ -3418,9 +3469,57 @@ impl Walk {
                     }
                     self.tir_expr(&m.read, Parent::Other);
                 }
+                self.mut_self_call(call, muts);
                 self.tir_expr(call, Parent::Other);
                 self.tir_block(back);
             }
+        }
+    }
+
+    /// Marks a `mut self` call: a call of a method that takes `mut self`, or of a requirement,
+    /// whose receiver is its first `mut` part. The key of a bound is for a requirement. One key is
+    /// for a `mut` argument, and the others are for the kind of place that the receiver is. The
+    /// call reads the temporary of the part where the receiver stands. A call of a function with a
+    /// `mut` first parameter, such as `exchange`, has the same shape, and is none of these.
+    fn mut_self_call(&mut self, call: &tir::Expr, muts: &[tir::MutArg]) {
+        let (args, through_bound) = match &call.kind {
+            tir::ExprKind::Call { func, args, .. } if self.mut_self_funcs.contains(&func.0) => {
+                (args, false)
+            }
+            tir::ExprKind::InterfaceCall { args, .. } => (args, true),
+            _ => return,
+        };
+        let (Some(receiver), Some(part)) = (args.first(), muts.first()) else {
+            return;
+        };
+        if !matches!(receiver.kind, tir::ExprKind::Local(temp) if temp == part.temp) {
+            return;
+        }
+        if through_bound {
+            self.mark("reach: a `mut self` call through a bound");
+        }
+        // A direct call with a `mut` argument reaches the receiver forms of E0171, and the parts
+        // that mono's `plain_receiver` keeps.
+        if !through_bound && muts.len() > 1 {
+            self.mark("reach: a `mut self` call with a `mut` argument");
+        }
+        let held = |base: &tir::Expr| {
+            matches!(
+                base.kind,
+                tir::ExprKind::Field { .. } | tir::ExprKind::StructField { .. }
+            )
+        };
+        self.mut_self_places.insert(match &part.read.kind {
+            tir::ExprKind::Index { base, .. } if held(base) => "an element of a field",
+            tir::ExprKind::Index { .. } => "an element",
+            tir::ExprKind::Field { .. } | tir::ExprKind::StructField { .. } => "a field",
+            tir::ExprKind::Local(_) => "a local",
+            _ => return,
+        });
+        if self.mut_self_places.len() == 4 {
+            self.mark(
+                "reach: a `mut self` call on a local, a field, an element and an element of a field",
+            );
         }
     }
 
@@ -3649,10 +3748,12 @@ fn length_guard_target(e: &ast::Expr) -> Option<String> {
     place_text(receiver)
 }
 
-/// The text of a place made of a name, fields and literal indexes.
+/// The text of a place made of a name or `self`, fields and literal indexes.
 fn place_text(e: &ast::Expr) -> Option<String> {
     match &e.kind {
         ast::ExprKind::Name(name) => Some(name.as_str().to_string()),
+        // The receiver of a method that takes `mut self` is a place.
+        ast::ExprKind::SelfValue => Some("self".to_string()),
         ast::ExprKind::Field {
             base,
             name,
@@ -4047,6 +4148,130 @@ fn main() {
     for key in JUMPS {
         assert!(walk.seen.contains(*key), "the walk should mark {key}");
     }
+}
+
+/// GIVEN a program with a `mut self` method on a struct and on an enum
+/// AND a requirement that a struct meets with `mut self` and a class with plain `self`
+/// AND a call on a local, a field, an element, an element of a field, and through a bound
+/// AND a call with a `mut` argument
+/// WHEN the walk reads it
+/// THEN it marks each key of `mut self`
+/// AND a program that has a `mut self` method and calls `exchange` on each kind of place marks only
+/// the key of the method
+#[test]
+fn the_walk_should_mark_each_key_of_mut_self() {
+    let keys = [
+        "reach: a `mut self` method on a struct",
+        "reach: a `mut self` method on an enum",
+        "reach: a `mut self` call on a local, a field, an element and an element of a field",
+        "reach: a `mut self` requirement met by `mut self` and by plain `self`",
+        "reach: a `mut self` call through a bound",
+        "reach: a `mut self` call with a `mut` argument",
+    ];
+    let source = "interface Step {
+    fn step(mut self)
+}
+
+struct Cell: Step {
+    n: i64
+
+    fn step(mut self) {
+        self.n += 1
+    }
+
+    fn take(mut self, mut other: Cell) {
+        self.n += other.n
+        other.n = 0
+    }
+}
+
+class Plain: Step {
+    n: i64
+
+    fn step(self) {
+        print(self.n)
+    }
+}
+
+struct Row {
+    c: Cell
+    cs: [Cell]
+}
+
+enum Light {
+    Red
+    Green
+
+    fn flip(mut self) {
+        self = Light.Green
+    }
+}
+
+fn twice<T: Step>(t: T) {
+    let mut u = t
+    u.step()
+}
+
+fn main() {
+    let mut cell = Cell(n: 0)
+    cell.step()
+    let mut row = Row(c: Cell(n: 0), cs: [Cell(n: 1)])
+    row.c.step()
+    let mut cells = [Cell(n: 2)]
+    cells[0].step()
+    row.cs[0].step()
+    let mut light = Light.Red
+    light.flip()
+    twice(cell)
+    twice(Plain(n: 3))
+    cell.take(mut row.c)
+    print(cell.n + row.c.n + cells[0].n + row.cs[0].n)
+    print(light == Light.Green)
+}
+";
+    let mut walk = Walk::default();
+    walk.program(source);
+    for key in keys {
+        assert!(walk.seen.contains(key), "the walk should mark {key}");
+    }
+    // `exchange` has the shape of a `mut self` call: its first argument is a `mut` part. The one
+    // `mut self` call here is on a local and has no `mut` argument, so only the method key holds.
+    let part = "struct Cell {
+    n: i64
+
+    fn step(mut self) {
+        self.n += 1
+    }
+}
+
+struct Row {
+    c: Cell
+    cs: [Cell]
+}
+
+fn main() {
+    let mut cell = Cell(n: 0)
+    let mut row = Row(c: Cell(n: 0), cs: [Cell(n: 1)])
+    let mut cells = [Cell(n: 2)]
+    cell.step()
+    let _ = exchange(mut cell, Cell(n: 3))
+    let _ = exchange(mut row.c, Cell(n: 3))
+    let _ = exchange(mut cells[0], Cell(n: 3))
+    let _ = exchange(mut row.cs[0], Cell(n: 3))
+    print(cell.n + row.c.n + cells[0].n + row.cs[0].n)
+}
+";
+    let mut walk = Walk::default();
+    walk.program(part);
+    let marked: Vec<&str> = keys
+        .into_iter()
+        .filter(|key| walk.seen.contains(*key))
+        .collect();
+    assert_eq!(
+        marked,
+        [keys[0]],
+        "the keys of a program with one struct method"
+    );
 }
 
 /// GIVEN a struct on a cycle with its link field and another optional struct field. WHEN only
@@ -4525,6 +4750,7 @@ fn main_calls_should_fit_the_budget_left() {
     g.scope.funcs.push(Func {
         name: "f1".to_string(),
         owner: None,
+        mut_self: None,
         params: Vec::new(),
         muts: Vec::new(),
         ret: Ty::Unit,
@@ -4549,6 +4775,7 @@ fn with_funcs(data: &[u8]) -> Gen<'_> {
         g.scope.funcs.push(Func {
             name: name.to_string(),
             owner: None,
+            mut_self: None,
             params: Vec::new(),
             muts: Vec::new(),
             ret,
@@ -9857,6 +10084,25 @@ fn generated_interfaces_should_be_used() {
     assert!(interfaces > 0, "no seed writes an interface");
 }
 
+/// GIVEN the generated programs, and the methods among them that take `mut self`
+/// WHEN the checker reads each program
+/// THEN no `mut self` warns W0002: each method writes `self`, or calls a method that does
+#[test]
+fn a_generated_mut_self_method_should_write_self() {
+    let mut methods = 0;
+    search_seeds(SEEDS, |n| {
+        let source = generate(&seed(n)).program;
+        let (_, diagnostics) = crate::front_end::checked(&source);
+        methods += source.matches("(mut self").count();
+        for d in &diagnostics {
+            let unwritten = d.code().as_str() == "W0002" && &source[d.span().range()] == "self";
+            assert!(!unwritten, "a `mut self` is never reassigned in\n{source}");
+        }
+        methods > 0
+    });
+    assert!(methods > 0, "no seed writes a method that takes `mut self`");
+}
+
 /// The methods among the members of a class or a struct.
 fn member_methods(members: &[ast::Member]) -> impl Iterator<Item = &ast::Function> + Clone {
     members.iter().filter_map(|member| match member {
@@ -10068,7 +10314,7 @@ fn generated_shapes_should_call_every_requirement_of_a_conformed_interface() {
 
 /// A method that meets a requirement, as `Requirement::method` writes it:
 /// `fn r<n>(self, ...) -> <result> { <value> }`, and for a `mut` parameter `p<k>` a first
-/// statement `p<k> = <number>;`.
+/// statement `p<k> = <number>;`. A method with `mut self` has `self = <value>;` before that.
 pub(crate) struct Method<'a> {
     pub(crate) name: &'a str,
     /// The type of the result, or `""` when the method has none.
@@ -10095,6 +10341,16 @@ pub(crate) fn methods(source: &str) -> Vec<(usize, Method<'_>)> {
             .unwrap_or_else(|| (head.strip_suffix(')').unwrap_or(head), ""));
         let named = !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit());
         let body = body.trim_end_matches('}').trim();
+        // A method that takes `mut self` writes it before anything else: `self = N.A; ...`.
+        let (params, body) = match params.strip_prefix("mut self") {
+            Some(rest) => (
+                rest,
+                body.strip_prefix("self = ").map_or(body, |after| {
+                    after.split_once("; ").map_or("", |(_, rest)| rest)
+                }),
+            ),
+            None => (params, body),
+        };
         let param = params
             .split_once("mut ")
             .and_then(|(_, rest)| rest.split(':').next());
@@ -10165,10 +10421,11 @@ fn a_requirement_should_take_a_mut_parameter() {
             let rest = after[digits..]
                 .strip_prefix(": i64")
                 .unwrap_or_else(|| panic!("`mut` should be on an `i64`: {line}"));
-            if before.ends_with("(self, ") && rest.starts_with(", ") {
+            let first = before.ends_with("(self, ") || before.ends_with("(mut self, ");
+            if first && rest.starts_with(", ") {
                 seen.insert("first, with a parameter after it");
             }
-            if !before.ends_with("(self, ") {
+            if !first {
                 seen.insert("after another parameter");
             }
             seen.insert(if line.contains(") -> ") {

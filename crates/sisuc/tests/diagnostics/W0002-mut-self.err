@@ -1,0 +1,14 @@
+warning[W0002]: `self` is never reassigned, so its `mut` changes nothing
+ --> W0002-mut-self.sisu:8:17
+  |
+8 |     fn show(mut self) {
+  |                 ^^^^ never reassigned
+  |
+help: remove `mut`
+  |
+8 -     fn show(mut self) {
+8 +     fn show(self) {
+  |
+
+sisu: 1 warning
+sisu: for more on a code, run `sisu explain <code>`: W0002

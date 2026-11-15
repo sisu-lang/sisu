@@ -1,0 +1,33 @@
+// GIVEN a struct method with plain `self` that passes a field of `self` as a `mut` argument
+// AND a method with plain `self` that passes `self` as a `mut` argument
+// WHEN `sisu check` runs on it
+// THEN it reports E0169 on each place, with the unsafe fix "take `mut self`"
+struct Tally {
+    n: i64
+}
+
+struct Board {
+    tally: Tally
+
+    fn clear(self) {
+        reset(mut self.tally)
+    }
+
+    fn wipe(self) {
+        wipe_all(mut self)
+    }
+}
+
+fn reset(mut t: Tally) {
+    t.n = 0
+}
+
+fn wipe_all(mut b: Board) {
+    b.tally.n = 0
+}
+
+fn main() {
+    let b = Board(tally: Tally(n: 1))
+    b.clear()
+    b.wipe()
+}

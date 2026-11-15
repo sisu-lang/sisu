@@ -1,0 +1,18 @@
+// GIVEN `show`, a `mut self` method that only reads `self`
+// WHEN `sisu check` runs on it
+// THEN it warns W0002 on `self`: its `mut` changes nothing
+// AND the safe fix removes `mut `, and `main`'s call needs no change
+struct Counter {
+    n: i64
+
+    fn show(mut self) {
+        print(self.n)
+    }
+}
+
+fn main() {
+    let mut c = Counter(n: 1)
+    c.n = 2
+    c.show()
+    print(c.n)
+}

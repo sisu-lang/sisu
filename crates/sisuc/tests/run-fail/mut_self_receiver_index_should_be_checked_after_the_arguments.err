@@ -1,0 +1,1 @@
+sisu: panic at mut_self_receiver_index_should_be_checked_after_the_arguments.sisu:16:8: index 1 out of bounds for length 1

@@ -79,7 +79,7 @@ impl<'a> Checker<'_> {
             self.extend_target(extend)
         } else {
             // The checks of the target's arguments waited with no bound of the block in scope.
-            self.rescope(queued);
+            self.rescope(queued..self.queued());
             early
         };
         self.body.self_type = target.map_or(SelfType::Failed, SelfType::Known);
@@ -130,15 +130,32 @@ impl<'a> Checker<'_> {
             if let Some(Some((bound, _))) = interface {
                 self.signatures[func.0].conformance = Some((bound.interface, bound.args));
             }
-            if let (Some(mut_self), Some(holder)) = (&method.mut_self, holder) {
-                let owner = method_owner(holder, &name);
-                self.error(DiagnosticKind::MutSelf {
-                    keyword: mut_self.keyword,
-                    remove: mut_self_removal(self.source.comments, mut_self),
-                    annotation: mut_self.annotation,
-                    safe: mut_self.annotation.is_none(),
-                    owner,
-                });
+            match (&method.mut_self, holder) {
+                (Some(mut_self), Some(Holder::Class(_))) => {
+                    self.error(DiagnosticKind::MutSelf {
+                        keyword: mut_self.keyword,
+                        remove: mut_self_removal(self.source.comments, mut_self),
+                        annotation: mut_self.annotation,
+                        safe: mut_self.annotation.is_none(),
+                        owner: MethodOwner::Class,
+                    });
+                }
+                // A struct or an enum takes `mut self` with no type: the `:` is E0011, as the
+                // parser reports it after `self` in the body. The twin is in `Parser::signature`.
+                (
+                    Some(ast::MutSelf {
+                        annotation: Some(annotation),
+                        ..
+                    }),
+                    Some(_),
+                ) => {
+                    self.error(DiagnosticKind::Expected {
+                        what: "`)`".to_string(),
+                        found: "`:`".to_string(),
+                        at: Span::new(annotation.start(), annotation.start() + 1),
+                    });
+                }
+                _ => {}
             }
             declared.push((method, receiver));
         }
@@ -564,24 +581,12 @@ pub(super) fn method_holder(ty: Type) -> Option<Holder> {
     }
 }
 
-/// What the fix of E0018 removes for `mut_self`: the `mut` and the white space after it, up to
-/// a comment.
-fn mut_self_removal(comments: &[usize], mut_self: &ast::MutSelf) -> Span {
+/// What the fix of E0018 and of W0002 removes for `mut_self`: the `mut` and the white space after
+/// it, up to a comment.
+pub(super) fn mut_self_removal(comments: &[usize], mut_self: &ast::MutSelf) -> Span {
     let (keyword, receiver) = (mut_self.keyword, mut_self.receiver);
     Span::new(
         keyword.start(),
         removal_end(comments, keyword.end(), receiver.start()),
     )
-}
-
-/// What owns the methods of `holder`, whose type is named `name`, in the report of a `mut self`.
-fn method_owner(holder: Holder, name: &str) -> MethodOwner {
-    match holder {
-        Holder::Class(_) => MethodOwner::Class,
-        Holder::Struct(_) => MethodOwner::Struct,
-        Holder::Enum(_) => MethodOwner::Enum(name.to_string()),
-        Holder::Array | Holder::I64 => {
-            unreachable!("the prelude should write no `mut self` on a built-in type")
-        }
-    }
 }

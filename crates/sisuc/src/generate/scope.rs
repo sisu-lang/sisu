@@ -499,8 +499,11 @@ pub(crate) struct Const {
 /// A generated function or method: `depth: i64` first, then its parameters.
 pub(crate) struct Func {
     pub(crate) name: String,
-    /// For a method, the class whose method it is.
+    /// For a method, the class, struct or enum whose method it is.
     pub(crate) owner: Option<Ty>,
+    /// For a method that takes `mut self`: the most size that its receiver's place may hold. The
+    /// receiver is the first `mut` part of a call.
+    pub(crate) mut_self: Option<u64>,
     /// Each parameter's type, and for a `string` the most chars an argument may hold.
     pub(crate) params: Vec<(Ty, u64)>,
     /// For each parameter: `Some` if it is `mut`, and what it may add to the caller's place. A
@@ -514,9 +517,9 @@ pub(crate) struct Func {
 }
 
 impl Func {
-    /// Whether it has a `mut` parameter.
+    /// Whether it has a `mut` parameter, or takes `mut self`.
     pub(crate) fn has_mut(&self) -> bool {
-        self.muts.iter().any(Option::is_some)
+        self.mut_self.is_some() || self.muts.iter().any(Option::is_some)
     }
 }
 

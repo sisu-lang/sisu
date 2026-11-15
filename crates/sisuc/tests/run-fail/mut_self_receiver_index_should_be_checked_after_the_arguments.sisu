@@ -1,0 +1,22 @@
+// GIVEN `struct C { v: i64 }` with the `mut self` method `change`, and
+// `let mut cs = [C(v: 1), C(v: 1)]`
+// WHEN `main` runs `cs[1].change({ cs = [C(v: 1)]; 5 })`, whose block prints "block"
+// THEN it prints "block", and then panics "index 1 out of bounds for length 1" at the receiver:
+// the index check runs after the arguments
+struct C {
+    v: i64
+
+    fn change(mut self, x: i64) {
+        self.v = x
+    }
+}
+
+fn main() {
+    let mut cs = [C(v: 1), C(v: 1)]
+    cs[1].change({
+        cs = [C(v: 1)]
+        print("block")
+        5
+    })
+    print(cs[0].v)                    // never runs
+}

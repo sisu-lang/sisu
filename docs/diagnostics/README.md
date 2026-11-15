@@ -29,7 +29,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0015](E0015.md) | error | `,` between fields, variants or arms |
 | [E0016](E0016.md) | error | `let` in front of a field |
 | [E0017](E0017.md) | error | method without `self` |
-| [E0018](E0018.md) | error | `mut self` on a method |
+| [E0018](E0018.md) | error | `mut self` on a class method |
 | [E0020](E0020.md) | error | `self` that is not the first parameter |
 | [E0021](E0021.md) | error | assignment to something that is not a place |
 | [E0023](E0023.md) | error | range outside a `for`, a pattern, an index or a string's `get` |

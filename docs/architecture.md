@@ -320,6 +320,9 @@ interface has the interface between its type and its name,
 method of one name. `mir` and codegen see only concrete types, and a program
 with no generic declaration passes through, apart from those method names.
 The first line of `--emit tir` says whether `mono` took this fast path.
+A requirement can take `mut self` while the method that `mono` picks takes
+plain `self`. Then `mono` rewrites the call. The receiver is no `mut` part any
+more: its value is read before the call, and nothing is stored back.
 `mono` starts from the user's functions only. A prelude function joins the
 program when a function that the program has calls it. `--emit tir` prints the
 program after `mono`, with the prelude functions that it reaches.

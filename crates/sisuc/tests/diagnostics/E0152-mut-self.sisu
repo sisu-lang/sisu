@@ -1,0 +1,30 @@
+// GIVEN a requirement `read` that takes plain `self`
+// AND a struct whose `read` takes `mut self`
+// AND a requirement `add` that takes `mut self`, and a class that has no `add`
+// WHEN `sisu check` runs on it
+// THEN the struct's `read` is E0152, with the note that the requirement's `self` is not `mut`
+// AND the class is E0152, with the help `fn add(self)`: a class method takes plain `self`
+interface Reader {
+    fn read(self) -> i64
+}
+
+struct Tape: Reader {
+    n: i64
+
+    fn read(mut self) -> i64 {
+        self.n += 1
+        self.n
+    }
+}
+
+interface Adder {
+    fn add(mut self)
+}
+
+class Total: Adder {
+    mut n: i64
+}
+
+fn main() {
+    print(Total(n: 1).n)
+}

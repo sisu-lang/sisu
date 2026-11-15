@@ -8,13 +8,15 @@ use super::member::{Access, FieldOwner, FoundField, safe_value};
 use super::names::{Resolved, Site};
 use super::operator::Operator;
 use super::reports::Reported;
-use super::unused_names::{Copied, Used};
+use super::unused_names::{Copied, Owner, Used};
 use super::{
     Binding, BindingKind, Checked, Checker, Declared, Expectation, Origin, Poisoned, as_optional,
     block_expr, known_type, payload, type_of,
 };
 use crate::ast;
-use crate::diagnostic::{DiagnosticKind, Immutable, IndexUsage, UnwrapHelp, Written};
+use crate::diagnostic::{
+    DiagnosticKind, Immutable, IndexUsage, SelfTake, UnwrapHelp, ValueKind, Written,
+};
 use crate::parser::{is_place, is_range_target};
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -112,13 +114,32 @@ pub(super) enum Change {
     Field,
     /// `mut x` as an argument: the place gives its cause when it cannot change, and reports none.
     MutArg,
+    /// `x.m()`, where some `mut self` method has the name `m`: the place holds its report as a
+    /// `push` does, until the call finds the method. The flag says whether the call writes the
+    /// place: the method that the receiver's declared type finds takes `mut self`.
+    Receiver(Symbol, bool),
 }
 
 impl Change {
+    /// Whether the change writes its place. Every change does, except the receiver of a call
+    /// that only reads it.
+    fn writes(self) -> bool {
+        !matches!(self, Change::Receiver(_, false))
+    }
+
+    /// The method that a receiver change calls. A `push` has none.
+    fn method(self) -> Option<Symbol> {
+        match self {
+            Change::Receiver(method, _) => Some(method),
+            _ => None,
+        }
+    }
+
     /// How a field access of this change uses the field.
     fn access(self) -> Access {
         match self {
             Change::Push => Access::Push,
+            Change::Receiver(_, writes) => Access::Receiver(writes),
             Change::MutArg => Access::Mut,
             Change::Assign | Change::Element | Change::Field => Access::Assign,
         }
@@ -129,8 +150,18 @@ impl Change {
     fn of_part(self) -> Change {
         match self {
             Change::Assign | Change::Element | Change::Field => Change::Field,
-            Change::Push | Change::MutArg => self,
+            Change::Push | Change::MutArg | Change::Receiver(..) => self,
         }
+    }
+
+    /// Whether the change holds its report and its write stamp until the call is found.
+    fn holds(self) -> bool {
+        matches!(self, Change::Push | Change::Receiver(..))
+    }
+
+    /// Whether the call reads the place before it writes it, so a field on its path is read.
+    fn copies_in(self) -> bool {
+        matches!(self, Change::MutArg | Change::Receiver(..))
     }
 
     /// How the index that this change reaches uses its element: an assignment writes it, when
@@ -147,7 +178,12 @@ impl Change {
     /// E0001 for the root `name`, whose write at `at` its `cause` forbids.
     fn immutable(self, name: String, at: Span, cause: Immutable) -> DiagnosticKind {
         match self {
-            Change::Push => DiagnosticKind::PushToImmutable { name, at, cause },
+            Change::Push | Change::Receiver(..) => DiagnosticKind::PushToImmutable {
+                name,
+                at,
+                cause,
+                method: self.method(),
+            },
             Change::MutArg => {
                 unreachable!("a `mut` argument gives its cause back, and reports none")
             }
@@ -329,7 +365,33 @@ impl Checker<'_> {
     /// rule of `push_receiver`.
     pub(super) fn is_push_place(&mut self, e: &ast::Expr) -> bool {
         // A receiver checked ahead of its turn is a value already.
-        is_place(e) && !self.body.ahead_at.contains_key(&(e.span, false)) && self.rooted(e)
+        (is_place(e) || self.is_self_place(e))
+            && !self.body.ahead_at.contains_key(&(e.span, false))
+            && self.rooted(e)
+    }
+
+    /// Whether `e` is a bare `self` that is a place: the `self` of a struct or an enum method.
+    /// The `self` of a class method and `self` outside a method are values.
+    pub(super) fn is_self_place(&self, e: &ast::Expr) -> bool {
+        matches!(e.kind, ast::ExprKind::SelfValue)
+            && matches!(
+                self.body.self_type.known().map(Type::kind),
+                Some(TypeKind::Struct(..) | TypeKind::Enum(..))
+            )
+    }
+
+    /// Whether the call of `method` on `receiver` checks its receiver as a place, which waits for
+    /// the call in `body.pushed`: a `push`, or a method that shares its name with a `mut self`
+    /// method. A path with a `?.` in it is a value: E0062 reports a `mut self` call on it.
+    pub(super) fn parks_receiver(
+        &mut self,
+        receiver: &ast::Expr,
+        method: Symbol,
+        safe: bool,
+    ) -> bool {
+        let named = method.as_str() == "push"
+            || !safe && self.mut_self_names.contains(&method) && first_safe(receiver).is_none();
+        named && self.is_push_place(receiver)
     }
 
     /// Whether the chain of indexes and fields of the place `e` ends in a local or in an
@@ -365,7 +427,7 @@ impl Checker<'_> {
     /// class, an enum, a struct, a type parameter or an associated type is not stamped. The call
     /// may be a method of its own, which writes nothing.
     pub(super) fn push_receiver(&mut self, receiver: &ast::Expr) -> Checked {
-        let mut place = self.place(receiver.span, receiver, Change::Push);
+        let place = self.place(receiver.span, receiver, Change::Push);
         if !matches!(
             place.ty.map(innermost).map(Type::kind),
             Some(
@@ -378,6 +440,38 @@ impl Checker<'_> {
         ) {
             self.stamp_push(receiver);
         }
+        self.park(receiver, place)
+    }
+
+    /// The receiver of a call of `method`, a name that a `mut self` method has, checked once as a
+    /// place. The place waits in `body.pushed` for the call to find the method. Nothing is stamped
+    /// yet: a plain method only reads its receiver.
+    pub(super) fn receiver_place(&mut self, receiver: &ast::Expr, method: Symbol) -> Checked {
+        let writes = self.receiver_writes(receiver, method);
+        let place = self.place(receiver.span, receiver, Change::Receiver(method, writes));
+        self.park(receiver, place)
+    }
+
+    /// Whether a call of `method` on the place `receiver` writes it, by the declared types: the
+    /// method that the type of the receiver finds takes `mut self`. Each index takes one array
+    /// layer off, and a range index none. A built-in type has no such method. A type parameter,
+    /// or a path that the types do not decide, may find one.
+    pub(super) fn receiver_writes(&mut self, receiver: &ast::Expr, method: Symbol) -> bool {
+        let Ok((_, ty)) = self.struct_walk(receiver) else {
+            return true;
+        };
+        let ty = innermost(ty);
+        match ty.kind() {
+            TypeKind::Struct(..) | TypeKind::Enum(..) => self.finds_mut_self(ty, method),
+            TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => true,
+            // Any other kind, such as a class or a built-in type, has no `mut self` method.
+            _ => false,
+        }
+    }
+
+    /// Keeps `place`, the place of `receiver`, in `body.pushed`, and gives the value it holds,
+    /// which owns the operands of the place.
+    fn park(&mut self, receiver: &ast::Expr, mut place: CheckedPlace) -> Checked {
         // A place of type `Error` has reported itself.
         let read = match (place.path.take(), place.ty) {
             (Some(path), Some(_)) => Ok(self.read(build(path), receiver.span)),
@@ -400,6 +494,25 @@ impl Checker<'_> {
     pub(super) fn take_pushed(&mut self, receiver: &ast::Expr) -> Option<CheckedPlace> {
         let (at, place) = self.body.pushed.take()?;
         (at == receiver.span).then_some(place)
+    }
+
+    /// The report of `place`, a place that a call changes: the report that it holds, raised now,
+    /// or the one that it made.
+    pub(super) fn place_report(&mut self, mut place: CheckedPlace) -> Option<Reported> {
+        match place.held.take() {
+            Some(d) => Some(self.error(d)),
+            None => place.reported,
+        }
+    }
+
+    /// Takes the place that `park` kept for `receiver`, if it kept one. A place kept for another
+    /// receiver stays.
+    pub(super) fn take_parked(&mut self, receiver: &ast::Expr) -> Option<CheckedPlace> {
+        let (at, _) = self.body.pushed.as_ref()?;
+        if *at != receiver.span {
+            return None;
+        }
+        self.body.pushed.take().map(|(_, place)| place)
     }
 
     /// Whether the `?.` of the root field of the place that `push_receiver` checked makes its
@@ -584,7 +697,11 @@ impl Checker<'_> {
         if !is_place(receiver_expr) {
             let at = receiver_expr.span;
             let range = self.push_range(receiver_expr, args);
-            let reported = self.error(DiagnosticKind::PushToTemporary { at, range });
+            let reported = self.error(DiagnosticKind::PushToTemporary {
+                at,
+                range,
+                method: None,
+            });
             return not_pushed(self, reported);
         }
         let (read, mut place) = match (receiver, place) {
@@ -934,7 +1051,7 @@ impl Checker<'_> {
         cause: Immutable,
     ) -> (Option<DiagnosticKind>, Option<Reported>) {
         let d = change.immutable(name, at, cause);
-        if change == Change::Push {
+        if change.holds() {
             return (Some(d), None);
         }
         (None, Some(self.error(d)))
@@ -944,6 +1061,17 @@ impl Checker<'_> {
     /// the root of a path that crosses no class object is reassigned, as `reassign_root` says.
     /// The root of a class field's base is written.
     pub(super) fn stamp_push(&mut self, target: &ast::Expr) {
+        self.stamp_change(target, None);
+    }
+
+    /// Stamps what the place `target` of a call of the `mut self` method `func` writes, as
+    /// `stamp_push` does. The binding at the root keeps `func` in its `mut_self_writers`.
+    pub(super) fn stamp_call(&mut self, target: &ast::Expr, func: tir::FuncId) {
+        self.stamp_change(target, Some(func));
+    }
+
+    /// `stamp_push`, or `stamp_call` when `by` names the method.
+    fn stamp_change(&mut self, target: &ast::Expr, by: Option<tir::FuncId>) {
         let (&ast::ExprKind::Name(name), false) =
             (&place_root(target).kind, self.crosses_class(target))
         else {
@@ -952,7 +1080,15 @@ impl Checker<'_> {
         let stamp = self.write_stamp();
         if let Some(b) = self.lookup(name) {
             b.written = stamp;
-            b.reassigned |= b.kind == BindingKind::Var;
+            if b.kind == BindingKind::Var {
+                match by {
+                    None => b.reassigned = true,
+                    Some(func) if !b.mut_self_writers.contains(&func) => {
+                        b.mut_self_writers.push(func);
+                    }
+                    Some(_) => {}
+                }
+            }
         }
     }
 
@@ -987,7 +1123,7 @@ impl Checker<'_> {
         change: Change,
     ) -> CheckedPlace {
         // A `push` stamps by the rule of `push_receiver`.
-        let stamp = (change != Change::Push).then(|| self.write_stamp());
+        let stamp = (!change.holds()).then(|| self.write_stamp());
         let Some(b) = self.lookup(name) else {
             if let Some(place) = self.constant_place(span, name, change) {
                 return place;
@@ -1044,6 +1180,61 @@ impl Checker<'_> {
         }
     }
 
+    /// The bare `self` of a method as the place `target`, which `span` changes as `change` says:
+    /// local 0, with the holder's type. A plain `self` cannot change: `self = e` is E0073, and a
+    /// `push` or a call holds its E0001. A `mut self` is stamped as written here for an assignment
+    /// and for a `mut` argument, which `mut_place` sends only for a `mut self`. A `push` and a
+    /// call stamp it at the call.
+    fn self_place(&mut self, span: Span, target: &ast::Expr, change: Change) -> CheckedPlace {
+        let Some(ty) = self.body.self_type.known() else {
+            // Outside a method, or in a block that failed: the value reports it.
+            let failed = self.expr(target, Expectation::None).err();
+            return CheckedPlace::failed(failed.map(|failed| failed.reported()));
+        };
+        let (held, reported) = if self.body.self_mut {
+            if !change.holds() {
+                self.stamp_root(target);
+            }
+            (None, None)
+        } else if change.holds() {
+            self.forbid(change, "self".to_string(), span, self.struct_self())
+        } else {
+            // A class method keeps the text of an object that is shared.
+            let take = (!matches!(ty.kind(), TypeKind::Class(..))).then(|| self.self_take());
+            let d = DiagnosticKind::AssignToSelf {
+                at: target.span,
+                take,
+            };
+            // No reader needs this report today: `assigned` takes the path, and `self += e`
+            // fails first with E0032. It stays, so that each place that failed holds its report.
+            (None, Some(self.error(d)))
+        };
+        CheckedPlace {
+            path: Some(Path::local(tir::LocalId(0))),
+            ty: Some(ty),
+            writable: true,
+            held,
+            reported,
+            ..CheckedPlace::failed(None)
+        }
+    }
+
+    /// How the plain `self` of this method can change: by taking `mut self`, unless a plain `self`
+    /// requirement binds the method.
+    pub(super) fn self_take(&self) -> SelfTake {
+        match self.body.owner {
+            Some(Owner::Func(func)) if !self.plain_self_requirement.contains(&func) => {
+                (self.signatures[func.0].self_span).map_or(SelfTake::Copy, SelfTake::Fix)
+            }
+            _ => SelfTake::Copy,
+        }
+    }
+
+    /// Why the plain `self` of this method cannot change.
+    pub(super) fn struct_self(&self) -> Immutable {
+        Immutable::StructSelf(self.self_take())
+    }
+
     /// The error for a write to `name`, at `at`, when a type parameter or an associated type holds
     /// the name: it is no value, as in a read.
     fn hidden_name(&mut self, name: Symbol, at: Span) -> Option<Reported> {
@@ -1077,7 +1268,7 @@ impl Checker<'_> {
         let array = found.2.is_some_and(|held| {
             matches!(held.kind(), TypeKind::Array(_)) || is_optional_array(held)
         });
-        if change == Change::Push && !array {
+        if change.holds() && !array {
             return Err(reported);
         }
         Ok((found, Some(reported)))
@@ -1117,12 +1308,13 @@ impl Checker<'_> {
     pub(super) fn place(&mut self, span: Span, target: &ast::Expr, change: Change) -> CheckedPlace {
         match &target.kind {
             &ast::ExprKind::Name(name) => self.name_place(span, target, name, change),
+            ast::ExprKind::SelfValue => self.self_place(span, target, change),
             ast::ExprKind::Field {
                 base, name, safe, ..
             } => self.field_place(span, target, (base, name, *safe), change),
             ast::ExprKind::Index { base, index } => {
                 let inner_change = match change {
-                    Change::Push | Change::MutArg => change,
+                    Change::Push | Change::MutArg | Change::Receiver(..) => change,
                     Change::Assign | Change::Element | Change::Field => Change::Element,
                 };
                 let outer = std::mem::replace(&mut self.body.indexed, true);
@@ -1205,7 +1397,7 @@ impl Checker<'_> {
         change: Change,
     ) -> CheckedPlace {
         let access = change.access();
-        if change != Change::Push {
+        if !change.holds() {
             self.stamp_root(base);
         }
         let root = place_root(base);
@@ -1217,10 +1409,12 @@ impl Checker<'_> {
             ast::ExprKind::Name(_) => Some(root.span),
             _ => self.body.quiet,
         };
+        // The base of a receiver whose call only reads it is read as any value is.
+        let chain = change.writes().then_some((span, change));
         let outer = (
             std::mem::replace(&mut self.body.indexed, indexed),
             std::mem::replace(&mut self.body.quiet, quiet),
-            self.body.write_chain.replace((span, change)),
+            std::mem::replace(&mut self.body.write_chain, chain),
         );
         let checked = self.value(base, Expectation::None);
         (self.body.indexed, self.body.quiet, self.body.write_chain) = outer;
@@ -1263,7 +1457,7 @@ impl Checker<'_> {
                     if let Some(ty) = ty {
                         let _ = self.find_field(ty, base, name, access);
                     }
-                    self.reassign_root(target);
+                    self.reassign_for(target, change);
                     return CheckedPlace::failed(Some(reported));
                 }
             }
@@ -1274,7 +1468,7 @@ impl Checker<'_> {
             match self.field_target(known_type(&checked), base, name, (access, change)) {
                 Ok(found) => found,
                 Err(reported) => {
-                    self.reassign_root(target);
+                    self.reassign_for(target, change);
                     return CheckedPlace::failed(Some(reported));
                 }
             };
@@ -1288,7 +1482,7 @@ impl Checker<'_> {
         let on_optional_report = on_optional;
         let on_optional = on_optional.is_some();
         // The copy-in reads the field.
-        if change == Change::MutArg {
+        if change.copies_in() {
             self.record(owner.used(index), target.span);
         }
         // The first error of the place: its base's, if the base failed.
@@ -1382,13 +1576,13 @@ impl Checker<'_> {
             Ok(found) => found,
             Err(reported) => {
                 self.read_root(root);
-                self.reassign_root(target);
+                self.reassign_for(target, change);
                 return CheckedPlace::failed(Some(reported));
             }
         };
         let shown = self.field_shown(owner, index);
         // The copy-in reads the field.
-        if change == Change::MutArg {
+        if change.copies_in() {
             self.record(owner.used(index), target.span);
         }
         let read = match checked {
@@ -1408,7 +1602,7 @@ impl Checker<'_> {
         let untyped = |checker: &mut Self| ty.is_none().then(|| checker.proof(name.span)); // proof: declaration
         if !is_path(&read, base) {
             self.read_root(root);
-            self.reassign_root(target);
+            self.reassign_for(target, change);
             let at = target.span;
             let read = ty.map(|ty| {
                 let kind = ExprKind::StructField {
@@ -1424,8 +1618,12 @@ impl Checker<'_> {
                     let d = DiagnosticKind::AssignToExpression { at, range: None };
                     (None, Some(self.error(d)), None)
                 }
-                Change::Push => (
-                    Some(DiagnosticKind::PushToTemporary { at, range: None }),
+                Change::Push | Change::Receiver(..) => (
+                    Some(DiagnosticKind::PushToTemporary {
+                        at,
+                        range: None,
+                        method: change.method(),
+                    }),
                     None,
                     read,
                 ),
@@ -1448,10 +1646,10 @@ impl Checker<'_> {
                 let named = self.name_place(span, root, root_name, written);
                 (named.writable, named.held, named.refused, named.reported)
             }
-            // The `self` of a struct method: a `mut self`, with its E0018, can change.
+            // The `self` of a `mut self` method can change.
             (Root::Local(_), _) if self.body.self_mut => (true, None, None, None),
             (Root::Local(_), _) => {
-                let cause = Immutable::StructSelf;
+                let cause = self.struct_self();
                 if change == Change::MutArg {
                     (true, None, Some(cause), None)
                 } else {
@@ -1515,7 +1713,7 @@ impl Checker<'_> {
             let array = ty.is_some_and(|ty| matches!(payload(ty).kind(), TypeKind::Array(_)));
             let writes = match change {
                 Change::Push => array,
-                Change::MutArg => false,
+                Change::MutArg | Change::Receiver(..) => false,
                 Change::Assign | Change::Element | Change::Field => true,
             };
             // A `?.` that takes out a class object: the field of the object is a place, and only
@@ -1549,7 +1747,7 @@ impl Checker<'_> {
             match self.field_target(known_type(checked), base, name, (change.access(), change)) {
                 Ok(found) => found,
                 Err(reported) => {
-                    self.reassign_root(target);
+                    self.reassign_for(target, change);
                     return CheckedPlace::failed(Some(reported));
                 }
             };
@@ -1601,7 +1799,7 @@ impl Checker<'_> {
         let (owner, index, ty) = match self.find_field(payload, base, name, change.access()) {
             Ok(found) => found,
             Err(reported) => {
-                self.reassign_root(target);
+                self.reassign_for(target, change);
                 return CheckedPlace::failed(Some(reported));
             }
         };
@@ -1614,7 +1812,7 @@ impl Checker<'_> {
                 ..CheckedPlace::failed(None)
             };
         }
-        let held = if change == Change::Push {
+        let held = if change.holds() {
             Some(self.chain_write((span, change), base, (base, name)))
         } else {
             // The copy-in reads the field.
@@ -1656,24 +1854,78 @@ impl Checker<'_> {
         if let (Some(root), Some(cause)) = (root, self.chain_root_cause(base)) {
             return change.of_part().immutable(root, span, cause);
         }
-        // The value to replace: a place on one line whose `?.` takes out a struct.
-        let replace = self
-            .one_line(object.span)
+        DiagnosticKind::ChainWriteOnStruct {
+            at: Span::new(object.span.end(), name.span.end()),
+            replace: self.chain_replace(object),
+        }
+    }
+
+    /// The value that the help of a `?.` write or `mut self` call replaces: `object` as written,
+    /// when it is a place on one line whose `?.` takes out a struct or an enum.
+    fn chain_replace(&self, object: &ast::Expr) -> Option<String> {
+        self.one_line(object.span)
             .then(|| self.replaceable(object))
             .flatten()
             .filter(|&(can, ty)| {
-                can && matches!(ty.kind(), TypeKind::Optional(payload) if is_struct(payload))
+                can && matches!(ty.kind(), TypeKind::Optional(payload)
+                    if matches!(payload.kind(), TypeKind::Struct(..) | TypeKind::Enum(..)))
             })
-            .map(|_| self.source.text(object.span).to_string());
-        DiagnosticKind::ChainWriteOnStruct {
-            at: Span::new(object.span.end(), name.span.end()),
-            replace,
+            .map(|_| self.source.text(object.span).to_string())
+    }
+
+    /// The report of the call of the `mut self` method `method` on `receiver`, a value of `kind`
+    /// that the `?.` after `object` before `name` leads to. A root that cannot change is E0001,
+    /// as `chain_write` orders it. Else it is E0062 at the `?.`, with the help of the write form:
+    /// part 1 cannot write through it.
+    pub(super) fn chain_call(
+        &mut self,
+        receiver: &ast::Expr,
+        (object, name): (&ast::Expr, &ast::Ident),
+        (method, kind): (Symbol, ValueKind),
+    ) -> DiagnosticKind {
+        let root = match self.struct_root(receiver) {
+            StructRoot::Binding(name) => Some(name.to_string()),
+            StructRoot::SelfValue => Some("self".to_string()),
+            StructRoot::Other => None,
+        };
+        if let (Some(root), Some(cause)) = (root, self.chain_root_cause(receiver)) {
+            return Change::Receiver(method, true).immutable(root, receiver.span, cause);
         }
+        DiagnosticKind::ChainCallOnValue {
+            at: Span::new(object.span.end(), name.span.end()),
+            method,
+            kind,
+            replace: self.chain_replace(object),
+        }
+    }
+
+    /// Whether the method `func` takes its receiver in the call that the fix of E0070 or E0120
+    /// writes. `receiver` is the first argument, or `None` for the `self` of the method that
+    /// holds the call. A plain `self` method takes any receiver. A `mut self` method needs a root
+    /// that can change. Its failed call stamps that root as written, as the call would: W0002's
+    /// fix would remove the `mut` that the fixed call needs.
+    pub(super) fn fixed_receiver_takes(
+        &mut self,
+        func: tir::FuncId,
+        receiver: Option<&ast::Expr>,
+    ) -> bool {
+        if !self.signatures[func.0].self_mut {
+            return true;
+        }
+        // `struct_root` finds no root for the `self` of an enum: take it here for both kinds.
+        let receiver = receiver.filter(|r| !matches!(r.kind, ast::ExprKind::SelfValue));
+        let Some(receiver) = receiver else {
+            self.body.self_written = self.write_stamp();
+            return self.body.self_mut;
+        };
+        // A root that `struct_root` does not find, such as a call or a slice, is a temporary.
+        let rooted = !matches!(self.struct_root(receiver), StructRoot::Other);
+        self.chain_root_cause(receiver).is_none() && rooted
     }
 
     /// Why the root of the place `target` cannot change, when a write through its struct path
     /// reaches it. A path that crosses a class object writes no root. The root binding is
-    /// reassigned: W0002's fix would lead to this E0001.
+    /// reassigned, and `self` is stamped: W0002's fix would lead to this E0001.
     fn chain_root_cause(&mut self, target: &ast::Expr) -> Option<Immutable> {
         match self.struct_root(target) {
             StructRoot::Binding(name) => {
@@ -1683,7 +1935,11 @@ impl Checker<'_> {
                 b.reassigned |= b.kind == BindingKind::Var;
                 binding_cause(b)
             }
-            StructRoot::SelfValue => (!self.body.self_mut).then_some(Immutable::StructSelf),
+            StructRoot::SelfValue => {
+                // As the binding above is reassigned: W0002 of `mut self` must not warn here.
+                self.body.self_written = self.write_stamp();
+                (!self.body.self_mut).then(|| self.struct_self())
+            }
             StructRoot::Other => None,
         }
     }
@@ -1698,7 +1954,7 @@ impl Checker<'_> {
             StructRoot::Binding(root) => (root, binding_cause(self.binding(root)?)),
             StructRoot::SelfValue => (
                 Symbol::intern("self"),
-                (!self.body.self_mut).then_some(Immutable::StructSelf),
+                (!self.body.self_mut).then(|| self.struct_self()),
             ),
             StructRoot::Other => return None,
         };
@@ -1735,16 +1991,38 @@ impl Checker<'_> {
         }
     }
 
-    /// Marks the binding at the root of the place `target` as reassigned. A path that crosses a
-    /// class object marks nothing: its write needs no `mut` of the root. A path that the declared
-    /// types do not decide also marks it, such as one with a missing field. The fix of its error
-    /// needs the `mut`.
+    /// Marks the binding at the root of the place `target` as reassigned, or stamps a root `self`
+    /// as written. A path that crosses a class object marks nothing: its write needs no `mut` of
+    /// the root. A path that the declared types do not decide also marks it, such as one with a
+    /// missing field. The fix of its error needs the `mut`.
     pub(super) fn reassign_root(&mut self, target: &ast::Expr) {
-        if let ast::ExprKind::Name(name) = place_root(target).kind
-            && !self.crosses_class(target)
-            && let Some(b) = self.lookup(name)
-        {
-            b.reassigned |= b.kind == BindingKind::Var;
+        if self.crosses_class(target) {
+            return;
+        }
+        match place_root(target).kind {
+            ast::ExprKind::Name(name) => {
+                if let Some(b) = self.lookup(name) {
+                    b.reassigned |= b.kind == BindingKind::Var;
+                }
+            }
+            // `self` has no binding: its stamp is what W0002 of a `mut self` reads.
+            ast::ExprKind::SelfValue => self.body.self_written = self.write_stamp(),
+            _ => {}
+        }
+    }
+
+    /// Marks the root of `target` as reassigned, as `reassign_root` does, when `change` writes.
+    fn reassign_for(&mut self, target: &ast::Expr, change: Change) {
+        if change.writes() {
+            self.reassign_root(target);
+        }
+    }
+
+    /// Marks the root of `target` as reassigned, as `reassign_root` does, unless a range index on
+    /// the path gives a copy: a write to the copy changes no root.
+    pub(super) fn reassign_chain_root(&mut self, target: &ast::Expr) {
+        if !matches!(self.struct_walk(target), Ok((StructRoot::Other, _))) {
+            self.reassign_root(target);
         }
     }
 

@@ -135,6 +135,8 @@ pub(super) struct RequirementInfo {
     pub(super) own_at: Vec<Span>,
     /// The bounds of each of `own`.
     pub(super) bounds: Vec<Bounds>,
+    /// `mut ` in front of `self`, through the start of `self`, if written.
+    pub(super) self_mut: Option<Span>,
     /// Without `self`; `None` is `Error`.
     pub(super) params: Vec<Option<Type>>,
     /// Whether each of `params` is `mut`.
@@ -274,10 +276,24 @@ pub(super) enum LangPath {
     None,
 }
 
+/// What the first loop of pass 1b (`Checker::interface_head`) keeps of one interface for the
+/// second (`Checker::interface_signature`).
+struct Head<'a> {
+    /// The associated types that are first of their name.
+    declared: Vec<&'a ast::AssocType>,
+    /// The bounds of each of them, as written. `None` is a bound that failed, and one that names
+    /// a member and waits for the second loop.
+    bounds: Vec<Vec<Option<Bound>>>,
+    /// The bound checks that the first loop queued for the interface.
+    queued: std::ops::Range<usize>,
+}
+
 impl Checker<'_> {
-    /// Pass 1b, after every name is known: resolves each interface's bounds, inheritance and
+    /// Pass 1b, after every name is known: resolves each interface's inheritance, bounds and
     /// requirement signatures, then reports its inheritance cycles and the requirements that it
-    /// declares again. `items` holds the interfaces in `InterfaceId` order.
+    /// declares again. The inheritance of every interface comes first (`interface_head`), and
+    /// then the rest of each (`interface_signature`). `items` holds the interfaces in
+    /// `InterfaceId` order.
     pub(super) fn interface_signatures(&mut self, items: &[&ast::Item]) {
         let interfaces: Vec<&ast::Interface> = items
             .iter()
@@ -286,10 +302,19 @@ impl Checker<'_> {
                 _ => None,
             })
             .collect();
-        for (i, interface) in interfaces.iter().enumerate() {
+        // First every inheritance list, and then the signatures: a read of an associated type
+        // goes through the lists of the interfaces on the way, whatever their order.
+        let mut heads = Vec::with_capacity(interfaces.len());
+        for (i, &interface) in interfaces.iter().enumerate() {
             // A fresh body: the parameters of a requirement are bound in it, and so are dropped.
+            let (head, _) = self.with_body(Body::default(), |checker| {
+                checker.interface_head(interface, InterfaceId(i))
+            });
+            heads.push(head);
+        }
+        for (i, (&interface, head)) in interfaces.iter().zip(heads).enumerate() {
             self.with_body(Body::default(), |checker| {
-                checker.interface_signature(interface, InterfaceId(i));
+                checker.interface_signature(interface, InterfaceId(i), head);
             });
         }
         let edges: Vec<Vec<usize>> = self
@@ -318,7 +343,6 @@ impl Checker<'_> {
         id: InterfaceId,
         own: TypeArgs,
     ) -> Vec<&'a ast::AssocType> {
-        let this_type = Type::intern(TypeKind::Param(self.interfaces[id.0].type_params[0], 0));
         let mut named = FxHashMap::default();
         let mut declared = Vec::new();
         for assoc in &interface.assoc {
@@ -327,8 +351,23 @@ impl Checker<'_> {
                 declared.push(assoc);
             }
         }
+        self.interfaces[id.0].assoc = (declared.iter())
+            .map(|assoc| AssocInfo {
+                name: assoc.name.clone(),
+                bounds: Bounds::default(),
+            })
+            .collect();
+        self.put_assoc_in_scope(id, own);
+        declared
+    }
+
+    /// Puts the associated types of the interface `id`, whose parameters are `own` as arguments,
+    /// in scope as bare names over `Self`. The report of a name declared twice is made once, by
+    /// `declare_assoc`.
+    fn put_assoc_in_scope(&mut self, id: InterfaceId, own: TypeArgs) {
+        let this_type = Type::intern(TypeKind::Param(self.interfaces[id.0].type_params[0], 0));
         self.body.assoc = Rc::new(Choices::new(
-            (declared.iter().enumerate())
+            (self.interfaces[id.0].assoc.iter().enumerate())
                 .map(|(k, assoc)| {
                     let k =
                         u32::try_from(k).expect("an interface should have fewer than 2^32 types");
@@ -341,34 +380,146 @@ impl Checker<'_> {
                 })
                 .collect(),
         ));
-        self.interfaces[id.0].assoc = (declared.iter())
-            .map(|assoc| AssocInfo {
-                name: assoc.name.clone(),
-                bounds: Bounds::default(),
-            })
-            .collect();
-        declared
     }
 
-    /// Resolves the bounds, inheritance and requirements of `interface`, whose id is `id`.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the requirements share the interface's scope, and a split passes each part of it"
-    )]
-    fn interface_signature(&mut self, interface: &ast::Interface, id: InterfaceId) {
+    /// Puts the type parameters of the interface `id` and its `Self` in scope. Gives the bound
+    /// that `Self` conforms to the interface itself, with the interface's parameters as the
+    /// arguments.
+    fn enter_interface(&mut self, interface: &ast::Interface, id: InterfaceId) -> Bound {
         let params = self.interfaces[id.0].type_params.clone();
         self.body.set_type_params(&params);
         self.body.self_type = SelfType::Known(Type::intern(TypeKind::Param(params[0], 0)));
-        // `Self` conforms to the interface itself, with its own parameters as the arguments.
         let own: Vec<Type> = (1..)
             .zip(&params[1..])
             .map(|(i, &name)| Type::intern(TypeKind::Param(name, i)))
             .collect();
-        let this = Bound {
+        Bound {
             interface: id,
             args: TypeArgs::intern(&own),
             at: interface.name.span,
-        };
+        }
+    }
+
+    /// The first loop of pass 1b for `interface`, whose id is `id`: its associated types, its
+    /// inheritance list, and the bounds of its associated types that name no member. A read of
+    /// an associated type goes through the inheritance and the bounds of other interfaces. So
+    /// each of them is final before the second loop (`interface_signature`) reads one. The bounds
+    /// of the parameters are not in scope yet. The checks that this queues take them in the
+    /// second loop.
+    fn interface_head<'a>(&mut self, interface: &'a ast::Interface, id: InterfaceId) -> Head<'a> {
+        let from = self.queued();
+        let this = self.enter_interface(interface, id);
+        // The associated types come first: a bare name stands for one in the interface.
+        let declared = self.declare_assoc(interface, id, this.args);
+        self.inherit_list(interface, id, &declared);
+        let mut bounds = Vec::with_capacity(declared.len());
+        for (k, assoc) in declared.iter().enumerate() {
+            let ty = self.body.assoc.at(k).ty;
+            // A bound that names a member waits for the second loop.
+            let row: Vec<Option<Bound>> = (assoc.bounds.iter())
+                .map(|bound| {
+                    if bound.names_member() {
+                        None
+                    } else {
+                        self.bound(bound, ty)
+                    }
+                })
+                .collect();
+            let failed = (row.iter().zip(&assoc.bounds))
+                .any(|(found, written)| found.is_none() && !written.names_member());
+            self.interfaces[id.0].assoc[k].bounds = Bounds {
+                list: row.iter().flatten().copied().collect(),
+                failed,
+            };
+            bounds.push(row);
+        }
+        Head {
+            declared,
+            bounds,
+            queued: from..self.queued(),
+        }
+    }
+
+    /// Resolves the inheritance list of `interface`, whose id is `id` and whose associated types
+    /// are `declared`. An entry that names an associated type of `Self`, of a parameter or of the
+    /// interface is never fit: it is reported from its text, so that no read of a closure that is
+    /// not final is made for it.
+    fn inherit_list(
+        &mut self,
+        interface: &ast::Interface,
+        id: InterfaceId,
+        declared: &[&ast::AssocType],
+    ) {
+        let mut local = FxHashSet::default();
+        if !interface.inherits.is_empty() {
+            local.extend(interface.type_params.iter().map(|param| param.name.name));
+            local.extend(declared.iter().map(|assoc| assoc.name.name));
+        }
+        let is_local = |name: Symbol| local.contains(&name);
+        let mut inherits = Vec::new();
+        let mut inherits_at = Vec::new();
+        let mut inherits_failed = false;
+        for ty in &interface.inherits {
+            let found = if ty.names_local_member(&is_local) {
+                self.report_inherited_member(ty, interface, &is_local);
+                None
+            } else {
+                self.inherited(ty, interface)
+            };
+            inherits_failed |= found.is_none();
+            if let Some(bound) = found {
+                inherits.push(bound);
+                inherits_at.push(ty.span);
+            }
+        }
+        self.interfaces[id.0].inherits = inherits;
+        self.interfaces[id.0].inherits_at = inherits_at;
+        self.interfaces[id.0].inherits_failed = inherits_failed;
+    }
+
+    /// Reports the entry `ty` of the inheritance list of `interface`, which names an associated
+    /// type of `Self` or of a name that `is_local`: the entry is no interface, or an argument of
+    /// it is no parameter, and a member is neither.
+    fn report_inherited_member(
+        &mut self,
+        ty: &ast::TypeExpr,
+        interface: &ast::Interface,
+        is_local: &impl Fn(Symbol) -> bool,
+    ) {
+        if ty.optional > 0 {
+            self.not_an_interface(ty, NotInterface::Optional);
+            return;
+        }
+        match &ty.kind {
+            ast::TypeKind::Applied(applied) => {
+                for written in (applied.args.iter()).filter(|arg| arg.names_local_member(is_local))
+                {
+                    self.error(DiagnosticKind::InheritedArgument {
+                        arg: written.to_string(),
+                        interface: interface.name.name.to_string(),
+                        at: written.span,
+                    });
+                }
+            }
+            ast::TypeKind::Member { .. } => self.not_an_interface(ty, NotInterface::Assoc),
+            ast::TypeKind::Array(_) => self.not_an_interface(ty, NotInterface::Array),
+            ast::TypeKind::Any(_) => self.not_an_interface(ty, NotInterface::Any),
+            ast::TypeKind::Name(_) | ast::TypeKind::SelfType => {
+                unreachable!("a name that is no member should not be reported as one")
+            }
+        }
+    }
+
+    /// Resolves the bounds, requirements and parameters of `interface`, whose id is `id`: the
+    /// second loop of pass 1b, after `interface_head` has run for every interface. `head` is
+    /// what the first loop kept for this one.
+    fn interface_signature(
+        &mut self,
+        interface: &ast::Interface,
+        id: InterfaceId,
+        mut head: Head<'_>,
+    ) {
+        let this = self.enter_interface(interface, id);
         self.interfaces[id.0].bounds = self.declare_bounds(
             0,
             vec![Bounds {
@@ -377,38 +528,13 @@ impl Checker<'_> {
             }],
             &interface.type_params,
         );
-        // The associated types come first: a bare name stands for one in the interface.
-        let declared = self.declare_assoc(interface, id, this.args);
-        let mut inherits_failed = false;
-        let (inherits, inherits_at) = interface
-            .inherits
-            .iter()
-            .filter_map(|ty| {
-                let found = self.inherited(ty, interface);
-                inherits_failed |= found.is_none();
-                Some((found?, ty.span))
-            })
-            .unzip();
-        self.interfaces[id.0].inherits = inherits;
-        self.interfaces[id.0].inherits_at = inherits_at;
-        self.interfaces[id.0].inherits_failed = inherits_failed;
-        // A read in the list found closures before the flag was set. A closure entry is scanned
-        // for the flag once, when it is added. So forget the closures, and what they gave.
-        // `unknown_assoc` stays, because an entry found here stays true.
-        self.body.forget_bounds(self.body.bounds.len());
+        // The checks that the first loop queued waited without the bounds of the parameters.
+        self.rescope(head.queued.clone());
+        self.put_assoc_in_scope(id, this.args);
+        self.member_bounds(id, &mut head);
+        // A read in these bounds can find the closure of an associated type whose bounds that
+        // name a member were not in yet.
         self.body.assoc_conforming.clear();
-        for (k, assoc) in declared.iter().enumerate() {
-            let ty = self.body.assoc.at(k).ty;
-            let mut failed = false;
-            let list = (assoc.bounds.iter())
-                .filter_map(|bound| {
-                    let found = self.bound(bound, ty);
-                    failed |= found.is_none();
-                    found
-                })
-                .collect();
-            self.interfaces[id.0].assoc[k].bounds = Bounds { list, failed };
-        }
         let mut first = FxHashMap::default();
         // The names of the interface's parameters, and then the requirement's own: the scope of
         // the interface is set up once, and a requirement adds and removes only its own.
@@ -454,6 +580,9 @@ impl Checker<'_> {
                 .map_or(Some(Type::UNIT), |ret| self.resolve(ret));
             let ret_queued = from..self.queued();
             self.body.truncate_type_params(scope);
+            if requirement.mut_self.is_some() {
+                self.mut_self_names.insert(requirement.name.name);
+            }
             if first_of_name {
                 let r = self.interfaces[id.0].requirements.len();
                 for (i, queued) in queued.into_iter().enumerate() {
@@ -470,6 +599,8 @@ impl Checker<'_> {
                         .map(|p| p.name.span)
                         .collect(),
                     bounds,
+                    self_mut: (requirement.mut_self.as_ref())
+                        .map(|m| Span::new(m.keyword.start(), m.receiver.start())),
                     params,
                     muts: requirement.params.iter().map(|p| p.mutable).collect(),
                     param_names: requirement.params.iter().map(|p| p.name.clone()).collect(),
@@ -486,6 +617,26 @@ impl Checker<'_> {
                     taken.remove(&param.name.name);
                 }
             }
+        }
+    }
+
+    /// Resolves the bounds of the associated types of `id` that name a member, which waited for
+    /// the second loop: they read other lists, which are final now.
+    fn member_bounds(&mut self, id: InterfaceId, head: &mut Head<'_>) {
+        for (k, assoc) in head.declared.iter().enumerate() {
+            if !assoc.bounds.iter().any(ast::TypeExpr::names_member) {
+                continue;
+            }
+            let ty = self.body.assoc.at(k).ty;
+            for (found, written) in head.bounds[k].iter_mut().zip(&assoc.bounds) {
+                if written.names_member() {
+                    *found = self.bound(written, ty);
+                }
+            }
+            self.interfaces[id.0].assoc[k].bounds = Bounds {
+                list: head.bounds[k].iter().flatten().copied().collect(),
+                failed: head.bounds[k].iter().any(Option::is_none),
+            };
         }
     }
 
@@ -545,16 +696,20 @@ impl Checker<'_> {
             list: row.into_iter().flatten().collect(),
         }));
         self.body.set_bounds(first, bounds.clone());
-        self.rescope(queued);
+        self.rescope(queued..self.queued());
         bounds
     }
 
-    /// Puts the checks queued after the first `queued` in the scope now in place, which has the
-    /// bounds that were not in scope when they were queued.
-    pub(super) fn rescope(&mut self, queued: usize) {
-        if self.queued() > queued {
+    /// Puts the checks `queued` in the scope now in place, which has the bounds that were not in
+    /// scope when they were queued.
+    pub(super) fn rescope(&mut self, queued: std::ops::Range<usize>) {
+        if !queued.is_empty() {
             let scope = self.scope();
-            for check in self.pending_bounds.iter_mut().flatten().skip(queued) {
+            let (skip, take) = (queued.start, queued.len());
+            for check in (self.pending_bounds.iter_mut().flatten())
+                .skip(skip)
+                .take(take)
+            {
                 check.scope = scope;
             }
         }
@@ -936,6 +1091,7 @@ impl Checker<'_> {
             TypeKind::Optional(..) => NotInterface::Optional,
             TypeKind::Array(..) => NotInterface::Array,
             TypeKind::Any(..) => NotInterface::Any,
+            TypeKind::Assoc(..) => NotInterface::Assoc,
             _ => NotInterface::BuiltIn,
         };
         self.not_an_interface(ty, kind);
@@ -1120,7 +1276,12 @@ impl Checker<'_> {
     /// type that is `Error` matches any.
     pub(super) fn meets(&self, requirement: &RequirementInfo, func: FuncId, base: &[Type]) -> bool {
         let sig = &self.signatures[func.0];
-        if requirement.own.len() != sig.own || requirement.params.len() != sig.params.len() {
+        // A `mut self` method meets only a `mut self` requirement. A plain `self` method meets
+        // either: it changes nothing, so mono gives it a copy of the place.
+        if sig.self_mut && requirement.self_mut.is_none()
+            || requirement.own.len() != sig.own
+            || requirement.params.len() != sig.params.len()
+        {
             return false;
         }
         let owner = sig.type_params.len() - sig.own;
@@ -2304,8 +2465,10 @@ impl Checker<'_> {
     /// each in the scope it was queued in, and makes unknown the type kept at the place of each
     /// that fails. Later types are checked as they are resolved.
     ///
-    /// The checks of one scope stand together in the queue, as a scope is made again when it
-    /// changes, so each scope is set up once for all its checks.
+    /// The checks of one scope stand together in the queue. A scope is made again when it
+    /// changes, so each scope is set up once for all its checks. The checks that the inheritance
+    /// list of one interface queues stand apart from the rest of its checks. So its scope can be
+    /// set up twice.
     pub(super) fn run_pending_bounds(&mut self) {
         let pending = self.pending_bounds.take().unwrap_or_default();
         let mut payloads: FxHashMap<(EnumId, usize, usize), Vec<usize>> = FxHashMap::default();

@@ -6,6 +6,7 @@ use super::{Diagnostic, Edit, Fix, Severity, Suggestion};
 use crate::conformance::CHOICE_DEPTH_LIMIT;
 use crate::payload_limit::{self, PAYLOAD_LIMIT_GIB};
 use crate::source::Span;
+use crate::symbol::Symbol;
 
 /// The code table: each code's variant and number. A number is never reused or changed.
 /// A row may name extra `DiagnosticKind` variants after `|` that share its code.
@@ -116,7 +117,7 @@ codes! {
     FieldNotMethod = "E0058",
     PrintArgument = "E0059",
     PrintNever = "E0061",
-    MayBeNone | ChainWriteOnStruct = "E0062",
+    MayBeNone | ChainWriteOnStruct | ChainCallOnValue = "E0062",
     NoMember = "E0063",
     TooManyArguments = "E0064",
     ArgumentNeedsLabel = "E0065",
@@ -341,11 +342,13 @@ pub(crate) enum DiagnosticKind {
         written: Written,
         cause: Immutable,
     },
-    /// A `push` at `at` onto `name`, or onto an element of it, which cannot change.
+    /// A `push` at `at` onto `name`, or onto an element of it, which cannot change. With
+    /// `method`, it is the call of that `mut self` method on the receiver at `at`.
     PushToImmutable {
         name: String,
         at: Span,
         cause: Immutable,
+        method: Option<Symbol>,
     },
     /// A statement at `at` after one that never finishes.
     UnreachableCode { at: Span },
@@ -559,12 +562,14 @@ pub(crate) enum DiagnosticKind {
     },
     /// The second `mut` argument of a call, at `second`, that is the place of the first, at
     /// `first`, or holds it, or is held by it. `shown` is the text of the place that is inside
-    /// the other, and `inside` the text of the other, for the second form.
+    /// the other, and `inside` the text of the other, for the second form. When the first is the
+    /// receiver of a call of the `mut self` method, `receiver` names it and says how they meet.
     MutPlaceTwice {
         first: Span,
         second: Span,
         shown: String,
         inside: Option<String>,
+        receiver: Option<(Symbol, ReceiverForm)>,
     },
     /// The `else` block of a `let ... else`, whose `}` is at `at`, which can reach its end.
     LetElseCanFinish { at: Span },
@@ -707,8 +712,13 @@ pub(crate) enum DiagnosticKind {
         range: Option<RangeTarget>,
     },
     /// A `push` at `at` onto something that is not a place; `range` says which range index it
-    /// holds, if any.
-    PushToTemporary { at: Span, range: Option<RangePush> },
+    /// holds, if any. With `method`, it is the call of that `mut self` method on the receiver at
+    /// `at`.
+    PushToTemporary {
+        at: Span,
+        range: Option<RangePush>,
+        method: Option<Symbol>,
+    },
     /// A range at `at` where it is not allowed, in the way that `form` says.
     RangeOutsideFor { at: Span, form: RangeForm },
     /// A second `==`, `!=` or `is` at `at` in one chain.
@@ -995,6 +1005,15 @@ pub(crate) enum DiagnosticKind {
     /// A write at `at`, from the end of a `?.`'s base to its field, that the `?.` on a struct
     /// value leads to. `replace` is the base as written, when the help can name it.
     ChainWriteOnStruct { at: Span, replace: Option<String> },
+    /// The call of the `mut self` method `method` that a `?.` on a value of `kind` leads to. It is
+    /// at `at`, from the end of the `?.`'s base to the name after it. `replace` is as in
+    /// `ChainWriteOnStruct`.
+    ChainCallOnValue {
+        at: Span,
+        method: Symbol,
+        kind: ValueKind,
+        replace: Option<String>,
+    },
     /// The `kind` member `name`, at `at`, which `owner` does not have.
     NoMember {
         owner: String,
@@ -1082,8 +1101,9 @@ pub(crate) enum DiagnosticKind {
     },
     /// The first byte at `at` that is not UTF-8, which the text shown in its place replaces.
     InvalidUtf8 { at: Span },
-    /// An assignment to the `self` at `at`, the `self` of a struct method when `struct_self`.
-    AssignToSelf { at: Span, struct_self: bool },
+    /// An assignment to the `self` at `at`. A struct or an enum method has the `take` of its
+    /// `self`, and a class method has none.
+    AssignToSelf { at: Span, take: Option<SelfTake> },
     /// An assignment to `name`, at `at`, which is a function.
     AssignToFunction { name: String, at: Span },
     /// A `let` that binds the `_` at `at`. The fix removes `remove`: the `mut` and the white
@@ -2171,6 +2191,8 @@ pub(crate) enum NotInterface {
     Array,
     /// `any I`, an interface value.
     Any,
+    /// An associated type, as `T.Item`.
+    Assoc,
 }
 
 impl NotInterface {
@@ -2185,6 +2207,7 @@ impl NotInterface {
             NotInterface::Optional => "an optional type",
             NotInterface::Array => "an array type",
             NotInterface::Any => "an interface value",
+            NotInterface::Assoc => "an associated type",
         }
     }
 }
@@ -2933,6 +2956,10 @@ pub(crate) enum NeverReassignedForm {
     /// A `mut` parameter, of a class type when `class`. Removing its `mut` changes every caller,
     /// so there is no fix.
     Param { class: bool },
+    /// A method's `mut self`. The fix removes `remove`: the `mut` and the white space after it,
+    /// up to a comment. It is `safe` when no call of the method has a diagnostic that exists only
+    /// because the method takes `mut self`: the fix then changes no caller.
+    SelfParam { remove: Span, safe: bool },
 }
 
 /// What owns a method.
@@ -2959,6 +2986,8 @@ pub(crate) enum ConformanceForm {
         method: String,
         found: String,
         want: String,
+        /// The method takes `mut self`, and the requirement plain `self`.
+        mut_self: bool,
         mut_differs: Option<MutDiffers>,
     },
     /// The method `method` of an `extend` block, which is no requirement; `target` is the type
@@ -2992,6 +3021,8 @@ pub(crate) enum NotAny {
     Assoc { owner: String, assoc: String },
     /// The interface inherits `inherited`, written with its arguments, one of which names `Self`.
     InheritsSelf { inherited: String },
+    /// The requirement `method` takes `mut self`, which `any` cannot call until part 3.
+    MutSelf { method: String },
 }
 
 /// How `any` is written wrongly (`AnyForm`).
@@ -3306,8 +3337,8 @@ pub(crate) enum NotMutForm {
 pub(crate) enum NotPlace {
     /// A binding or a field that cannot change.
     Immutable(Immutable),
-    /// `self`, where `class` says that its type is a class.
-    SelfValue { class: bool },
+    /// `self`, with the `take` of a struct or an enum method, and none for a class.
+    SelfValue(Option<SelfTake>),
     /// A value that is no place: a call, a literal.
     Temporary,
     /// A range index of the kind of value `SliceOf` says.
@@ -3375,8 +3406,37 @@ pub(crate) enum Immutable {
     Constant {
         declared: Span,
     },
-    /// The plain `self` of a struct method.
-    StructSelf,
+    /// The plain `self` of a struct or an enum method.
+    StructSelf(SelfTake),
+}
+
+/// How an argument that is passed `mut` meets the receiver of a `mut self` call.
+#[derive(Clone, Copy)]
+pub(crate) enum ReceiverForm {
+    /// The argument is the receiver's place.
+    Same,
+    /// The argument is inside the receiver.
+    ArgumentInside,
+    /// The receiver is inside the argument.
+    ReceiverInside,
+}
+
+/// How the plain `self` of a struct or an enum method can change.
+#[derive(Clone, Copy)]
+pub(crate) enum SelfTake {
+    /// The fix makes the method take `mut self`, by writing `mut ` before its `self` at the span.
+    Fix(Span),
+    /// A plain `self` requirement binds the method, so it keeps its `self`: it copies it.
+    Copy,
+}
+
+/// The kind of value that a `?.` takes out of an optional, when a `mut self` call follows it.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) enum ValueKind {
+    Struct,
+    Enum,
+    /// A value of a type parameter or an associated type, as the compiler writes the type.
+    Type(String),
 }
 
 /// What a write changes of its root.
@@ -3411,9 +3471,15 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d = Diagnostic::coded(code, at, format!("cannot assign to {what}`{name}`"));
                 immutable_cause(d, &name, written != Written::Whole, &cause)
             }
-            DiagnosticKind::PushToImmutable { name, at, cause } => {
+            DiagnosticKind::PushToImmutable {
+                name,
+                at,
+                cause,
+                method,
+            } => {
+                let method = method.map_or("push", |method| method.as_str());
                 let d = Diagnostic::coded(code, at, format!("cannot change `{name}`"))
-                    .with_label(format!("`push` changes `{name}`"));
+                    .with_label(format!("`{method}` changes `{name}`"));
                 immutable_cause(d, &name, true, &cause)
             }
             DiagnosticKind::UnreachableCode { at } => {
@@ -3448,6 +3514,24 @@ impl From<DiagnosticKind> for Diagnostic {
                     d
                 }
             }
+            DiagnosticKind::NeverReassigned {
+                at,
+                form: NeverReassignedForm::SelfParam { remove, safe },
+                ..
+            } => Diagnostic::coded(
+                code,
+                at,
+                "`self` is never reassigned, so its `mut` changes nothing",
+            )
+            .with_label("never reassigned")
+            .with_fix(Fix {
+                message: "remove `mut`".to_string(),
+                safe,
+                edits: vec![Edit {
+                    span: remove,
+                    replacement: String::new(),
+                }],
+            }),
             DiagnosticKind::LeadingBinaryMinus { at } => {
                 Diagnostic::coded(code, at, "a line cannot start with a binary `-`").with_help(
                     "to continue the previous line, end it with `-`; to negate, write `-x`",
@@ -3709,33 +3793,21 @@ impl From<DiagnosticKind> for Diagnostic {
                             .collect(),
                     })
                 };
-                // The fix of a class or an interface method: safe when only `,` or `)` follows
-                // `self`.
+                // The fix of a class method: safe when only `,` or `)` follows `self`.
                 let message = if safe {
                     "remove the `mut`"
                 } else {
                     "try removing the `mut`; the receiver may need another change"
                 };
                 match owner {
-                    Owner::Class => drop_mut(
+                    // A requirement may take `mut self`, so no interface comes here.
+                    Owner::Class | Owner::Interface => drop_mut(
                         Diagnostic::coded(
                             code,
                             keyword,
                             "a class method takes `self`, not `mut self`",
                         )
                         .with_help("an object is shared: `self` can already write every `mut` field"),
-                        safe,
-                        message,
-                    ),
-                    Owner::Interface => drop_mut(
-                        Diagnostic::coded(
-                            code,
-                            keyword,
-                            "an interface method cannot take `mut self`",
-                        )
-                        .with_help(
-                            "a class method changes its object's `mut` fields through plain `self`",
-                        ),
                         safe,
                         message,
                     ),
@@ -3832,15 +3904,19 @@ impl From<DiagnosticKind> for Diagnostic {
                     method,
                     found,
                     want,
+                    mut_self,
                     mut_differs,
                 } => {
-                    let d = Diagnostic::coded(
+                    let mut d = Diagnostic::coded(
                         code,
                         at,
                         format!("`{method}` does not match `{interface}`'s requirement"),
                     )
                     .with_label(format!("found `{found}`"))
                     .with_help(format!("`{interface}` requires `{want}`"));
+                    if mut_self {
+                        d = d.with_note("the requirement's `self` is not `mut`");
+                    }
                     match mut_differs {
                         Some(MutDiffers { at, name, mutable }) => {
                             let not = if mutable { "" } else { "not " };
@@ -4469,6 +4545,32 @@ impl From<DiagnosticKind> for Diagnostic {
                 second,
                 shown,
                 inside,
+                receiver: Some((method, form)),
+            } => {
+                // `shown` is inside `outer`, or both are the same place.
+                let outer = inside.as_ref().unwrap_or(&shown);
+                let (own, other, tail) = match form {
+                    ReceiverForm::Same => (&shown, &shown, ""),
+                    ReceiverForm::ArgumentInside => (outer, &shown, ", which is inside it,"),
+                    ReceiverForm::ReceiverInside => (&shown, outer, ", which holds it,"),
+                };
+                Diagnostic::coded(
+                    code,
+                    second,
+                    format!("`{method}` can change `{own}`, and this call also passes `{other}`{tail} as `mut`"),
+                )
+                .with_label("passed `mut` here")
+                .with_secondary(
+                    first,
+                    format!("`{method}` takes `mut self`, so it can change `{own}`"),
+                )
+            }
+            DiagnosticKind::MutPlaceTwice {
+                first,
+                second,
+                shown,
+                inside,
+                receiver: None,
             } => {
                 let message = match inside {
                     Some(outer) => {
@@ -4542,6 +4644,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 reason,
                 at,
             } => {
+                let mut_self = matches!(reason, NotAny::MutSelf { .. });
                 let inherited = owner.map(|owner| format!("it inherits `{owner}`"));
                 let why = match (reason, inherited) {
                     (NotAny::TakesSelf { method }, None) => {
@@ -4569,11 +4672,16 @@ impl From<DiagnosticKind> for Diagnostic {
                     (NotAny::InheritsSelf { inherited }, _) => {
                         format!("it inherits `{inherited}`, whose arguments name `Self`")
                     }
+                    (NotAny::MutSelf { method }, None) => format!("`{method}` takes `mut self`"),
+                    (NotAny::MutSelf { method }, Some(inherits)) => {
+                        format!("{inherits}, whose `{method}` takes `mut self`")
+                    }
                 };
+                let yet = if mut_self { " yet" } else { "" };
                 Diagnostic::coded(
                     code,
                     at,
-                    format!("`{interface}` cannot be used as `any {interface}`: {why}"),
+                    format!("`{interface}` cannot be used as `any {interface}`{yet}: {why}"),
                 )
                 .with_label("used after `any` here")
                 .with_help(format!("use a type parameter: `T: {interface}`"))
@@ -4640,14 +4748,23 @@ impl From<DiagnosticKind> for Diagnostic {
                 Some(range) => range.diagnostic(code, at),
                 None => Diagnostic::coded(code, at, "cannot assign to this expression"),
             },
-            DiagnosticKind::PushToTemporary { at, range: None } => {
-                Diagnostic::coded(code, at, "cannot push to a temporary value")
+            DiagnosticKind::PushToTemporary {
+                at,
+                range: None,
+                method,
+            } => {
+                let message = match method {
+                    Some(method) => format!("cannot call `{method}` on a temporary value"),
+                    None => "cannot push to a temporary value".to_string(),
+                };
+                Diagnostic::coded(code, at, message)
                     .with_label("this value is not stored in a variable")
                     .with_help("store it in a `let mut` variable first")
             }
             DiagnosticKind::PushToTemporary {
                 at,
                 range: Some(range),
+                ..
             } => {
                 let d = Diagnostic::coded(code, at, "cannot push to a temporary value")
                     .with_label("a range index gives a new value");
@@ -5506,6 +5623,27 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
+            DiagnosticKind::ChainCallOnValue {
+                at,
+                method,
+                kind,
+                replace,
+            } => {
+                let value = match kind {
+                    ValueKind::Struct => "a struct value".to_string(),
+                    ValueKind::Enum => "an enum value".to_string(),
+                    ValueKind::Type(ty) => format!("a value of type `{ty}`"),
+                };
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`?.` cannot call `{method}` on {value} yet"),
+                );
+                match replace {
+                    Some(base) => d.with_help(replace_text(&base)),
+                    None => d,
+                }
+            }
             DiagnosticKind::ChainWriteOnStruct { at, replace } => {
                 let d = Diagnostic::coded(code, at, "`?.` cannot write a field of a struct value yet");
                 match replace {
@@ -5782,12 +5920,12 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, "source is not valid UTF-8")
                     .with_help("save the file as UTF-8")
             }
-            DiagnosticKind::AssignToSelf { at, struct_self } => {
-                Diagnostic::coded(code, at, "cannot assign to `self`").with_help(if struct_self {
-                    STRUCT_SELF_HELP
-                } else {
-                    "an object is shared: `self` can already write every `mut` field"
-                })
+            DiagnosticKind::AssignToSelf { at, take } => {
+                let d = Diagnostic::coded(code, at, "cannot assign to `self`");
+                match take {
+                    Some(take) => take_self(d, take),
+                    None => d.with_help(CLASS_SELF_HELP),
+                }
             }
             DiagnosticKind::AssignToFunction { name, at } => {
                 Diagnostic::coded(code, at, format!("`{name}` is a function, not a variable"))
@@ -7298,7 +7436,7 @@ fn immutable_cause(d: Diagnostic, name: &str, element: bool, cause: &Immutable) 
             d.with_label("cannot assign")
         }
         .with_secondary(declared, "declared with `const` here"),
-        Immutable::StructSelf => d.with_help(STRUCT_SELF_HELP),
+        Immutable::StructSelf(take) => take_self(d, take),
     }
 }
 
@@ -7329,7 +7467,7 @@ pub(crate) fn copy_help(
             "`{root}` is a plain parameter{}: delete the write, or return the changed copy",
             so(" here")
         ),
-        Some(Immutable::StructSelf) => format!(
+        Some(Immutable::StructSelf(_)) => format!(
             "`self` cannot change in this method{}: delete the write, or return the changed copy",
             so(" here")
         ),
@@ -7343,8 +7481,24 @@ pub(crate) fn copy_help(
     })
 }
 
-/// The help of a write through the plain `self` of a struct method.
+/// The help of a write through the plain `self` of a method that a plain `self` requirement binds.
 const STRUCT_SELF_HELP: &str = "copy `self` into a `let mut` variable";
+
+/// The help of an assignment to the `self` of a class method.
+const CLASS_SELF_HELP: &str = "an object is shared: `self` can already write every `mut` field";
+
+/// `d`, a report of a change through plain `self`. It has the unsafe fix "take `mut self`". When
+/// a requirement binds the method, it has the help to copy `self` instead.
+fn take_self(d: Diagnostic, take: SelfTake) -> Diagnostic {
+    match take {
+        SelfTake::Fix(at) => d.with_fix(unsafe_fix(
+            "take `mut self`",
+            Span::new(at.start(), at.start()),
+            "mut ",
+        )),
+        SelfTake::Copy => d.with_help(STRUCT_SELF_HELP),
+    }
+}
 
 /// The indefinite article before the type `ty`: "an" before a vowel letter, except the types
 /// `u8` and the like, and `unit`, which say "you".
@@ -7376,10 +7530,10 @@ fn mut_not_place(d: Diagnostic, name: &str, cause: &NotPlace) -> Diagnostic {
     let d = d.with_label(label);
     match *cause {
         NotPlace::Range(_) | NotPlace::Temporary => d,
-        NotPlace::SelfValue { class: true } => {
-            d.with_help("an object is shared: `self` can already write every `mut` field")
+        NotPlace::SelfValue(None) => d.with_help(CLASS_SELF_HELP),
+        NotPlace::SelfValue(Some(take)) | NotPlace::Immutable(Immutable::StructSelf(take)) => {
+            take_self(d, take)
         }
-        NotPlace::SelfValue { class: false } => d.with_help(copy),
         NotPlace::Immutable(Immutable::Let {
             declared,
             redeclared,
@@ -7405,7 +7559,6 @@ fn mut_not_place(d: Diagnostic, name: &str, cause: &NotPlace) -> Diagnostic {
         NotPlace::Immutable(Immutable::Constant { declared }) => {
             d.with_secondary(declared, "declared with `const` here")
         }
-        NotPlace::Immutable(Immutable::StructSelf) => d.with_help(STRUCT_SELF_HELP),
     }
 }
 

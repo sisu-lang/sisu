@@ -1,0 +1,91 @@
+// GIVEN `interface K { fn add(mut self); fn n(self) -> i64 }` and `fn bump<T: K>(mut t: T)`, which
+// runs `t.add()`
+// AND a struct, a generic struct `G<i64>` that conforms in `extend<T> G<T>: K`, an enum and a
+// class, each in `let mut x`. Each `add` adds 1 to a count that starts at 1
+// AND `bump` takes `depth`, which `main` reads at run time as 1, and goes `depth` levels down
+// before it calls `add`; the WHEN lines leave `depth` out
+// WHEN `main` keeps a copy of `x`, runs `bump(mut x)`, and prints `x.n()` and the copy's `n()`
+// THEN it prints "2" for `x` of each type, and "1" for the copy of each struct and enum
+// AND "2" for the copy of the class, which is the same object
+// o2-calls: main bump<S> 1
+// o2-calls: main bump<G<i64>> 1
+// o2-calls: main bump<E> 1
+// o2-calls: main bump<C> 1
+interface K {
+    fn add(mut self)
+    fn n(self) -> i64
+}
+
+// Recursive to a depth that `main` reads at run time, so that `-O2` keeps the calls.
+fn bump<T: K>(mut t: T, depth: i64) {
+    if depth > 0 {
+        bump(mut t, depth - 1)
+        return
+    }
+    t.add()
+}
+
+struct S: K {
+    c: i64
+
+    fn add(mut self) { self.c += 1 }
+    fn n(self) -> i64 { self.c }
+}
+
+struct G<T> {
+    v: T
+    c: i64
+}
+
+extend<T> G<T>: K {
+    fn add(mut self) { self.c += 1 }
+    fn n(self) -> i64 { self.c }
+}
+
+enum E: K {
+    Count(i64)
+
+    fn add(mut self) {
+        match self {
+            Count(c) => self = E.Count(c + 1)
+        }
+    }
+
+    fn n(self) -> i64 {
+        match self {
+            Count(c) => c
+        }
+    }
+}
+
+class C: K {
+    mut c: i64
+
+    fn add(self) { self.c += 1 }
+    fn n(self) -> i64 { self.c }
+}
+
+fn main() {
+    let depth = 1 + (read_line() ?? "").len()
+    let mut s = S(c: 1)
+    let s0 = s
+    bump(mut s, depth)
+    print(s.n())                      // 2
+    print(s0.n())                     // 1
+    let mut g = G(v: 7, c: 1)
+    let g0 = g
+    bump(mut g, depth)
+    print(g.n())                      // 2
+    print(g0.n())                     // 1
+    print(g.v)                        // 7
+    let mut e = E.Count(1)
+    let e0 = e
+    bump(mut e, depth)
+    print(e.n())                      // 2
+    print(e0.n())                     // 1
+    let mut c = C(c: 1)
+    let c0 = c
+    bump(mut c, depth)
+    print(c.n())                      // 2
+    print(c0.n())                     // 2
+}

@@ -1,0 +1,50 @@
+// GIVEN `struct B { xs: [i64]; name: string }` with two `mut self` methods
+// AND `grow`, which pushes `x` when `x` is not below zero
+// AND `reset`, which replaces `self` with `B(xs: [0], name: "r")`
+// AND `let a = B(xs: [1], name: "a")` and `let mut b = a`
+// AND each `mut self` method takes `depth`, which `main` reads at run time as 1, and the call
+// goes `depth` levels down before it changes `self`; the WHEN lines leave `depth` out
+// WHEN `main` runs `b.grow(2)` and `b.grow(-1)`, and prints `a.xs` and `b.xs`
+// AND runs `b.reset()`, and prints `a.xs`, `b.xs` and `b.name`
+// THEN it prints "[1]", "[1, 2]", "[1]", "[0]" and "r"
+// AND the memory test of the case reports no leak and no error
+// o2-calls: main B.grow 2
+// o2-calls: main B.reset 1
+struct B {
+    xs: [i64]
+    name: string
+
+    // Each method recurses, to a depth that `main` reads at run time, so that `-O2` keeps the
+    // calls. Only the last level changes `self`.
+    fn grow(mut self, x: i64, depth: i64) {
+        if depth > 0 {
+            self.grow(x, depth - 1)
+            return
+        }
+        if x >= 0 {
+            self.xs.push(x)
+        }
+    }
+
+    fn reset(mut self, depth: i64) {
+        if depth > 0 {
+            self.reset(depth - 1)
+            return
+        }
+        self = B(xs: [0], name: "r")
+    }
+}
+
+fn main() {
+    let depth = 1 + (read_line() ?? "").len()
+    let a = B(xs: [1], name: "a")
+    let mut b = a
+    b.grow(2, depth)
+    b.grow(-1, depth)
+    print(a.xs)                       // [1]
+    print(b.xs)                       // [1, 2]
+    b.reset(depth)
+    print(a.xs)                       // [1]
+    print(b.xs)                       // [0]
+    print(b.name)                     // r
+}

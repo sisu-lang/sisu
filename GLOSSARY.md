@@ -287,11 +287,11 @@ whose first parameter is `self`, called as `receiver.name(args)`.
 _Avoid_: member function
 
 **Mutating method**:
-A method of a struct or an array that takes `mut self`, such as `push`, and
-changes the value in the place it was called on. That place must be able to
-change. Its receiver is copied in and out like a `mut` argument. This is for
-milestone 9: in step 1 of ADR 0043, a built-in receiver call such as
-`xs.push(y)` stays as it was.
+A method of a struct, an enum or an array that takes `mut self`, such as
+`move_by` or `push`. It changes the value in the place it was called on. That
+place must be able to change. Its receiver is copied in and out like a `mut`
+argument. In step 1 of ADR 0043, a built-in receiver call such as `xs.push(y)`
+stays as it was.
 _Avoid_: `inout`, `mutating`
 
 **Receiver**:

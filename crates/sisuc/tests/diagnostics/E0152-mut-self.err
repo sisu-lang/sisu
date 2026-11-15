@@ -1,0 +1,19 @@
+error[E0152]: `read` does not match `Reader`'s requirement
+  --> E0152-mut-self.sisu:14:8
+   |
+14 |     fn read(mut self) -> i64 {
+   |        ^^^^ found `fn read(mut self) -> i64`
+   |
+   = note: the requirement's `self` is not `mut`
+   = help: `Reader` requires `fn read(self) -> i64`
+
+error[E0152]: `Total` does not meet `Adder`
+  --> E0152-mut-self.sisu:24:14
+   |
+24 | class Total: Adder {
+   |              ^^^^^
+   |
+   = help: fn add(self)
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0152

@@ -227,6 +227,23 @@ parts! {
     neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_15 => 15,
 }
 
+/// GIVEN the template of `neighbours.txt` with each `{stmt}` empty
+/// WHEN `sisu check` runs on it
+/// THEN it ends with no error, so each program meets its statement and no error of the template.
+#[test]
+fn template_should_check_with_no_error() {
+    let program = forms().template.replace("{stmt}", "");
+    let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
+        .args(["check", "-e", &program])
+        .output()
+        .expect("sisu should start");
+    assert!(
+        out.status.success(),
+        "the template should check with no error:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// GIVEN the programs of `programs()` and the split of `part`
 /// WHEN the indexes of each part are collected
 /// THEN each program is in exactly one part, and `programs()` holds each value in each context.

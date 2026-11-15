@@ -14,7 +14,8 @@ use super::reports::Reported;
 use super::{Checked, Checker, Expectation, Poisoned, SelfType, block_expr, type_of};
 use crate::ast;
 use crate::diagnostic::{
-    ChainForm, ChainLabel, DiagnosticKind, Immutable, MissingFix, NotMutForm, NotPlace, SliceOf,
+    ChainForm, ChainLabel, DiagnosticKind, Immutable, MissingFix, NotMutForm, NotPlace,
+    ReceiverForm, SliceOf,
 };
 use crate::parser::{is_place, is_range_target};
 use crate::source::Span;
@@ -98,6 +99,11 @@ pub(super) struct MutParts {
     /// What the check of each argument at a `mut` parameter that has no `mut` found, by its place
     /// among the arguments, in argument order. A value that is no place is not here.
     unmarked: Vec<(usize, MarkCheck)>,
+    /// The `mut self` method that the call runs, when the first of `marked` is its receiver.
+    receiver: Option<Symbol>,
+    /// That method, when the call names one and not a requirement: E0171 at its receiver exists
+    /// only because it takes `mut self`.
+    func: Option<tir::FuncId>,
 }
 
 /// What `marks` keeps of a place that an argument names.
@@ -367,11 +373,16 @@ impl Checker<'_> {
                 let (_, failed) = self.checked_alone(arg);
                 return Ok(CheckedPlace::failed(failed));
             }
+            // A `mut self` is a place: its write goes back through slot 0.
+            if self.body.self_mut {
+                return Ok(self.place(arg.span, arg, Change::MutArg));
+            }
             let class = matches!(
                 self.body.self_type.known().map(Type::kind),
                 Some(TypeKind::Class(..))
             );
-            return Err((NotPlace::SelfValue { class }, None));
+            let take = (!class).then(|| self.self_take());
+            return Err((NotPlace::SelfValue(take), None));
         }
         let root = place_root(arg);
         if let ast::ExprKind::Name(name) = root.kind
@@ -618,10 +629,40 @@ impl Checker<'_> {
         let path = place
             .path
             .expect("a place that a `mut` argument takes should have a path");
+        self.slot(&arg.value, (path, ty), parts)
+    }
+
+    /// The temp that stands for the receiver `receiver` of a call of the `mut self` method
+    /// `method`, and the call's parts. `func` is the method when the call names one. The
+    /// receiver's place is `path` of type `ty`, and its part comes first.
+    pub(super) fn receiver_slot(
+        &mut self,
+        receiver: &ast::Expr,
+        (method, func): (Symbol, Option<tir::FuncId>),
+        path: Path,
+        ty: Type,
+    ) -> (tir::Expr, MutParts) {
+        let mut parts = MutParts {
+            receiver: Some(method),
+            func,
+            ..MutParts::default()
+        };
+        let temp = self.slot(receiver, (path, ty), &mut parts);
+        (temp, parts)
+    }
+
+    /// The temp that stands for the place `path` of type `ty`, written `value`, in its call. The
+    /// part that the call takes with it goes to `parts`.
+    fn slot(
+        &mut self,
+        value: &ast::Expr,
+        (path, ty): (Path, Type),
+        parts: &mut MutParts,
+    ) -> tir::Expr {
         let key = self.mut_key(&path);
         let temp = self.fresh(ty);
-        let span = arg.value.span;
-        let root = match place_root(&arg.value).kind {
+        let span = value.span;
+        let root = match place_root(value).kind {
             ast::ExprKind::Name(name) => Some(name),
             _ => None,
         };
@@ -711,7 +752,7 @@ impl Checker<'_> {
         parts: &mut MutParts,
         bind: Option<(&mut super::generic::Inference<'_>, Option<Type>)>,
     ) -> Option<Checked> {
-        if arg.label.is_some() || !is_place(&arg.value) {
+        if arg.label.is_some() || !is_place(&arg.value) && !self.is_self_place(&arg.value) {
             return None;
         }
         let mut failed = None;
@@ -925,7 +966,7 @@ impl Checker<'_> {
         let fits = |kept: &Kept| !related && !kept.chain && kept.ty.is_some() && kept.ty == want;
         match check {
             // A place of a call that failed before it checked its arguments: nothing is known.
-            None if is_place(&arg.value) => MissingFix::NoFix,
+            None if is_place(&arg.value) || self.is_self_place(&arg.value) => MissingFix::NoFix,
             Some(MarkCheck::Place(kept)) if fits(&kept) => MissingFix::Add,
             Some(MarkCheck::Failed | MarkCheck::Place(_)) => MissingFix::NoFix,
             Some(MarkCheck::NotPlace(NotPlace::Immutable(cause), kept)) => {
@@ -975,29 +1016,42 @@ impl Checker<'_> {
     /// Reports each `mut` argument of a call whose place is the place of an earlier one, or
     /// holds it, or is held by it (E0171). Gives the parts, in argument order.
     pub(super) fn mut_overlaps(&mut self, taken: MutParts) -> Vec<MutPart> {
+        let (method, func) = (taken.receiver, taken.func);
         let (parts, keys): (Vec<MutPart>, Vec<MutPlaceKey>) = taken.marked.into_iter().unzip();
         for (first, second, how) in twice(&keys) {
             let (a, b) = (&parts[first], &parts[second]);
+            // The longer path is the one inside.
+            let first_inside = keys[first].steps.len() > keys[second].steps.len();
             let (shown, inside) = match how {
                 Overlap::Same => (self.source.text(b.span).to_string(), None),
-                // The longer path is the one inside.
                 Overlap::Inside => {
-                    let (inner, outer) = if keys[first].steps.len() > keys[second].steps.len() {
-                        (a, b)
-                    } else {
-                        (b, a)
-                    };
+                    let (inner, outer) = if first_inside { (a, b) } else { (b, a) };
                     (
                         self.source.text(inner.span).to_string(),
                         Some(self.source.text(outer.span).to_string()),
                     )
                 }
             };
+            // The receiver is the first part, so it is never the later one.
+            let receiver = method.filter(|_| first == 0).map(|method| {
+                let form = match how {
+                    Overlap::Same => ReceiverForm::Same,
+                    Overlap::Inside if first_inside => ReceiverForm::ReceiverInside,
+                    Overlap::Inside => ReceiverForm::ArgumentInside,
+                };
+                (method, form)
+            });
+            if receiver.is_some()
+                && let Some(func) = func
+            {
+                self.needs_mut_self.insert(func);
+            }
             self.error(DiagnosticKind::MutPlaceTwice {
                 first: a.span,
                 second: b.span,
                 shown,
                 inside,
+                receiver,
             });
         }
         parts

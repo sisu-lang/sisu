@@ -17,9 +17,10 @@ pub(crate) use registry::{
     MissingFix, MutDiffers, NanFix, NestingForm, NeverReassignedForm, NoOperatorForm, NoReturn,
     NoValueCause, NotAny, NotConformForm, NotInterface, NotMutForm, NotPlace, Operand, Owner,
     Panic, Peel, PeelIs, PeelLayers, Plain, PowerFix, PrecisionHelp, RETIRED, RangeForm,
-    RangePlace, RangePush, RangeTarget, RangeWrite, ReceiverArgument, SliceOf, SpecForm, SpecLimit,
-    Spelled, TypeReceiver, TypedLiteral, Unbuilt, Ungenerated, UnknownForm, Unwrap, UnwrapHelp,
-    UsedBy, VariantLabels, WideKind, Written, copy_help, invisible,
+    RangePlace, RangePush, RangeTarget, RangeWrite, ReceiverArgument, ReceiverForm, SelfTake,
+    SliceOf, SpecForm, SpecLimit, Spelled, TypeReceiver, TypedLiteral, Unbuilt, Ungenerated,
+    UnknownForm, Unwrap, UnwrapHelp, UsedBy, ValueKind, VariantLabels, WideKind, Written,
+    copy_help, invisible,
 };
 #[cfg(test)]
 pub(crate) use registry::{NAME_STEPS, string_index_names};

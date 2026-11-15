@@ -138,7 +138,8 @@ impl Copied {
 /// and declared at `at`. `fix` holds each place that binds a `for` or pattern name, which `_`
 /// can replace, and is empty for any other. `remove` is what the fix of W0002 removes for a
 /// `let mut` that W0002 would warn about: it does when the pass does not judge the binding.
-/// `copy` is set for a `let mut` that copies a place.
+/// `copy` is set for a `let mut` that copies a place. `needs` holds each `mut self` method whose
+/// W0002 fix would take the W0014 or W0016 away and put no W0002 in its place.
 pub(super) struct Pending {
     pub(super) func: tir::FuncId,
     pub(super) param: bool,
@@ -147,6 +148,7 @@ pub(super) struct Pending {
     pub(super) fix: Vec<Span>,
     pub(super) remove: Option<Span>,
     pub(super) copy: Option<Copied>,
+    pub(super) needs: Vec<tir::FuncId>,
 }
 
 impl Pending {
@@ -590,10 +592,13 @@ impl Checker<'_> {
                 found.push(DiagnosticKind::UnusedBlock { name, at, uses }.into());
             }
         }
-        found.extend(pending.into_iter().filter_map(|p| {
+        for p in pending {
             let live = reached.live[p.func.0];
-            p.judged(live, self.source)
-        }));
+            if live {
+                self.needs_mut_self.extend(&p.needs);
+            }
+            found.extend(p.judged(live, self.source));
+        }
         found
     }
 

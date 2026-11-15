@@ -1,11 +1,3 @@
-error[E0018]: a struct method cannot take `mut self` yet
-  --> E0120-type-method-no-fix.sisu:20:11
-   |
-20 |     fn bm(mut self, x: i64) {
-   |           ^^^
-   |
-   = help: take `self` and return the changed copy
-
 error[E0120]: `bumpm` is a method of `Tree`; call it on a value
   --> E0120-type-method-no-fix.sisu:40:10
    |
@@ -96,5 +88,17 @@ help: a variant with a similar name exists: `A`
 75 +     E.A(e)
    |
 
+error[E0120]: `bm` is a method of `Tree`; call it on a value
+  --> E0120-type-method-no-fix.sisu:79:10
+   |
+79 |     Tree.bm(t, 1)
+   |          ^^
+   |
+help: call `bm` as a method
+   |
+79 -     Tree.bm(t, 1)
+79 +     t.bm(1)
+   |
+
 sisu: 14 errors
-sisu: for more on a code, run `sisu explain <code>`: E0018, E0105, E0118, E0120, E0137
+sisu: for more on a code, run `sisu explain <code>`: E0105, E0118, E0120, E0137
