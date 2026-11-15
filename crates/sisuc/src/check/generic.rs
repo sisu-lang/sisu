@@ -2627,7 +2627,8 @@ impl Checker<'_> {
                 continue;
             }
             let value = call.slots[i].as_ref().and_then(|slot| slot.as_ref().ok());
-            let cause = self.no_value_cause(&args[i].value, value, (ty, None), false);
+            let want = param.and_then(|param| self.known_in(&call, param));
+            let cause = self.no_value_cause(&args[i].value, value, (ty, want), false);
             let reported = self.no_value(at, cause);
             call.slots[i] = Some(Err(Poisoned::untyped(reported)));
         }

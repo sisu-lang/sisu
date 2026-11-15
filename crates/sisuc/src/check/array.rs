@@ -308,25 +308,24 @@ impl Checker<'_> {
     }
 
     /// E0043 at each `unit` element beside an element of another type, which has no value
-    /// there, with the proof of the first. `typed` holds each element that has a type, with it.
+    /// there, with the proof of the first. The type of the first such other element is the type
+    /// that the `unit` element must give. `typed` holds each element that has a type, with it.
     fn refuse_unit_elements(
         &mut self,
         elements: &[ast::Expr],
         slots: &mut [Option<Checked>],
         typed: &[(usize, Type)],
     ) -> Option<Reported> {
-        if !typed
+        let other = typed
             .iter()
-            .any(|&(_, ty)| !takes_unit(ty) && ty != Type::NEVER)
-        {
-            return None;
-        }
+            .map(|&(_, ty)| ty)
+            .find(|&ty| !takes_unit(ty) && ty != Type::NEVER)?;
         let mut failed = None;
         for &(i, ty) in typed {
             if ty == Type::UNIT {
                 let e = &elements[i];
                 let value = slots[i].as_ref().and_then(|slot| slot.as_ref().ok());
-                let cause = self.no_value_cause(e, value, (Type::UNIT, None), false);
+                let cause = self.no_value_cause(e, value, (Type::UNIT, Some(other)), false);
                 let reported = self.no_value(e.span, cause);
                 slots[i] = Some(Err(Poisoned::untyped(reported)));
                 failed.get_or_insert(reported);
