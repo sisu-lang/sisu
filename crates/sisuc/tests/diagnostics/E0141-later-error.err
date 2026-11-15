@@ -264,5 +264,71 @@ error[E0141]: `break` with a value in a `while`
     |
     = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-sisu: 32 errors
+error[E0141]: `break` with a value in a `while`
+   --> E0141-later-error.sisu:121:32
+    |
+120 |     w: while c {
+    |        ----- this `while` has no value
+121 |         let a = loop { break w (if c { break 2 } else { 3 }) }
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
+
+error[E0141]: `break` with a value in a `while`
+   --> E0141-later-error.sisu:129:24
+    |
+128 |     w: while c {
+    |        ----- this `while` has no value
+129 |         loop { break w (if c { break 2 } else { 3 }) }
+    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
+
+error[E0141]: `break` with a value in a `while`
+   --> E0141-later-error.sisu:137:32
+    |
+136 |     w: while c {
+    |        ----- this `while` has no value
+137 |         let a = loop { break w (if c { break } else { 3 }) }
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
+
+error[E0141]: `break` with a value in a `while`
+   --> E0141-later-error.sisu:146:32
+    |
+145 |     w: while c {
+    |        ----- this `while` has no value
+146 |         let a = loop { break w (if c { break x } else { 3 }) }
+    |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
+
+error[E0141]: `break` with a value in a `while`
+   --> E0141-later-error.sisu:154:47
+    |
+153 |     w: while c {
+    |        ----- this `while` has no value
+154 |         let a = loop { let b = loop { break w (if c { break 2 } else { 3 }) }; break 5 }
+    |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
+
+error[E0032]: expected `i64`, found `bool`
+   --> E0141-later-error.sisu:155:19
+    |
+155 |         print(a + true)
+    |                   ^^^^
+
+error[E0141]: `break` with a value in a `while`
+   --> E0141-later-error.sisu:162:50
+    |
+161 |     w: while c {
+    |        ----- this `while` has no value
+162 |         let a = loop { if c { break 7 }; break w (if c { break 2 } else { 3 }) }
+    |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
+
+sisu: 39 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032, E0141

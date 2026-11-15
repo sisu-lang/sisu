@@ -64,5 +64,17 @@ error[E0032]: expected `i64`, found `bool`
 26 |     print(a + true)
    |               ^^^^
 
-sisu: 7 errors
+error[E0142]: loop label `outer` has the same name as the binding `outer`
+  --> E0142-later-error.sisu:33:30
+   |
+31 |     let outer = 3
+   |         ----- the binding is declared here
+32 |     outer: loop {
+   |     ----- loop label declared here
+33 |         let a = loop { break outer (if c { break 2 } else { 5 }) }
+   |                              ^^^^^
+   |
+   = help: rename the loop label
+
+sisu: 8 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032, E0142

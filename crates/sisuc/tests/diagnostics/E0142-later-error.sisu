@@ -26,4 +26,13 @@ fn row_r12() {
     print(a + true)
 }
 
+fn row_g17_clash() {
+    let c = [1].len() == 1
+    let outer = 3
+    outer: loop {
+        let a = loop { break outer (if c { break 2 } else { 5 }) }
+        print(a + 1)
+    }
+}
+
 fn main() {}

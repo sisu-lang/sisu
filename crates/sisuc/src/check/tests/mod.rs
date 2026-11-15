@@ -1987,6 +1987,11 @@ fn a_skipped_break_value_should_fail_only_the_loops_its_jumps_name() {
         ),
         &[(Code::BreakValueNotLoop, (3, 43))],
     );
+    // An unlabeled `break` in the value gives the innermost loop its value, so that loop fails.
+    codes(
+        "fn main() {\n    let c = [1].len() == 1\n    w: while c {\n        let a = loop { break w (if c { break 2 } else { 3 }) }\n        print(a + 1)\n    }\n}",
+        &[(Code::BreakValueNotLoop, (4, 32))],
+    );
 }
 
 /// A skipped `break` value is lexed and walked once. `chain(n)` nests `n` skipped values, each in

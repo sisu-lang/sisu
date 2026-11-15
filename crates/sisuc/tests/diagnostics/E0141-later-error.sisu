@@ -115,4 +115,53 @@ fn row_r16() {
     print(a + true)
 }
 
+fn row_g17_labeled() {
+    let c = [1].len() == 1
+    w: while c {
+        let a = loop { break w (if c { break 2 } else { 3 }) }
+        print(a + 1)
+    }
+}
+
+fn row_g17_statement() {
+    let c = [1].len() == 1
+    w: while c {
+        loop { break w (if c { break 2 } else { 3 }) }
+        print("after")
+    }
+}
+
+fn row_g17_bare() {
+    let c = [1].len() == 1
+    w: while c {
+        let a = loop { break w (if c { break } else { 3 }) }
+        print(a + 1)
+    }
+}
+
+fn row_g17_name() {
+    let c = [1].len() == 1
+    let x = 4
+    w: while c {
+        let a = loop { break w (if c { break x } else { 3 }) }
+        print(a + 1)
+    }
+}
+
+fn row_g17_nested() {
+    let c = [1].len() == 1
+    w: while c {
+        let a = loop { let b = loop { break w (if c { break 2 } else { 3 }) }; break 5 }
+        print(a + true)
+    }
+}
+
+fn row_g17_earlier_break() {
+    let c = [1].len() == 1
+    w: while c {
+        let a = loop { if c { break 7 }; break w (if c { break 2 } else { 3 }) }
+        print(a + true)
+    }
+}
+
 fn main() {}
