@@ -509,9 +509,10 @@ fn inherited_requirements_should_be_found_without_arguments() {
 
 /// A requirement adds its own type parameters to the scope of its interface and drops them, so
 /// the work grows with the parameters and the requirements, not with their product: one step to
-/// index each parameter, and one for each type name that is looked up.
+/// index each parameter, and one for each type name that is looked up. Each of the two loops of
+/// pass 1b sets the scope of an interface up once.
 #[test]
-fn the_scope_of_an_interface_should_be_set_up_once() {
+fn the_scope_of_an_interface_should_be_set_up_once_in_each_loop() {
     let steps = |n: usize| {
         let params: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
         let requirements = (0..n)
@@ -526,9 +527,9 @@ fn the_scope_of_an_interface_should_be_set_up_once() {
         clean(&src);
         PARAM_STEPS.get()
     };
-    // 1 + n to index `Self` and the parameters, then 3 for each requirement.
-    assert_eq!(steps(32), 129 + LANG_PARAM_STEPS);
-    assert_eq!(steps(64), 257 + LANG_PARAM_STEPS);
+    // 2 + 2n to index `Self` and the parameters in the two loops, then 3 for each requirement.
+    assert_eq!(steps(32), 162 + LANG_PARAM_STEPS);
+    assert_eq!(steps(64), 322 + LANG_PARAM_STEPS);
 }
 
 /// The interfaces a bound gives: itself, then what it inherits, each once, with the arguments
@@ -2884,11 +2885,11 @@ fn bound_checks_that_wait_should_set_up_their_scope_once() {
         clean(&src);
         PARAM_STEPS.get()
     };
-    // A constant number of steps for each parameter, and 6 besides; a replay of the scope for
-    // each check would add a step for each pair.
+    // A constant number of steps for each parameter, and 7 besides (the interface `I` is set up
+    // in the two loops); a replay of the scope for each check would add a step for each pair.
     for class in [false, true] {
-        assert_eq!(steps(16, class), 7 * 16 + 6 + LANG_PARAM_STEPS);
-        assert_eq!(steps(32, class), 7 * 32 + 6 + LANG_PARAM_STEPS);
+        assert_eq!(steps(16, class), 7 * 16 + 7 + LANG_PARAM_STEPS);
+        assert_eq!(steps(32, class), 7 * 32 + 7 + LANG_PARAM_STEPS);
     }
 }
 

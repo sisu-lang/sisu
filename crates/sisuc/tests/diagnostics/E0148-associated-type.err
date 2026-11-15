@@ -1,0 +1,8 @@
+error[E0148]: `Self.Item` is an associated type, not an interface
+ --> E0148-associated-type.sisu:5:27
+  |
+5 | interface _Boxed: Source, Self.Item {}
+  |                           ^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0148
