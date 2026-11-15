@@ -5,6 +5,7 @@ use super::expr::{fits, literal_type, no_member, path, takes_unit, typed, unit_c
 use super::generic::{Rank, mark, mismatch_poison};
 use super::place::{Change, first_safe, is_struct};
 use super::reports::Reported;
+use super::stmt::optional_unit;
 use super::{
     Checked, Checker, Declared, Expectation, Origin, Poisoned, as_optional, known_type, payload,
     type_of,
@@ -293,6 +294,8 @@ impl Checker<'_> {
             .into_iter()
             .map(|slot| {
                 match slot.expect("the three waves should check every element, one rank each") {
+                    // A `unit` lifts to `unit?` only when it has a value (`lift`).
+                    Ok(e) if e.ty == Type::UNIT && optional_unit(element) => self.lift(e, element),
                     Ok(e) if e.ty != element => {
                         self.record_shown_any(e.ty, element);
                         Ok(widen(e, element))
