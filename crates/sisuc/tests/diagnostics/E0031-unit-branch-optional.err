@@ -1,0 +1,30 @@
+error[E0031]: function `f` must return `i64?`, but its body has no value
+  --> E0031-unit-branch-optional.sisu:12:1
+   |
+11 |     if c { g() }
+   |     ------------ this `if` has no `else`, so it has no value
+12 | }
+   | ^
+   |
+   = help: add an `else`, and make each branch give an `i64?`
+
+error[E0031]: function `b` must return `unit?`, but its body has no value
+  --> E0031-unit-branch-optional.sisu:16:1
+   |
+15 |     if c { return None }
+   |     -------------------- this `if` has no `else`, so it has no value
+16 | }
+   | ^
+   |
+   = help: add an `else`, and make each branch give a `unit?`
+
+error[E0043]: this `if` has no `else`, so it has no value
+  --> E0031-unit-branch-optional.sisu:20:19
+   |
+20 |     let y: i64? = if c { g() }
+   |                   ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give a value
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0031, E0043

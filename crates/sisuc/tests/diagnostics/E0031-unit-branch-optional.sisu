@@ -1,0 +1,23 @@
+// GIVEN a function that returns an optional whose body ends in an `if` without an `else` whose
+//   branch gives `unit` or never finishes
+// WHEN `sisu check` runs on it
+// THEN it reports E0031 at the closing `}` of the function
+// AND a label at the `if` says that it has no value, as an `if` without an `else` has none where
+//   an optional is expected
+// AND E0043 says the same where a `let` expects an optional
+fn g() {}
+
+fn f(c: bool) -> i64? {
+    if c { g() }
+}
+
+fn b(c: bool) -> unit? {
+    if c { return None }
+}
+
+fn main() {
+    let c = true
+    let y: i64? = if c { g() }
+    print(y ?? f(c) ?? 0)
+    let _ = b(c)
+}
