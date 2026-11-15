@@ -30,6 +30,10 @@ A change whose tests are in `scripts/test_*.py` has no separate test commit, bec
    | <the finding's repro> | <...> | <...> | RUN/probes/<round>/<name>.sisu |
    | <each neighbour> | <...> | <...> | <...> |
 
+   Docs text: when the fix gives a sentence for a doc, each example in the sentence is one row
+   of the table, with its probe. When a probe contradicts the sentence, change the sentence and
+   report the row.
+
    Tests: <the fixture or the run case that holds each row, and the mutation each new test kills>.
 
 Report, do not add: when a check (a hook, a lint, a test table) seems to need a new exemption,

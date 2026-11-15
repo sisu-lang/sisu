@@ -66,3 +66,7 @@ To have another model review a spec, a plan or a diff, use the `review-sisu` ski
 ### Docs
 
 Before you open a pull request, run the `update-docs` skill to bring the docs in line with the code. After a merge, run it only when the user asks or the pull request skipped it. Skills live in `.agents/skills/`, where Codex finds them; `.claude/skills/` symlinks each one for Claude Code. An agent without skill support follows `.agents/skills/update-docs/SKILL.md` directly.
+
+### Retro
+
+After the final review of a branch, or before the pull request when the branch had no review, run the `kaizen` skill (`.agents/skills/kaizen/SKILL.md`).
