@@ -907,9 +907,7 @@ impl Checker<'_> {
                 self.generated_display(span, receiver, site, args, listed)
             }
             Err(reported) => {
-                if ty.is_none() {
-                    self.stamp_type_call(receiver_expr, method.name, args);
-                }
+                self.stamp_failed_call(ty, receiver_expr, method.name, args);
                 self.labels(args);
                 self.stray_call(ty, method.name, args);
                 Err(Poisoned::untyped(reported))
@@ -1065,6 +1063,27 @@ impl Checker<'_> {
             return;
         };
         self.stamp_mut_params(args, &muts);
+    }
+
+    /// Stamps the call `receiver.method(args)` that found no method, where `ty` is the type of
+    /// `receiver`. With no type, `stamp_type_call` stamps it. A broken method of a struct or an
+    /// enum may take `mut self`, so the call stamps the root of its receiver as written.
+    fn stamp_failed_call(
+        &mut self,
+        ty: Option<Type>,
+        receiver: &ast::Expr,
+        method: Symbol,
+        args: &[ast::Arg],
+    ) {
+        let Some(ty) = ty else {
+            self.stamp_type_call(receiver, method, args);
+            return;
+        };
+        if matches!(ty.kind(), TypeKind::Struct(..) | TypeKind::Enum(..))
+            && matches!(self.own_method(ty, method), Some(Declared::Poisoned(_)))
+        {
+            self.reassign_chain_root(receiver);
+        }
     }
 
     /// E0167 for each `mut` argument of the call `receiver.method(args)` of a method of the

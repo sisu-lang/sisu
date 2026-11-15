@@ -901,13 +901,16 @@ struct Checker<'src> {
     uses: Vec<Use>,
     /// Each binding of a function or a method that nothing reads, in check order.
     pending: Vec<Pending>,
-    /// Each `mut self` that W0002 warns about: its method, the span of `self`, and what the fix
-    /// removes. The calls of the method are in other bodies, so `unused_mut_selves` reports it
-    /// when every body is checked.
-    unused_mut_self: Vec<(tir::FuncId, Span, Span)>,
+    /// Each `mut self` that W0002 warns about: its method and the method's name, the span of
+    /// `self`, and what the fix removes. The calls of the method are in other bodies, so
+    /// `unused_mut_selves` reports it when every body is checked.
+    unused_mut_self: Vec<(tir::FuncId, Symbol, Span, Span)>,
     /// The `mut self` methods that a call needs as they are: the call has a diagnostic that
     /// exists only because the method takes `mut self`. The W0002 fix of one is unsafe.
     needs_mut_self: FxHashSet<tir::FuncId>,
+    /// The `mut self` names of the calls that `call_shape` did not rank: the context of such a
+    /// call gives it no type, which can be E0050. The W0002 fix of a method of the name is unsafe.
+    unranked_mut_self: FxHashSet<Symbol>,
     /// Whether a type argument was recorded: see `tir::Program::instantiates`.
     instantiates: bool,
     /// Each `dbg` call: the body that holds it, if any, the type of its operand, and its span.
@@ -1535,6 +1538,7 @@ impl<'src> Checker<'src> {
             pending: Vec::new(),
             unused_mut_self: Vec::new(),
             needs_mut_self: FxHashSet::default(),
+            unranked_mut_self: FxHashSet::default(),
             instantiates: false,
             dbg_shown: Vec::new(),
             read_shown: Vec::new(),
@@ -2618,7 +2622,7 @@ impl Checker<'_> {
             }
             c.pop_scope();
             if let Some(mut_self) = &f.mut_self {
-                c.warn_unused_mut_self(id, mut_self);
+                c.warn_unused_mut_self((id, f.name.name), mut_self);
             }
             // The value's mismatch is reported once the body is gone, so a misfit is taken now.
             let misfit = (c.misfit_type(&body))

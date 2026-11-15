@@ -4202,6 +4202,9 @@ impl Checker<'_> {
         } = &e.kind
             && self.parks_receiver(receiver, method.name, *safe)
         {
+            if method.name.as_str() != "push" {
+                self.unranked_mut_self.insert(method.name);
+            }
             return None;
         }
         match &e.kind {

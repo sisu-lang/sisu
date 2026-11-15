@@ -464,6 +464,7 @@ impl Checker<'_> {
         match ty.kind() {
             TypeKind::Struct(..) | TypeKind::Enum(..) => self.finds_mut_self(ty, method),
             TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => true,
+            // Any other kind, such as a class or a built-in type, has no `mut self` method.
             _ => false,
         }
     }
@@ -1204,6 +1205,8 @@ impl Checker<'_> {
                 at: target.span,
                 take,
             };
+            // No reader needs this report today: `assigned` takes the path, and `self += e`
+            // fails first with E0032. It stays, so that each place that failed holds its report.
             (None, Some(self.error(d)))
         };
         CheckedPlace {

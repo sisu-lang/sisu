@@ -318,6 +318,7 @@ const REACH: &[&str] = &[
     "reach: a `mut self` call on a local, a field, an element and an element of a field",
     "reach: a `mut self` requirement met by `mut self` and by plain `self`",
     "reach: a `mut self` call through a bound",
+    "reach: a `mut self` call with a `mut` argument",
 ];
 
 /// The keys that the forms of `Gen::gap_forms` mark. `Generated::plain` leaves the forms out, so
@@ -3475,10 +3476,10 @@ impl Walk {
     }
 
     /// Marks a `mut self` call: a call of a method that takes `mut self`, or of a requirement,
-    /// whose receiver is its first `mut` part. The key of a bound is for a requirement, and the
-    /// others are for the kind of place that the receiver is. The call reads the temporary of the
-    /// part where the receiver stands. A call of a function with a `mut` first parameter, such as
-    /// `exchange`, has the same shape, and is none of these.
+    /// whose receiver is its first `mut` part. The key of a bound is for a requirement. One key is
+    /// for a `mut` argument, and the others are for the kind of place that the receiver is. The
+    /// call reads the temporary of the part where the receiver stands. A call of a function with a
+    /// `mut` first parameter, such as `exchange`, has the same shape, and is none of these.
     fn mut_self_call(&mut self, call: &tir::Expr, muts: &[tir::MutArg]) {
         let (args, through_bound) = match &call.kind {
             tir::ExprKind::Call { func, args, .. } if self.mut_self_funcs.contains(&func.0) => {
@@ -3495,6 +3496,11 @@ impl Walk {
         }
         if through_bound {
             self.mark("reach: a `mut self` call through a bound");
+        }
+        // A direct call with a `mut` argument reaches the receiver forms of E0171, and the parts
+        // that mono's `plain_receiver` keeps.
+        if !through_bound && muts.len() > 1 {
+            self.mark("reach: a `mut self` call with a `mut` argument");
         }
         let held = |base: &tir::Expr| {
             matches!(
