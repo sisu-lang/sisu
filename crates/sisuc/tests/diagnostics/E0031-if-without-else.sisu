@@ -1,0 +1,12 @@
+// GIVEN a function that returns `i64` whose body ends in an `if` with no `else`
+// WHEN `sisu check` runs on it
+// THEN it reports E0031 at the closing `}` of the function
+// AND a label at the `if` says that it has no `else`, so it has no value
+// AND the help says to add an `else`, and to make each branch give an `i64`
+fn five(c: bool) -> i64 {
+    if c { 5 }
+}
+
+fn main() {
+    print(five(true))
+}

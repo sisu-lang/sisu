@@ -1,4 +1,4 @@
-error[E0043]: expression has no value
+error[E0043]: `print` returns no value
  --> E0043-break-unit.sisu:3:15
   |
 3 |         break print(1)

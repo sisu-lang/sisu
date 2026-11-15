@@ -1,0 +1,12 @@
+// GIVEN a function that returns `bool` whose body ends in an `if let` with no `else`
+// WHEN `sisu check` runs on it
+// THEN it reports E0031 at the closing `}` of the function
+// AND a label at the `if let` says that it has no `else`, so it has no value
+// AND the help says to add an `else`, and to make each branch give a `bool`
+fn has(o: i64?) -> bool {
+    if let Some(v) = o { v > 0 }
+}
+
+fn main() {
+    print(has(None))
+}

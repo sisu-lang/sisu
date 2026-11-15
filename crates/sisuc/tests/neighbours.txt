@@ -187,6 +187,8 @@ if c { None } else { todo("x") }
 if c { None } else { loop { } }
 if c { todo("x") } else { panic("x") }
 if c { None } else { todo("x"); print("a") }
+if c { 1 }
+if let Some(v) = Some(1) { v }
 nothing()
 ob?.none()
 Bx().none()

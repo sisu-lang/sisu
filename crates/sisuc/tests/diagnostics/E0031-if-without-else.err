@@ -1,0 +1,12 @@
+error[E0031]: function `five` must return `i64`, but its body has no value
+ --> E0031-if-without-else.sisu:8:1
+  |
+7 |     if c { 5 }
+  |     ---------- this `if` has no `else`, so it has no value
+8 | }
+  | ^
+  |
+  = help: add an `else`, and make each branch give an `i64`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0031

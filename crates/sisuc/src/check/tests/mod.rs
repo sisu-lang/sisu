@@ -28,6 +28,7 @@ mod let_else;
 mod loop_condition;
 mod mut_args;
 mod names;
+mod no_value;
 mod optionals;
 mod origins;
 mod parity;

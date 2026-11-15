@@ -1,0 +1,7 @@
+// GIVEN a `let` whose value is a call of the prelude function `print`
+// WHEN `sisu check` runs on it
+// THEN it reports E0043 "`print` returns no value" at the call
+// AND no label points into the prelude
+fn main() {
+    let x = print(1)
+}
