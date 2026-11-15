@@ -328,6 +328,9 @@ su.u
 xu[0]
 # An `if` without an `else` that gives a `unit`: it has no value to lift to `unit?`.
 if d { g() }
+# An `if` whose `then` block jumps before an `if` without an `else`: the tail of a `never` block
+# is unreachable, so no code reads its value.
+if c { return; if d { 1 } } else { g() }
 
 [failed values]
 # A type parameter read: in the function whose bound failed, `u` is unknown.

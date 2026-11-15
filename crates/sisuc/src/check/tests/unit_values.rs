@@ -1249,3 +1249,374 @@ fn a_unit_call_with_one_argument_should_name_its_function_in_the_cause() {
     let src = "fn k(x: i64) {}\nfn main() {\n    let y: i64 = k(1)\n}";
     assert_eq!(found(src), [(Code::NoValue, (3, 18), vec![(1, 4)])]);
 }
+
+/// A program whose `f` holds `used` on line 9, in a `loop`, after the declarations that the rows
+/// share: a `unit` function `g`, functions `h` over `ty?` and `hu` over `ty`, a generic `id` and
+/// a struct `S` over `ty?`. `items`, on line 6, holds more declarations.
+fn with_jump(ty: &str, items: &str, used: &str) -> String {
+    format!(
+        "fn g() {{}}\nfn h(x: {ty}?) {{}}\nfn hu(x: {ty}) {{}}\nfn id<T>(x: T) -> T {{ x }}\nstruct S {{ x: {ty}? }}\n{items}\nfn f(c: bool, d: bool, n: i64) {{\n    loop {{\n        {used}\n        break\n    }}\n}}\nfn main() {{ f(false, false, 1) }}"
+    )
+}
+
+/// A row of the `with_jump` tables: its name, its `items`, its use, and each report wanted in it.
+/// A report is its code and a text. The last start of that text in the program is its start.
+type JumpRow<'a> = (&'a str, &'a str, &'a str, Vec<(Code, &'a str)>);
+
+/// Checks each row of `rows` in `with_jump` over `unit`, and also over `i64` when `twin` is set.
+/// The `i64` twin has `2` in place of each `g()`. Lists every row that is red.
+fn jump_rows(rows: &[JumpRow<'_>], twin: bool) {
+    with_prelude();
+    let mut red = Vec::new();
+    for (row, items, used, wanted) in rows {
+        let mut forms = vec![("unit", with_jump("unit", items, used))];
+        if twin {
+            let swap = |text: &str| text.replace("unit", "i64").replace("g()", "2");
+            forms.push(("i64 twin", with_jump("i64", &swap(items), &swap(used))));
+        }
+        for (form, src) in forms {
+            let wanted: Vec<_> = (wanted.iter())
+                .map(|&(code, text)| {
+                    let offset = src.rfind(text).expect("each wanted text is in its program");
+                    (code, line_col(&src, offset), false)
+                })
+                .collect();
+            let Ok(found) = std::panic::catch_unwind(|| reports(&src)) else {
+                red.push(format!("row `{row}`, {form}: the checker panicked"));
+                continue;
+            };
+            if found != wanted {
+                red.push(format!(
+                    "row `{row}`, {form}: found {found:?}, wanted {wanted:?}"
+                ));
+            }
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+/// A block that ends with `never` keeps its unreachable tail. No code reads that tail's value,
+/// so an `if` without an `else` there is not E0043, and a value there is not W0004. Each row
+/// reports only the unreachable code, as its `i64` twin does.
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table holds a row for each place that reads the value"
+)]
+fn a_valueless_if_after_a_jump_should_report_only_unreachable_code() {
+    let at_if = || vec![(Code::UnreachableCode, "if d")];
+    let rows: Vec<JumpRow<'_>> = vec![
+        (
+            "jump on its own line",
+            "",
+            "let u = if c { return\n            if d { 1 } } else { g() }\n        print(u)",
+            at_if(),
+        ),
+        (
+            "jump in the else branch",
+            "",
+            "let u = if c { g() } else { return; if d { 1 } }\n        print(u)",
+            at_if(),
+        ),
+        (
+            "jump in a match arm",
+            "",
+            "let u = match n { 1 => { return; if d { 1 } }; _ => g() }\n        print(u)",
+            at_if(),
+        ),
+        (
+            "break",
+            "",
+            "let u = if c { break; if d { 1 } } else { g() }\n        print(u)",
+            at_if(),
+        ),
+        (
+            "continue",
+            "",
+            "let u = if c { continue; if d { 1 } } else { g() }\n        print(u)",
+            at_if(),
+        ),
+        (
+            "panic",
+            "",
+            "let u = if c { panic(\"x\"); if d { 1 } } else { g() }\n        print(u)",
+            at_if(),
+        ),
+        (
+            "let of type unit?",
+            "",
+            "let _y: unit? = if c { return; if d { g() } } else { g() }",
+            at_if(),
+        ),
+        (
+            "argument of type unit?",
+            "",
+            "h(if c { return; if d { 1 } } else { g() })",
+            at_if(),
+        ),
+        (
+            "argument of type unit",
+            "",
+            "hu(if c { return; if d { 1 } } else { g() })",
+            at_if(),
+        ),
+        (
+            "untyped array element",
+            "",
+            "let a = [if c { return; if d { 1 } } else { g() }, g()]\n        print(a)",
+            at_if(),
+        ),
+        (
+            "struct field of type unit?",
+            "",
+            "let _s = S(x: if c { return; if d { 1 } } else { g() })",
+            at_if(),
+        ),
+        (
+            "interpolation",
+            "",
+            "let u = \"{if c { return; if d { 1 } } else { g() }}\"\n        print(u)",
+            at_if(),
+        ),
+        (
+            "if let on a Some",
+            "",
+            "if let Some(v) = Some(if c { return; if d { 1 } } else { g() }) { print(v) }",
+            at_if(),
+        ),
+        (
+            "array fill",
+            "",
+            "let u = [if c { return; if d { 1 } } else { g() }; 2]\n        print(u)",
+            at_if(),
+        ),
+        (
+            "body of a unit? function",
+            "fn t(c: bool, d: bool) -> unit? { if c { return None; if d { 1 } } else { g() } }",
+            "let _v = t(c, d)",
+            at_if(),
+        ),
+        (
+            "return in a unit? function",
+            "fn t(c: bool, d: bool) -> unit? { return if c { return None; if d { 1 } } else { g() } }",
+            "let _v = t(c, d)",
+            at_if(),
+        ),
+        (
+            "left operand of ==",
+            "",
+            "let u = (if c { return; if d { 1 } } else { g() }) == g()\n        print(u)",
+            at_if(),
+        ),
+        (
+            "right operand of ==",
+            "",
+            "let u = g() == (if c { return; if d { 1 } } else { g() })\n        print(u)",
+            at_if(),
+        ),
+        (
+            "generic argument",
+            "",
+            "let u = id(if c { return; if d { 1 } } else { g() })\n        print(u)",
+            at_if(),
+        ),
+        (
+            "if let after the jump",
+            "",
+            "let u = if c { return; if let Some(v) = Some(1) { v } } else { g() }\n        print(u)",
+            vec![(Code::UnreachableCode, "if let")],
+        ),
+        (
+            "body of a unit function",
+            "fn t(c: bool, d: bool) -> unit { if c { panic(\"x\"); if d { 1 } } else { g() } }",
+            "let _v = t(c, d)",
+            at_if(),
+        ),
+    ];
+    jump_rows(&rows, true);
+}
+
+/// The reports of an `if` without an `else` that no jump makes unreachable stay. So do those of
+/// a `never` value that is read, and of a jump inside a value that the branch reads. This test
+/// passes before and after the fix of its commit: it pins the reports.
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table holds a row for each place that reads the value"
+)]
+fn a_valueless_if_that_no_jump_skips_should_keep_its_reports() {
+    let no_value = || vec![(Code::NoValue, "if d")];
+    let rows: Vec<JumpRow<'_>> = vec![
+        (
+            "never block as the value",
+            "",
+            "let u = { return; if d { 1 } }\n        print(u)",
+            vec![(Code::NoValue, "{ return"), (Code::UnreachableCode, "if d")],
+        ),
+        (
+            "never block in parentheses",
+            "",
+            "let u = if c { ({ return; if d { 1 } }) } else { g() }\n        print(u)",
+            vec![(Code::UnreachableCode, "if d")],
+        ),
+        (
+            "never match in a branch",
+            "",
+            "let u = if c { match n { _ => { return; if d { 1 } } } } else { g() }\n        print(u)",
+            vec![(Code::UnreachableCode, "if d")],
+        ),
+        (
+            "reachable, else branch",
+            "",
+            "let u = if c { g() } else { if d { 1 } }\n        print(u)",
+            no_value(),
+        ),
+        (
+            "reachable, match arm",
+            "",
+            "let u = match n { 1 => { if d { 1 } }; _ => g() }\n        print(u)",
+            no_value(),
+        ),
+        (
+            "reachable, let of type unit?",
+            "",
+            "let _y: unit? = if c { if d { g() } } else { g() }",
+            no_value(),
+        ),
+        (
+            "reachable, argument of type unit?",
+            "",
+            "h(if c { if d { 1 } } else { g() })",
+            no_value(),
+        ),
+        (
+            "reachable, argument of type unit",
+            "",
+            "hu(if c { if d { 1 } } else { g() })",
+            no_value(),
+        ),
+        (
+            "reachable, untyped array element",
+            "",
+            "let a = [if c { if d { 1 } } else { g() }, g()]\n        print(a)",
+            no_value(),
+        ),
+        (
+            "reachable, struct field",
+            "",
+            "let _s = S(x: if c { if d { 1 } } else { g() })",
+            no_value(),
+        ),
+        (
+            "reachable, interpolation",
+            "",
+            "let u = \"{if c { if d { 1 } } else { g() }}\"\n        print(u)",
+            no_value(),
+        ),
+        (
+            "reachable, if let on a Some",
+            "",
+            "if let Some(v) = Some(if c { if d { 1 } } else { g() }) { print(v) }",
+            no_value(),
+        ),
+        (
+            "reachable, array fill",
+            "",
+            "let u = [if c { if d { 1 } } else { g() }; 2]\n        print(u)",
+            no_value(),
+        ),
+        (
+            "reachable, body of a unit? function",
+            "fn t(c: bool, d: bool) -> unit? { if c { if d { 1 } } else { g() } }",
+            "let _v = t(c, d)",
+            no_value(),
+        ),
+        (
+            "reachable, return in a unit? function",
+            "fn t(c: bool, d: bool) -> unit? { return if c { if d { 1 } } else { g() } }",
+            "let _v = t(c, d)",
+            no_value(),
+        ),
+        (
+            "reachable, left operand of ==",
+            "",
+            "let u = (if c { if d { 1 } } else { g() }) == g()\n        print(u)",
+            no_value(),
+        ),
+        (
+            "reachable, right operand of ==",
+            "",
+            "let u = g() == (if c { if d { 1 } } else { g() })\n        print(u)",
+            no_value(),
+        ),
+        (
+            "reachable, generic argument",
+            "",
+            "let u = id(if c { if d { 1 } } else { g() })\n        print(u)",
+            no_value(),
+        ),
+        (
+            "reachable, if let",
+            "",
+            "let u = if c { if let Some(v) = Some(1) { v } } else { g() }\n        print(u)",
+            vec![(Code::NoValue, "if let")],
+        ),
+        (
+            "reachable, body of a unit function",
+            "fn t(c: bool, d: bool) -> unit { if c { if d { 1 } } else { g() } }",
+            "let _v = t(c, d)",
+            vec![(Code::UnusedValue, "1 }")],
+        ),
+    ];
+    jump_rows(&rows, false);
+}
+
+/// A statement or a `unit` body discards the value of each branch, but not the unreachable tail of
+/// a branch that ends with `never`: W0001 reports that tail, and W0004 does not.
+#[test]
+fn a_value_after_a_jump_should_report_only_unreachable_code_where_it_is_discarded() {
+    with_prelude();
+    let mut red = Vec::new();
+    for (row, src, unused) in [
+        (
+            "statement",
+            "fn g() {}\nfn main() {\n    let c = true\n    if c { return; 5 } else { g() }\n}",
+            None,
+        ),
+        (
+            "branch in a body",
+            "fn t(c: bool) { if c { return; 5 } else { print(1) } }\nfn main() {\n    t(true)\n}",
+            None,
+        ),
+        (
+            "branch beside a value",
+            "fn main() {\n    let c = true\n    if c { return; 5 } else { 6 }\n}",
+            Some("6 }"),
+        ),
+    ] {
+        let mut wanted = vec![(
+            Code::UnreachableCode,
+            line_col(src, src.find('5').expect("a 5")),
+            false,
+        )];
+        wanted.extend(unused.map(|text| {
+            let offset = src.find(text).expect("the unused text is in the program");
+            (Code::UnusedValue, line_col(src, offset), false)
+        }));
+        let found = reports(src);
+        if found != wanted {
+            red.push(format!("row `{row}`: found {found:?}, wanted {wanted:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
