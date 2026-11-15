@@ -318,6 +318,91 @@ fn badness(syntax: &Result<Vec<Diagnostic>, Diagnostic>) -> (bool, usize) {
     }
 }
 
+/// Each safe fix of `source` that breaks the contract of the safe fixes, one line for each.
+/// Applied alone, a safe fix must remove the diagnostics that carry it, keep every other code,
+/// and add no lexer or parser error: a diagnostic that goes away with it was a cascade of the same
+/// mistake (ADR 0013). The checker may still report errors that the fix reveals, also of the
+/// carriers' code, but not where a carrier was. A fix that two diagnostics carry is applied once.
+///
+/// The caller runs it on a thread with a stack of `STACK_SIZE`, as `front_end` needs. The
+/// fixture test of `diagnostic::explanations` and `tests/neighbours.rs` call it.
+pub fn safe_fix_breaches(source: &str) -> Vec<String> {
+    let codes = |ds: &[Diagnostic]| ds.iter().map(Diagnostic::code).collect::<Vec<_>>();
+    let diagnostics = front_end(source).1;
+    let mut applied: Vec<&Fix> = Vec::new();
+    let mut breaches = Vec::new();
+    for d in &diagnostics {
+        for fix in d.fixes().iter().filter(|f| f.safe()) {
+            if applied.contains(&fix) {
+                continue;
+            }
+            applied.push(fix);
+            let result = fix.apply(source);
+            let after = front_end(&result).1;
+            let (carriers, others): (Vec<&Diagnostic>, Vec<&Diagnostic>) =
+                diagnostics.iter().partition(|e| e.fixes().contains(fix));
+            // A carrier is gone when no report of its code is where it was. A report of its
+            // code elsewhere is one that the fix reveals.
+            let left: Vec<Code> = (carriers.iter())
+                .filter(|e| {
+                    let at = (moved(fix, e.span().start()), moved(fix, e.span().end()));
+                    (after.iter())
+                        .any(|a| a.code() == e.code() && (a.span().start(), a.span().end()) == at)
+                })
+                .map(|e| e.code())
+                .collect();
+            let removed = minus(others.iter().map(|e| e.code()).collect(), &codes(&after));
+            let syntax = added_syntax(source, &result);
+            if !left.is_empty() || !removed.is_empty() || !syntax.is_empty() {
+                breaches.push(format!(
+                    "the safe fix of {:?} at {:?} left {left:?}, removed {removed:?} and added \
+                     the syntax errors {syntax:?}:\n{result}",
+                    d.code(),
+                    d.span()
+                ));
+            }
+        }
+    }
+    breaches
+}
+
+/// Where offset `at` of a source is after `fix`: the edits that end before it move it.
+pub(crate) fn moved(fix: &Fix, at: usize) -> usize {
+    let before = fix.edits().iter().filter(|e| e.span().end() <= at);
+    let (added, removed) = before.fold((0, 0), |(added, removed), e| {
+        (
+            added + e.replacement().len(),
+            removed + e.span().range().len(),
+        )
+    });
+    at + added - removed
+}
+
+/// The lexer and parser diagnostics of `source`.
+fn syntax_codes(source: &str) -> Vec<Code> {
+    let diagnostics = match lexer::lex(source) {
+        Ok(lexed) => parser::parse(lexed, false).diagnostics,
+        Err(d) => vec![d],
+    };
+    diagnostics.iter().map(Diagnostic::code).collect()
+}
+
+/// `a` with one occurrence of each code of `b` removed.
+fn minus(mut a: Vec<Code>, b: &[Code]) -> Vec<Code> {
+    for code in b {
+        if let Some(i) = a.iter().position(|c| c == code) {
+            a.remove(i);
+        }
+    }
+    a
+}
+
+/// The syntax-error codes that `result` has and `source` does not. It compares codes, so a fix that
+/// trades one E0011 for another E0011 passes.
+pub(crate) fn added_syntax(source: &str, result: &str) -> Vec<Code> {
+    minus(syntax_codes(result), &syntax_codes(source))
+}
+
 /// How badly `source` fails to lex or to parse, as `badness` ranks it.
 pub(crate) fn syntax_errors(source: &str) -> (bool, usize) {
     badness(&syntax(source))

@@ -4,10 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{Code, Diagnostic, Edit, Fix, RETIRED};
-use crate::front_end::{decode, front_end, sound_fixes};
+use crate::front_end::{added_syntax, decode, front_end, safe_fix_breaches, sound_fixes};
 use crate::fuzz::assert_spans;
-use crate::lexer::lex;
-use crate::parser::{parse, parse_ok};
+use crate::parser::parse_ok;
 
 /// The diagnostics of `source`, found on the stack of the compiler.
 fn diagnostics(source: &str) -> Vec<Diagnostic> {
@@ -296,75 +295,28 @@ fn fixtures() -> Vec<(PathBuf, Code)> {
         .collect()
 }
 
-/// The lexer and parser diagnostics of `source`.
-fn syntax_codes(source: &str) -> Vec<Code> {
-    crate::on_compiler_stack(|| {
-        let diagnostics = match lex(source) {
-            Ok(lexed) => parse(lexed, false).diagnostics,
-            Err(d) => vec![d],
-        };
-        diagnostics.iter().map(Diagnostic::code).collect()
-    })
-}
-
-/// `a` with one occurrence of each code of `b` removed.
-fn minus(mut a: Vec<Code>, b: &[Code]) -> Vec<Code> {
-    for code in b {
-        if let Some(i) = a.iter().position(|c| c == code) {
-            a.remove(i);
-        }
-    }
-    a
-}
-
-/// The syntax-error codes that `result` has and `source` does not. It compares codes, so a fix that
-/// trades one E0011 for another E0011 passes.
-fn added_syntax(source: &str, result: &str) -> Vec<Code> {
-    minus(syntax_codes(result), &syntax_codes(source))
-}
-
 /// Applying one safe fix removes the diagnostics that carry it and no other, and adds no syntax
-/// error: a diagnostic that disappears with it was a cascade of the same mistake (ADR 0013). The
-/// checker may still report errors the fix reveals.
+/// error (`safe_fix_breaches`). The message lists every fix that breaks it.
 #[test]
 fn each_safe_fix_should_remove_exactly_its_diagnostic() {
-    let mut applied = 0;
+    let mut checked = 0;
+    let mut breaches = Vec::new();
     for (path, _) in all_fixtures() {
         let Some(source) = fixture_text(&path) else {
             continue;
         };
-        let diagnostics = diagnostics(&source);
-        let before: Vec<Code> = diagnostics.iter().map(Diagnostic::code).collect();
-        for d in &diagnostics {
-            for fix in d.fixes().iter().filter(|f| f.safe()) {
-                let edits: Vec<&Edit> = fix.edits().iter().collect();
-                let result = apply(&source, &edits);
-                let at = format!(
-                    "{}: fixing {:?} at {:?}",
-                    path.display(),
-                    d.code(),
-                    d.span()
-                );
-                assert_eq!(
-                    added_syntax(&source, &result),
-                    [],
-                    "{at} added a syntax error:\n{result}"
-                );
-                let carriers: Vec<Code> = diagnostics
-                    .iter()
-                    .filter(|e| e.fixes().contains(fix))
-                    .map(Diagnostic::code)
-                    .collect();
-                assert_eq!(
-                    minus(before.clone(), &codes(&result)),
-                    carriers,
-                    "{at} removed other diagnostics:\n{result}"
-                );
-                applied += 1;
-            }
+        if diagnostics(&source)
+            .iter()
+            .any(|d| d.fixes().iter().any(Fix::safe))
+        {
+            checked += 1;
+        }
+        for breach in crate::on_compiler_stack(|| safe_fix_breaches(&source)) {
+            breaches.push(format!("{}: {breach}", path.display()));
         }
     }
-    assert!(applied > 0, "no fixture has a safe fix");
+    assert!(checked > 0, "no fixture has a safe fix");
+    assert!(breaches.is_empty(), "{}", breaches.join("\n"));
 }
 
 /// Applying one unsafe fix that `sisu check` shows adds no syntax error that the source does not
@@ -382,7 +334,7 @@ fn each_unsafe_fix_should_parse() {
                 let edits: Vec<&Edit> = fix.edits().iter().collect();
                 let result = apply(&source, &edits);
                 applied += 1;
-                let added = added_syntax(&source, &result);
+                let added = crate::on_compiler_stack(|| added_syntax(&source, &result));
                 if !added.is_empty() {
                     failing.push(format!(
                         "{}: fixing {:?} at {:?} added {added:?}:\n{result}",
