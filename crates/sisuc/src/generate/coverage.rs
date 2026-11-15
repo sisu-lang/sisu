@@ -7323,6 +7323,66 @@ fn generated_programs_should_reach_each_gap_rule() {
     );
 }
 
+/// The forms in which `program` holds a `unit` loop of a printed `unit` (`Gen::unit_loop`). The
+/// loop follows the bound `u` as a statement, binds `u` again, or stands for an operand.
+fn unit_loop_forms(program: &str) -> FxHashSet<&'static str> {
+    let mut forms = FxHashSet::default();
+    // Only a `unit` loop names its counter `v<n>` and sets it to 1: a `mut` copy names it `w<n>`.
+    for (start, _) in program.match_indices("({ let mut v") {
+        let counter = &program[start + "({ let mut v".len()..];
+        if !counter
+            .trim_start_matches(|c: char| c.is_ascii_digit())
+            .starts_with(" = 1; ")
+        {
+            continue;
+        }
+        let mut depth = 0;
+        let end = (program[start..].char_indices())
+            .find_map(|(i, c)| {
+                match c {
+                    '(' => depth += 1,
+                    ')' if depth == 1 => return Some(start + i + 1),
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                None
+            })
+            .expect("each `unit` loop should close its `(`");
+        let (before, after) = (&program[..start], &program[end..]);
+        let form = if before.ends_with("let u = ") {
+            "binds `u` again"
+        } else if before.ends_with("; ") && after.starts_with("; ") {
+            "a statement"
+        } else if before.ends_with('[') || before.ends_with("Some(") || after.starts_with(" < u") {
+            "an operand"
+        } else {
+            continue;
+        };
+        forms.insert(form);
+    }
+    forms
+}
+
+/// GIVEN the programs of the seeds `0..FUZZ_SEEDS`, which the nightly reads and no others
+/// WHEN the test reads the `unit` loops of their printed `unit` values, in order
+/// THEN a loop is a statement in one, binds `u` again in one, and is an operand in one
+#[test]
+fn generated_programs_should_reach_each_form_of_a_unit_loop() {
+    let all = ["a statement", "binds `u` again", "an operand"];
+    let mut seen = FxHashSet::default();
+    for n in 0..FUZZ_SEEDS {
+        seen.extend(unit_loop_forms(&generate(&seed(n)).program));
+        if seen.len() == all.len() {
+            break;
+        }
+    }
+    let missing: Vec<_> = all.iter().filter(|form| !seen.contains(*form)).collect();
+    assert!(
+        missing.is_empty(),
+        "no program of the seeds 0..{FUZZ_SEEDS} holds a `unit` loop as: {missing:?}"
+    );
+}
+
 /// GIVEN the programs of the seeds `0..FUZZ_SEEDS`, which the nightly reads and no others
 /// WHEN the build reads them in order
 /// THEN each point of `LOWERING_POINTS` is marked, and the walk stops once all are
