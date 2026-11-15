@@ -323,6 +323,7 @@ impl Checker<'_> {
                     guard: guard.transpose().map_err(|p| p.reported())?,
                     body: body.map_err(|p| p.reported())?,
                     reachable,
+                    made: false,
                 })
             })
             .collect();
@@ -1535,11 +1536,13 @@ impl Checker<'_> {
                     guard: None,
                     body: then_block,
                     reachable: true,
+                    made: false,
                 },
                 tir::Arm {
                     pattern: other,
                     bindings: Vec::new(),
                     guard: None,
+                    made: else_block.is_none(),
                     body: else_block.unwrap_or_else(empty_block),
                     reachable: true,
                 },

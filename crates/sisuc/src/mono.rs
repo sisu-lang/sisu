@@ -2311,6 +2311,7 @@ mod tests {
             guard: None,
             body: block(param),
             reachable: true,
+            made: false,
         };
         for (case, kind) in [
             (

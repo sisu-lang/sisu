@@ -956,7 +956,9 @@ fn without_value(e: &tir::Expr, lifted: bool) -> Option<Span> {
             tail(then_block).or_else(|| else_block.as_ref().and_then(tail))
         }
         tir::ExprKind::Match { arms, .. } => {
-            if unit && arms.iter().any(|arm| has_value(&arm.body)) {
+            // A made arm is the missing `else` of an `if let` on an enum.
+            let made = lifted && arms.iter().any(|arm| arm.made);
+            if made || unit && arms.iter().any(|arm| has_value(&arm.body)) {
                 return Some(e.span);
             }
             arms.iter().find_map(|arm| tail(&arm.body))

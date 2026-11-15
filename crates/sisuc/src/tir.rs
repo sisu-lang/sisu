@@ -926,6 +926,9 @@ pub(crate) struct Arm {
     pub(crate) body: Block,
     /// False when earlier arms take every value the pattern matches (W0006).
     pub(crate) reachable: bool,
+    /// True for the `_` arm that the checker makes for an `if let` on an enum without an `else`.
+    /// Such an arm has no value, so the `match` gives no value to lift.
+    pub(crate) made: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -2579,6 +2582,7 @@ mod tests {
                 ty: Type::I64,
             },
             reachable: true,
+            made: false,
         };
         let arms = vec![
             arm(
@@ -2703,6 +2707,7 @@ mod tests {
                 ty: Type::I64,
             },
             reachable: true,
+            made: false,
         };
         let wild = Pattern {
             kind: PatternKind::Wild,
@@ -3681,6 +3686,7 @@ mod tests {
             guard,
             body: valued(k),
             reachable: true,
+            made: false,
         };
         let place = Place::Index {
             base: Box::new(Place::Field {
