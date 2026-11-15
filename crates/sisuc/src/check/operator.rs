@@ -9,7 +9,7 @@ use super::interface::Operation;
 use super::reports::{Held, Reported};
 use super::{
     Checked, Checker, Expectation, Lowered, Origin, Poisoned, as_optional, beyond_one_layer,
-    block_expr, is_kept, known_type, optional_of, payload, type_of, wrap,
+    block_expr, is_kept, known_type, optional_of, payload, type_of,
 };
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
@@ -1145,9 +1145,9 @@ impl Checker<'_> {
         let (l, r) = match (type_of(&l), type_of(&r)) {
             (Some(lt), Some(rt)) if lt != rt => {
                 if fits(lt, rt) {
-                    (l, r.map(|e| wrap(e, lt)))
+                    (l, r.and_then(|e| self.lift(e, lt)))
                 } else if fits(rt, lt) {
-                    (l.map(|e| wrap(e, rt)), r)
+                    (l.and_then(|e| self.lift(e, rt)), r)
                 } else if self.converts_to_any(rt, lt) {
                     // A class beside an `any` converts to it first.
                     #[cfg(test)]
@@ -1300,7 +1300,9 @@ impl Checker<'_> {
             Some(Type::NEVER) => (other, payload),
             Some(ty) if ty == payload || ty == optional_of(payload) => (other, ty),
             // `x ?? 5` on an `i64??`: the payload of an optional `P` is wrapped to `P`.
-            Some(ty) if optional_of(ty) == payload => (other.map(|e| wrap(e, payload)), payload),
+            Some(ty) if optional_of(ty) == payload => {
+                (other.and_then(|e| self.lift(e, payload)), payload)
+            }
             Some(ty) => {
                 // An object and an `any` type that it converts to join to the `any` type.
                 let Some(joined) = self.any_join(payload, ty) else {

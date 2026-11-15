@@ -7,7 +7,7 @@ use super::pattern::{LetPattern, arm_key};
 use super::reports::Reported;
 use super::{
     Checked, CheckedBlock, Checker, Expectation, Misfit, Origin, Poisoned, as_optional, block_type,
-    is_jumped, is_kept, payload, tail, value_span, wrap_block,
+    is_jumped, is_kept, payload, tail, value_span,
 };
 use crate::ast;
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Unwrap};
@@ -293,7 +293,7 @@ impl Checker<'_> {
                             unwrap_some_object(block, ty);
                             self.any_block(block, ty, source.span, Origin::None);
                         } else {
-                            wrap_block(block, ty, source.span);
+                            self.lift_block(block, ty, source.span);
                         }
                     }
                 }

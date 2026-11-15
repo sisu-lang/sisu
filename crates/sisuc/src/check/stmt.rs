@@ -1628,6 +1628,8 @@ impl Checker<'_> {
             Some(ty) if !fits(ty, got) && (!hinted || !is_target(ty)) => {
                 (self.against(v, checked, expected).0, ty)
             }
+            // The loop as a whole lifts a `T` value to the expected `T?`.
+            Some(ty) if ty != got => (self.refuse_unlifted(checked), got),
             _ => (checked, got),
         };
         // A misfit left is reported against the first value, as a value of its type is.

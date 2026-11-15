@@ -1022,6 +1022,12 @@ fn an_if_without_else_should_give_no_optional_unit_value() {
             at("if c"),
         ),
         (
+            "a unit? equal to",
+            "let e = p?.log() == if c { g() }",
+            "",
+            at("if c"),
+        ),
+        (
             "fallback of a unit??",
             "let a: unit?? = None; let z = a ?? if c { g() }",
             "",

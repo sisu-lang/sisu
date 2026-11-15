@@ -7,7 +7,8 @@ use super::names::{self, Resolved};
 use super::reports::Reported;
 use super::stmt::optional_unit;
 use super::{
-    Checked, Checker, Expectation, Origin, Poisoned, SelfType, Uninferred, payload, type_of, wrap,
+    Checked, CheckedBlock, Checker, Expectation, Origin, Poisoned, SelfType, Uninferred, payload,
+    type_of, wrap, wrap_block,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
@@ -468,6 +469,40 @@ impl Checker<'_> {
         })
     }
 
+    /// `e`, a `T`, wrapped to `want`, its optional. A `unit` whose value an `if` without an
+    /// `else` gives has no value to wrap: E0043 at that `if` (see `unlifted`).
+    pub(super) fn lift(&mut self, e: tir::Expr, want: Type) -> Checked {
+        match unlifted(&e) {
+            Some(at) => Err(Poisoned::typed(want, self.no_value(at, Type::UNIT, None))),
+            None => Ok(wrap(e, want)),
+        }
+    }
+
+    /// `checked`, a value that a later wrap lifts to its optional, as a loop lifts its `break`
+    /// values. E0043 when it has no value to lift (see `lift`); the value keeps its type.
+    pub(super) fn refuse_unlifted(&mut self, checked: Checked) -> Checked {
+        match checked
+            .as_ref()
+            .ok()
+            .and_then(|e| Some((unlifted(e)?, e.ty)))
+        {
+            Some((at, ty)) => Err(Poisoned::typed(ty, self.no_value(at, Type::UNIT, None))),
+            None => checked,
+        }
+    }
+
+    /// `lift` for the value of `block`, a branch or a body. A block with no value gets a `unit`
+    /// at `span` (see `wrap_block`).
+    pub(super) fn lift_block(&mut self, block: &mut CheckedBlock, want: Type, span: Span) {
+        let at = (block.as_ref().ok())
+            .and_then(|block| block.value.as_deref())
+            .and_then(unlifted);
+        match at {
+            Some(at) => *block = Err(Poisoned::typed(want, self.no_value(at, Type::UNIT, None))),
+            None => wrap_block(block, want, span),
+        }
+    }
+
     /// A value of type `want`; `Poisoned` is `Error`, which every type matches. A `T` where
     /// `want` is a `T?` is wrapped.
     pub(super) fn expect(&mut self, e: &ast::Expr, want: Expectation) -> Checked {
@@ -510,7 +545,7 @@ impl Checker<'_> {
                 && payload == got
             {
                 let wrapped = match checked {
-                    Ok(e) => Ok(wrap(e, want)),
+                    Ok(e) => self.lift(e, want),
                     Err(failed) => Err(Poisoned::typed(want, failed.reported())),
                 };
                 return (wrapped, false);
@@ -884,11 +919,24 @@ fn valueless_value(checked: &Checked) -> Option<Span> {
 /// value of one: through a block's value, a branch, an arm or a wrap. Such an `if` has no value.
 /// Only a `unit` or a `unit?` can give one, so the walk stops at any other type.
 pub(super) fn valueless(e: &tir::Expr) -> Option<Span> {
+    without_value(e, false)
+}
+
+/// `valueless` of `e`, a `unit` that lifts to `unit?`. There each `if` without an `else` has no
+/// value, whatever its branch has, as for an `i64?`.
+fn unlifted(e: &tir::Expr) -> Option<Span> {
+    without_value(e, true)
+}
+
+/// The walk of `valueless`; with `lifted`, an `if` without an `else` has no value by itself.
+fn without_value(e: &tir::Expr, lifted: bool) -> Option<Span> {
     let unit = e.ty == Type::UNIT;
     if !unit && !optional_unit(e.ty) {
         return None;
     }
-    let tail = |block: &tir::Block| block.value.as_deref().and_then(valueless);
+    let tail = |block: &tir::Block| {
+        (block.value.as_deref()).and_then(|value| without_value(value, lifted))
+    };
     // A branch with a value beside no `else`: an `if let` on an enum is a `match` of two arms.
     let has_value = |block: &tir::Block| !matches!(block.ty, Type::UNIT | Type::NEVER);
     match &e.kind {
@@ -902,7 +950,7 @@ pub(super) fn valueless(e: &tir::Expr) -> Option<Span> {
             else_block,
             ..
         } => {
-            if else_block.is_none() && has_value(then_block) {
+            if else_block.is_none() && (lifted || has_value(then_block)) {
                 return Some(e.span);
             }
             tail(then_block).or_else(|| else_block.as_ref().and_then(tail))
@@ -914,7 +962,7 @@ pub(super) fn valueless(e: &tir::Expr) -> Option<Span> {
             arms.iter().find_map(|arm| tail(&arm.body))
         }
         tir::ExprKind::Block(block) => tail(block),
-        tir::ExprKind::Wrap(inner) => valueless(inner),
+        tir::ExprKind::Wrap(inner) => without_value(inner, lifted),
         // Each of these gives its own value, which no `if` gives.
         tir::ExprKind::Int(_)
         | tir::ExprKind::Float(_)
