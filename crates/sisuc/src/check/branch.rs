@@ -433,11 +433,12 @@ impl Checker<'_> {
         };
         let d = match failed {
             AnyJoin::Leaves {
+                ty,
                 member: (i, Type::UNIT),
                 ..
             } => DiagnosticKind::NoValue {
                 at: sources[i].span,
-                cause: self.branch_cause(&sources[i], &blocks[i]),
+                cause: self.branch_cause(&sources[i], &blocks[i], Some(ty)),
             }
             .into(),
             AnyJoin::Leaves {
@@ -502,14 +503,14 @@ impl Checker<'_> {
             self.leaves_any(at, tail, want, got, origin)
         };
         match expected.ty() {
-            _ if first_ty == Type::UNIT && !wants_unit(expected) => DiagnosticKind::NoValue {
+            want if first_ty == Type::UNIT && !wants_unit(expected) => DiagnosticKind::NoValue {
                 at: sources[first].span,
-                cause: self.branch_cause(&sources[first], &blocks[first]),
+                cause: self.branch_cause(&sources[first], &blocks[first], want.or(Some(other_ty))),
             }
             .into(),
-            _ if other_ty == Type::UNIT && !wants_unit(expected) => DiagnosticKind::NoValue {
+            want if other_ty == Type::UNIT && !wants_unit(expected) => DiagnosticKind::NoValue {
                 at: sources[other].span,
-                cause: self.branch_cause(&sources[other], &blocks[other]),
+                cause: self.branch_cause(&sources[other], &blocks[other], want.or(Some(first_ty))),
             }
             .into(),
             Some(want) if fits(want, first_ty) => report(other, want, other_ty, expected.origin()),
@@ -537,7 +538,7 @@ impl Checker<'_> {
             && !wants_unit(expected)
         {
             let at = sources[i].span;
-            let cause = self.branch_cause(&sources[i], &blocks[i]);
+            let cause = self.branch_cause(&sources[i], &blocks[i], Some(want));
             return Some(DiagnosticKind::NoValue { at, cause }.into());
         }
         for &(i, t) in members {
@@ -549,11 +550,17 @@ impl Checker<'_> {
         None
     }
 
-    /// Why the branch `source`, whose checked block is `block`, has no value.
-    fn branch_cause(&self, source: &Branch<'_>, block: &CheckedBlock) -> NoValueCause {
+    /// Why the branch `source`, whose checked block is `block`, has no value where `want` is
+    /// wanted, when one type is.
+    fn branch_cause(
+        &self,
+        source: &Branch<'_>,
+        block: &CheckedBlock,
+        want: Option<Type>,
+    ) -> NoValueCause {
         let value = block.as_ref().ok().and_then(|b| b.value.as_deref());
         source.tail.map_or(NoValueCause::Plain, |tail| {
-            self.no_value_cause(tail, value, Type::UNIT, false)
+            self.no_value_cause(tail, value, (Type::UNIT, want), false)
         })
     }
 

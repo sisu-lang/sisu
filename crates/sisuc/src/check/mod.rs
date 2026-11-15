@@ -2624,8 +2624,12 @@ impl Checker<'_> {
                 let d = if got == Type::UNIT {
                     let end = f.body.span.end();
                     let value = body.as_ref().ok().and_then(|b| b.value.as_deref());
-                    let tail = tail(&f.body)
-                        .map(|e| (e.span, self.no_value_cause(e, value, Type::UNIT, false)));
+                    let tail = tail(&f.body).map(|e| {
+                        (
+                            e.span,
+                            self.no_value_cause(e, value, (Type::UNIT, Some(want)), false),
+                        )
+                    });
                     DiagnosticKind::BodyHasNoValue {
                         function: f.name.name.to_string(),
                         want: self.type_name(want),

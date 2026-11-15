@@ -2,7 +2,7 @@
 //   is expected
 // WHEN `sisu check` runs on it
 // THEN it reports E0043 "this `if` has no `else`, so its value is `unit`" at the `if`
-// AND the help names the expected type
+// AND the help names the expected type, where the context has one
 fn g() {}
 
 fn h(a: i64) {}

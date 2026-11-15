@@ -2627,7 +2627,7 @@ impl Checker<'_> {
                 continue;
             }
             let value = call.slots[i].as_ref().and_then(|slot| slot.as_ref().ok());
-            let cause = self.no_value_cause(&args[i].value, value, ty, false);
+            let cause = self.no_value_cause(&args[i].value, value, (ty, None), false);
             let reported = self.no_value(at, cause);
             call.slots[i] = Some(Err(Poisoned::untyped(reported)));
         }
@@ -3852,7 +3852,9 @@ impl Checker<'_> {
                     mark(self.against(e, slot, Expectation::Required(want, origin)))
                 }
                 _ => {
-                    let cause = self.no_value_cause(e, slot.as_ref().ok(), Type::UNIT, false);
+                    let want = bound.map(|(want, _)| want);
+                    let value = slot.as_ref().ok();
+                    let cause = self.no_value_cause(e, value, (Type::UNIT, want), false);
                     Err(Poisoned::untyped(self.no_value(e.span, cause)))
                 }
             });

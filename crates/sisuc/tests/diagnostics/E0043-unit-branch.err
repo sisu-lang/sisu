@@ -20,7 +20,7 @@ error[E0043]: this `if` has no `else`, so its value is `unit`
 15 |     print(1 + if c { g() })
    |               ^^^^^^^^^^^^
    |
-   = help: add an `else`, and make each branch give `i64`
+   = help: add an `else`, and make each branch give a value
 
 error[E0043]: this `if let` has no `else`, so its value is `unit`
   --> E0043-unit-branch.sisu:16:18

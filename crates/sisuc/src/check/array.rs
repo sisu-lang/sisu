@@ -326,7 +326,7 @@ impl Checker<'_> {
             if ty == Type::UNIT {
                 let e = &elements[i];
                 let value = slots[i].as_ref().and_then(|slot| slot.as_ref().ok());
-                let cause = self.no_value_cause(e, value, Type::UNIT, false);
+                let cause = self.no_value_cause(e, value, (Type::UNIT, None), false);
                 let reported = self.no_value(e.span, cause);
                 slots[i] = Some(Err(Poisoned::untyped(reported)));
                 failed.get_or_insert(reported);

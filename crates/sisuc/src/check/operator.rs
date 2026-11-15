@@ -718,11 +718,11 @@ impl Checker<'_> {
             });
         }
         let other =
-            (checked.iter().filter_map(type_of)).any(|ty| !takes_unit(ty) && ty != Type::NEVER);
-        if other {
+            (checked.iter().filter_map(type_of)).find(|&ty| !takes_unit(ty) && ty != Type::NEVER);
+        if other.is_some() {
             for (e, c) in operands.iter().zip(&mut checked) {
                 if type_of(c) == Some(Type::UNIT) {
-                    let cause = self.no_value_cause(e, c.as_ref().ok(), Type::UNIT, false);
+                    let cause = self.no_value_cause(e, c.as_ref().ok(), (Type::UNIT, other), false);
                     *c = Err(Poisoned::untyped(self.no_value(e.span, cause)));
                 }
             }
@@ -864,12 +864,13 @@ impl Checker<'_> {
         let other = self.value(second, want);
         // A `unit` beside a value of another type has no value to compare.
         if let (Some(a), Some(b)) = (type_of(&checked), type_of(&other))
-            && let Some((side, value)) = [(first, &checked, a, b), (second, &other, b, a)]
+            && let Some((side, value, beside)) = [(first, &checked, a, b), (second, &other, b, a)]
                 .into_iter()
                 .find(|&(_, _, ty, beside)| ty == Type::UNIT && !takes_unit(beside))
-                .map(|(side, value, ..)| (side, value))
+                .map(|(side, value, _, beside)| (side, value, beside))
         {
-            let cause = self.no_value_cause(side, value.as_ref().ok(), Type::UNIT, false);
+            let value = value.as_ref().ok();
+            let cause = self.no_value_cause(side, value, (Type::UNIT, Some(beside)), false);
             let reported = self.no_value(side.span, cause);
             return Err(Poisoned::untyped(reported));
         }

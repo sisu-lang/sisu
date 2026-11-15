@@ -300,6 +300,10 @@ pub(crate) enum NoValueCause {
     /// An `if`, or an `if let`, whose last `else` is missing. `returning` says that a `return` of
     /// a unit function holds it.
     NoElse { if_let: bool, returning: bool },
+    /// An `if`, or an `if let`, whose last `else` is missing and whose branch gives `unit` or
+    /// never finishes: its value is `unit`. `want` is the type that the context wants, when it
+    /// wants one.
+    UnitIf { if_let: bool, want: Option<String> },
     /// A call of `name`, a function that declares no return type, at `declared`, when that
     /// declaration is in the program.
     Call {
@@ -315,6 +319,10 @@ impl NoValueCause {
             NoValueCause::Plain | NoValueCause::Never => None,
             NoValueCause::NoElse { if_let, .. } => Some(format!(
                 "this `{}` has no `else`, so it has no value",
+                if *if_let { "if let" } else { "if" }
+            )),
+            NoValueCause::UnitIf { if_let, .. } => Some(format!(
+                "this `{}` has no `else`, so its value is `unit`",
                 if *if_let { "if let" } else { "if" }
             )),
             NoValueCause::Call { name, .. } => Some(format!("`{name}` returns `unit`")),
@@ -4813,7 +4821,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     Some((span, cause)) if let Some(text) = cause.reason() => {
                         let d = d.with_secondary(span, text);
                         match cause {
-                            NoValueCause::NoElse { .. } => d.with_help(format!(
+                            NoValueCause::NoElse { .. } | NoValueCause::UnitIf { .. } => d.with_help(format!(
                                 "add an `else`, and make each branch give {} `{want}`",
                                 indefinite(&want)
                             )),
@@ -5092,6 +5100,10 @@ impl From<DiagnosticKind> for Diagnostic {
                             "add an `else`, and make each branch give a value".to_owned()
                         })
                     }
+                    NoValueCause::UnitIf { want, .. } => d.with_help(format!(
+                        "add an `else`, and make each branch give {}",
+                        want.map_or_else(|| "a value".to_owned(), |want| format!("`{want}`"))
+                    )),
                     NoValueCause::Call {
                         name,
                         declared: Some(declared),

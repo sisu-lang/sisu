@@ -483,7 +483,7 @@ impl Checker<'_> {
     /// has no expected type for `value` to hold `e` to.
     pub(super) fn refuse_unit(&mut self, e: &ast::Expr, checked: Checked) -> Checked {
         if type_of(&checked) == Some(Type::UNIT) {
-            let cause = self.no_value_cause(e, checked.as_ref().ok(), Type::UNIT, false);
+            let cause = self.no_value_cause(e, checked.as_ref().ok(), (Type::UNIT, None), false);
             return Err(Poisoned::untyped(self.no_value(e.span, cause)));
         }
         checked
@@ -520,7 +520,8 @@ impl Checker<'_> {
         let unwanted = type_of(checked) == Some(Type::UNIT)
             && expected.ty().is_some_and(|want| !takes_unit(want));
         unwanted.then(|| {
-            let cause = self.no_value_cause(e, checked.as_ref().ok(), Type::UNIT, returning);
+            let value = checked.as_ref().ok();
+            let cause = self.no_value_cause(e, value, (Type::UNIT, expected.ty()), returning);
             (e.span, cause)
         })
     }
@@ -547,7 +548,7 @@ impl Checker<'_> {
         &self,
         e: &ast::Expr,
         value: Option<&tir::Expr>,
-        ty: Type,
+        (ty, want): (Type, Option<Type>),
         returning: bool,
     ) -> NoValueCause {
         if ty == Type::NEVER {
@@ -558,7 +559,14 @@ impl Checker<'_> {
         }
         let name = match &e.kind {
             ExprKind::If { .. } | ExprKind::IfLet { .. } => {
+                // A branch with no value of its own gives the `if` the value `unit`.
                 return match missing_else(e) {
+                    Some(if_let) if value.is_some_and(|value| valueless(value).is_none()) => {
+                        NoValueCause::UnitIf {
+                            if_let,
+                            want: want.map(|want| self.type_name(want)),
+                        }
+                    }
                     Some(if_let) => NoValueCause::NoElse { if_let, returning },
                     None => NoValueCause::Plain,
                 };
@@ -569,7 +577,7 @@ impl Checker<'_> {
                         tir::ExprKind::Dbg { operand, .. } => Some(&**operand),
                         _ => None,
                     });
-                    return self.no_value_cause(&arg.value, operand, ty, returning);
+                    return self.no_value_cause(&arg.value, operand, (ty, want), returning);
                 }
                 callee
             }
