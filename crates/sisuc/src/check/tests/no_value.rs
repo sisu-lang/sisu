@@ -327,6 +327,19 @@ fn value_rows() -> Vec<Row> {
             text("if c { 2 }", 0),
             Cause::NoElse,
         ),
+        // An argument of a generic call: the cause shows at each place that checks one.
+        row_with(
+            "R43",
+            "fn consume<T>(x: T, y: T) {}\n",
+            "consume(if c { 5 }, 1)",
+            (text("if c { 5 }", 0), Cause::NoElse),
+        ),
+        row_with(
+            "R44",
+            "fn opt<T>(x: [T?]) {}\n",
+            "opt([if c { 5 }])",
+            (text("if c { 5 }", 0), Cause::NoElse),
+        ),
         row_with(
             "R37",
             "struct W: U { fn m(self) {} }\n",
@@ -555,22 +568,30 @@ fn a_body_with_no_value_should_label_its_tail() {
     assert_no_red(&red);
 }
 
+/// The count of fixes of the one diagnostic of the program `src`.
+fn fixes_of_one(id: &str, src: &str) -> usize {
+    let (_, ds) = checked(src);
+    let [d] = ds.as_slice() else {
+        panic!("row `{id}`: {} diagnostics, wanted 1", ds.len());
+    };
+    d.fixes().len()
+}
+
 /// GIVEN the reports of rows R1, R9, R11 and B1
 /// WHEN they are read
 /// THEN none of them holds a fix
 #[test]
 fn a_unit_value_should_offer_no_fix() {
-    let mut red = Vec::new();
-    let mut fixes = Vec::new();
-    for row in value_rows() {
-        if ["R1", "R9", "R11"].contains(&row.id) {
-            fixes.push((row.id, value_diagnostic(&row, &mut red).fixes().len()));
-        }
-    }
-    for row in body_rows() {
-        if row.id == "B1" {
-            fixes.push((row.id, body_diagnostic(&row, &mut red).fixes().len()));
-        }
-    }
+    let mut fixes: Vec<_> = value_rows()
+        .iter()
+        .filter(|row| ["R1", "R9", "R11"].contains(&row.id))
+        .map(|row| (row.id, fixes_of_one(row.id, &value_source(row))))
+        .collect();
+    fixes.extend(
+        body_rows()
+            .iter()
+            .filter(|row| row.id == "B1")
+            .map(|row| (row.id, fixes_of_one(row.id, &body_source(row)))),
+    );
     assert_eq!(fixes, [("R1", 0), ("R9", 0), ("R11", 0), ("B1", 0)]);
 }
