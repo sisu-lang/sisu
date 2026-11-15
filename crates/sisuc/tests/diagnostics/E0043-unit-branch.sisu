@@ -2,8 +2,8 @@
 //   is expected
 // WHEN `sisu check` runs on it
 // THEN it reports E0043 "this `if` has no `else`, so its value is `unit`" at the `if`
-// AND the help names the expected type, where the context has one, as a generic parameter, a join,
-//   an `==` or a comparison gives
+// AND the help names the expected type where the context has one. A generic parameter, an array
+//   element, a join, an `==` and a comparison give one
 fn g() {}
 
 fn h(a: i64) {}
@@ -25,4 +25,5 @@ fn main() {
     print(1 == if c { g() })
     let v = if d { if c { g() } } else { 1 }
     print(1 < if c { g() })
+    let u = [1, if c { g() }]
 }

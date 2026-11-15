@@ -4,8 +4,8 @@
 // THEN it reports E0031 at the closing `}` of the function
 // AND a label at the `if` says that it has no value, as an `if` without an `else` has none where
 //   an optional is expected
-// AND E0043 says the same where a `let`, a generic parameter, an array element, a join or an `==`
-//   expects an optional
+// AND E0043 says the same where a `let`, a generic parameter, an optional array, a join or an
+//   `==` expects an optional
 fn g() {}
 
 fn k<T>(x: T, y: T?) {}
@@ -34,4 +34,6 @@ fn main() {
     print(o == if c { g() })
     let w = if d { if c { g() } } else { o }
     print(if c { g() } == o)
+    let a1 = [1, o, if c { g() }]
+    let a2 = [1, None, if c { g() }]
 }

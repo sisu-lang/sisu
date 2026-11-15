@@ -82,5 +82,21 @@ error[E0043]: this `if` has no `else`, so it has no value
    |
    = help: add an `else`, and make each branch give a value
 
-sisu: 10 errors
+error[E0043]: this `if` has no `else`, so it has no value
+  --> E0031-unit-branch-optional.sisu:37:21
+   |
+37 |     let a1 = [1, o, if c { g() }]
+   |                     ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give a value
+
+error[E0043]: this `if` has no `else`, so it has no value
+  --> E0031-unit-branch-optional.sisu:38:24
+   |
+38 |     let a2 = [1, None, if c { g() }]
+   |                        ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give a value
+
+sisu: 12 errors
 sisu: for more on a code, run `sisu explain <code>`: E0031, E0043

@@ -78,5 +78,13 @@ error[E0043]: this `if` has no `else`, so its value is `unit`
    |
    = help: add an `else`, and make each branch give `i64`
 
-sisu: 10 errors
+error[E0043]: this `if` has no `else`, so its value is `unit`
+  --> E0043-unit-branch.sisu:28:17
+   |
+28 |     let u = [1, if c { g() }]
+   |                 ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give `i64`
+
+sisu: 11 errors
 sisu: for more on a code, run `sisu explain <code>`: E0043
