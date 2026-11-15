@@ -295,6 +295,38 @@ fn value_rows() -> Vec<Row> {
             text("if c { greet() } else { greet(); greet() }", 0),
             Cause::Plain,
         ),
+        // A braced `else` that holds one `if` is no `else if`: the outer `if` has an `else`.
+        row(
+            "R39",
+            "let x = if c { greet() } else { if c { greet() } }",
+            text("if c { greet() } else { if c { greet() } }", 0),
+            Cause::Plain,
+        ),
+        row(
+            "R40",
+            "let x = if c { greet() } else { if let Some(v) = o { print(v) } }",
+            text(
+                "if c { greet() } else { if let Some(v) = o { print(v) } }",
+                0,
+            ),
+            Cause::Plain,
+        ),
+        row_with(
+            "R41",
+            "fn f(c: bool) { return if c { print(1) } else { if c { print(2) } } }\n",
+            "",
+            (
+                text("if c { print(1) } else { if c { print(2) } }", 0),
+                Cause::Plain,
+            ),
+        ),
+        // The join reports the inner `if`, which has no `else`.
+        row(
+            "R42",
+            "let x = if c { 1 } else { if c { 2 } }",
+            text("if c { 2 }", 0),
+            Cause::NoElse,
+        ),
         row_with(
             "R37",
             "struct W: U { fn m(self) {} }\n",
@@ -360,6 +392,12 @@ fn body_rows() -> Vec<BodyRow> {
             "fn f(c: bool) -> i64 { if c { return 5 } }\n",
             Some(text("if c { return 5 }", 0)),
             true,
+        ),
+        (
+            "B11",
+            "fn f(c: bool) -> i64 { if c { greet() } else { if c { greet() } } }\n",
+            None,
+            false,
         ),
     ];
     rows.into_iter()

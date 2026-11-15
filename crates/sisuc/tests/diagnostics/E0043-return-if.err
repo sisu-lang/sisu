@@ -7,7 +7,7 @@ error[E0043]: this `if` has no `else`, so it has no value
 8 | |     }
   | |_____^
   |
-  = help: remove this `return`, or put it inside the `if`
+  = help: remove this `return`, or write `return` with no value inside the `if`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0043

@@ -4,7 +4,7 @@ error[E0043]: this `if let` has no `else`, so it has no value
 6 |     return if let Some(v) = o { print(v) }
   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   |
-  = help: remove this `return`, or put it inside the `if let`
+  = help: remove this `return`, or write `return` with no value inside the `if let`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0043
