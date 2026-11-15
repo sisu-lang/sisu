@@ -1,0 +1,15 @@
+error[E0170]: the `mut` argument `u` has type `unit`, but the parameter `a` of `set` has type `unit?`
+  --> E0170-unit.sisu:13:13
+   |
+13 |     set(mut u)
+   |             ^ has type `unit`
+   |
+  ::: E0170-unit.sisu:7:15
+   |
+ 7 | fn set<T>(mut a: T?) {
+   |               - declared `T?` here
+   |
+   = help: a `mut` argument must have exactly the parameter's type: the callee can store `None`, which a `unit` cannot hold
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0170

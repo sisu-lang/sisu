@@ -908,3 +908,171 @@ fn the_unit_note_should_name_the_call_in_dbg() {
         assert_eq!(expr::unit_call(tail).as_deref(), called, "row `{row}`");
     }
 }
+
+/// A program with `used` in `main` and `decl` after it, after the declarations that the rows
+/// share: a function `g` that returns `unit`, a function `h` over `unit?`, a generic `w` over
+/// `T?`, an enum `U` with a method, and four bindings. `decl` is last, so a row finds the end of
+/// its body as the last `}`.
+fn with_lift(used: &str, decl: &str) -> String {
+    format!(
+        "fn g() {{}}\nfn h(x: unit?) {{}}\nfn w<T>(x: T?) {{}}\nenum U {{\n    A\n    fn log(self) {{}}\n}}\nfn main() {{\n    let c = false\n    let d = true\n    let o: i64? = None\n    let p: U? = None\n    {used}\n}}\n{decl}"
+    )
+}
+
+/// A row of the `with_lift` tables: its name, the use, the declaration, and each report wanted
+/// in it. A report is its code and the text whose last start in the program is the report's start.
+type LiftRow<'a> = (&'a str, &'a str, &'a str, Vec<(Code, &'a str)>);
+
+/// Checks each row of `rows` in `with_lift`, and lists every row that is red.
+fn lift_rows(rows: &[LiftRow<'_>]) {
+    with_prelude();
+    let mut red = Vec::new();
+    for (row, used, decl, wanted) in rows {
+        let src = with_lift(used, decl);
+        let wanted: Vec<_> = (wanted.iter())
+            .map(|&(code, text)| {
+                let offset = src.rfind(text).expect("each wanted text is in the program");
+                (code, line_col(&src, offset))
+            })
+            .collect();
+        let found: Vec<_> = (diags(&src).iter())
+            .map(|d| (d.code(), at(&src, d.span())))
+            .collect();
+        if found != wanted {
+            red.push(format!("row `{row}`: found {found:?}, wanted {wanted:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+/// An `if` or an `if let` without an `else` gives no `unit?` value, as it gives no `i64?` value.
+/// Where its `unit` lifts to `unit?`, it is E0043 at that `if`. The value can come through a
+/// block, a branch, an arm, a `return`, an argument, an element, a `break`, an `==` or a `??`.
+#[test]
+fn an_if_without_else_should_give_no_optional_unit_value() {
+    let at = |text| vec![(Code::NoValue, text)];
+    let rows = [
+        (
+            "else if in a body",
+            "",
+            "fn b(c: bool, d: bool) -> unit? { if c { g() } else if d { g() } }",
+            at("if d"),
+        ),
+        (
+            "branch beside None in a body",
+            "",
+            "fn f(c: bool, d: bool) -> unit? { if c { if d { g() } } else { None } }",
+            at("if d"),
+        ),
+        (
+            "return",
+            "",
+            "fn r(c: bool) -> unit? { return if c { g() } }",
+            at("if c"),
+        ),
+        (
+            "match arm beside None",
+            "",
+            "fn m(c: bool, n: i64) -> unit? { match n { 1 => if c { g() }; _ => None } }",
+            at("if c"),
+        ),
+        ("let", "let y: unit? = if c { g() }", "", at("if c")),
+        ("block", "let y: unit? = { if c { g() } }", "", at("if c")),
+        (
+            "else of a let",
+            "let y: unit? = if c { g() } else { if d { g() } }",
+            "",
+            at("if d"),
+        ),
+        (
+            "branch beside None",
+            "let y = if c { if d { g() } } else { None }",
+            "",
+            at("if d"),
+        ),
+        ("argument", "h(if c { g() })", "", at("if c")),
+        ("generic argument", "w(if c { g() })", "", at("if c")),
+        (
+            "element",
+            "let xs: [unit?] = [if c { g() }]",
+            "",
+            at("if c"),
+        ),
+        (
+            "break value",
+            "let y: unit? = loop { break if c { g() } }",
+            "",
+            at("if c"),
+        ),
+        (
+            "if let",
+            "let y: unit? = if let x = o { g() }",
+            "",
+            at("if let"),
+        ),
+        (
+            "equal to a unit?",
+            "let e = if c { g() } == p?.log()",
+            "",
+            at("if c"),
+        ),
+        (
+            "fallback of a unit??",
+            "let a: unit?? = None; let z = a ?? if c { g() }",
+            "",
+            at("if c"),
+        ),
+    ];
+    lift_rows(&rows);
+}
+
+/// A `unit` value lifts to `unit?` with no report. A body that ends in an `if` without an `else`
+/// is E0031, as an `i64?` body is. These rows pass before and after the fix of their
+/// commit: they pin the reports beside it.
+#[test]
+fn a_unit_value_should_lift_and_a_body_if_should_keep_its_report() {
+    let rows = [
+        (
+            "body if",
+            "",
+            "fn a(c: bool) -> unit? { if c { g() } }",
+            vec![(Code::BodyHasNoValue, "}")],
+        ),
+        (
+            "body if that returns",
+            "",
+            "fn n(c: bool) -> unit? { if c { return None } }",
+            vec![(Code::BodyHasNoValue, "}")],
+        ),
+        (
+            "empty body",
+            "",
+            "fn e() -> unit? {}",
+            vec![(Code::BodyHasNoValue, "}")],
+        ),
+        ("unit tail", "", "fn f() -> unit? { g() }", vec![]),
+        ("unit let", "let y: unit? = g()", "", vec![]),
+        ("unit block", "let y: unit? = { g() }", "", vec![]),
+        ("Some", "let y: unit? = Some(g())", "", vec![]),
+        (
+            "both branches",
+            "let y: unit? = if c { g() } else { g() }",
+            "",
+            vec![],
+        ),
+        ("statement", "if c { g() }", "", vec![]),
+        (
+            "unit body",
+            "",
+            "fn t(c: bool) -> unit { if c { g() } }",
+            vec![],
+        ),
+        ("safe call in a statement", "if c { p?.log() }", "", vec![]),
+    ];
+    lift_rows(&rows);
+}
