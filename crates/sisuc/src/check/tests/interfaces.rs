@@ -4949,7 +4949,7 @@ fn an_associated_type_read_through_a_later_interface_should_check_as_when_writte
 }
 
 /// The rows of the second test.
-const MEMBER_ARGUMENT_ROWS: [(&str, &str, &[Wanted]); 20] = [
+const MEMBER_ARGUMENT_ROWS: [(&str, &str, &[Wanted]); 21] = [
     (
         "n9, written after",
         "interface It {\n    type Item\n}\ninterface G<X> {}\ninterface J: K, G<Self.Item> {}\ninterface K: It {}\nfn main() {}",
@@ -5020,6 +5020,11 @@ const MEMBER_ARGUMENT_ROWS: [(&str, &str, &[Wanted]); 20] = [
         "e9, an optional member as an entry",
         "interface It {\n    type Item\n}\ninterface K: It {}\ninterface J: K, Self.Item? {}\nfn main() {}",
         &[(Code::NotAnInterface, (5, 17))],
+    ),
+    (
+        "e12, an optional applied entry whose argument is a member (green before and after)",
+        "interface Has {\n    type Item\n}\ninterface G<X> {}\ninterface J: Has, G<Self.Item>? {}\nfn main() {}",
+        &[(Code::NotAnInterface, (5, 19))],
     ),
     (
         "e10, an `any` entry whose argument is a member",
