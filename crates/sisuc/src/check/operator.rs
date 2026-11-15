@@ -1155,11 +1155,14 @@ impl Checker<'_> {
                 // the fix would hide. It needs no jump either: a `break` types its loop, and each
                 // jump changes how the code flows. A poisoned default has no `tir` to read: it
                 // follows an earlier error, or only the left side could type it, as `[]` and
-                // `None`. Both exits of the check sort the reports, so they are in text order.
+                // `None`. A left side that ends in `}` would end a `let ... else` value in `}`
+                // (E0173), so it gets no fix either. Both exits of the check sort the reports, so
+                // they are in text order.
                 Ok(_) => self.diagnostics.error(DiagnosticKind::CoalesceNotOptional {
                     at: lhs.span,
                     default: (self.diagnostics.len() == before
-                        && matches!(&default, Ok(e) if !e.exits()))
+                        && matches!(&default, Ok(e) if !e.exits())
+                        && !self.source.text(lhs.span).ends_with('}'))
                     .then(|| Span::new(lhs.span.end(), rhs.span.end())),
                 }),
                 Err(reported) => reported,
