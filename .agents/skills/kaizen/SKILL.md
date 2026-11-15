@@ -59,7 +59,9 @@ question 3, or says `no lesson`.
 ## 3. Write and propose
 
 Write the answers to `<main checkout>/.scratch/<feature>/kaizen.md`, or to
-`<ledger folder>/<group>-kaizen.md` in a `solve-issues` batch. Save
+`<ledger folder>/<group>-kaizen.md` in a `solve-issues` batch. Each later run on
+the branch, also one that the user asks for, adds a section with the date
+to the same file. Save
 each lesson of kind 4 as a memory, and name it to the user. An agent with no
 memories proposes it as a line in `AGENTS.md`.
 
@@ -67,7 +69,5 @@ Then give the user each proposal of kinds 1, 2, 3 and 5, and each cleanup,
 the most severe first. For each one, give the change, the files and the
 cost. The user picks which ones to make. A picked change goes on its own
 branch and pull request, or into the current branch when the user says so.
-When a picked change in the current branch gets a new review, the next run
-adds a section with the date to the same `kaizen.md`.
 
 The step is done when each lesson of question 3 is a proposal or a memory.
