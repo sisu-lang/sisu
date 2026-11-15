@@ -509,6 +509,14 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    /// In `; ;`, the fix of the first `;` removes `; `, so the report of the second `;` moves to
+    /// where the first one was. The fix did not leave its report there.
+    #[test]
+    fn safe_fix_breaches_should_not_count_a_moved_report_as_left() {
+        let src = "fn main() {\n    print(1)\n; ;\n}\n";
+        assert_eq!(safe_fix_breaches(src), Vec::<String>::new());
+    }
+
     /// `checked` stops before `mono`, which `front_end` runs: `sisu check` names no
     /// instantiation.
     #[test]
