@@ -982,3 +982,194 @@ fn a_block_made_never_before_its_tail_should_keep_its_error() {
         "the dead `let` should warn"
     );
 }
+
+/// GIVEN a `??` whose left side is not optional
+/// WHEN the program is checked
+/// THEN E0048 offers a safe fix that removes the `??` and its default, which never runs
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row for each default that gets the fix, and each that gets none"
+)]
+fn a_default_of_a_value_that_is_not_optional_should_offer_its_removal() {
+    let row = |id, body: &'static str, reports| FixRow {
+        id,
+        src: format!("fn main() {{\n    let a = 3\n    let o: i64? = None\n    {body}\n}}"),
+        reports,
+    };
+    let remove = |at: Needle, from, to, after| {
+        vec![
+            Report::new(Code::CoalesceNotOptional, at)
+                .fix(true, 1, (from, to))
+                .after(after),
+        ]
+    };
+    let none = |at: Needle| Report::new(Code::CoalesceNotOptional, at);
+    fix_rows(&[
+        row(
+            "C1",
+            "print(a ?? 4)",
+            remove(("print(", "a"), "a ?? 4", "a", After::Clean),
+        ),
+        row(
+            "C2",
+            "print(o ?? 1 ?? 2)",
+            remove(("o ?? ", "1"), "1 ?? 2", "1", After::Clean),
+        ),
+        row(
+            "C3",
+            "print((a) ?? 4)",
+            remove(("print(", "(a)"), "(a) ?? 4", "(a)", After::Clean),
+        ),
+        row(
+            "C4",
+            "let s: string = a ?? \"x\"",
+            remove(
+                ("string = ", "a"),
+                "a ?? \"x\"",
+                "a",
+                After::Errors(&[Code::Mismatch]),
+            ),
+        ),
+        row(
+            "C5",
+            "print(a ?? b)",
+            vec![
+                none(("print(", "a")),
+                Report::new(Code::BindingNotFound, ("?? ", "b")).fix(false, 1, ("?? b", "?? a")),
+            ],
+        ),
+        // `??` groups to the right: the outer E0048 holds the inner one, so only the inner one
+        // has a fix.
+        row(
+            "C6",
+            "print(a ?? 4 ?? 5)",
+            vec![
+                none(("print(", "a")),
+                Report::new(Code::CoalesceNotOptional, ("?? ", "4"))
+                    .fix(true, 1, ("4 ?? 5", "4"))
+                    .after(After::Errors(&[Code::CoalesceNotOptional])),
+            ],
+        ),
+        row(
+            "C7",
+            "print(a ?? { let z: u8 = 300; 1 })",
+            vec![
+                none(("print(", "a")),
+                Report::new(Code::IntegerDoesNotFit, ("z: u8 = ", "300")),
+            ],
+        ),
+        // The fix stays inside a group.
+        row(
+            "C9",
+            "print((a ?? 4))",
+            remove(("print((", "a"), "a ?? 4", "a", After::Clean),
+        ),
+        // The default has only a warning, which the fix would remove with the default.
+        row(
+            "C8",
+            "print(a ?? { let mut z = 1; z })",
+            vec![none(("print(", "a"))],
+        ),
+        // A jump in the default types its loop and changes how the code flows: the fix would
+        // delete it, so the default gets no fix.
+        row(
+            "C10",
+            "loop { let x = a ?? break; print(x) }",
+            vec![none(("x = ", "a"))],
+        ),
+        row(
+            "C11",
+            "let v = loop { let x = a ?? break 5; print(x) }; print(v)",
+            vec![none(("x = ", "a"))],
+        ),
+        row(
+            "C12",
+            "let v = loop { let x = a ?? break \"s\"; if x > 1 { break 5 } }; print(v)",
+            vec![
+                none(("x = ", "a")),
+                Report::new(Code::Mismatch, ("break ", "5")).secondary(&[("?? ", "break \"s\"")]),
+            ],
+        ),
+        row(
+            "C13",
+            "for i in 0..3 { let x = a ?? continue; print(x + i) }",
+            vec![none(("x = ", "a"))],
+        ),
+        row(
+            "C14",
+            "let x = a ?? return; print(x)",
+            vec![none(("x = ", "a"))],
+        ),
+        row(
+            "C15",
+            "loop { let x = a ?? { if a > 1 { break }; 1 }; print(x) }",
+            vec![none(("x = ", "a"))],
+        ),
+        // A loop of its own in the default also gets no fix: the rule reads `exits`, which is
+        // true for a jump at any depth.
+        row(
+            "C16",
+            "loop { let x = a ?? { loop { break }; 1 }; print(x); break }",
+            vec![none(("x = ", "a"))],
+        ),
+        // A default that never finishes, with no jump, keeps its fix.
+        row(
+            "C17",
+            "print(a ?? panic(\"x\"))",
+            remove(("print(", "a"), "a ?? panic(\"x\")", "a", After::Clean),
+        ),
+        // A poisoned default has no `tir` to read, so it gets no fix. It follows an earlier
+        // error, or only the left side could give it a type, as for `[]` and `None`.
+        row(
+            "C18",
+            "let y = nope; print(a ?? y)",
+            vec![
+                Report::new(Code::BindingNotFound, ("y = ", "nope")),
+                none(("print(", "a")),
+            ],
+        ),
+        row(
+            "C19",
+            "let y = nope; loop { let x = a ?? { if a > 1 { break }; y }; print(x) }",
+            vec![
+                Report::new(Code::BindingNotFound, ("y = ", "nope")),
+                none(("x = ", "a")),
+            ],
+        ),
+        row(
+            "C20",
+            "let xs = [1]; print(xs ?? [])",
+            vec![none(("print(", "xs"))],
+        ),
+        row("C21", "print(a ?? None)", vec![none(("print(", "a"))]),
+        // A left side that ends in `}` gets no fix: in a `let ... else`, the value would then
+        // end in `}` (E0173). The rule reads the text, so it holds outside a `let ... else` too.
+        row(
+            "C22",
+            "let Some(v) = { a } ?? 0 else { return }; print(v)",
+            vec![none(("Some(v) = ", "{ a }"))],
+        ),
+        row(
+            "C23",
+            "let Some(v) = if a > 1 { a } else { 2 } ?? 0 else { return }; print(v)",
+            vec![none(("Some(v) = ", "if a > 1 { a } else { 2 }"))],
+        ),
+        row(
+            "C24",
+            "let Some(v) = match a { _ => a } ?? 0 else { return }; print(v)",
+            vec![none(("Some(v) = ", "match a { _ => a }"))],
+        ),
+        row("C25", "print({ a } ?? 4)", vec![none(("print(", "{ a }"))]),
+        row(
+            "C26",
+            "let Some(v) = (a) ?? 0 else { return }; print(v)",
+            remove(
+                ("Some(v) = ", "(a)"),
+                "(a) ?? 0",
+                "(a)",
+                After::Errors(&[Code::UnwrapNeedsOptional]),
+            ),
+        ),
+    ]);
+}

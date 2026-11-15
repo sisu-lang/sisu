@@ -571,10 +571,17 @@ impl Checker<'_> {
         // A class and a struct name a field that a call writes as a method alike.
         let in_fields = |info: &ClassInfo| {
             if info.field(name.name).is_some() {
+                // The fix is safe only while no field holds a function: function types are
+                // pending (`docs/reference/closures.md`).
+                let parens = site
+                    .parens
+                    .filter(|_| nullary)
+                    .map(|parens| Span::new(name.span.end(), parens.end()));
                 DiagnosticKind::FieldNotMethod {
                     name: name.name.to_string(),
                     owner: self.type_name(ty),
                     at: name.span,
+                    parens,
                 }
                 .into()
             } else {

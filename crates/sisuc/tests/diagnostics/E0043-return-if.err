@@ -1,0 +1,14 @@
+error[E0043]: this `if` has no `else`, so it has no value
+  --> E0043-return-if.sisu:7:12
+   |
+ 7 |       return if n % 2 == 1 {
+   |  ____________^
+ 8 | |         print("{n} is odd!")
+ 9 | |         n
+10 | |     }
+   | |_____^
+   |
+   = help: remove this `return`, or write `return` with no value inside the `if`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0043

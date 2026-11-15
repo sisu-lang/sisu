@@ -1,0 +1,10 @@
+error[E0043]: this `if` has no `else`, so it has no value
+ --> E0043-if-without-else.sisu:7:13
+  |
+7 |     let x = if c { 5 }
+  |             ^^^^^^^^^^
+  |
+  = help: add an `else`, and make each branch give a value
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0043

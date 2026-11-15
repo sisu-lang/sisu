@@ -17,6 +17,7 @@ Prepare: python3 review_round.py prepare REPO RUN TARGET [--round N] [--old-main
 Verify: python3 review_round.py verify REPO RUN --report STEM [--report STEM]... [--round N]
 
 Save a report: python3 review_round.py save-report RUN STEM --agent ID [--round N]
+    or: python3 review_round.py save-report --agent ID --out FILE
 
 Check the rulings: python3 review_round.py rulings RUN --report STEM [--report STEM]... [--round N]
 
@@ -29,8 +30,9 @@ RUN is the run directory.
 TARGET is BASE..HEAD for a diff, or the path of a spec or a plan with --kind spec|plan.
 STEM is the first part of the name of a report, such as sol or opus: the report of round 1 is
 sol.md and the report of round 2 is sol-2.md. A finding of a report starts with "### <n>.", and
-its ruling in rulings-<N>.md starts with "<STEM> <n>: <ruling>". A report's path, such as
-RUN/sol-2.md, is accepted in place of its STEM.
+its ruling in rulings-<N>.md starts with "<STEM> <n>: <ruling>". The file stem of the report,
+such as "sol-2 1:" in rulings-2.md, is the same finding. A report's path, such as RUN/sol-2.md, is
+accepted in place of its STEM.
 
 Each file name follows the round: round 1 writes brief.md and tree-1.txt, round 2 writes brief-2.md
 and tree-2.txt. RUN/focus.md (focus-N.md in a later round) goes in when it exists. A later round
@@ -56,7 +58,8 @@ reviewer can commit too: go on only when you made each of those commits.
 
 ID is the agent ID that the Agent tool returned. save-report finds agent-ID.jsonl under
 ~/.claude/projects, or under --transcripts DIR. It reads the last SubagentHandback message of the
-agent, or else its last text.
+agent, or else its last text. --out FILE writes the reply to FILE in place of RUN/<STEM>.md. Use it
+for a reply that is not the report of a review round, such as a test-list review.
 
 stats reads each RUN as a kept run of .scratch/reviews/. It counts the runs by their last brief,
 the runs with no rulings file, and the rulings by round and severity. It also counts the rulings
@@ -289,19 +292,26 @@ def verify(repo: Path, run: Path, round_number: int, reports: list[str]) -> int:
     return 1 if missing else 0
 
 
-def read_rulings(path: Path) -> dict[str, str]:
-    """Return the ruling of each finding in the rulings file PATH, such as {"sol 1": "Accept"}."""
+def read_rulings(path: Path, round_number: int) -> dict[str, str]:
+    """Return the ruling of each finding in the rulings file PATH, such as {"sol 1": "Accept"}.
+
+    A finding can name its report by the file stem of round ROUND_NUMBER, such as "sol-2 1" in
+    round 2. It counts as the finding of its STEM, "sol 1".
+    """
     lines = path.read_text(encoding="utf-8") if path.exists() else ""
+    suffix = f"-{round_number}" if round_number > 1 else ""
     # The ruling ends at the next colon; "Defer to <where>" with a <where> counts as Defer.
     return {
-        finding: "Defer" if ruling.startswith("Defer to ") and ruling[9:].strip() else ruling
-        for finding, ruling in re.findall(r"^(\S+ \d+): ([^:\n]+)", lines, flags=re.MULTILINE)
+        f"{stem.removesuffix(suffix)} {n}": (
+            "Defer" if ruling.startswith("Defer to ") and ruling[9:].strip() else ruling
+        )
+        for stem, n, ruling in re.findall(r"^(\S+) (\d+): ([^:\n]+)", lines, flags=re.MULTILINE)
     }
 
 
 def rulings(run: Path, round_number: int, reports: list[str]) -> int:
     """Return 1 when a finding of a report has no ruling. Print the rulings of each reviewer."""
-    ruled = read_rulings(run / f"rulings-{round_number}.md")
+    ruled = read_rulings(run / f"rulings-{round_number}.md", round_number)
     status = 0
     for stem in reports:
         report = (run / numbered(stem, round_number)).read_text(encoding="utf-8")
@@ -313,7 +323,11 @@ def rulings(run: Path, round_number: int, reports: list[str]) -> int:
                 print(f"review_round: no ruling: {stem} {n}")
                 status = 1
             elif ruling not in ("Accept", "Reject", "Defer"):
-                print(f"review_round: not Accept, Reject or Defer: {stem} {n}: {ruling}")
+                print(
+                    f"review_round: not Accept, Reject or Defer: {stem} {n}: {ruling}; write"
+                    f' "{stem} {n}: Accept: <reason>", "Reject: <reason>"'
+                    ' or "Defer to <where>: <reason>"'
+                )
                 status = 1
             else:
                 counts[ruling] = counts.get(ruling, 0) + 1
@@ -379,7 +393,7 @@ def stats(runs: list[Path]) -> int:
         unruled += not ruled
         for path, round_number in ruled:
             findings: dict[str, dict[str, str]] = {}
-            for finding, note in read_rulings(path).items():
+            for finding, note in read_rulings(path, round_number).items():
                 stem, number = finding.split(" ")
                 # Older rulings carry a note after the word, such as "Accept (same as sol 2)".
                 word = re.match(r"Accept|Reject|Defer|Ask", note)
@@ -435,8 +449,8 @@ def handback(transcript: Path) -> str:
     return last.get("text", "")
 
 
-def save_report(run: Path, stem: str, agent: str, round_number: int, transcripts: Path) -> int:
-    """Write the final reply of the agent AGENT to RUN/<stem>.md, word for word."""
+def save_report(report: Path, agent: str, transcripts: Path) -> int:
+    """Write the final reply of the agent AGENT to the file REPORT, word for word."""
     name = f"agent-{agent.removeprefix('agent-')}.jsonl"
     found = sorted(transcripts.glob(f"*/*/subagents/{name}"))
     if len(found) != 1:
@@ -446,7 +460,6 @@ def save_report(run: Path, stem: str, agent: str, round_number: int, transcripts
     if not reply.strip():
         print(f"review_round: {found[0]} holds no final reply")
         return 1
-    report = run / numbered(stem, round_number)
     report.write_text(reply if reply.endswith("\n") else reply + "\n", encoding="utf-8")
     print(report)
     return 0
@@ -455,6 +468,17 @@ def save_report(run: Path, stem: str, agent: str, round_number: int, transcripts
 def stems(args: argparse.Namespace) -> list[str]:
     """Return the STEM of each --report value of the command line."""
     return [stem_of(r, args.run, args.round) for r in args.report]
+
+
+def save_path(parser: argparse.ArgumentParser, args: argparse.Namespace) -> Path:
+    """Return the file that save-report writes: --out FILE, or the report of STEM in RUN."""
+    if args.out is not None:
+        if args.run is not None:
+            parser.error("give RUN STEM or --out FILE, not both")
+        return args.out
+    if args.stem is None:
+        parser.error("give RUN STEM or --out FILE")
+    return args.run / numbered(stem_of(args.stem, args.run, args.round), args.round)
 
 
 def main() -> int:
@@ -477,8 +501,9 @@ def main() -> int:
     prepare_parser.add_argument("--old-main", action="store_true")
     prepare_parser.add_argument("--pr-body", type=Path, metavar="FILE")
     verify_parser.add_argument("--report", action="append", required=True, metavar="STEM")
-    save_parser.add_argument("run", type=Path)
-    save_parser.add_argument("stem")
+    save_parser.add_argument("run", type=Path, nargs="?")
+    save_parser.add_argument("stem", nargs="?")
+    save_parser.add_argument("--out", type=Path, metavar="FILE")
     save_parser.add_argument("--agent", required=True, metavar="ID")
     save_parser.add_argument(
         "--transcripts", type=Path, default=Path.home() / ".claude" / "projects"
@@ -498,8 +523,7 @@ def main() -> int:
         record(args.repo, args.run / f"tree-{args.round}.txt")
         return 0
     if args.command == "save-report":
-        stem = stem_of(args.stem, args.run, args.round)
-        return save_report(args.run, stem, args.agent, args.round, args.transcripts)
+        return save_report(save_path(parser, args), args.agent, args.transcripts)
     # parse_known_args would take the value of an option before TARGET as the target.
     if args.target != sys.argv[4]:
         parser.error("write TARGET just after RUN, before each option")

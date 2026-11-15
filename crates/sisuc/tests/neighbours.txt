@@ -16,7 +16,8 @@
 # value of `[failed values]` holds `u`.
 #
 # Most programs are wrong. The test fails when `sisu check` crashes on one, as a reached `panic!`
-# or `assert!` in the checker does.
+# or `assert!` in the checker does. It also fails when a safe fix of one breaks its contract: applied
+# alone, it removes a diagnostic that does not carry it, or adds a syntax error.
 #
 # A line that starts with `#` is a comment. Each value and each context is one line.
 #
@@ -203,6 +204,10 @@ if c { None } else { todo("x") }
 if c { None } else { loop { } }
 if c { todo("x") } else { panic("x") }
 if c { None } else { todo("x"); print("a") }
+if c { 1 }
+if let Some(v) = Some(1) { v }
+if c { 1 } else { if c { 1 } }
+if c { 1 } else { if let Some(v) = Some(1) { v } }
 nothing()
 ob?.none()
 Bx().none()
@@ -258,6 +263,9 @@ panic("a", "b")
 # Values that are no optional.
 p
 op
+# A value that is no optional and ends in `}`: a `let ... else` cannot take it.
+{ p }
+if c { p } else { p }
 # A mutable local, the only value that a `mut` argument can take: it reaches the rebind.
 mq
 # A place in parentheses: its span keeps the parentheses.
@@ -356,6 +364,13 @@ let _a = if c { Some(p) } else if d { $ } else { None }
 let _a = match k { 0 => Some(p); 1 => $; _ => None }
 let _a = if c { Some(Some(Some(n))) } else { match k { 0 => $; _ => Rock() } }
 let _a = op ?? $
+# The left side of a `??` whose default jumps or makes a `let ... else` value: a fix that removes
+# the `??` must keep the jump's effect and leave a value that a `let ... else` takes. The `break`
+# value disagrees with the later one, so a fix that deletes it removes that report too.
+let _a = loop { let _x = $ ?? break "s"; break 5 }
+for _i in [1] { let _x = $ ?? continue }
+let _x = $ ?? return
+let _l = $ ?? 0 else { return }
 # Written types.
 let _a: (any Pet)? = $
 let _a: [(any Pet)?] = [$]
@@ -460,6 +475,9 @@ $[0]?.push(1)
 for _x in $.wrap([1]) {}
 print($)
 print("x {$}")
+# A fix that deletes to the end of a span must stop inside a group.
+print(($))
+print("{($)}")
 # A value as a name that is read, and as a name that is assigned.
 let _r = $
 $ = 1

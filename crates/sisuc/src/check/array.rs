@@ -1,7 +1,7 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
 use super::any::{AnyJoin, is_target, widen};
-use super::expr::{fits, literal_type, no_member, path, takes_unit, typed, unit_call};
+use super::expr::{fits, literal_type, no_member, path, takes_unit, typed};
 use super::generic::{Rank, mark, mismatch_poison};
 use super::place::{Change, first_safe, is_struct};
 use super::reports::Reported;
@@ -325,7 +325,9 @@ impl Checker<'_> {
         for &(i, ty) in typed {
             if ty == Type::UNIT {
                 let e = &elements[i];
-                let reported = self.no_value(e.span, Type::UNIT, unit_call(e));
+                let value = slots[i].as_ref().and_then(|slot| slot.as_ref().ok());
+                let cause = self.no_value_cause(e, value, Type::UNIT, false);
+                let reported = self.no_value(e.span, cause);
                 slots[i] = Some(Err(Poisoned::untyped(reported)));
                 failed.get_or_insert(reported);
             }

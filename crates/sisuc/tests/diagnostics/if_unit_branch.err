@@ -1,10 +1,11 @@
-error[E0043]: expression has no value
+error[E0043]: `nothing` returns `unit`
  --> if_unit_branch.sisu:4:39
   |
+1 | fn nothing() {}
+  |    ------- `nothing` declares no return type
+...
 4 |     let y: i64 = if true { 1 } else { nothing() }
   |                                       ^^^^^^^^^
-  |
-  = note: `nothing` returns `unit`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0043

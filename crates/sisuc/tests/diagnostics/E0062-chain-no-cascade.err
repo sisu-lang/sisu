@@ -179,6 +179,12 @@ error[E0048]: the left side of `??` is not optional
     |
 122 |     print((c.v < 1) ?? false)
     |           ^^^^^^^^^
+    |
+help: remove the `??` and its default
+    |
+122 -     print((c.v < 1) ?? false)
+122 +     print((c.v < 1))
+    |
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:122:12
@@ -209,6 +215,12 @@ error[E0048]: the left side of `??` is not optional
     |
 130 |     print((!c.b) ?? false)
     |           ^^^^^^
+    |
+help: remove the `??` and its default
+    |
+130 -     print((!c.b) ?? false)
+130 +     print((!c.b))
+    |
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:130:13
@@ -227,6 +239,12 @@ error[E0048]: the left side of `??` is not optional
     |
 134 |     print((c.b && k) ?? false)
     |           ^^^^^^^^^^
+    |
+help: remove the `??` and its default
+    |
+134 -     print((c.b && k) ?? false)
+134 +     print((c.b && k))
+    |
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:134:12
@@ -365,6 +383,12 @@ error[E0048]: the left side of `??` is not optional
     |
 175 |     print((if c.b { 1 } else { 2 }) ?? 0)
     |           ^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: remove the `??` and its default
+    |
+175 -     print((if c.b { 1 } else { 2 }) ?? 0)
+175 +     print((if c.b { 1 } else { 2 }))
+    |
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:175:15
@@ -475,6 +499,12 @@ error[E0048]: the left side of `??` is not optional
     |
 210 |     print((c.v == 1) ?? false)
     |           ^^^^^^^^^^
+    |
+help: remove the `??` and its default
+    |
+210 -     print((c.v == 1) ?? false)
+210 +     print((c.v == 1))
+    |
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:210:12
@@ -493,6 +523,12 @@ error[E0048]: the left side of `??` is not optional
     |
 214 |     print("{c.v}" ?? "")
     |           ^^^^^^^
+    |
+help: remove the `??` and its default
+    |
+214 -     print("{c.v}" ?? "")
+214 +     print("{c.v}")
+    |
 
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:214:13

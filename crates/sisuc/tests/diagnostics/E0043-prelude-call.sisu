@@ -1,0 +1,8 @@
+// GIVEN a `let` of type `i64` whose value is a call of the prelude function `print`
+// WHEN `sisu check` runs on it
+// THEN it reports E0043 "`print` returns `unit`" at the call
+// AND no label points into the prelude
+fn main() {
+    let x: i64 = print(1)
+    print(x)
+}

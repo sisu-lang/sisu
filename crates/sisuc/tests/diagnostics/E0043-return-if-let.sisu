@@ -1,0 +1,12 @@
+// GIVEN a function with no return type whose body is `return` of an `if let` with no `else`
+// AND the branch of the `if let` has a value
+// WHEN `sisu check` runs on it
+// THEN it reports E0043 "this `if let` has no `else`, so it has no value" at the `if let`
+// AND the help says to remove the `return`, or to write `return` with no value inside the `if let`
+fn show(o: i64?) {
+    return if let Some(v) = o { v }
+}
+
+fn main() {
+    show(None)
+}

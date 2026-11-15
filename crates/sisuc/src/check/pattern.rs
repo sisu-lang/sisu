@@ -1046,7 +1046,10 @@ impl Checker<'_> {
     ) -> Result<i64, Reported> {
         if ty == Type::U8 {
             if let Some(minus) = negative {
-                return Err(self.error(DiagnosticKind::NegatedU8 { at: minus.to(text) }));
+                return Err(self.error(DiagnosticKind::NegatedU8 {
+                    at: minus.to(text),
+                    convert: None,
+                }));
             }
             if value > i64::from(u8::MAX) {
                 return Err(self.error(DiagnosticKind::IntegerDoesNotFit {

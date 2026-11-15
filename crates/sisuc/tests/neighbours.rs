@@ -1,7 +1,7 @@
 //! Each value of `neighbours.txt` in each of its contexts: the forms that the checker treats in
 //! their own way, in each position that a join or an expected type gives them. Most of the
-//! programs are wrong, so the test asks only that `sisu check` ends with its own exit status, not
-//! with a crash.
+//! programs are wrong. So the test asks that `sisu check` ends with its own exit status, not with
+//! a crash. It also asks that each safe fix keeps the contract of `sisuc::safe_fix_breaches`.
 
 use std::path::Path;
 use std::process::Command;
@@ -127,6 +127,7 @@ fn part_indexes(n: usize, total: usize) -> impl Iterator<Item = usize> {
 }
 
 /// Runs `crash` on each program of part `n`, one after the other, and asserts that none crashed.
+/// Then asserts that no safe fix of those programs breaks its contract.
 fn check_part(n: usize) {
     let programs = programs();
     let indexes: Vec<usize> = part_indexes(n, programs.len()).collect();
@@ -143,6 +144,28 @@ fn check_part(n: usize) {
         indexes.len(),
         crashes.join("\n")
     );
+    let breaches: Vec<String> = std::thread::Builder::new()
+        .stack_size(sisuc::STACK_SIZE)
+        .spawn(move || {
+            (indexes.iter())
+                .flat_map(|&i| {
+                    let (which, program, stmt) = &programs[i];
+                    let breaches = sisuc::safe_fix_breaches(program);
+                    breaches
+                        .into_iter()
+                        .map(move |b| format!("{which}: {stmt}\n  {b}"))
+                })
+                .collect()
+        })
+        .expect("the thread should start")
+        .join()
+        .expect("the check of the safe fixes should not panic");
+    assert!(
+        breaches.is_empty(),
+        "part {n}: {} safe fixes break their contract:\n{}",
+        breaches.len(),
+        breaches.join("\n")
+    );
 }
 
 /// Each part is one test, so that nextest spreads the parts over the cores.
@@ -154,7 +177,9 @@ macro_rules! parts {
             /// AND each value of `[failed values]` in each context, in a function whose bound
             /// failed, in a program of its own
             /// WHEN `sisu check` runs on each program of the part
-            /// THEN no run crashes: each one ends with no error or with an error.
+            /// THEN no run crashes: each one ends with no error or with an error
+            /// AND each safe fix, applied alone, removes only the diagnostics that carry it and
+            /// adds no syntax error.
             #[test]
             fn $name() {
                 check_part($n);
@@ -184,22 +209,22 @@ macro_rules! parts {
 }
 
 parts! {
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_00 => 0,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_01 => 1,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_02 => 2,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_03 => 3,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_04 => 4,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_05 => 5,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_06 => 6,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_07 => 7,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_08 => 8,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_09 => 9,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_10 => 10,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_11 => 11,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_12 => 12,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_13 => 13,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_14 => 14,
-    check_should_end_with_its_own_status_on_neighbouring_forms_part_15 => 15,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_00 => 0,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_01 => 1,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_02 => 2,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_03 => 3,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_04 => 4,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_05 => 5,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_06 => 6,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_07 => 7,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_08 => 8,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_09 => 9,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_10 => 10,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_11 => 11,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_12 => 12,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_13 => 13,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_14 => 14,
+    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_15 => 15,
 }
 
 /// GIVEN the programs of `programs()` and the split of `part`

@@ -1,7 +1,7 @@
 //! Branches: `if`, `if let` and the join of branch types.
 
 use super::any::{AnyJoin, SEED, is_target};
-use super::expr::{fits, takes_unit, unit_call};
+use super::expr::{fits, takes_unit};
 use super::generic::{Ahead, Rank, Ranked};
 use super::pattern::{LetPattern, arm_key};
 use super::reports::Reported;
@@ -10,7 +10,7 @@ use super::{
     is_jumped, is_kept, payload, tail, value_span,
 };
 use crate::ast;
-use crate::diagnostic::{Diagnostic, DiagnosticKind, Unwrap};
+use crate::diagnostic::{Diagnostic, DiagnosticKind, NoValueCause, Unwrap};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
@@ -27,14 +27,14 @@ pub(super) fn failed_join(ty: Result<Type, Poisoned>, part: Option<Reported>) ->
 }
 
 /// `span`, the span of an `if` with no `else`, when its `then` block has a value: such an `if` has
-/// none (see `Poisoned::valueless`).
+/// none (see `Poisoned::valueless`). `if_let` says that it is an `if let`, and goes with it.
 fn valueless_join(
-    span: Span,
+    (span, if_let): (Span, bool),
     else_block: Option<&ast::Block>,
     then: &CheckedBlock,
-) -> Option<Span> {
+) -> Option<(Span, bool)> {
     let value = block_type(then).is_some_and(|ty| !matches!(ty, Type::UNIT | Type::NEVER));
-    (else_block.is_none() && value).then_some(span)
+    (else_block.is_none() && value).then_some((span, if_let))
 }
 
 /// The proof of the first failed branch among `blocks`, of a join that failed by a branch.
@@ -63,7 +63,7 @@ impl Checker<'_> {
             |_| None,
             |c, expected| c.block(then_block, expected),
         );
-        let valueless = valueless_join(span, else_block, &then);
+        let valueless = valueless_join((span, false), else_block, &then);
         let part = (cond.as_ref().err())
             .or_else(|| then.as_ref().err())
             .or_else(|| other.as_ref().and_then(|other| other.as_ref().err()))
@@ -122,7 +122,7 @@ impl Checker<'_> {
         );
         let bound = checked.expect("`branches` should check the first block, which sets it");
         let ty = ty?;
-        let valueless = valueless_join(span, else_block, &then);
+        let valueless = valueless_join((span, true), else_block, &then);
         let kind = match (scrutinee, then, other.transpose(), bound) {
             (Ok(scrutinee), Ok(then_block), Ok(else_block), LetPattern::Some { bind }) => {
                 tir::ExprKind::IfSome {
@@ -435,7 +435,11 @@ impl Checker<'_> {
             AnyJoin::Leaves {
                 member: (i, Type::UNIT),
                 ..
-            } => sources[i].no_value().into(),
+            } => DiagnosticKind::NoValue {
+                at: sources[i].span,
+                cause: self.branch_cause(&sources[i], &blocks[i]),
+            }
+            .into(),
             AnyJoin::Leaves {
                 ty,
                 giver,
@@ -498,12 +502,16 @@ impl Checker<'_> {
             self.leaves_any(at, tail, want, got, origin)
         };
         match expected.ty() {
-            _ if first_ty == Type::UNIT && !wants_unit(expected) => {
-                sources[first].no_value().into()
+            _ if first_ty == Type::UNIT && !wants_unit(expected) => DiagnosticKind::NoValue {
+                at: sources[first].span,
+                cause: self.branch_cause(&sources[first], &blocks[first]),
             }
-            _ if other_ty == Type::UNIT && !wants_unit(expected) => {
-                sources[other].no_value().into()
+            .into(),
+            _ if other_ty == Type::UNIT && !wants_unit(expected) => DiagnosticKind::NoValue {
+                at: sources[other].span,
+                cause: self.branch_cause(&sources[other], &blocks[other]),
             }
+            .into(),
             Some(want) if fits(want, first_ty) => report(other, want, other_ty, expected.origin()),
             Some(want) => report(first, want, first_ty, expected.origin()),
             None => report(other, first_ty, other_ty, given),
@@ -528,7 +536,9 @@ impl Checker<'_> {
         if let Some(&(i, _)) = members.iter().find(|&&(_, t)| t == Type::UNIT)
             && !wants_unit(expected)
         {
-            return Some(sources[i].no_value().into());
+            let at = sources[i].span;
+            let cause = self.branch_cause(&sources[i], &blocks[i]);
+            return Some(DiagnosticKind::NoValue { at, cause }.into());
         }
         for &(i, t) in members {
             if !fits(want, t) && !self.converts_to_any(t, want) {
@@ -537,6 +547,14 @@ impl Checker<'_> {
             }
         }
         None
+    }
+
+    /// Why the branch `source`, whose checked block is `block`, has no value.
+    fn branch_cause(&self, source: &Branch<'_>, block: &CheckedBlock) -> NoValueCause {
+        let value = block.as_ref().ok().and_then(|b| b.value.as_deref());
+        source.tail.map_or(NoValueCause::Plain, |tail| {
+            self.no_value_cause(tail, value, Type::UNIT, false)
+        })
     }
 
     /// Where the branch `source`, of type `got`, is reported as a mistake against `want`, with
@@ -608,15 +626,6 @@ impl Branch<'_> {
     /// waits and makes no optional by itself.
     fn exact(&self) -> bool {
         self.rank == Rank::Waits && !self.optional
-    }
-
-    /// The E0043 of the branch, whose value is a `unit` where the others have another type.
-    fn no_value(&self) -> DiagnosticKind {
-        DiagnosticKind::NoValue {
-            at: self.span,
-            never: false,
-            unit_call: self.tail.and_then(unit_call),
-        }
     }
 }
 

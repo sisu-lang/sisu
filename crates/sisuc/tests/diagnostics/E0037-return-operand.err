@@ -1,8 +1,15 @@
 error[E0037]: this function returns no value
  --> E0037-return-operand.sisu:5:18
   |
+4 | fn f() {
+  |    - `f` declares no return type
 5 |     print(return 1)
   |                  ^
+  |
+help: add `-> i64` to `f`
+  |
+4 | fn f() -> i64 {
+  |        ++++++
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0037

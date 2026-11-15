@@ -1,0 +1,12 @@
+error[E0031]: function `has` must return `bool`, but its body has no value
+ --> E0031-if-let-without-else.sisu:8:1
+  |
+7 |     if let Some(v) = o { v > 0 }
+  |     ---------------------------- this `if let` has no `else`, so it has no value
+8 | }
+  | ^
+  |
+  = help: add an `else`, and make each branch give a `bool`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0031

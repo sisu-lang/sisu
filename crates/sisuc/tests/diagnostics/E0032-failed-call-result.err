@@ -242,14 +242,18 @@ error[E0059]: `print` takes one value
     |
 160 |     let _s: string = print(1, 2)
     |                      ^^^^^^^^^^^
+    |
+help: join the values into one string
+    |
+160 -     let _s: string = print(1, 2)
+160 +     let _s: string = print("{1} {2}")
+    |
 
-error[E0043]: expression has no value
+error[E0043]: `print` returns `unit`
    --> E0032-failed-call-result.sisu:160:22
     |
 160 |     let _s: string = print(1, 2)
     |                      ^^^^^^^^^^^
-    |
-    = note: `print` returns `unit`
 
 error[E0053]: `panic` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:163:22
@@ -335,13 +339,11 @@ error[E0053]: `[i64].push` takes 1 argument, found 2
 182 |     let _s: string = xs.push(1, 2)
     |                      ^^^^^^^^^^^^^
 
-error[E0043]: expression has no value
+error[E0043]: `push` returns `unit`
    --> E0032-failed-call-result.sisu:182:22
     |
 182 |     let _s: string = xs.push(1, 2)
     |                      ^^^^^^^^^^^^^
-    |
-    = note: `push` returns `unit`
 
 error[E0053]: `string.get` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:185:22
@@ -720,13 +722,11 @@ error[E0032]: expected `Flag`, found `i64`
 274 |     let _s: string = e.eq(1)
     |                           ^
 
-error[E0043]: expression has no value
+error[E0043]: `print` returns `unit`
    --> E0032-failed-call-result.sisu:277:22
     |
 277 |     let _s: string = print(n: 1)
     |                      ^^^^^^^^^^^
-    |
-    = note: `print` returns `unit`
 
 error[E0055]: this call takes no labels on its arguments
    --> E0032-failed-call-result.sisu:277:28
@@ -770,13 +770,11 @@ error[E0055]: this call takes no labels on its arguments
     |
     = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
 
-error[E0043]: expression has no value
+error[E0043]: `print` returns `unit`
    --> E0032-failed-call-result.sisu:286:22
     |
 286 |     let _s: string = print(nope)
     |                      ^^^^^^^^^^^
-    |
-    = note: `print` returns `unit`
 
 error[E0033]: cannot find binding `nope`
    --> E0032-failed-call-result.sisu:286:28

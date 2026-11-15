@@ -11,9 +11,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::alias::{Through, Via};
 use super::any;
 use super::array::innermost;
-use super::expr::{
-    bare_hole, dbg_argument, literal_type, option_written, read_jump, takes_unit, unit_call,
-};
+use super::expr::{bare_hole, dbg_argument, literal_type, option_written, read_jump, takes_unit};
 use super::interface::{Bounds, Required};
 use super::member::FieldOwner;
 use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
@@ -27,7 +25,7 @@ use super::{
     Poisoned, as_optional, built_in_type, is_kept, optional_of, own_args, payload, type_of,
 };
 use crate::ast::{self, StmtKind};
-use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, Unwrap};
+use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, NoValueCause, Unwrap};
 use crate::lexer::{TokenKind, lex};
 use crate::parser::is_place;
 use crate::source::Span;
@@ -1752,12 +1750,15 @@ pub(super) struct VariantShape {
 }
 
 /// How a call writes its callee: its name, the type arguments in `angles` (none written when
-/// `written` is empty), and the type the call's context expects.
+/// `written` is empty), and the type the call's context expects. A method call also has the span
+/// of its `(args)`.
 #[derive(Clone, Copy)]
 pub(super) struct Site<'a> {
     pub(super) name: &'a ast::Ident,
     pub(super) written: &'a [ast::TypeExpr],
     pub(super) angles: Span,
+    /// The span of the `(args)` of a method call, none for any other call.
+    pub(super) parens: Option<Span>,
     pub(super) expected: Expectation,
 }
 
@@ -2625,7 +2626,9 @@ impl Checker<'_> {
                 self.settle_unit(&mut call, args, i, param);
                 continue;
             }
-            let reported = self.no_value(at, ty, unit_call(&args[i].value));
+            let value = call.slots[i].as_ref().and_then(|slot| slot.as_ref().ok());
+            let cause = self.no_value_cause(&args[i].value, value, ty, false);
+            let reported = self.no_value(at, cause);
             call.slots[i] = Some(Err(Poisoned::untyped(reported)));
         }
         let broken = poison_broken_params(&mut call.bindings, sig.declared);
@@ -3789,7 +3792,7 @@ impl Checker<'_> {
                 slots[i] = Some(match type_of(&checked) {
                     Some(Type::NEVER) => {
                         let at = self.never_at(e.span);
-                        Err(Poisoned::untyped(self.no_value(at, Type::NEVER, None)))
+                        Err(Poisoned::untyped(self.no_value(at, NoValueCause::Never)))
                     }
                     Some(Type::UNIT) => {
                         units.push(i);
@@ -3848,11 +3851,10 @@ impl Checker<'_> {
                     let origin = Origin::Element { at, ty: want };
                     mark(self.against(e, slot, Expectation::Required(want, origin)))
                 }
-                _ => Err(Poisoned::untyped(self.no_value(
-                    e.span,
-                    Type::UNIT,
-                    unit_call(e),
-                ))),
+                _ => {
+                    let cause = self.no_value_cause(e, slot.as_ref().ok(), Type::UNIT, false);
+                    Err(Poisoned::untyped(self.no_value(e.span, cause)))
+                }
             });
         }
     }

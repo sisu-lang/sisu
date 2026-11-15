@@ -3,7 +3,7 @@
 //! `todo`, a keyword that panics as `panic` does, is checked here too.
 
 use super::array::pair;
-use super::expr::{missing_value, path, read_jump, typed, unlabeled};
+use super::expr::{path, read_jump, typed, unlabeled};
 use super::mut_args::Callee;
 use super::reports::Reported;
 use super::{Checked, Checker, Expectation, Origin, Poisoned, type_of};
@@ -106,7 +106,12 @@ impl Checker<'_> {
     ) -> Result<(&'a ast::Arg, Checked, Option<Reported>), Checked> {
         let labeled = self.labels(args);
         let [arg] = args else {
-            let kind = DiagnosticKind::PrintArgument { function, at: span };
+            let join = self.join_values(function, args);
+            let kind = DiagnosticKind::PrintArgument {
+                function,
+                join,
+                at: span,
+            };
             let reported = self.diagnostics.error(kind);
             self.stray(args);
             return Err(Err(Poisoned::new(ret, reported)));
@@ -120,16 +125,52 @@ impl Checker<'_> {
                 function,
                 at: self.never_at(arg.value.span),
             },
-            _ => match missing_value(&arg.value, &checked, Expectation::None) {
-                Some((at, unit_call)) => DiagnosticKind::NoValue {
-                    at,
-                    never: false,
-                    unit_call,
-                },
+            _ => match self.missing_value(&arg.value, &checked, Expectation::None, false) {
+                Some((at, cause)) => DiagnosticKind::NoValue { at, cause },
                 None => return Ok((arg, checked, labeled)),
             },
         };
         Err(Err(Poisoned::new(ret, self.diagnostics.error(error))))
+    }
+
+    /// The span of the `args` of a call of `function`, and one string that prints them in order
+    /// with a space between. Only `print` and `eprint` get one. A string literal gives its text
+    /// as written. Any other value goes in `{...}`, so none of them may hold a line break.
+    fn join_values(&self, function: &str, args: &[ast::Arg]) -> Option<(Span, String)> {
+        let (Some(first), Some(last)) = (args.first(), args.last()) else {
+            return None;
+        };
+        if function == "dbg"
+            || args
+                .iter()
+                .any(|a| a.label.is_some() || a.mut_keyword.is_some())
+        {
+            return None;
+        }
+        let mut text = String::from("\"");
+        for (i, arg) in args.iter().enumerate() {
+            if i > 0 {
+                text.push(' ');
+            }
+            let written = self.source.text(arg.value.span);
+            let literal = matches!(
+                arg.value.kind,
+                ast::ExprKind::Str(_) | ast::ExprKind::Interpolate(_)
+            )
+            .then(|| written.strip_prefix('"')?.strip_suffix('"'))
+            .flatten();
+            match literal {
+                Some(inner) => text.push_str(inner),
+                None if written.contains('\n') => return None,
+                None => {
+                    text.push('{');
+                    text.push_str(written);
+                    text.push('}');
+                }
+            }
+        }
+        text.push('"');
+        Some((first.value.span.to(last.value.span), text))
     }
 
     /// Warns when `checked`, the check of the printed `value`, is an optional: the text may be

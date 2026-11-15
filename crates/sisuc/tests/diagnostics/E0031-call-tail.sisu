@@ -1,0 +1,17 @@
+// GIVEN a function that returns `i64` whose body ends in a call of a function with no return
+//   type
+// WHEN `sisu check` runs on it
+// THEN it reports E0031 at the closing `}` of the function
+// AND a label at the call says that `greet` returns `unit`
+// AND it has no help
+fn greet() {
+    print(1)
+}
+
+fn five() -> i64 {
+    greet()
+}
+
+fn main() {
+    print(five())
+}

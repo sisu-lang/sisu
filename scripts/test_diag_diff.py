@@ -294,6 +294,114 @@ class DiagDiff(unittest.TestCase):
 
             self.assertLessEqual(max(peak_runs(run)), limit, flag)
 
+    def test_apply_should_judge_each_fix_that_one_build_alone_gives(self) -> None:
+        """GIVEN a program `abc` that both builds reject with different fixes
+        AND a base fix that keeps the contract, and one that removes a report it does not carry
+        AND a head fix that keeps the contract, one that leaves its report and adds a syntax
+        error, and one whose result crashes the head
+        WHEN diag_diff runs with `--apply`
+        THEN it prints `lost clean fix`, `lost fix`, `new fix` and `new broken fix`
+        AND each line has the code, the position and the message, and the reason of a break
+        """
+
+        def fix(message: str, start: int, end: int, replacement: str) -> dict[str, Any]:
+            edit = {"start": start, "end": end, "replacement": replacement}
+            return {"message": message, "safe": True, "edits": [edit]}
+
+        def report(code: str, start: int, fixes: list[dict[str, Any]]) -> dict[str, Any]:
+            primary = {"line": 1, "column": start + 1, "start": start, "end": start + 1}
+            return {
+                "kind": "diagnostic",
+                "code": code,
+                "severity": "error" if code.startswith("E") else "warning",
+                "primary": primary,
+                "secondary": [],
+                "fixes": fixes,
+            }
+
+        kept, cascade = fix("keep", 1, 2, ""), fix("cascade", 2, 3, "")
+        new, broken, crash = (
+            fix("new", 0, 1, "x"),
+            fix("broken", 0, 0, "("),
+            fix("crash", 0, 1, "!"),
+        )
+        other = report("W0001", 2, [])
+        checks = {
+            "base": {
+                "abc": [report("E0048", 0, [kept]), report("E0043", 2, [cascade]), other],
+                "ac": [report("E0043", 1, []), other],
+                "ab": [report("E0048", 0, [])],
+            },
+            "head": {
+                "abc": [report("E0048", 0, [new, broken, crash]), other],
+                "xbc": [other],
+                "(abc": [report("E0048", 1, []), other],
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "p.sisu").write_text("abc")
+            builds = {name: table_sisu(tmp, name, outputs) for name, outputs in checks.items()}
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                status = dd.main(builds["base"], builds["head"], tmp, apply=True)
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            [line for line in out.getvalue().splitlines() if line.startswith(("  lost", "  new"))],
+            [
+                "  lost clean fix: E0048 1:1 keep",
+                "  lost fix: E0043 1:3 cascade: removed W0001",
+                "  new fix: E0048 1:1 new",
+                "  new broken fix: E0048 1:1 broken: left E0048; added syntax E0011",
+                "  new broken fix: E0048 1:1 crash: crashed",
+            ],
+        )
+
+    def test_apply_should_not_count_a_report_that_moved_to_a_carriers_place_as_left(self) -> None:
+        """GIVEN `; ;` with a W0007 on each `;`
+        AND the fix of the first `;` removes `; `, so the second report moves to the first place
+        WHEN `breaks` judges that fix
+        THEN it finds no break
+        """
+
+        def report(start: int, end: int) -> dict[str, Any]:
+            edit = {"start": start, "end": end, "replacement": ""}
+            fix = {"message": "remove", "safe": True, "edits": [edit]}
+            primary = {"start": start, "end": start + 1}
+            return {"kind": "diagnostic", "code": "W0007", "primary": primary, "fixes": [fix]}
+
+        # The fix of the second `;` removes ` ;`: it starts one byte before its report.
+        first, second = report(0, 2), report(2, 3)
+        second["fixes"][0]["edits"][0]["start"] = 1
+        with tempfile.TemporaryDirectory() as tmp:
+            sisu = table_sisu(tmp, "sisu", {";": [report(0, 1)]})
+            self.assertEqual(dd.breaks(sisu, b"; ;", [first, second], first["fixes"][0]), "")
+
+
+def table_sisu(tmp: str, name: str, outputs: Mapping[str, list[dict[str, Any]]]) -> str:
+    """A sisu stand-in whose `check` prints the reports that `outputs` gives a source text.
+
+    Its `build` reports E0011 on a text that starts with `(`. It crashes on a text that `outputs`
+    does not give.
+    """
+    script = (
+        "import json, sys\n"
+        "args = sys.argv[1:]\n"
+        "text = args[args.index('-e') + 1] if '-e' in args"
+        " else open(next(a for a in args if a.endswith('.sisu'))).read()\n"
+        "table = json.load(open(sys.argv[0] + '.json'))\n"
+        "if 'build' not in args and text not in table: sys.exit(101)\n"
+        "codes = ['E0011'] if 'build' in args and text.startswith('(') else []\n"
+        "found = [{'kind': 'diagnostic', 'code': c} for c in codes] if 'build' in args"
+        " else table[text]\n"
+        "print(*(json.dumps(d) for d in found), sep='\\n', file=sys.stderr)\n"
+        "sys.exit(1 if found else 0)\n"
+    )
+    path = Path(tmp, name)
+    path.write_text(f"#!{sys.executable}\n{script}")
+    path.chmod(0o755)
+    Path(tmp, f"{name}.json").write_text(json.dumps(outputs))
+    return str(path)
+
 
 def peak_runs(run: Callable[[str, str], object]) -> list[int]:
     """The count of fake sisu runs at each start while `run(sisu, dir)` checks six programs."""

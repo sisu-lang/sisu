@@ -12,7 +12,8 @@ use super::{
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
-    Code, Definition, Diagnostic, DiagnosticKind, Expected, Literal, RangePlace, suggestion,
+    Code, Definition, Diagnostic, DiagnosticKind, Expected, Literal, NoValueCause, RangePlace,
+    suggestion,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -45,6 +46,49 @@ pub(super) fn read_jump(checked: Checked) -> Checked {
             poisoned
         }
     })
+}
+
+/// For an `if` or `if let` whose chain of `else if` ends with no `else`: whether that last one
+/// is an `if let`.
+fn missing_else(mut e: &ast::Expr) -> Option<bool> {
+    loop {
+        let (if_let, else_block) = match &e.kind {
+            ExprKind::If { else_block, .. } => (false, else_block),
+            ExprKind::IfLet { else_block, .. } => (true, else_block),
+            _ => return None,
+        };
+        let Some(block) = else_block else {
+            return Some(if_let);
+        };
+        // `else if` is an `else` block that holds the inner `if`, and nothing else, with the span
+        // of that `if`. A block in braces has its braces in its span: the `else` it belongs to
+        // is there, so the outer `if` has an `else`.
+        let [
+            ast::Stmt {
+                kind: ast::StmtKind::Expr(inner),
+                ..
+            },
+        ] = block.stmts.as_slice()
+        else {
+            return None;
+        };
+        if block.span != inner.span {
+            return None;
+        }
+        e = inner;
+    }
+}
+
+/// The function that the call `value` calls, through the block and the `MutCall` that a call with
+/// `mut` arguments becomes. `Checker::mut_call` (`check/mut_args.rs`) owns these forms: a change
+/// there checks this function.
+fn callee(value: &tir::Expr) -> Option<tir::FuncId> {
+    match &value.kind {
+        tir::ExprKind::Call { func, .. } => Some(*func),
+        tir::ExprKind::MutCall { call, .. } => callee(call),
+        tir::ExprKind::Block(block) => block.value.as_deref().and_then(callee),
+        _ => None,
+    }
 }
 
 impl Checker<'_> {
@@ -127,7 +171,7 @@ impl Checker<'_> {
         if ty == Type::U8 && !(0..=i64::from(u8::MAX)).contains(&value) {
             // Only `-9223372036854775808` parses to a negative literal.
             let reported = self.diagnostics.error(if value < 0 {
-                DiagnosticKind::NegatedU8 { at }
+                DiagnosticKind::NegatedU8 { at, convert: None }
             } else {
                 DiagnosticKind::IntegerDoesNotFit {
                     text: self.source.text(literal).to_string(),
@@ -186,6 +230,7 @@ impl Checker<'_> {
                     name: callee,
                     written: types,
                     angles: *angles,
+                    parens: None,
                     expected,
                 };
                 let checked = self.call(e.span, site, args);
@@ -244,6 +289,7 @@ impl Checker<'_> {
                     name: method,
                     written: types,
                     angles: *angles,
+                    parens: Some(*parens),
                     expected,
                 };
                 // `report_unbound` reads it: the result of a safe call is optional.
@@ -414,66 +460,137 @@ impl Checker<'_> {
     /// An expression whose value is used: not `never`, and not `unit` where a value of another
     /// type is expected, nor an `if` without an `else` whose branch has a value.
     pub(super) fn value(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
+        self.value_in(e, expected, false)
+    }
+
+    /// `value`; `returning` says that `e` is the value of a `return` in a function with no
+    /// result. It changes the help of an `if` with no `else`.
+    pub(super) fn value_in(
+        &mut self,
+        e: &ast::Expr,
+        expected: Expectation,
+        returning: bool,
+    ) -> Checked {
         let checked = read_jump(self.expr(e, expected));
         if type_of(&checked) == Some(Type::NEVER) {
             let at = self.never_at(e.span);
-            return Err(Poisoned::untyped(self.no_value(at, Type::NEVER, None)));
+            return Err(Poisoned::untyped(self.no_value(at, NoValueCause::Never)));
         }
-        self.refuse_unwanted(e, checked, expected)
+        self.refuse_unwanted(e, checked, expected, returning)
     }
 
     /// `checked`, the value of `e`, or E0043 when it is a `unit`: the context takes no `unit`, and
     /// has no expected type for `value` to hold `e` to.
     pub(super) fn refuse_unit(&mut self, e: &ast::Expr, checked: Checked) -> Checked {
         if type_of(&checked) == Some(Type::UNIT) {
-            return Err(Poisoned::untyped(self.no_value(
-                e.span,
-                Type::UNIT,
-                unit_call(e),
-            )));
+            let cause = self.no_value_cause(e, checked.as_ref().ok(), Type::UNIT, false);
+            return Err(Poisoned::untyped(self.no_value(e.span, cause)));
         }
         checked
     }
 
     /// `checked`, the value of `e` in a context that expects `expected`, or E0043 when the context
-    /// cannot take it (see `missing_value`).
+    /// cannot take it (see `missing_value`). `returning` is as for `value_in`.
     pub(super) fn refuse_unwanted(
         &mut self,
         e: &ast::Expr,
         checked: Checked,
         expected: Expectation,
+        returning: bool,
     ) -> Checked {
-        match missing_value(e, &checked, expected) {
-            Some((at, unit_call)) => {
-                Err(Poisoned::untyped(self.no_value(at, Type::UNIT, unit_call)))
-            }
+        match self.missing_value(e, &checked, expected, returning) {
+            Some((at, cause)) => Err(Poisoned::untyped(self.no_value(at, cause))),
             None => checked,
         }
+    }
+
+    /// Where `checked`, the value of `e` in a context that expects `expected`, has no value that
+    /// the context can take, and why. It is a valueless `if` at its tail (see `valueless`), or a
+    /// `unit` where another type is expected. `returning` is as for `value_in`.
+    pub(super) fn missing_value(
+        &self,
+        e: &ast::Expr,
+        checked: &Checked,
+        expected: Expectation,
+        returning: bool,
+    ) -> Option<(Span, NoValueCause)> {
+        if let Some((at, if_let)) = valueless_value(checked) {
+            return Some((at, NoValueCause::NoElse { if_let, returning }));
+        }
+        let unwanted = type_of(checked) == Some(Type::UNIT)
+            && expected.ty().is_some_and(|want| !takes_unit(want));
+        unwanted.then(|| {
+            let cause = self.no_value_cause(e, checked.as_ref().ok(), Type::UNIT, returning);
+            (e.span, cause)
+        })
     }
 
     /// `checked`, or E0043 at the valueless `if` that gives its value (see `valueless`).
     pub(super) fn refuse_valueless(&mut self, checked: Checked) -> Checked {
         match valueless_value(&checked) {
-            Some(at) => Err(Poisoned::untyped(self.no_value(at, Type::UNIT, None))),
+            Some((at, if_let)) => Err(Poisoned::untyped(self.no_value(at, no_else(if_let)))),
             None => checked,
         }
     }
 
-    /// Reports a value of `ty`, `unit` or `never`, used at `at`. `unit_call` is the function that
-    /// the expression calls, when that call returns `unit`.
-    pub(super) fn no_value(&mut self, at: Span, ty: Type, unit_call: Option<String>) -> Reported {
-        self.error(DiagnosticKind::NoValue {
-            at,
-            never: ty == Type::NEVER,
-            unit_call,
-        })
+    /// Reports a value that is `unit` or `never`, used at `at`; `cause` says which (see
+    /// `no_value_cause`).
+    pub(super) fn no_value(&mut self, at: Span, cause: NoValueCause) -> Reported {
+        self.error(DiagnosticKind::NoValue { at, cause })
+    }
+
+    /// Why `e`, whose checked form is `value`, has no value: an `if` or an `if let` that has no
+    /// `else` at the end of its chain, or a call. A value of type `never` never finishes. `value`
+    /// shows the callee, through the `mut` arguments of the call. `dbg` returns its argument, so
+    /// the cause of `dbg(x)` is the cause of `x`.
+    pub(super) fn no_value_cause(
+        &self,
+        e: &ast::Expr,
+        value: Option<&tir::Expr>,
+        ty: Type,
+        returning: bool,
+    ) -> NoValueCause {
+        if ty == Type::NEVER {
+            return NoValueCause::Never;
+        }
+        if ty != Type::UNIT {
+            return NoValueCause::Plain;
+        }
+        let name = match &e.kind {
+            ExprKind::If { .. } | ExprKind::IfLet { .. } => {
+                return match missing_else(e) {
+                    Some(if_let) => NoValueCause::NoElse { if_let, returning },
+                    None => NoValueCause::Plain,
+                };
+            }
+            ExprKind::Call { callee, args, .. } if callee.name.as_str() == "dbg" => {
+                if let [arg] = args.as_slice() {
+                    let operand = value.and_then(|value| match &value.kind {
+                        tir::ExprKind::Dbg { operand, .. } => Some(&**operand),
+                        _ => None,
+                    });
+                    return self.no_value_cause(&arg.value, operand, ty, returning);
+                }
+                callee
+            }
+            ExprKind::Call { callee, .. } => callee,
+            ExprKind::MethodCall { method, .. } => method,
+            _ => return NoValueCause::Plain,
+        };
+        NoValueCause::Call {
+            name: name.name.to_string(),
+            declared: value
+                .and_then(callee)
+                .map(|func| self.signatures[func.0].span)
+                .filter(|span| !span.in_prelude()),
+        }
     }
 
     /// `e`, a `T`, wrapped to `want`, its optional. A `unit` whose value an `if` without an
     /// `else` gives has no value to wrap: E0043 at that `if` (see `unlifted`).
     pub(super) fn lift(&mut self, e: tir::Expr, want: Type) -> Checked {
         match unlifted(&e) {
-            Some(at) => Err(Poisoned::typed(want, self.no_value(at, Type::UNIT, None))),
+            Some((at, if_let)) => Err(Poisoned::typed(want, self.no_value(at, no_else(if_let)))),
             None => Ok(wrap(e, want)),
         }
     }
@@ -486,7 +603,9 @@ impl Checker<'_> {
             .ok()
             .and_then(|e| Some((unlifted(e)?, e.ty)))
         {
-            Some((at, ty)) => Err(Poisoned::typed(ty, self.no_value(at, Type::UNIT, None))),
+            Some(((at, if_let), ty)) => {
+                Err(Poisoned::typed(ty, self.no_value(at, no_else(if_let))))
+            }
             None => checked,
         }
     }
@@ -498,7 +617,9 @@ impl Checker<'_> {
             .and_then(|block| block.value.as_deref())
             .and_then(unlifted);
         match at {
-            Some(at) => *block = Err(Poisoned::typed(want, self.no_value(at, Type::UNIT, None))),
+            Some((at, if_let)) => {
+                *block = Err(Poisoned::typed(want, self.no_value(at, no_else(if_let))));
+            }
             None => wrap_block(block, want, span),
         }
     }
@@ -892,24 +1013,17 @@ pub(super) fn takes_unit(want: Type) -> bool {
     }
 }
 
-/// Where `checked`, the value of `e` in a context that expects `expected`, has no value that the
-/// context can take. The second part is the function that the note of E0043 names. It is a
-/// valueless `if` at its tail (see `valueless`), or a `unit` where another type is expected.
-pub(super) fn missing_value(
-    e: &ast::Expr,
-    checked: &Checked,
-    expected: Expectation,
-) -> Option<(Span, Option<String>)> {
-    if let Some(at) = valueless_value(checked) {
-        return Some((at, None));
+/// The cause of E0043 at a valueless `if` (see `valueless`); `if_let` says that it is an
+/// `if let`.
+pub(super) fn no_else(if_let: bool) -> NoValueCause {
+    NoValueCause::NoElse {
+        if_let,
+        returning: false,
     }
-    let unwanted =
-        type_of(checked) == Some(Type::UNIT) && expected.ty().is_some_and(|want| !takes_unit(want));
-    unwanted.then(|| (e.span, unit_call(e)))
 }
 
 /// `valueless` of `checked`, or the failed valueless `if` it is (see `Poisoned::valueless`).
-fn valueless_value(checked: &Checked) -> Option<Span> {
+fn valueless_value(checked: &Checked) -> Option<(Span, bool)> {
     checked
         .as_ref()
         .map_or_else(|failed| failed.valueless, valueless)
@@ -917,19 +1031,20 @@ fn valueless_value(checked: &Checked) -> Option<Span> {
 
 /// The span of the `if` without an `else` whose branch has a value, when `e` is one or gives the
 /// value of one: through a block's value, a branch, an arm or a wrap. Such an `if` has no value.
-/// Only a `unit` or a `unit?` can give one, so the walk stops at any other type.
-pub(super) fn valueless(e: &tir::Expr) -> Option<Span> {
+/// Only a `unit` or a `unit?` can give one, so the walk stops at any other type. The second part
+/// says that the `if` is an `if let`.
+pub(super) fn valueless(e: &tir::Expr) -> Option<(Span, bool)> {
     without_value(e, false)
 }
 
 /// `valueless` of `e`, a `unit` that lifts to `unit?`. There each `if` without an `else` has no
 /// value, whatever its branch has, as for an `i64?`.
-fn unlifted(e: &tir::Expr) -> Option<Span> {
+fn unlifted(e: &tir::Expr) -> Option<(Span, bool)> {
     without_value(e, true)
 }
 
 /// The walk of `valueless`; with `lifted`, an `if` without an `else` has no value by itself.
-fn without_value(e: &tir::Expr, lifted: bool) -> Option<Span> {
+fn without_value(e: &tir::Expr, lifted: bool) -> Option<(Span, bool)> {
     let unit = e.ty == Type::UNIT;
     if !unit && !optional_unit(e.ty) {
         return None;
@@ -951,7 +1066,8 @@ fn without_value(e: &tir::Expr, lifted: bool) -> Option<Span> {
             ..
         } => {
             if else_block.is_none() && (lifted || has_value(then_block)) {
-                return Some(e.span);
+                let if_let = matches!(e.kind, tir::ExprKind::IfSome { .. });
+                return Some((e.span, if_let));
             }
             tail(then_block).or_else(|| else_block.as_ref().and_then(tail))
         }
@@ -959,7 +1075,7 @@ fn without_value(e: &tir::Expr, lifted: bool) -> Option<Span> {
             // A made arm is the missing `else` of an `if let` on an enum.
             let made = lifted && arms.iter().any(|arm| arm.made);
             if made || unit && arms.iter().any(|arm| has_value(&arm.body)) {
-                return Some(e.span);
+                return Some((e.span, true));
             }
             arms.iter().find_map(|arm| tail(&arm.body))
         }
@@ -1010,52 +1126,6 @@ fn without_value(e: &tir::Expr, lifted: bool) -> Option<Span> {
         | tir::ExprKind::Continue { .. }
         | tir::ExprKind::Return(_)
         | tir::ExprKind::MutCall { .. } => None,
-    }
-}
-
-/// The name of the function that `e` calls, when `e` is a call: the note of E0043 and E0031 says
-/// that it returns `unit`. The caller knows that `e` has type `unit`. `dbg` returns its argument,
-/// so the note names the call in the argument, if there is one.
-pub(super) fn unit_call(e: &ast::Expr) -> Option<String> {
-    match &e.kind {
-        ExprKind::Call { callee, args, .. } if callee.name.as_str() == "dbg" => {
-            match args.as_slice() {
-                [arg] => unit_call(&arg.value),
-                _ => Some(callee.name.to_string()),
-            }
-        }
-        ExprKind::Call { callee, .. } => Some(callee.name.to_string()),
-        ExprKind::MethodCall { method, .. } => Some(method.name.to_string()),
-        // No call: the note names no function.
-        ExprKind::Int { .. }
-        | ExprKind::Float(_)
-        | ExprKind::Bool(_)
-        | ExprKind::Char(_)
-        | ExprKind::Str(_)
-        | ExprKind::Interpolate(_)
-        | ExprKind::Name(_)
-        | ExprKind::Applied { .. }
-        | ExprKind::Todo { .. }
-        | ExprKind::SelfValue
-        | ExprKind::NoneLit
-        | ExprKind::Field { .. }
-        | ExprKind::Unary { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Compare { .. }
-        | ExprKind::Coalesce { .. }
-        | ExprKind::ArrayLit(_)
-        | ExprKind::ArrayFill { .. }
-        | ExprKind::Index { .. }
-        | ExprKind::Range(_)
-        | ExprKind::Is { .. }
-        | ExprKind::If { .. }
-        | ExprKind::IfLet { .. }
-        | ExprKind::Match { .. }
-        | ExprKind::Loop { .. }
-        | ExprKind::Block(_)
-        | ExprKind::Return { .. }
-        | ExprKind::Break { .. }
-        | ExprKind::Continue { .. } => None,
     }
 }
 

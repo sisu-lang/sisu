@@ -1,8 +1,15 @@
 error[E0037]: this function returns no value
  --> E0037.sisu:2:12
   |
+1 | fn show() {
+  |    ---- `show` declares no return type
 2 |     return 5
   |            ^
+  |
+help: add `-> i64` to `show`
+  |
+1 | fn show() -> i64 {
+  |           ++++++
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0037

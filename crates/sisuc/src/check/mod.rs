@@ -124,9 +124,10 @@ struct Poisoned {
     /// `match`, it is at least one branch (see `join`). The flow keeps the `never`, as a jump
     /// statement does; a place that reads the value takes it as untyped (`read_jump`).
     jumped: bool,
-    /// The span of a failed `if` without an `else` whose branch has a value, as in `if 1 { 2 }`.
-    /// Such an `if` has no value, so a use of it is E0043 (see `missing_value`).
-    valueless: Option<Span>,
+    /// The span of a failed `if` without an `else` whose branch has a value, as in `if 1 { 2 }`,
+    /// and whether it is an `if let`. Such an `if` has no value, so a use of it is E0043 (see
+    /// `missing_value`).
+    valueless: Option<(Span, bool)>,
     /// The proof of the report, or of the promise, that made the value poisoned.
     reported: Reported,
 }
@@ -2598,8 +2599,8 @@ impl Checker<'_> {
                 let valueless = (body.as_ref().ok())
                     .and_then(|block| block.value.as_deref())
                     .and_then(expr::valueless);
-                if let Some(at) = valueless {
-                    body = Err(Poisoned::untyped(c.no_value(at, Type::UNIT, None)));
+                if let Some((at, if_let)) = valueless {
+                    body = Err(Poisoned::untyped(c.no_value(at, expr::no_else(if_let))));
                 } else if payload != Type::UNIT || tail(&f.body).is_some_and(|e| !without_else(e)) {
                     c.lift_block(&mut body, want, value_span(&f.body));
                 }
@@ -2622,11 +2623,14 @@ impl Checker<'_> {
             (Some(want), Some(got)) if want != Type::UNIT && got != Type::NEVER && got != want => {
                 let d = if got == Type::UNIT {
                     let end = f.body.span.end();
+                    let value = body.as_ref().ok().and_then(|b| b.value.as_deref());
+                    let tail = tail(&f.body)
+                        .map(|e| (e.span, self.no_value_cause(e, value, Type::UNIT, false)));
                     DiagnosticKind::BodyHasNoValue {
                         function: f.name.name.to_string(),
                         want: self.type_name(want),
                         at: Span::new(end - 1, end),
-                        unit_call: tail(&f.body).and_then(expr::unit_call),
+                        tail,
                     }
                     .into()
                 } else {
@@ -2791,6 +2795,14 @@ impl Checker<'_> {
         let mut name = String::new();
         write_type(&mut name, ty, |head| self.head(head));
         name
+    }
+
+    /// The name of `ty` as a program writes it, or `None` when `type_name` cut it with `...`:
+    /// text for a fix must parse.
+    fn whole_type_name(&self, ty: Type) -> Option<String> {
+        let mut name = String::new();
+        let cut = write_type(&mut name, ty, |head| self.head(head));
+        (!cut).then_some(name)
     }
 
     /// The declared name of a class or an enum.

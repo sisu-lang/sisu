@@ -8,7 +8,7 @@ use std::fmt::Write;
 
 use super::array::pair;
 use super::call::Dot;
-use super::expr::{local, missing_value, no_member, path, postfix, typed, unlabeled};
+use super::expr::{local, no_member, path, postfix, typed, unlabeled};
 use super::mut_args::Callee;
 use super::{Checked, Checker, Expectation, Origin, Poisoned, block_expr, is_jumped, type_of};
 use crate::ast::{self, CompareOp, ExprKind};
@@ -82,8 +82,8 @@ impl Checker<'_> {
             let value = self.expr(part, Expectation::None);
             // Every type interpolates but `never`; an optional warns. An `if` without an `else`
             // whose branch has a value has no value to write.
-            if let Some((at, _)) = missing_value(part, &value, Expectation::None) {
-                let reported = self.no_value(at, Type::UNIT, None);
+            if let Some((at, cause)) = self.missing_value(part, &value, Expectation::None, false) {
+                let reported = self.no_value(at, cause);
                 checked.push(Err(Poisoned::untyped(reported)));
                 continue;
             }

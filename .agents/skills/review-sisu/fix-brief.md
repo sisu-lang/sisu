@@ -36,6 +36,7 @@ Report, do not add: when a check (a hook, a lint, a test table) seems to need a 
 report the hit and the reason, and add nothing.
 
 After the fix: `make test`, `prek run --all-files`, clippy clean. Compare the probes with
-`python3 scripts/diag_diff.py BASE_SISU HEAD_SISU RUN/probes`. Report each row's output at the head.
+`python3 scripts/diag_diff.py --apply BASE_SISU HEAD_SISU RUN/probes`. Report each row's output at
+the head, and each `lost fix` and `new broken fix` line with its reason.
 No mutation test. Do not push, open a pull request or merge.
 ```

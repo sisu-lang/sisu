@@ -1,0 +1,10 @@
+error[E0043]: this `if let` has no `else`, so it has no value
+ --> E0043-return-if-let.sisu:7:12
+  |
+7 |     return if let Some(v) = o { v }
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: remove this `return`, or write `return` with no value inside the `if let`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0043

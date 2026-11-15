@@ -12,11 +12,14 @@ fn with_use(used: &str) -> String {
     )
 }
 
-/// Whether `d`, an E0043 or an E0031, has the note that a function returns `unit`: its kind has
-/// a `unit_call`. Only that note adds a note to these kinds. The fixtures pin which function the
-/// note names.
-pub(super) fn has_unit_note(d: &Diagnostic) -> bool {
-    d.notes().len() == 1
+/// Whether `d` is an E0043 or an E0031 that names a call of a function of the program as its
+/// cause: E0043 has a secondary label at the declaration of that function, and E0031 one at the
+/// tail of the body. An `if` without an `else` as the cause adds a help. The fixtures pin the
+/// text.
+pub(super) fn names_a_call(d: &Diagnostic) -> bool {
+    matches!(d.code(), Code::NoValue | Code::BodyHasNoValue)
+        && d.secondary().len() == 1
+        && d.help().is_none()
 }
 
 #[test]
@@ -24,7 +27,7 @@ fn unit_use_should_report_its_row() {
     with_prelude();
     let mut red = Vec::new();
     // Each row holds the use, and where E0043 is reported in it: a column after the use's start.
-    // It holds the function that the note says returns `unit`, when it does.
+    // It holds the function that the cause says returns `unit`, when it does.
     for (row, used, no_value) in [
         ("typed let", "let x: i64 = g()", Some((13, Some("g")))),
         ("argument", "h(g())", Some((2, Some("g")))),
@@ -69,12 +72,12 @@ fn unit_use_should_report_its_row() {
         if found != wanted {
             red.push(format!("row `{row}`: found {found:?}, wanted {wanted:?}"));
         }
-        // The kind has a `unit_call` for a call: the note's text is in the fixtures.
+        // The cause names the call: its text is in the fixtures.
         if let (Some((_, call)), [d]) = (no_value, ds.as_slice())
-            && has_unit_note(d) != call.is_some()
+            && names_a_call(d) != call.is_some()
         {
             red.push(format!(
-                "row `{row}`: wanted the note of {call:?}, found {d:?}"
+                "row `{row}`: wanted the cause of {call:?}, found {d:?}"
             ));
         }
     }
@@ -142,12 +145,12 @@ fn a_program_that_printed_a_unit_should_check_clean() {
 }
 
 /// A body whose last expression is a call that returns `unit`, in a function that returns another
-/// type, says which call it is. The fixture `E0031-unit-call` pins the text.
+/// type, says which call it is. The fixture `E0031-call-tail` pins the text.
 #[test]
 fn a_body_that_ends_in_a_unit_call_should_name_the_call() {
     let src = "fn g() {}\nfn five() -> i64 {\n    g()\n}\nfn main() {}";
-    let d = diagnostic(src, Code::BodyHasNoValue, (4, 1, "}"), &[]);
-    assert!(has_unit_note(&d));
+    let d = diagnostic(src, Code::BodyHasNoValue, (4, 1, "}"), &[(3, 5)]);
+    assert!(names_a_call(&d));
 }
 
 /// A `main` that has `used` on line 14, after the declarations that the rows share. These are a
@@ -164,12 +167,11 @@ fn with_names(used: &str) -> String {
 /// the report has the note that names a call of a `unit` function.
 type UseRow<'a> = (&'a str, String, Vec<(Code, &'a str, bool)>);
 
-/// The reports of `src`: code, line and column, and whether the report has a note. Of the reports
-/// that these rows find, only E0043 and E0031 have a note. They have it only when a call of a
-/// `unit` function is the expression with no value.
+/// The reports of `src`: code, line and column, and whether the report names a call as its cause
+/// (see `names_a_call`).
 fn reports(src: &str) -> Vec<(Code, (usize, usize), bool)> {
     (diags(src).iter())
-        .map(|d| (d.code(), at(src, d.span()), !d.notes().is_empty()))
+        .map(|d| (d.code(), at(src, d.span()), names_a_call(d)))
         .collect()
 }
 
@@ -970,22 +972,25 @@ fn a_bare_break_of_an_inner_loop_should_keep_no_value() {
     );
 }
 
-/// The note of E0043 and E0031 names the call that gives the `unit`. `dbg` returns its argument,
-/// so the note names the call in it.
+/// The cause of E0043 names the call that gives the `unit`, with a secondary label at its
+/// declaration. `dbg` returns its argument, so the cause is the call in it.
 #[test]
-fn the_unit_note_should_name_the_call_in_dbg() {
-    for (row, src, called) in [
-        ("call", "g()", Some("g")),
-        ("dbg of a call", "dbg(g())", Some("g")),
-        ("dbg of dbg", "dbg(dbg(g()))", Some("g")),
-        ("dbg of a local", "dbg(u)", None),
+fn the_unit_cause_should_name_the_call_in_dbg() {
+    with_prelude();
+    for (row, src, declared) in [
+        ("call", "g()", vec![(1, 4)]),
+        ("dbg of a call", "dbg(g())", vec![(1, 4)]),
+        ("dbg of dbg", "dbg(dbg(g()))", vec![(1, 4)]),
+        ("dbg of a local", "dbg(u)", vec![]),
     ] {
-        let program = parse_ok(&format!("fn main() {{ {src} }}"));
-        let [ast::Item::Function(f)] = program.items.as_slice() else {
-            panic!("row `{row}`: the program should hold one function");
-        };
-        let tail = tail(&f.body).expect("the body should end in the expression");
-        assert_eq!(expr::unit_call(tail).as_deref(), called, "row `{row}`");
+        let program = format!(
+            "fn g() {{}}\nfn main() {{\n    let u = g()\n    let y: i64 = {src}\n    print(u)\n    print(y)\n}}"
+        );
+        assert_eq!(
+            found(&program),
+            [(Code::NoValue, (4, 18), declared)],
+            "row `{row}`"
+        );
     }
 }
 
@@ -1236,17 +1241,11 @@ fn a_unit_value_should_lift_and_a_body_if_should_keep_its_report() {
     lift_rows(&rows);
 }
 
-/// A call of a `unit` function with one argument, where an `i64` is wanted, is E0043 with the
-/// note that names that function. Only `dbg` names the call in its argument.
+/// A call of a `unit` function with one argument, where an `i64` is wanted, is E0043 whose cause
+/// names that function, with a secondary label at it. Only `dbg` names the call in its argument.
 #[test]
-fn a_unit_call_with_one_argument_should_name_its_function_in_the_note() {
+fn a_unit_call_with_one_argument_should_name_its_function_in_the_cause() {
     with_prelude();
     let src = "fn k(x: i64) {}\nfn main() {\n    let y: i64 = k(1)\n}";
-    assert_eq!(reports(src), [(Code::NoValue, (3, 18), true)]);
-    let program = parse_ok("fn main() { k(1) }");
-    let [ast::Item::Function(f)] = program.items.as_slice() else {
-        panic!("the program should hold one function");
-    };
-    let tail = tail(&f.body).expect("the body should end in the call");
-    assert_eq!(expr::unit_call(tail).as_deref(), Some("k"));
+    assert_eq!(found(src), [(Code::NoValue, (3, 18), vec![(1, 4)])]);
 }

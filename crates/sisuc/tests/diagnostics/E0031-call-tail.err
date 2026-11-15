@@ -1,10 +1,10 @@
 error[E0031]: function `five` must return `i64`, but its body has no value
- --> E0031-unit-call.sisu:7:1
-  |
-7 | }
-  | ^
-  |
-  = note: `greet` returns `unit`
+  --> E0031-call-tail.sisu:13:1
+   |
+12 |     greet()
+   |     ------- `greet` returns `unit`
+13 | }
+   | ^
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0031
