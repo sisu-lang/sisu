@@ -1082,3 +1082,18 @@ fn a_unit_value_should_lift_and_a_body_if_should_keep_its_report() {
     ];
     lift_rows(&rows);
 }
+
+/// A call of a `unit` function with one argument, where an `i64` is wanted, is E0043 with the
+/// note that names that function. Only `dbg` names the call in its argument.
+#[test]
+fn a_unit_call_with_one_argument_should_name_its_function_in_the_note() {
+    with_prelude();
+    let src = "fn k(x: i64) {}\nfn main() {\n    let y: i64 = k(1)\n}";
+    assert_eq!(reports(src), [(Code::NoValue, (3, 18), true)]);
+    let program = parse_ok("fn main() { k(1) }");
+    let [ast::Item::Function(f)] = program.items.as_slice() else {
+        panic!("the program should hold one function");
+    };
+    let tail = tail(&f.body).expect("the body should end in the call");
+    assert_eq!(expr::unit_call(tail).as_deref(), Some("k"));
+}
