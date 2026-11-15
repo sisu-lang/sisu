@@ -2459,7 +2459,7 @@ fn a_print_of_several_values_should_offer_one_string() {
             "print(x: \"a\", a)",
             vec![
                 Report::new(Code::PrintArgument, ("    ", "print(x: \"a\", a)")),
-                Report::new(Code::LabeledArgument, ("print(", "x")),
+                Report::new(Code::LabeledArgument, ("print(", "x")).help(true),
             ],
         ),
         row(
@@ -2471,6 +2471,21 @@ fn a_print_of_several_values_should_offer_one_string() {
             "P13",
             "print(\"a\",\n    a)",
             join("print(\"a\",\n    a)", "\"a\",\n    a", "\"a {a}\""),
+        ),
+        // A `mut` argument is no value of the string.
+        FixRow {
+            id: "P14",
+            src: "fn main() {\n    let mut a = 1\n    print(1, mut a)\n}".to_owned(),
+            reports: vec![Report::new(
+                Code::PrintArgument,
+                ("    ", "print(1, mut a)"),
+            )],
+        },
+        // The fix stays inside a group.
+        row(
+            "P15",
+            "print((1), (2))",
+            join("print((1), (2))", "(1), (2)", "\"{(1)} {(2)}\""),
         ),
     ]);
 }

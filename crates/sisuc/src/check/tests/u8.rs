@@ -547,6 +547,12 @@ fn a_negated_u8_should_offer_a_conversion() {
             ),
         ),
         row("N8", "let b: i64? = -a", none(("i64? = ", "-a"))),
+        // The fix stays inside a group.
+        row(
+            "N10",
+            "let b: i64 = (-a)",
+            convert(("i64 = ", "(-a)"), "(-a)", "(-i64(a))", clean),
+        ),
         FixRow {
             id: "N9",
             src: "fn h(o: i64?) {\n    let a: u8 = 3\n    print(o ?? -a)\n}\nfn main() {}"

@@ -318,6 +318,8 @@ struct Report {
     /// For each fix: whether it is safe, how many edits it has, and `(from, to)`. Applying the
     /// fix alone changes the text `from` of the program into `to`.
     fixes: Vec<(bool, usize, (&'static str, &'static str))>,
+    /// Whether the report has a help.
+    help: bool,
     after: After,
 }
 
@@ -328,8 +330,15 @@ impl Report {
             at,
             secondary: Vec::new(),
             fixes: Vec::new(),
+            help: false,
             after: After::Unchecked,
         }
+    }
+
+    /// The report has a help.
+    fn help(mut self, help: bool) -> Report {
+        self.help = help;
+        self
     }
 
     fn secondary(mut self, spans: &[Needle]) -> Report {
@@ -382,6 +391,13 @@ impl Report {
             .collect();
         if found != wanted {
             return Some(format!("fixes {found:?}, wanted {wanted:?}"));
+        }
+        if d.help().is_some() != self.help {
+            return Some(format!(
+                "help {:?}, wanted {}",
+                d.help().is_some(),
+                self.help
+            ));
         }
         if d.fixes().iter().any(Fix::safe)
             && let Some(why) = safe_fix_removes_only(src, d)

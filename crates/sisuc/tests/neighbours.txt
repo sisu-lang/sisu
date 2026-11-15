@@ -435,6 +435,9 @@ $[0]?.push(1)
 for _x in $.wrap([1]) {}
 print($)
 print("x {$}")
+# A fix that deletes to the end of a span must stop inside a group.
+print(($))
+print("{($)}")
 # A value as a name that is read, and as a name that is assigned.
 let _r = $
 $ = 1

@@ -217,5 +217,7 @@ fn a_for_over_an_integer_should_offer_a_range() {
         row("L6", "let s = \"ab\"\n    ", "s", none("s")),
         row("L7", "", "{ n }", none("{ n }")),
         row("L8", "", "{ n } + 1", none("{ n } + 1")),
+        // The fix stays inside a group.
+        row("L9", "", "(n)", range("(n)", "in (n)", "in 0..(n)")),
     ]);
 }

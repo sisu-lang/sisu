@@ -1055,6 +1055,12 @@ fn a_default_of_a_value_that_is_not_optional_should_offer_its_removal() {
                 Report::new(Code::IntegerDoesNotFit, ("z: u8 = ", "300")),
             ],
         ),
+        // The fix stays inside a group.
+        row(
+            "C9",
+            "print((a ?? 4))",
+            remove(("print((", "a"), "a ?? 4", "a", After::Clean),
+        ),
         // The default has only a warning, which the fix would remove with the default.
         row(
             "C8",
