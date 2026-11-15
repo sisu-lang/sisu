@@ -46,6 +46,34 @@ fn unused_value_should_warn_when_a_statement_drops_it() {
         &[(3, 5, "u8(n)")],
     );
     warns("fn g() { 1 }\nfn main() {}", &[(1, 10, "1")]);
+    // The join converts the inner `if` to an `any` type: its branches still warn, not the `if`.
+    let any_rows: &[(&str, &[(usize, &str)])] = &[
+        (
+            "if c { if d { p } else { p } } else { None }",
+            &[(19, "p"), (30, "p"), (43, "None")],
+        ),
+        (
+            "if c { if d { Fox() } else { Fox() } } else { p }",
+            &[(19, "Fox()"), (34, "Fox()"), (51, "p")],
+        ),
+        (
+            "match n { 0 => if d { p } else { p }; _ => None }",
+            &[(27, "p"), (38, "p"), (48, "None")],
+        ),
+    ];
+    for (body, expected) in any_rows {
+        let src = format!(
+            "interface Named {{ fn name(self) -> string }}
+struct Fox: Named {{ fn name(self) -> string {{ \"f\" }} }}
+fn main() {{ t(true, true, 1, Fox()) }}
+fn t(c: bool, d: bool, n: i64, p: any Named) {{
+    {body}
+    print(n)
+}}"
+        );
+        let expected: Vec<_> = expected.iter().map(|&(col, text)| (5, col, text)).collect();
+        warns(&src, &expected);
+    }
     let rows: &[(&str, &[(usize, &str)])] = &[
         ("f()", &[(5, "f()")]),
         ("if c { 1 } else { 2 }", &[(12, "1"), (23, "2")]),
