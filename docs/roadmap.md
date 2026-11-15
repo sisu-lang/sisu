@@ -1075,9 +1075,9 @@ Each is small once its milestone's main feature exists:
   neither until "Equality, hashing and order" decides otherwise. The list is
   fixed by the compiler: this replaces
   derive macros, not user code generation.
-- Milestone 10: `mut self` requirements in interfaces arrive with records,
-  and milestone 10 decides whether a class's `self` method satisfies one, as
-  in Swift.
+- `mut self` requirements in interfaces (built with structs, part 2). A
+  struct or an enum meets one with `mut self` or with plain `self`, and a
+  class meets one with plain `self`, as in Swift.
 - Milestone 8: Array `push`: a built-in that grows the block in place when
   nothing else holds it, doubling its capacity when full, and copies it first
   when it is shared (ADR 0007). The other methods that change an array take
@@ -1725,7 +1725,7 @@ accepted.
     }
     ```
 
-    `mut self` requirements in interfaces wait for milestone 10, with records.
+    An interface can require `mut self` (built with structs, part 2).
 
   - A type declares its interfaces after its name: `class Tree: Display {`,
     and `record Point: Hash {` as milestone 10 writes them.
