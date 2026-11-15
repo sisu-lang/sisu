@@ -1971,7 +1971,7 @@ fn break_name_is_a_label_only_near_one() {
 /// error after the `loop` shows. In the second program it names `outer`, so `outer` has no type
 /// and nothing more shows. In the third program an unlabeled `break` fails the innermost loop.
 #[test]
-fn a_skipped_break_value_should_fail_only_the_loops_its_jumps_name() {
+fn a_skipped_break_value_should_fail_only_the_loops_its_breaks_can_give_a_value() {
     let program = |line: &str| {
         format!("fn main() {{\n    let c = [1].len() == 1\n    {line}\n    print(a + true)\n}}")
     };

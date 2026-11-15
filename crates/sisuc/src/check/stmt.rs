@@ -1162,6 +1162,11 @@ impl Checker<'_> {
             self.fail_loops(.., reported);
             return;
         };
+        let innermost = self
+            .body
+            .loops
+            .iter()
+            .rposition(|context| matches!(context, LoopContext::Body(_)));
         for (at, token) in lexed.tokens.iter().enumerate() {
             #[cfg(test)]
             super::SKIP_TOKEN_STEPS.set(super::SKIP_TOKEN_STEPS.get() + 1);
@@ -1175,13 +1180,7 @@ impl Checker<'_> {
                 }) => self.open_label(*name).map(|(open, _)| open),
                 _ => None,
             };
-            let innermost = || {
-                self.body
-                    .loops
-                    .iter()
-                    .rposition(|context| matches!(context, LoopContext::Body(_)))
-            };
-            if let Some(open) = named.or_else(innermost) {
+            if let Some(open) = named.or(innermost) {
                 self.fail_loops(open.., reported);
             }
         }
