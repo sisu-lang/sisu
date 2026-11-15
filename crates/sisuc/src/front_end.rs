@@ -342,12 +342,20 @@ pub fn safe_fix_breaches(source: &str) -> Vec<String> {
             let (carriers, others): (Vec<&Diagnostic>, Vec<&Diagnostic>) =
                 diagnostics.iter().partition(|e| e.fixes().contains(fix));
             // A carrier is gone when no report of its code is where it was. A report of its
-            // code elsewhere is one that the fix reveals.
+            // code elsewhere is one that the fix reveals, and a report that moved there is
+            // another one of `others`.
+            let at = |e: &Diagnostic| {
+                let span = e.span();
+                (e.code(), moved(fix, span.start()), moved(fix, span.end()))
+            };
+            let images: Vec<_> = others.iter().map(|e| at(e)).collect();
             let left: Vec<Code> = (carriers.iter())
                 .filter(|e| {
-                    let at = (moved(fix, e.span().start()), moved(fix, e.span().end()));
-                    (after.iter())
-                        .any(|a| a.code() == e.code() && (a.span().start(), a.span().end()) == at)
+                    let place = at(e);
+                    let found = (after.iter())
+                        .filter(|a| (a.code(), a.span().start(), a.span().end()) == place)
+                        .count();
+                    found > images.iter().filter(|i| **i == place).count()
                 })
                 .map(|e| e.code())
                 .collect();

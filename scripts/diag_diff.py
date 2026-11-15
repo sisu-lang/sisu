@@ -14,9 +14,9 @@ With `--apply`, the script looks at each safe fix that only one build gives on a
 It applies the fix alone, and the build that gave it checks the result again. Under the
 program, the script prints `lost clean fix` or `lost fix` for a fix of the base, and `new fix` or
 `new broken fix` for a fix of the head. A fix is clean when it keeps the contract of
-`safe_fix_breaches` in `crates/sisuc/src/fuzz.rs`: no report of a diagnostic that carries it is
+`safe_fix_breaches` in `crates/sisuc/src/front_end.rs`: no report of a diagnostic that carries it is
 left where it was, every other code stays, and no lexer or parser error is added. A fix that is not
-clean gives the reason.
+clean gives the reason, or `crashed` when the build crashes on the result.
 
 It runs at most two sisu processes at once, so that it can run next to other work. `--jobs=N`
 runs at most N.
@@ -100,11 +100,16 @@ def show(ds: list[Diagnostic]) -> str:
     )
 
 
-def reports(sisu: str, args: list[str]) -> list[dict[str, Any]]:
-    """Return each diagnostic, as its JSON object, that `sisu ARGS --format json` reports."""
+def reports(sisu: str, args: list[str]) -> list[dict[str, Any]] | None:
+    """Return each diagnostic, as its JSON object, that `sisu ARGS --format json` reports.
+
+    Return None when sisu crashes: it exits with a status other than 0 and 1.
+    """
     run = subprocess.run(
         [sisu, *args, "--format", "json"], capture_output=True, text=True, check=False
     )
+    if run.returncode not in (0, 1):
+        return None
     lines = (run.stdout + run.stderr).splitlines()
     found = [json.loads(line) for line in lines if line.startswith("{")]
     return [d for d in found if d["kind"] == "diagnostic"]
@@ -139,19 +144,23 @@ def breaks(sisu: str, source: bytes, found: list[dict[str, Any]], fix: dict[str,
     """
     text = applied(source, fix).decode()
     after = reports(sisu, ["check", "-e", text])
+    ast = reports(sisu, ["build", "--emit", "ast", "-e", text])
+    if after is None or ast is None:
+        return "crashed"
     carriers = [d for d in found if fix in d["fixes"]]
-    others = [d["code"] for d in found if fix not in d["fixes"]]
-    at = {(a["code"], a["primary"]["start"], a["primary"]["end"]) for a in after}
-    left = [
-        d["code"]
-        for d in carriers
-        if (d["code"], moved(fix, d["primary"]["start"]), moved(fix, d["primary"]["end"])) in at
-    ]
-    removed = minus(others, [a["code"] for a in after])
-    syntax = minus(
-        [d["code"] for d in reports(sisu, ["build", "--emit", "ast", "-e", text])],
-        [d["code"] for d in reports(sisu, ["build", "--emit", "ast", "-e", source.decode()])],
-    )
+    others = [d for d in found if fix not in d["fixes"]]
+
+    def at(d: dict[str, Any]) -> tuple[str, int, int]:
+        p = d["primary"]
+        return (d["code"], moved(fix, p["start"]), moved(fix, p["end"]))
+
+    # A report that moved to a carrier's place is another one of `others`, not a carrier left.
+    images = [at(d) for d in others]
+    places = [(a["code"], a["primary"]["start"], a["primary"]["end"]) for a in after]
+    left = [d["code"] for d in carriers if places.count(at(d)) > images.count(at(d))]
+    removed = minus([d["code"] for d in others], [a["code"] for a in after])
+    before = reports(sisu, ["build", "--emit", "ast", "-e", source.decode()]) or []
+    syntax = minus([d["code"] for d in ast], [d["code"] for d in before])
     parts = [
         f"{what} {', '.join(codes)}"
         for what, codes in (("left", left), ("removed", removed), ("added syntax", syntax))
@@ -163,7 +172,7 @@ def breaks(sisu: str, source: bytes, found: list[dict[str, Any]], fix: dict[str,
 def fix_lines(base_sisu: str, head_sisu: str, path: Path) -> list[str]:
     """Return a line for each safe fix that one build gives on `path` and the other does not."""
     source = path.read_bytes()
-    found = {sisu: reports(sisu, ["check", str(path)]) for sisu in (base_sisu, head_sisu)}
+    found = {sisu: reports(sisu, ["check", str(path)]) or [] for sisu in (base_sisu, head_sisu)}
 
     def safe(sisu: str) -> list[tuple[dict[str, Any], dict[str, Any]]]:
         pairs = [(d, f) for d in found[sisu] for f in d["fixes"] if f["safe"]]
