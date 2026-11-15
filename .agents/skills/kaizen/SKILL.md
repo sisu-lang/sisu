@@ -55,7 +55,8 @@ question 3, or says `no lesson`.
 
 ## 3. Write and propose
 
-Write the answers to `<main checkout>/.scratch/<feature>/kaizen.md`. Save
+Write the answers to `<main checkout>/.scratch/<feature>/kaizen.md`, or to
+`<ledger folder>/<group>-kaizen.md` in a `solve-issues` batch. Save
 each lesson of kind 4 as a memory, and name it to the user. An agent with no
 memories proposes it as a line in `AGENTS.md`.
 
