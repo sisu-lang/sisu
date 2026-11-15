@@ -1,0 +1,13 @@
+// GIVEN a function with no return type whose body is `return` of an `if` with no `else`
+// WHEN `sisu check` runs on it
+// THEN it reports E0043 "this `if` has no `else`, so it has no value" at the `if`
+// AND the help says to remove the `return`, or to write `return` with no value inside the `if`
+fn alert_on_odd_number(n: i64) {
+    return if n % 2 == 0 {
+        print("{n} is odd!")
+    }
+}
+
+fn main() {
+    alert_on_odd_number(3)
+}

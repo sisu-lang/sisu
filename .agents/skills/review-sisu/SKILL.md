@@ -111,8 +111,9 @@ on.
 Give every finding one ruling, and write each ruling as one line of
 `RUN/rulings-<round>.md`:
 `<stem> <n>: Accept | Reject | Defer to <where>: <reason>`, where `<stem>` is
-the report's stem. When two reviewers report one defect, give both lines the
-same ruling and name the other line. Then run `python3 <skill base>/scripts/review_round.py rulings RUN --round <round> --report <stem>`,
+the report's stem, such as `opus`, or its file stem, such as `opus-2`. The
+ruling is one word before the colon; put a note in the reason. When two
+reviewers report one defect, give both lines the same ruling and name the other line. Then run `python3 <skill base>/scripts/review_round.py rulings RUN --round <round> --report <stem>`,
 with the same `--report` options as `verify`. It fails on a finding that has
 no ruling, and its counts go into the report to the user.
 
@@ -151,7 +152,7 @@ Rules for ruling:
 ### 5. Fix and review again
 
 Fix the accepted findings in the target. Fix the class, not only the repro. For each finding, list the neighbouring cases: the same rule in each position the language allows it. `crates/sisuc/tests/neighbours.txt` lists the known values and positions, and each new one goes there. Try each case, and fix the cause so that all of them are right. Write the brief for a fix round from [fix-brief.md](fix-brief.md). A `solve-issues` batch uses the "Fix round" part of its own `brief.md` instead. It asks for that list and its results. It also asks for the command and the output behind each claim about `sisu`. The executor writes each probe program to `RUN/probes/<round>/`.
-The executor compares the probes of every round with `python3 scripts/diag_diff.py BASE_SISU HEAD_SISU RUN/probes`, where `BASE_SISU` is the build before the round. The script compares the codes, the positions, the text and the fixes of each diagnostic; `--codes` compares only codes, positions and crashes, for a round that rewords many diagnostics on purpose. It runs `sisu check`, and prints each program that crashes the head as `crash`. So it finds a panic in the front end with no second run. A panic in codegen or at run time needs a `sisu run` of the probe. A fix to code keeps `make test`
+The executor compares the probes of every round with `python3 scripts/diag_diff.py --apply BASE_SISU HEAD_SISU RUN/probes`, where `BASE_SISU` is the build before the round. The script compares the codes, the positions, the text and the fixes of each diagnostic; `--codes` compares only codes, positions and crashes, for a round that rewords many diagnostics on purpose. `--apply` applies each safe fix that only one build gives. It prints `lost fix` or `new broken fix` when the result leaves its report, removes another one or adds a syntax error. It runs `sisu check`, and prints each program that crashes the head as `crash`. So it finds a panic in the front end with no second run. A panic in codegen or at run time needs a `sisu run` of the probe. A fix to code keeps `make test`
 passing. A fix that changes behavior adds its tests in a commit before the
 fix, red at the round base. The reviewer runs those tests at that commit:
 each must fail, and for the stated cause. A change whose tests are in

@@ -1,0 +1,9 @@
+// GIVEN a `let` whose value is an `if` with no `else`
+// WHEN `sisu check` runs on it
+// THEN it reports E0043 "this `if` has no `else`, so it has no value" at the `if`
+// AND the help says to add an `else`, and to make each branch give a value
+fn main() {
+    let c = true
+    let x = if c { 5 }
+    print(x)
+}

@@ -184,3 +184,40 @@ fn for_inclusive_lowers() {
         ],
     );
 }
+
+/// GIVEN a `for` over an `i64`
+/// WHEN the program is checked
+/// THEN E0035 offers an unsafe fix that starts a range at `0`
+/// BUT there is no fix when the value has another type
+/// BUT there is no fix when its text starts with `{`, which `0..{ n } {` cannot parse
+#[test]
+fn a_for_over_an_integer_should_offer_a_range() {
+    let row = |id, lines: &'static str, subject: &'static str, reports| FixRow {
+        id,
+        src: format!(
+            "fn k() -> i64 {{ 2 }}\nfn main() {{\n    let n = 3\n    {lines}for i in {subject} {{ print(i) }}\n}}"
+        ),
+        reports,
+    };
+    let range = |subject: &'static str, from, to| {
+        vec![
+            Report::new(Code::ForNeedsArray, ("for i in ", subject))
+                .fix(false, 1, (from, to))
+                .after(After::Clean),
+        ]
+    };
+    let none =
+        |subject: &'static str| vec![Report::new(Code::ForNeedsArray, ("for i in ", subject))];
+    fix_rows(&[
+        row("L1", "", "n", range("n", "in n", "in 0..n")),
+        row("L2", "", "n + 1", range("n + 1", "in n + 1", "in 0..n + 1")),
+        row("L3", "", "3", range("3", "in 3", "in 0..3")),
+        row("L4", "", "k()", range("k()", "in k()", "in 0..k()")),
+        row("L5", "let m: u8 = 3\n    ", "m", none("m")),
+        row("L6", "let s = \"ab\"\n    ", "s", none("s")),
+        row("L7", "", "{ n }", none("{ n }")),
+        row("L8", "", "{ n } + 1", none("{ n } + 1")),
+        // The fix stays inside a group.
+        row("L9", "", "(n)", range("(n)", "in (n)", "in 0..(n)")),
+    ]);
+}

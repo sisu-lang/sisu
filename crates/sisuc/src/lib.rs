@@ -47,6 +47,7 @@ use report::{Format, Reporter};
 use timings::Timings;
 use tir::Program;
 
+pub use front_end::safe_fix_breaches;
 pub use fuzz::front_end as fuzz_front_end;
 #[cfg(feature = "fuzz")]
 pub use fuzz_program::program as fuzz_program;

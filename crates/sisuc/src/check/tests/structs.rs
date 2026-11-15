@@ -2745,3 +2745,65 @@ fn a_type_argument_on_a_struct_without_type_parameters_should_report_e0137_first
         .collect();
     error_rows(&rows);
 }
+
+/// GIVEN a call of a field of a struct
+/// WHEN the program is checked
+/// THEN E0058 offers a safe fix that removes the `()`, unless the call has an argument or type
+/// arguments
+#[test]
+fn a_call_of_a_field_should_offer_to_read_it() {
+    let row = |id, body: &'static str, reports| FixRow {
+        id,
+        src: format!(
+            "struct P {{ x: i64 }}\nfn main() {{\n    let p = P(x: 1)\n    let o: P? = p\n    {body}\n}}"
+        ),
+        reports,
+    };
+    let read = |at: Needle, from, to| {
+        vec![
+            Report::new(Code::FieldNotMethod, at)
+                .fix(true, 1, (from, to))
+                .after(After::Clean),
+        ]
+    };
+    fix_rows(&[
+        row("M1", "print(p.x())", read(("p.", "x"), "p.x()", "p.x")),
+        FixRow {
+            id: "M2",
+            src: "struct P { x: i64 }\nfn f(p: P?) { print(p?.x()) }\nfn main() {}".to_owned(),
+            reports: read(("p?.", "x"), "p?.x()", "p?.x"),
+        },
+        row("M3", "print(p.x ())", read(("p.", "x"), "p.x ()", "p.x")),
+        row(
+            "M4",
+            "print(p.x(1))",
+            vec![Report::new(Code::FieldNotMethod, ("p.", "x"))],
+        ),
+        row(
+            "M5",
+            "print(p.x<i64>())",
+            vec![Report::new(TypeArguments, ("print(", "p.x"))],
+        ),
+        // The fix deletes `()` and no `)` of a group.
+        row(
+            "M6",
+            "print((p.x()))",
+            read(("p.", "x"), "(p.x())", "(p.x)"),
+        ),
+        row(
+            "M7",
+            "print(\"{(p.x())}\")",
+            read(("p.", "x"), "(p.x())", "(p.x)"),
+        ),
+        row(
+            "M8",
+            "print((o?.x()))",
+            read(("o?.", "x"), "(o?.x())", "(o?.x)"),
+        ),
+        row(
+            "M9",
+            "print(((p.x())) + 1)",
+            read(("p.", "x"), "((p.x()))", "((p.x))"),
+        ),
+    ]);
+}

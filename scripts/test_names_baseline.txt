@@ -255,7 +255,6 @@ crates/sisuc/src/check/tests/mod.rs::failed_join_blames_the_branch_that_does_not
 crates/sisuc/src/check/tests/mod.rs::failed_labeled_jump_leaves_no_never_loop
 crates/sisuc/src/check/tests/mod.rs::failed_tail_of_an_optional_body_reports_once
 crates/sisuc/src/check/tests/mod.rs::failed_value_reports_once
-crates/sisuc/src/check/tests/mod.rs::field_called_as_method
 crates/sisuc/src/check/tests/mod.rs::field_on_i64
 crates/sisuc/src/check/tests/mod.rs::for_variable_has_no_fix
 crates/sisuc/src/check/tests/mod.rs::functions_in_any_order

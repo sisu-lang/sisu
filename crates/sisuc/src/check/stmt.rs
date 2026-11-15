@@ -5,6 +5,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::any::{AnyJoin, SEED, is_target, widen};
 use super::array::must_unwrap;
 use super::enums::unwrapped;
+use super::expectation::own_name;
 use super::expr::{fits, local};
 use super::extend::mut_self_removal;
 use super::generic::Ahead;
@@ -19,8 +20,8 @@ use super::{
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{
-    ClashForm, ClashKind, Diagnostic, DiagnosticKind, NeverReassignedForm, RangePlace, Unwrap,
-    UnwrapHelp, closest,
+    ClashForm, ClashKind, Diagnostic, DiagnosticKind, NeverReassignedForm, NoReturn, RangePlace,
+    Unwrap, UnwrapHelp, closest,
 };
 use crate::source::{Span, removal_end};
 use crate::symbol::Symbol;
@@ -827,7 +828,13 @@ impl Checker<'_> {
             }
             Some((ty, _)) => {
                 let found = self.type_name(ty);
-                let d = DiagnosticKind::ForNeedsArray { found, at: e.span };
+                // `0..{ n } {` does not parse.
+                let from_zero = ty == Type::I64 && !self.source.text(e.span).starts_with('{');
+                let d = DiagnosticKind::ForNeedsArray {
+                    found,
+                    at: e.span,
+                    from_zero,
+                };
                 (None, Some(d.into()))
             }
             None => (None, None),
@@ -972,9 +979,15 @@ impl Checker<'_> {
                 _ => None,
             },
             Some(value) if self.body.ret == Some(Type::UNIT) => {
-                let checked = self.value(value, Expectation::None);
+                let checked = self.value_in(value, Expectation::None, true);
                 let reported = match known_type(&checked) {
-                    Ok(_) => self.error(DiagnosticKind::UnexpectedReturnValue { at: value.span }),
+                    Ok(ty) => {
+                        let function = self.no_return(ty);
+                        self.error(DiagnosticKind::UnexpectedReturnValue {
+                            at: value.span,
+                            function,
+                        })
+                    }
                     Err(reported) => reported,
                 };
                 return Err(never(reported));
@@ -993,6 +1006,32 @@ impl Checker<'_> {
             }
         };
         Ok(tir::Expr::new(ExprKind::Return(value), Type::NEVER, span))
+    }
+
+    /// The function whose body returns a value of type `ty` though it declares no return type.
+    /// It has the offset of its `{`, so that a fix adds the type there. `main` has none: a type
+    /// there is wrong. A method for a requirement has none: the type makes it fail E0152. A type
+    /// whose name is cut has none: the fix would not parse.
+    fn no_return(&self, ty: Type) -> Option<NoReturn> {
+        let Some(Owner::Func(f)) = self.body.owner else {
+            return None;
+        };
+        let sig = &self.signatures[f.0];
+        let main = match self.names.function(Symbol::intern("main")) {
+            Some(Declared::Known(id)) => id == f,
+            // After a clash it is not known which function is `main`.
+            Some(Declared::Poisoned(_)) => true,
+            None => false,
+        };
+        let free = !main && !self.named_for_requirement.contains(&f);
+        Some(NoReturn {
+            name: own_name(&sig.name).to_owned(),
+            at: sig.span,
+            add: free
+                .then(|| self.whole_type_name(ty))
+                .flatten()
+                .map(|name| (sig.header.end(), name)),
+        })
     }
 
     /// `f`, inside the header of the loop whose keyword is `keyword` and loop label `label`.
@@ -1557,10 +1596,10 @@ impl Checker<'_> {
             return checked;
         }
         let checked = match type_of(&checked).or(misfit) {
-            Some(Type::UNIT) => Err(Poisoned::untyped(self.error(DiagnosticKind::NoValue {
-                at: v.span,
-                never: false,
-            }))),
+            Some(Type::UNIT) => {
+                let cause = self.no_value_cause(v, checked.as_ref().ok(), Type::UNIT, false);
+                Err(Poisoned::untyped(self.no_value(v.span, cause)))
+            }
             Some(Type::NEVER) | None => checked,
             Some(got) => {
                 // Checking `v` can set the first type, through a `break` of this loop inside it.

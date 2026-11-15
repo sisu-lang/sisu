@@ -166,17 +166,7 @@ fn assert_safe_fixes(source: &str, diagnostics: &[Diagnostic]) {
         }
         let fixed = fix.apply(source);
         let after = crate::front_end::front_end(&fixed).1;
-        // Where a span of `source` would be in `fixed`: the edits before its ends move it.
-        let moved = |at: usize| {
-            let before = fix.edits().iter().filter(|e| e.span().end() <= at);
-            let (added, removed) = before.fold((0, 0), |(added, removed), e| {
-                (
-                    added + e.replacement().len(),
-                    removed + e.span().range().len(),
-                )
-            });
-            at + added - removed
-        };
+        let moved = |at: usize| crate::front_end::moved(fix, at);
         let moved_span = |s: Span| (moved(s.start()), moved(s.end()));
         // A diagnostic within `e`'s span reports the same problem, or one that stops the
         // checker before it reaches `e`'s.

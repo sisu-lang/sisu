@@ -2637,10 +2637,14 @@ impl Checker<'_> {
             (Some(want), Some(got)) if want != Type::UNIT && got != Type::NEVER && got != want => {
                 let d = if got == Type::UNIT {
                     let end = f.body.span.end();
+                    let value = body.as_ref().ok().and_then(|b| b.value.as_deref());
+                    let tail = tail(&f.body)
+                        .map(|e| (e.span, self.no_value_cause(e, value, Type::UNIT, false)));
                     DiagnosticKind::BodyHasNoValue {
                         function: f.name.name.to_string(),
                         want: self.type_name(want),
                         at: Span::new(end - 1, end),
+                        tail,
                     }
                     .into()
                 } else {
@@ -2805,6 +2809,14 @@ impl Checker<'_> {
         let mut name = String::new();
         write_type(&mut name, ty, |head| self.head(head));
         name
+    }
+
+    /// The name of `ty` as a program writes it, or `None` when `type_name` cut it with `...`:
+    /// text for a fix must parse.
+    fn whole_type_name(&self, ty: Type) -> Option<String> {
+        let mut name = String::new();
+        let cut = write_type(&mut name, ty, |head| self.head(head));
+        (!cut).then_some(name)
     }
 
     /// The declared name of a class or an enum.
