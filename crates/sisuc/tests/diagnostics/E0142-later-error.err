@@ -1,9 +1,9 @@
 error[E0142]: loop label `outer` has the same name as the binding `outer`
- --> E0142-later-error.sisu:4:40
+ --> E0142-later-error.sisu:3:40
   |
-3 |     let outer = 3
+2 |     let outer = 3
   |         ----- the binding is declared here
-4 |     let a = loop { outer: loop { break outer 5 }; break 1 }
+3 |     let a = loop { outer: loop { break outer 5 }; break 1 }
   |                    -----               ^^^^^
   |                    |
   |                    loop label declared here
@@ -11,17 +11,17 @@ error[E0142]: loop label `outer` has the same name as the binding `outer`
   = help: rename the loop label
 
 error[E0032]: expected `i64`, found `bool`
- --> E0142-later-error.sisu:5:15
+ --> E0142-later-error.sisu:4:15
   |
-5 |     print(a + true)
+4 |     print(a + true)
   |               ^^^^
 
 error[E0142]: loop label `outer` has the same name as the binding `outer`
-  --> E0142-later-error.sisu:11:40
+  --> E0142-later-error.sisu:10:40
    |
-10 |     let outer = 3
+ 9 |     let outer = 3
    |         ----- the binding is declared here
-11 |     let a = loop { outer: loop { break outer (if c { break 2 } else { 5 }) }; break 1 }
+10 |     let a = loop { outer: loop { break outer (if c { break 2 } else { 5 }) }; break 1 }
    |                    -----               ^^^^^
    |                    |
    |                    loop label declared here
@@ -29,17 +29,17 @@ error[E0142]: loop label `outer` has the same name as the binding `outer`
    = help: rename the loop label
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0142-later-error.sisu:12:15
+  --> E0142-later-error.sisu:11:15
    |
-12 |     print(a + true)
+11 |     print(a + true)
    |               ^^^^
 
 error[E0142]: loop label `outer` has the same name as the binding `outer`
-  --> E0142-later-error.sisu:18:43
+  --> E0142-later-error.sisu:17:43
    |
-17 |     let outer = 3
+16 |     let outer = 3
    |         ----- the binding is declared here
-18 |     let a = m: loop { outer: loop { break outer (if c { break m 2 } else { 5 }) }; break 1 }
+17 |     let a = m: loop { outer: loop { break outer (if c { break m 2 } else { 5 }) }; break 1 }
    |                       -----               ^^^^^
    |                       |
    |                       loop label declared here
@@ -47,11 +47,11 @@ error[E0142]: loop label `outer` has the same name as the binding `outer`
    = help: rename the loop label
 
 error[E0142]: loop label `outer` has the same name as the binding `outer`
-  --> E0142-later-error.sisu:25:43
+  --> E0142-later-error.sisu:24:43
    |
-24 |     let outer = 3
+23 |     let outer = 3
    |         ----- the binding is declared here
-25 |     let a = m: loop { outer: loop { break outer (if c { continue m } else { 5 }) }; break 1 }
+24 |     let a = m: loop { outer: loop { break outer (if c { continue m } else { 5 }) }; break 1 }
    |                       -----               ^^^^^
    |                       |
    |                       loop label declared here
@@ -59,19 +59,19 @@ error[E0142]: loop label `outer` has the same name as the binding `outer`
    = help: rename the loop label
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0142-later-error.sisu:26:15
+  --> E0142-later-error.sisu:25:15
    |
-26 |     print(a + true)
+25 |     print(a + true)
    |               ^^^^
 
 error[E0142]: loop label `outer` has the same name as the binding `outer`
-  --> E0142-later-error.sisu:33:30
+  --> E0142-later-error.sisu:32:30
    |
-31 |     let outer = 3
+30 |     let outer = 3
    |         ----- the binding is declared here
-32 |     outer: loop {
+31 |     outer: loop {
    |     ----- loop label declared here
-33 |         let a = loop { break outer (if c { break 2 } else { 5 }) }
+32 |         let a = loop { break outer (if c { break 2 } else { 5 }) }
    |                              ^^^^^
    |
    = help: rename the loop label

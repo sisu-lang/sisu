@@ -5,13 +5,11 @@ fn row_p1() {
 }
 
 fn row_p2() {
-    let c = [1].len() == 1
     let a = loop { for i in [1] { break i }; break 1 }
     print(a + true)
 }
 
 fn row_p3() {
-    let c = [1].len() == 1
     let a = loop { while let Some(x) = Some(1) { break x }; break 1 }
     print(a + true)
 }

@@ -1,5 +1,4 @@
 fn row_q1() {
-    let c = [1].len() == 1
     let outer = 3
     let a = loop { outer: loop { break outer 5 }; break 1 }
     print(a + true)

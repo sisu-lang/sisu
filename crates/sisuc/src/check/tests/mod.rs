@@ -1966,9 +1966,10 @@ fn break_name_is_a_label_only_near_one() {
     );
 }
 
-/// A `break` with a value in a `while` is not checked, and it fails the loops that a `break` in
-/// the value names, no others. In `p1` it names none, so the type error after the `loop` shows. In
-/// `p5` it names `outer`, so `outer` has no type and nothing more shows.
+/// A `break` with a value in a `while` is not checked. It fails only the loops that a `break` in
+/// the value may give a value. In the first program the value holds no `break`, so the type
+/// error after the `loop` shows. In the second program it names `outer`, so `outer` has no type
+/// and nothing more shows. In the third program an unlabeled `break` fails the innermost loop.
 #[test]
 fn a_skipped_break_value_should_fail_only_the_loops_its_jumps_name() {
     let program = |line: &str| {

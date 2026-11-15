@@ -1145,12 +1145,14 @@ impl Checker<'_> {
     }
 
     /// Skips the `break` value at `value`, which is not checked, by the error `reported`: a jump in
-    /// it may name any open loop label, so no open loop label is reported unused. Only a loop that
-    /// a `break` in the value names gets no type, with the loops inside it, as for a misspelled
-    /// loop label. A `continue` gives no loop a value. Any other `break` names the loop of the
-    /// `break` that holds the value, which fails already, or a loop inside the value. A label
+    /// it may name any open loop label, so no open loop label is reported unused. Only the loops
+    /// that a `break` in the value may give a value get no type, as for a misspelled loop label. A
+    /// `continue` gives no loop a value. A `break` with an open loop label fails that loop and the
+    /// loops inside it. Any other `break` may be the innermost open loop's, so that loop fails with
+    /// the loops inside it. This holds even when the `break` names a loop inside the value. A label
     /// inside the value that shadows an open label (`break (outer: loop { break outer 2 })`) also
-    /// fails the open loop: a missed error, never a false one.
+    /// fails the open loop: a missed error, never a false one. The target of the `break` that holds
+    /// the value fails already, and an open loop header cannot hold such a `break` (E0082).
     fn skip_value(&mut self, value: Span, reported: Reported) {
         let labels: Vec<Span> = self.open_labels().map(|l| l.span).collect();
         self.body.failed_labels.extend(labels);
@@ -1163,13 +1165,23 @@ impl Checker<'_> {
         for (at, token) in lexed.tokens.iter().enumerate() {
             #[cfg(test)]
             super::SKIP_TOKEN_STEPS.set(super::SKIP_TOKEN_STEPS.get() + 1);
-            if token.kind == TokenKind::Break
-                && let Some(Token {
+            if token.kind != TokenKind::Break {
+                continue;
+            }
+            let named = match lexed.tokens.get(at + 1) {
+                Some(Token {
                     kind: TokenKind::Ident(name),
                     ..
-                }) = lexed.tokens.get(at + 1)
-                && let Some((open, _)) = self.open_label(*name)
-            {
+                }) => self.open_label(*name).map(|(open, _)| open),
+                _ => None,
+            };
+            let innermost = || {
+                self.body
+                    .loops
+                    .iter()
+                    .rposition(|context| matches!(context, LoopContext::Body(_)))
+            };
+            if let Some(open) = named.or_else(innermost) {
                 self.fail_loops(open.., reported);
             }
         }

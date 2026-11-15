@@ -15,9 +15,9 @@ error[E0032]: expected `i64`, found `bool`
   |               ^^^^
 
 error[E0141]: `break` with a value in a `for`
- --> E0141-later-error.sisu:9:41
+ --> E0141-later-error.sisu:8:41
   |
-9 |     let a = loop { for i in [1] { break i }; break 1 }
+8 |     let a = loop { for i in [1] { break i }; break 1 }
   |                    ---                  ^
   |                    |
   |                    this `for` has no value
@@ -25,29 +25,29 @@ error[E0141]: `break` with a value in a `for`
   = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0141-later-error.sisu:10:15
-   |
-10 |     print(a + true)
-   |               ^^^^
+ --> E0141-later-error.sisu:9:15
+  |
+9 |     print(a + true)
+  |               ^^^^
 
 error[E0141]: `break` with a value in a `while let`
-  --> E0141-later-error.sisu:15:56
+  --> E0141-later-error.sisu:13:56
    |
-15 |     let a = loop { while let Some(x) = Some(1) { break x }; break 1 }
+13 |     let a = loop { while let Some(x) = Some(1) { break x }; break 1 }
    |                    ----- this `while let` has no value ^
    |
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0141-later-error.sisu:16:15
+  --> E0141-later-error.sisu:14:15
    |
-16 |     print(a + true)
+14 |     print(a + true)
    |               ^^^^
 
 error[E0141]: `break` with a value in a `while`
-  --> E0141-later-error.sisu:21:36
+  --> E0141-later-error.sisu:19:36
    |
-21 |     let a = loop { while c { break true }; break 1 }
+19 |     let a = loop { while c { break true }; break 1 }
    |                    -----           ^^^^
    |                    |
    |                    this `while` has no value
@@ -55,15 +55,15 @@ error[E0141]: `break` with a value in a `while`
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0141-later-error.sisu:22:15
+  --> E0141-later-error.sisu:20:15
    |
-22 |     print(a + true)
+20 |     print(a + true)
    |               ^^^^
 
 error[E0141]: `break` with a value in a `while`
-  --> E0141-later-error.sisu:27:36
+  --> E0141-later-error.sisu:25:36
    |
-27 |     let a = loop { while c { break 2 + "x" }; break 1 }
+25 |     let a = loop { while c { break 2 + "x" }; break 1 }
    |                    -----           ^^^^^^^
    |                    |
    |                    this `while` has no value
@@ -71,15 +71,15 @@ error[E0141]: `break` with a value in a `while`
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0141-later-error.sisu:28:15
+  --> E0141-later-error.sisu:26:15
    |
-28 |     print(a + true)
+26 |     print(a + true)
    |               ^^^^
 
 error[E0141]: `break` with a value in a `while`
-  --> E0141-later-error.sisu:33:36
+  --> E0141-later-error.sisu:31:36
    |
-33 |     let a = loop { while c { break nope }; break 1 }
+31 |     let a = loop { while c { break nope }; break 1 }
    |                    -----           ^^^^
    |                    |
    |                    this `while` has no value
@@ -87,15 +87,15 @@ error[E0141]: `break` with a value in a `while`
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0141-later-error.sisu:34:15
+  --> E0141-later-error.sisu:32:15
    |
-34 |     print(a + true)
+32 |     print(a + true)
    |               ^^^^
 
 error[E0141]: `break` with a value in a `while`
-  --> E0141-later-error.sisu:39:36
+  --> E0141-later-error.sisu:37:36
    |
-39 |     let a = loop { while c { break "a break" }; break 1 }
+37 |     let a = loop { while c { break "a break" }; break 1 }
    |                    -----           ^^^^^^^^^
    |                    |
    |                    this `while` has no value
@@ -103,15 +103,15 @@ error[E0141]: `break` with a value in a `while`
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0141-later-error.sisu:40:15
+  --> E0141-later-error.sisu:38:15
    |
-40 |     print(a + true)
+38 |     print(a + true)
    |               ^^^^
 
 error[E0141]: `break` with a value in a `while`
-  --> E0141-later-error.sisu:45:39
+  --> E0141-later-error.sisu:43:39
    |
-45 |     let a = l: loop { while c { break 2 }; break l 1 }
+43 |     let a = l: loop { while c { break 2 }; break l 1 }
    |                       -----           ^
    |                       |
    |                       this `while` has no value
@@ -119,15 +119,15 @@ error[E0141]: `break` with a value in a `while`
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0141-later-error.sisu:46:15
+  --> E0141-later-error.sisu:44:15
    |
-46 |     print(a + true)
+44 |     print(a + true)
    |               ^^^^
 
 error[E0141]: `break` with a value in a `while`
-  --> E0141-later-error.sisu:51:39
+  --> E0141-later-error.sisu:49:39
    |
-51 |     let a = loop { l: while c { break 2 }; break 1 }
+49 |     let a = loop { l: while c { break 2 }; break 1 }
    |                       -----           ^
    |                       |
    |                       this `while` has no value
@@ -135,15 +135,15 @@ error[E0141]: `break` with a value in a `while`
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0141-later-error.sisu:52:15
+  --> E0141-later-error.sisu:50:15
    |
-52 |     print(a + true)
+50 |     print(a + true)
    |               ^^^^
 
 error[E0141]: `break` with a value in a `while`
-  --> E0141-later-error.sisu:57:36
+  --> E0141-later-error.sisu:55:36
    |
-57 |     let a = loop { while c { break (if c { continue } else { 2 }) }; break 1 }
+55 |     let a = loop { while c { break (if c { continue } else { 2 }) }; break 1 }
    |                    -----           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |                    |
    |                    this `while` has no value
@@ -151,15 +151,15 @@ error[E0141]: `break` with a value in a `while`
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0141-later-error.sisu:58:15
+  --> E0141-later-error.sisu:56:15
    |
-58 |     print(a + true)
+56 |     print(a + true)
    |               ^^^^
 
 error[E0141]: `break` with a value in a `while`
-  --> E0141-later-error.sisu:63:43
+  --> E0141-later-error.sisu:61:43
    |
-63 |     let a = outer: loop { while c { break (if c { continue outer } else { 2 }) }; break 1 }
+61 |     let a = outer: loop { while c { break (if c { continue outer } else { 2 }) }; break 1 }
    |                           -----           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |                           |
    |                           this `while` has no value
@@ -167,15 +167,15 @@ error[E0141]: `break` with a value in a `while`
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0141-later-error.sisu:64:15
+  --> E0141-later-error.sisu:62:15
    |
-64 |     print(a + true)
+62 |     print(a + true)
    |               ^^^^
 
 error[E0141]: `break` with a value in a `while`
-  --> E0141-later-error.sisu:69:36
+  --> E0141-later-error.sisu:67:36
    |
-69 |     let a = loop { while c { break (m: loop { break m 2 }) }; break 1 }
+67 |     let a = loop { while c { break (m: loop { break m 2 }) }; break 1 }
    |                    -----           ^^^^^^^^^^^^^^^^^^^^^^^
    |                    |
    |                    this `while` has no value
@@ -183,15 +183,15 @@ error[E0141]: `break` with a value in a `while`
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0141-later-error.sisu:70:15
+  --> E0141-later-error.sisu:68:15
    |
-70 |     print(a + true)
+68 |     print(a + true)
    |               ^^^^
 
 error[E0141]: `break` with a value in a `while`
-  --> E0141-later-error.sisu:76:53
+  --> E0141-later-error.sisu:74:53
    |
-76 |     let a = loop { match k { 0 => { while c { break 2 } }; _ => {} }; break 1 }
+74 |     let a = loop { match k { 0 => { while c { break 2 } }; _ => {} }; break 1 }
    |                                     -----           ^
    |                                     |
    |                                     this `while` has no value
@@ -199,15 +199,15 @@ error[E0141]: `break` with a value in a `while`
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0141-later-error.sisu:77:15
+  --> E0141-later-error.sisu:75:15
    |
-77 |     print(a + true)
+75 |     print(a + true)
    |               ^^^^
 
 error[E0141]: `break` with a value in a `while`
-  --> E0141-later-error.sisu:82:58
+  --> E0141-later-error.sisu:80:58
    |
-82 |     let a = outer: loop { for i in [1] { while c { break (if c { continue outer } else { 2 }) } }; break 1 }
+80 |     let a = outer: loop { for i in [1] { while c { break (if c { continue outer } else { 2 }) } }; break 1 }
    |                                          -----           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |                                          |
    |                                          this `while` has no value
@@ -215,15 +215,15 @@ error[E0141]: `break` with a value in a `while`
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0032]: expected `i64`, found `bool`
-  --> E0141-later-error.sisu:83:15
+  --> E0141-later-error.sisu:81:15
    |
-83 |     print(a + true)
+81 |     print(a + true)
    |               ^^^^
 
 error[E0141]: `break` with a value in a `while`
-  --> E0141-later-error.sisu:88:43
+  --> E0141-later-error.sisu:86:43
    |
-88 |     let a = outer: loop { while c { break (if c { break outer 3 } else { 2 }) }; break 1 }
+86 |     let a = outer: loop { while c { break (if c { break outer 3 } else { 2 }) }; break 1 }
    |                           -----           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |                           |
    |                           this `while` has no value
@@ -231,9 +231,9 @@ error[E0141]: `break` with a value in a `while`
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0141]: `break` with a value in a `while`
-  --> E0141-later-error.sisu:94:53
+  --> E0141-later-error.sisu:92:53
    |
-94 |     let a = outer: loop { m: loop { while c { break (if c { break outer 3 } else { 2 }) }; break m 1 }; break 1 }
+92 |     let a = outer: loop { m: loop { while c { break (if c { break outer 3 } else { 2 }) }; break m 1 }; break 1 }
    |                                     -----           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |                                     |
    |                                     this `while` has no value
@@ -241,91 +241,91 @@ error[E0141]: `break` with a value in a `while`
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0141]: `break` with a value in a `while`
-   --> E0141-later-error.sisu:100:43
-    |
-100 |     let a = outer: loop { while c { break "{if c { break outer 3 } else { 2 }}" }; break 1 }
-    |                           -----           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-    |                           |
-    |                           this `while` has no value
-    |
-    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
+  --> E0141-later-error.sisu:98:43
+   |
+98 |     let a = outer: loop { while c { break "{if c { break outer 3 } else { 2 }}" }; break 1 }
+   |                           -----           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |                           |
+   |                           this `while` has no value
+   |
+   = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0141]: `break` with a value in a `while`
-   --> E0141-later-error.sisu:108:19
+   --> E0141-later-error.sisu:106:19
     |
-107 |           while c {
+105 |           while c {
     |           ----- this `while` has no value
-108 |               break (if c {
+106 |               break (if c {
     |  ___________________^
-109 | |                 // break outer 1
-110 | |                 break outer 3
-111 | |             } else { 2 })
+107 | |                 // break outer 1
+108 | |                 break outer 3
+109 | |             } else { 2 })
     | |_________________________^
     |
     = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0141]: `break` with a value in a `while`
-   --> E0141-later-error.sisu:121:32
+   --> E0141-later-error.sisu:119:32
     |
-120 |     w: while c {
+118 |     w: while c {
     |        ----- this `while` has no value
-121 |         let a = loop { break w (if c { break 2 } else { 3 }) }
+119 |         let a = loop { break w (if c { break 2 } else { 3 }) }
     |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0141]: `break` with a value in a `while`
-   --> E0141-later-error.sisu:129:24
+   --> E0141-later-error.sisu:127:24
     |
-128 |     w: while c {
+126 |     w: while c {
     |        ----- this `while` has no value
-129 |         loop { break w (if c { break 2 } else { 3 }) }
+127 |         loop { break w (if c { break 2 } else { 3 }) }
     |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0141]: `break` with a value in a `while`
-   --> E0141-later-error.sisu:137:32
+   --> E0141-later-error.sisu:135:32
     |
-136 |     w: while c {
+134 |     w: while c {
     |        ----- this `while` has no value
-137 |         let a = loop { break w (if c { break } else { 3 }) }
+135 |         let a = loop { break w (if c { break } else { 3 }) }
     |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0141]: `break` with a value in a `while`
-   --> E0141-later-error.sisu:146:32
+   --> E0141-later-error.sisu:144:32
     |
-145 |     w: while c {
+143 |     w: while c {
     |        ----- this `while` has no value
-146 |         let a = loop { break w (if c { break x } else { 3 }) }
+144 |         let a = loop { break w (if c { break x } else { 3 }) }
     |                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0141]: `break` with a value in a `while`
-   --> E0141-later-error.sisu:154:47
+   --> E0141-later-error.sisu:152:47
     |
-153 |     w: while c {
+151 |     w: while c {
     |        ----- this `while` has no value
-154 |         let a = loop { let b = loop { break w (if c { break 2 } else { 3 }) }; break 5 }
+152 |         let a = loop { let b = loop { break w (if c { break 2 } else { 3 }) }; break 5 }
     |                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
 error[E0032]: expected `i64`, found `bool`
-   --> E0141-later-error.sisu:155:19
+   --> E0141-later-error.sisu:153:19
     |
-155 |         print(a + true)
+153 |         print(a + true)
     |                   ^^^^
 
 error[E0141]: `break` with a value in a `while`
-   --> E0141-later-error.sisu:162:50
+   --> E0141-later-error.sisu:160:50
     |
-161 |     w: while c {
+159 |     w: while c {
     |        ----- this `while` has no value
-162 |         let a = loop { if c { break 7 }; break w (if c { break 2 } else { 3 }) }
+160 |         let a = loop { if c { break 7 }; break w (if c { break 2 } else { 3 }) }
     |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
     = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
