@@ -868,6 +868,7 @@ fn mut_self_should_parse_where_it_has_meaning() {
 /// WHEN the program is checked. THEN a bare `self` is a place in a struct or an enum method only,
 /// and each row has its codes.
 #[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows")]
 fn bare_self_should_be_a_place_only_in_a_struct_or_enum_method() {
     let a = "struct A { n: i64; fn bump(mut self) { self.n = 1 } }\n";
     let rows: Vec<(&str, String, Vec<Wanted>)> = vec![
@@ -937,6 +938,27 @@ fn bare_self_should_be_a_place_only_in_a_struct_or_enum_method() {
                 .to_string(),
             vec![],
         ),
+        (
+            "`push` on a call in a struct method",
+            "struct T {\n    n: i64\n    fn m(self) {\n        make().push(1)\n    }\n}\n\
+             fn make() -> [i64] { [1] }\nfn main() {\n    T(n: 1).m()\n}\n"
+                .to_string(),
+            vec![(AssignToExpression, (4, 9))],
+        ),
+        (
+            "`push` on a call in an enum method",
+            "enum E {\n    A\n    fn m(self) {\n        make().push(1)\n    }\n}\n\
+             fn make() -> [i64] { [1] }\nfn main() {\n    E.A.m()\n}\n"
+                .to_string(),
+            vec![(AssignToExpression, (4, 9))],
+        ),
+        (
+            "a `mut self` call on a call in a struct method",
+            "struct T {\n    n: i64\n    fn m(self) {\n        mk().bump()\n    }\n}\n\
+             fn mk() -> A { A(n: 0) }\nfn main() {\n    T(n: 1).m()\n}\n"
+                .to_string(),
+            vec![(AssignToExpression, (4, 9))],
+        ),
     ];
     for (row, src, wanted) in &rows {
         let both = format!("{src}{a}");
@@ -968,6 +990,77 @@ fn bare_self_should_be_a_place_only_in_a_struct_or_enum_method() {
         "{:?}",
         ds[0]
     );
+}
+
+/// GIVEN `interface Bump { fn bump(mut self) }`, `struct H<T> { v: T }` and `struct N: Bump`.
+/// WHEN `fn g<T: Bump>(mut h: H<T>?)` runs `h.v.bump()`. THEN `sisu check` reports one E0062 at
+/// `h`, with no fix, and no W0002: the call may write the generic part.
+#[test]
+fn mut_self_call_on_a_generic_part_behind_an_optional_should_be_e0062_alone() {
+    judge_unused();
+    let src = "interface Bump {\n    fn bump(mut self)\n}\nstruct H<T> {\n    v: T\n}\n\
+               struct N {\n    n: i64\n}\nextend N: Bump {\n    fn bump(mut self) { self.n = self.n + 1 }\n}\n\
+               fn g<T: Bump>(mut h: H<T>?) {\n    h.v.bump()\n}\nfn main() {}\n";
+    let (_, ds) = checked(src);
+    let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
+    assert_eq!(found, [(MayBeNone, (14, 5))]);
+    assert_eq!(fixes(src, &ds[0]), [], "{:?}", ds[0]);
+}
+
+/// GIVEN a struct, an `extend` block or an enum whose `mut self` method `m` has a syntax error in
+/// its body. WHEN `main` calls `m` on a local. THEN `sisu check` reports the syntax error alone:
+/// the call may write the local, so it gets no W0002 and no W0014, and a `let` gets no E0001.
+#[test]
+fn call_of_a_broken_method_should_report_only_the_method_error() {
+    judge_unused();
+    let s = "struct T {\n    n: i64\n    fn m(mut self) {\n        self.n = 2\n        f() = 3\n    }\n}\n\
+             fn f() -> i64 { 1 }\n";
+    let e = "struct T {\n    n: i64\n}\nextend T {\n    fn m(mut self) {\n        self.n = 2\n        f() = 3\n    }\n}\n\
+             fn f() -> i64 { 1 }\n";
+    let plain = "struct T {\n    n: i64\n    fn m(self) {\n        print(self.n)\n        f() = 3\n    }\n}\n\
+                 fn f() -> i64 { 1 }\n";
+    let call = "fn main() {\n    let mut t = T(n: 1)\n    t.m()\n    print(t.n)\n}\n";
+    let rows = [
+        ("a struct method", format!("{s}{call}"), (AssignToExpression, (5, 9))),
+        (
+            "a missing value",
+            format!("{s}{call}").replace("f() = 3", "self.n = "),
+            (Expected, (6, 5)),
+        ),
+        ("a method of an `extend` block", format!("{e}{call}"), (AssignToExpression, (7, 9))),
+        (
+            "an enum method",
+            "enum E {\n    A\n    B\n    fn m(mut self) {\n        self = E.B\n        let = 1\n    }\n}\n\
+             fn main() {\n    let mut e = E.A\n    e.m()\n    print(1)\n}\n"
+                .to_string(),
+            (Expected, (6, 13)),
+        ),
+        ("a `let` caller", format!("{s}{call}").replace("let mut t", "let t"), (AssignToExpression, (5, 9))),
+        ("a caller that never reads", format!("{s}{call}").replace("    print(t.n)\n", ""), (AssignToExpression, (5, 9))),
+        ("a plain method", format!("{plain}{call}"), (AssignToExpression, (5, 9))),
+    ];
+    for (row, src, wanted) in rows {
+        let ds = crate::front_end::front_end(&src).1;
+        let found: Vec<_> = ds.iter().map(|d| (d.code(), at(&src, d.span()))).collect();
+        assert_eq!(found, [wanted], "row `{row}`");
+    }
+}
+
+/// GIVEN a `mut self` method that never changes `self`, and a call that needs the `mut` for a
+/// W0014 or an E0050. WHEN each safe fix is applied alone. THEN it keeps the contract of
+/// `safe_fix_breaches`: the W0002 fix of `self` is unsafe there.
+#[test]
+fn unused_mut_self_safe_fixes_should_keep_their_contract() {
+    let programs = [
+        "struct Pile {\n    n: i64\n    fn show(mut self) { print(self.n) }\n}\nfn main() {\n    let mut pile = Pile(n: 0)\n    pile.show()\n}\n",
+        "struct Pile {\n    n: i64\n    fn peek(mut self) { print(self.n) }\n}\nstruct W {\n    p: Pile\n}\nfn main() {\n    let mut w = W(p: Pile(n: 1))\n    w.p.peek()\n    let mut c = w\n    c.p.peek()\n}\n",
+        "struct B {\n    n: i64\n    fn none<U>(mut self) -> U? { None }\n}\nfn id<U>(u: U) -> U { u }\nfn main() {\n    let mut b = B(n: 1)\n    b.n = 2\n    let x: i64? = id(b.none())\n    print(x ?? 0)\n}\n",
+        "struct A {\n    n: i64\n    fn none(mut self) {}\n}\nstruct B {\n    n: i64\n    fn none<U>(self) -> U? { None }\n}\nfn id<U>(u: U) -> U { u }\nfn main() {\n    let mut a = A(n: 1)\n    a.none()\n    print(a.n)\n    let b = B(n: 1)\n    let x: i64? = id(b.none())\n    print(x ?? 0)\n}\n",
+    ];
+    for src in programs {
+        let breaches = crate::on_compiler_stack(|| crate::front_end::safe_fix_breaches(src));
+        assert_eq!(breaches, Vec::<String>::new(), "{src}");
+    }
 }
 
 /// GIVEN `class C` with its own plain `push`. WHEN a method runs `self.push(1)`. THEN the
@@ -1579,9 +1672,33 @@ fn unused_mut_self_fix_should_be_unsafe_when_a_call_needs_the_mut() {
         ),
         (
             "no call needs the `mut`",
-            format!("{pile}fn main() {{\n    let mut pile = Pile(n: 0)\n    pile.show()\n}}\n"),
+            format!("{pile}fn main() {{\n    let mut pile = Pile(n: 0)\n    pile.show()\n    print(pile.n)\n}}\n"),
             None,
             true,
+        ),
+        (
+            "W0014 at a `let mut` that only the call writes",
+            format!("{pile}fn main() {{\n    let mut pile = Pile(n: 0)\n    pile.show()\n}}\n"),
+            Some(UnusedVariable),
+            false,
+        ),
+        (
+            "W0014 at a copy that only the call writes",
+            "struct Pile {\n    n: i64\n    fn peek(mut self) { print(self.n) }\n}\nstruct W {\n    p: Pile\n}\nfn main() {\n    let mut w = W(p: Pile(n: 1))\n    w.p.peek()\n    let mut c = w\n    c.p.peek()\n}\n".to_string(),
+            Some(UnusedVariable),
+            false,
+        ),
+        (
+            "E0050 at a generic call that takes the call",
+            "struct B {\n    n: i64\n    fn none<U>(mut self) -> U? { None }\n}\nfn id<U>(u: U) -> U { u }\nfn main() {\n    let mut b = B(n: 1)\n    b.n = 2\n    let x: i64? = id(b.none())\n    print(x ?? 0)\n}\n".to_string(),
+            Some(CannotInfer),
+            false,
+        ),
+        (
+            "E0050 at a generic call of a plain method that shares the name",
+            "struct A {\n    n: i64\n    fn none(mut self) {}\n}\nstruct B {\n    n: i64\n    fn none<U>(self) -> U? { None }\n}\nfn id<U>(u: U) -> U { u }\nfn main() {\n    let mut a = A(n: 1)\n    a.none()\n    print(a.n)\n    let b = B(n: 1)\n    let x: i64? = id(b.none())\n    print(x ?? 0)\n}\n".to_string(),
+            Some(CannotInfer),
+            false,
         ),
         (
             "E0021 on a temporary",

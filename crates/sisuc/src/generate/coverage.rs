@@ -4146,6 +4146,7 @@ fn main() {
 /// GIVEN a program with a `mut self` method on a struct and on an enum
 /// AND a requirement that a struct meets with `mut self` and a class with plain `self`
 /// AND a call on a local, a field, an element, an element of a field, and through a bound
+/// AND a call with a `mut` argument
 /// WHEN the walk reads it
 /// THEN it marks each key of `mut self`
 /// AND a program that has a `mut self` method and calls `exchange` on each kind of place marks only
@@ -4158,6 +4159,7 @@ fn the_walk_should_mark_each_key_of_mut_self() {
         "reach: a `mut self` call on a local, a field, an element and an element of a field",
         "reach: a `mut self` requirement met by `mut self` and by plain `self`",
         "reach: a `mut self` call through a bound",
+        "reach: a `mut self` call with a `mut` argument",
     ];
     let source = "interface Step {
     fn step(mut self)
@@ -4168,6 +4170,11 @@ struct Cell: Step {
 
     fn step(mut self) {
         self.n += 1
+    }
+
+    fn take(mut self, mut other: Cell) {
+        self.n += other.n
+        other.n = 0
     }
 }
 
@@ -4210,6 +4217,7 @@ fn main() {
     light.flip()
     twice(cell)
     twice(Plain(n: 3))
+    cell.take(mut row.c)
     print(cell.n + row.c.n + cells[0].n + row.cs[0].n)
     print(light == Light.Green)
 }
