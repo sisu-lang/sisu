@@ -1148,15 +1148,24 @@ impl Checker<'_> {
     ) -> Checked {
         let scrutinee = self.value(lhs, Expectation::None);
         let Some(TypeKind::Optional(payload)) = type_of(&scrutinee).map(Type::kind) else {
-            let reported = match known_type(&scrutinee) {
-                Ok(_) => self.diagnostics.error(DiagnosticKind::CoalesceNotOptional {
-                    at: lhs.span,
-                    default: Span::new(lhs.span.end(), rhs.span.end()),
-                }),
-                Err(reported) => reported,
-            };
+            let mark = self.diagnostics.mark();
+            let before = self.diagnostics.len();
             // Only its own diagnostics matter.
             drop(self.fallback(rhs, Expectation::Poisoned));
+            let reported = match known_type(&scrutinee) {
+                // The fix deletes the default with its reports, so it needs a default with none.
+                // The report goes before them: the order of the reports is the order of the text.
+                Ok(_) => self.diagnostics.insert_at(
+                    mark,
+                    DiagnosticKind::CoalesceNotOptional {
+                        at: lhs.span,
+                        default: (self.diagnostics.len() == before)
+                            .then(|| Span::new(lhs.span.end(), rhs.span.end())),
+                    }
+                    .into(),
+                ),
+                Err(reported) => reported,
+            };
             return Err(Poisoned::untyped(reported));
         };
         // `??` groups to the right, so a `None` that starts a right `??` has no type to take:

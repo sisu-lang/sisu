@@ -573,8 +573,10 @@ impl Checker<'_> {
             if info.field(name.name).is_some() {
                 // The fix is safe only while no field holds a function: function types are
                 // pending (`docs/reference/closures.md`).
-                let parens = (nullary && site.written.is_empty())
-                    .then(|| Span::new(name.span.end(), span.end()));
+                let parens = site
+                    .parens
+                    .filter(|_| nullary)
+                    .map(|parens| Span::new(name.span.end(), parens.end()));
                 DiagnosticKind::FieldNotMethod {
                     name: name.name.to_string(),
                     owner: self.type_name(ty),

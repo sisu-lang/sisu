@@ -837,8 +837,9 @@ pub(crate) enum DiagnosticKind {
         right: String,
         at: Span,
     },
-    /// The left side of a `??`, at `at`, which is not optional.
-    CoalesceNotOptional { at: Span, default: Span },
+    /// The left side of a `??`, at `at`, which is not optional. `default` is the `??` and its
+    /// default, for the fix that deletes them. It is none when the default has a report.
+    CoalesceNotOptional { at: Span, default: Option<Span> },
     /// The receiver at `at` of a `?.`, which is not optional. `value` is its path as written,
     /// when it has one. `access` is everything between the receiver and the member name: the
     /// `?.` and any space or comment around it.
@@ -5157,14 +5158,19 @@ impl From<DiagnosticKind> for Diagnostic {
                 Diagnostic::coded(code, at, format!("cannot compare `{left}` with `{right}`"))
             }
             DiagnosticKind::CoalesceNotOptional { at, default } => {
-                Diagnostic::coded(code, at, "the left side of `??` is not optional").with_fix(Fix {
-                    message: "remove the `??` and its default".to_owned(),
-                    safe: true,
-                    edits: vec![Edit {
-                        span: default,
-                        replacement: String::new(),
-                    }],
-                })
+                let d = Diagnostic::coded(code, at, "the left side of `??` is not optional");
+                // The fix would also remove the reports of the default.
+                match default {
+                    Some(span) => d.with_fix(Fix {
+                        message: "remove the `??` and its default".to_owned(),
+                        safe: true,
+                        edits: vec![Edit {
+                            span,
+                            replacement: String::new(),
+                        }],
+                    }),
+                    None => d,
+                }
             }
             DiagnosticKind::SafeAccessNotOptional { value, at, access } => {
                 Diagnostic::coded(code, at, format!("{} is not optional", named(value))).with_fix(

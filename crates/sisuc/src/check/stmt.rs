@@ -1009,7 +1009,8 @@ impl Checker<'_> {
 
     /// The function whose body returns a value of type `ty` though it declares no return type.
     /// It has the offset of its `{`, so that a fix adds the type there. `main` has none: a type
-    /// there is wrong. A method for a requirement has none: the type makes it fail E0152.
+    /// there is wrong. A method for a requirement has none: the type makes it fail E0152. A type
+    /// whose name is cut has none: the fix would not parse.
     fn no_return(&self, ty: Type) -> Option<NoReturn> {
         let Some(Owner::Func(f)) = self.body.owner else {
             return None;
@@ -1019,7 +1020,9 @@ impl Checker<'_> {
         Some(NoReturn {
             name: own_name(&sig.name).to_owned(),
             at: sig.span,
-            add: free.then(|| (sig.header.end(), self.type_name(ty))),
+            add: free
+                .then(|| Some((sig.header.end(), self.whole_type_name(ty)?)))
+                .flatten(),
         })
     }
 

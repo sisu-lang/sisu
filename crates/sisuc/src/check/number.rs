@@ -130,6 +130,7 @@ impl Checker<'_> {
             name: &ident,
             written,
             angles: angles.unwrap_or(base.span),
+            parens: None,
             expected,
         };
         let at = if call.is_some() {

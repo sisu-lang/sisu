@@ -2771,6 +2771,14 @@ impl Checker<'_> {
         name
     }
 
+    /// The name of `ty` as a program writes it, or `None` when `type_name` cut it with `...`:
+    /// text for a fix must parse.
+    fn whole_type_name(&self, ty: Type) -> Option<String> {
+        let mut name = String::new();
+        let cut = write_type(&mut name, ty, |head| self.head(head));
+        (!cut).then_some(name)
+    }
+
     /// The declared name of a class or an enum.
     fn head(&self, head: Head) -> &'static str {
         match head {

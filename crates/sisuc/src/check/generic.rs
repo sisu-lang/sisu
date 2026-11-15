@@ -1740,12 +1740,15 @@ pub(super) struct VariantShape {
 }
 
 /// How a call writes its callee: its name, the type arguments in `angles` (none written when
-/// `written` is empty), and the type the call's context expects.
+/// `written` is empty), and the type the call's context expects. A method call also has the span
+/// of its `(args)`.
 #[derive(Clone, Copy)]
 pub(super) struct Site<'a> {
     pub(super) name: &'a ast::Ident,
     pub(super) written: &'a [ast::TypeExpr],
     pub(super) angles: Span,
+    /// The span of the `(args)` of a method call, none for any other call.
+    pub(super) parens: Option<Span>,
     pub(super) expected: Expectation,
 }
 

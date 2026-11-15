@@ -226,6 +226,7 @@ impl Checker<'_> {
                     name: callee,
                     written: types,
                     angles: *angles,
+                    parens: None,
                     expected,
                 };
                 let checked = self.call(e.span, site, args);
@@ -284,6 +285,7 @@ impl Checker<'_> {
                     name: method,
                     written: types,
                     angles: *angles,
+                    parens: Some(*parens),
                     expected,
                 };
                 // `report_unbound` reads it: the result of a safe call is optional.
