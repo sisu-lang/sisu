@@ -1,0 +1,118 @@
+fn row_p1() {
+    let c = [1].len() == 1
+    let a = loop { while c { break 2 }; break 1 }
+    print(a + true)
+}
+
+fn row_p2() {
+    let c = [1].len() == 1
+    let a = loop { for i in [1] { break i }; break 1 }
+    print(a + true)
+}
+
+fn row_p3() {
+    let c = [1].len() == 1
+    let a = loop { while let Some(x) = Some(1) { break x }; break 1 }
+    print(a + true)
+}
+
+fn row_p4() {
+    let c = [1].len() == 1
+    let a = loop { while c { break true }; break 1 }
+    print(a + true)
+}
+
+fn row_p7() {
+    let c = [1].len() == 1
+    let a = loop { while c { break 2 + "x" }; break 1 }
+    print(a + true)
+}
+
+fn row_p9() {
+    let c = [1].len() == 1
+    let a = loop { while c { break nope }; break 1 }
+    print(a + true)
+}
+
+fn row_q2() {
+    let c = [1].len() == 1
+    let a = loop { while c { break "a break" }; break 1 }
+    print(a + true)
+}
+
+fn row_q3() {
+    let c = [1].len() == 1
+    let a = l: loop { while c { break 2 }; break l 1 }
+    print(a + true)
+}
+
+fn row_q4() {
+    let c = [1].len() == 1
+    let a = loop { l: while c { break 2 }; break 1 }
+    print(a + true)
+}
+
+fn row_q5() {
+    let c = [1].len() == 1
+    let a = loop { while c { break (if c { continue } else { 2 }) }; break 1 }
+    print(a + true)
+}
+
+fn row_q6() {
+    let c = [1].len() == 1
+    let a = outer: loop { while c { break (if c { continue outer } else { 2 }) }; break 1 }
+    print(a + true)
+}
+
+fn row_q8() {
+    let c = [1].len() == 1
+    let a = loop { while c { break (m: loop { break m 2 }) }; break 1 }
+    print(a + true)
+}
+
+fn row_t1() {
+    let c = [1].len() == 1
+    let k = 1
+    let a = loop { match k { 0 => { while c { break 2 } }; _ => {} }; break 1 }
+    print(a + true)
+}
+
+fn row_t5() {
+    let c = [1].len() == 1
+    let a = outer: loop { for i in [1] { while c { break (if c { continue outer } else { 2 }) } }; break 1 }
+    print(a + true)
+}
+
+fn row_p5() {
+    let c = [1].len() == 1
+    let a = outer: loop { while c { break (if c { break outer 3 } else { 2 }) }; break 1 }
+    print(a + true)
+}
+
+fn row_q7() {
+    let c = [1].len() == 1
+    let a = outer: loop { m: loop { while c { break (if c { break outer 3 } else { 2 }) }; break m 1 }; break 1 }
+    print(a + true)
+}
+
+fn row_r6() {
+    let c = [1].len() == 1
+    let a = outer: loop { while c { break "{if c { break outer 3 } else { 2 }}" }; break 1 }
+    print(a + true)
+}
+
+fn row_r16() {
+    let c = [1].len() == 1
+    let a = outer: loop {
+        while c {
+            break (if c {
+                // break outer 1
+                break outer 3
+            } else { 2 })
+        }
+        break 1
+    }
+    print(a + true)
+}
+
+fn main() {}

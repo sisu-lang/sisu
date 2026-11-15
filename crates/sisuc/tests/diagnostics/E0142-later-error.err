@@ -1,0 +1,68 @@
+error[E0142]: loop label `outer` has the same name as the binding `outer`
+ --> E0142-later-error.sisu:4:40
+  |
+3 |     let outer = 3
+  |         ----- the binding is declared here
+4 |     let a = loop { outer: loop { break outer 5 }; break 1 }
+  |                    -----               ^^^^^
+  |                    |
+  |                    loop label declared here
+  |
+  = help: rename the loop label
+
+error[E0032]: expected `i64`, found `bool`
+ --> E0142-later-error.sisu:5:15
+  |
+5 |     print(a + true)
+  |               ^^^^
+
+error[E0142]: loop label `outer` has the same name as the binding `outer`
+  --> E0142-later-error.sisu:11:40
+   |
+10 |     let outer = 3
+   |         ----- the binding is declared here
+11 |     let a = loop { outer: loop { break outer (if c { break 2 } else { 5 }) }; break 1 }
+   |                    -----               ^^^^^
+   |                    |
+   |                    loop label declared here
+   |
+   = help: rename the loop label
+
+error[E0032]: expected `i64`, found `bool`
+  --> E0142-later-error.sisu:12:15
+   |
+12 |     print(a + true)
+   |               ^^^^
+
+error[E0142]: loop label `outer` has the same name as the binding `outer`
+  --> E0142-later-error.sisu:18:43
+   |
+17 |     let outer = 3
+   |         ----- the binding is declared here
+18 |     let a = m: loop { outer: loop { break outer (if c { break m 2 } else { 5 }) }; break 1 }
+   |                       -----               ^^^^^
+   |                       |
+   |                       loop label declared here
+   |
+   = help: rename the loop label
+
+error[E0142]: loop label `outer` has the same name as the binding `outer`
+  --> E0142-later-error.sisu:25:43
+   |
+24 |     let outer = 3
+   |         ----- the binding is declared here
+25 |     let a = m: loop { outer: loop { break outer (if c { continue m } else { 5 }) }; break 1 }
+   |                       -----               ^^^^^
+   |                       |
+   |                       loop label declared here
+   |
+   = help: rename the loop label
+
+error[E0032]: expected `i64`, found `bool`
+  --> E0142-later-error.sisu:26:15
+   |
+26 |     print(a + true)
+   |               ^^^^
+
+sisu: 7 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0142

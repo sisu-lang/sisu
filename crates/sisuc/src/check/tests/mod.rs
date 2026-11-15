@@ -1966,6 +1966,57 @@ fn break_name_is_a_label_only_near_one() {
     );
 }
 
+/// A `break` with a value in a `while` is not checked, and it fails the loops that a `break` in
+/// the value names, no others. In `p1` it names none, so the type error after the `loop` shows. In
+/// `p5` it names `outer`, so `outer` has no type and nothing more shows.
+#[test]
+fn a_skipped_break_value_should_fail_only_the_loops_its_jumps_name() {
+    let program = |line: &str| {
+        format!("fn main() {{\n    let c = [1].len() == 1\n    {line}\n    print(a + true)\n}}")
+    };
+    codes(
+        &program("let a = loop { while c { break 2 }; break 1 }"),
+        &[
+            (Code::BreakValueNotLoop, (3, 36)),
+            (Code::Mismatch, (4, 15)),
+        ],
+    );
+    codes(
+        &program(
+            "let a = outer: loop { while c { break (if c { break outer 3 } else { 2 }) }; break 1 }",
+        ),
+        &[(Code::BreakValueNotLoop, (3, 43))],
+    );
+}
+
+/// A skipped `break` value is lexed and walked once. `chain(n)` nests `n` skipped values, each in
+/// the `if` that `while` needs. So a value that is lexed again at each depth makes the count
+/// quadratic. The parser stops at 256 levels of nesting, which 30 links stay under: a link adds 3.
+#[test]
+fn skipped_break_values_should_be_lexed_once() {
+    let chain = |n: usize| {
+        let value = (0..n).fold("1".to_string(), |inner, _| {
+            format!("if c {{ while c {{ break ({inner}) }}; 1 }} else {{ 2 }}")
+        });
+        format!("fn main() {{\n    let c = [1].len() == 1\n    while c {{ break ({value}) }}\n}}")
+    };
+    crate::on_compiler_stack(|| {
+        let steps = |n: usize| {
+            SKIP_TOKEN_STEPS.set(0);
+            let source = chain(n);
+            let tokens = crate::lexer::lex(&source)
+                .expect("the chain lexes")
+                .tokens
+                .len();
+            drop(checked(&source));
+            let steps = SKIP_TOKEN_STEPS.get();
+            assert!(steps <= tokens, "depth {n}: {steps} steps, {tokens} tokens");
+            steps
+        };
+        assert_near_linear(steps(10), steps(20), steps(30));
+    });
+}
+
 /// The sources that the fixes of the first diagnostic with `code` give. Each keeps the syntax.
 fn fixed_sources(src: &str, code: Code) -> Vec<String> {
     let ds = diags(src);
