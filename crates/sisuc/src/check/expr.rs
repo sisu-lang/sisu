@@ -10,7 +10,8 @@ use super::{
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::diagnostic::{
-    Code, Definition, Diagnostic, DiagnosticKind, Expected, Literal, RangePlace, suggestion,
+    Code, Definition, Diagnostic, DiagnosticKind, Expected, Literal, NoValueCause, RangePlace,
+    suggestion,
 };
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -42,6 +43,43 @@ pub(super) fn read_jump(checked: Checked) -> Checked {
             poisoned
         }
     })
+}
+
+/// For an `if` or `if let` whose chain of `else if` ends with no `else`: whether that last one
+/// is an `if let`.
+fn missing_else(mut e: &ast::Expr) -> Option<bool> {
+    loop {
+        let (if_let, else_block) = match &e.kind {
+            ExprKind::If { else_block, .. } => (false, else_block),
+            ExprKind::IfLet { else_block, .. } => (true, else_block),
+            _ => return None,
+        };
+        let Some(block) = else_block else {
+            return Some(if_let);
+        };
+        // `else if` is an `else` block that holds the inner `if`, and nothing else.
+        let [
+            ast::Stmt {
+                kind: ast::StmtKind::Expr(inner),
+                ..
+            },
+        ] = block.stmts.as_slice()
+        else {
+            return None;
+        };
+        e = inner;
+    }
+}
+
+/// The function that the call `value` calls, through the block and the `MutCall` that a call with
+/// `mut` arguments becomes.
+fn callee(value: &tir::Expr) -> Option<tir::FuncId> {
+    match &value.kind {
+        tir::ExprKind::Call { func, .. } => Some(*func),
+        tir::ExprKind::MutCall { call, .. } => callee(call),
+        tir::ExprKind::Block(block) => block.value.as_deref().and_then(callee),
+        _ => None,
+    }
 }
 
 impl Checker<'_> {
@@ -410,22 +448,69 @@ impl Checker<'_> {
 
     /// An expression whose value is used: not `unit` or `never`.
     pub(super) fn value(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
+        self.value_in(e, expected, false)
+    }
+
+    /// `value`; `returning` says that `e` is the value of a `return` in a function with no
+    /// result. It changes the help of an `if` with no `else`.
+    pub(super) fn value_in(
+        &mut self,
+        e: &ast::Expr,
+        expected: Expectation,
+        returning: bool,
+    ) -> Checked {
         let checked = read_jump(self.expr(e, expected));
         match type_of(&checked) {
             Some(ty @ (Type::UNIT | Type::NEVER)) => {
                 let at = self.never_at(e.span);
-                Err(Poisoned::untyped(self.no_value(at, ty)))
+                let cause = self.no_value_cause(e, checked.as_ref().ok(), ty, returning);
+                Err(Poisoned::untyped(self.no_value(at, ty, cause)))
             }
             _ => checked,
         }
     }
 
-    /// Reports a value of `ty`, `unit` or `never`, used at `at`.
-    pub(super) fn no_value(&mut self, at: Span, ty: Type) -> Reported {
+    /// Reports a value of `ty`, `unit` or `never`, used at `at`; `cause` is the reason of a
+    /// `unit` value (see `no_value_cause`).
+    pub(super) fn no_value(&mut self, at: Span, ty: Type, cause: NoValueCause) -> Reported {
         self.error(DiagnosticKind::NoValue {
             at,
             never: ty == Type::NEVER,
+            cause,
         })
+    }
+
+    /// Why `e`, whose checked form is `value`, has no value: an `if` or an `if let` that has no
+    /// `else` at the end of its chain, or a call. A value of type `never` has no cause. `value`
+    /// shows the callee, through the `mut` arguments of the call.
+    pub(super) fn no_value_cause(
+        &self,
+        e: &ast::Expr,
+        value: Option<&tir::Expr>,
+        ty: Type,
+        returning: bool,
+    ) -> NoValueCause {
+        if ty != Type::UNIT {
+            return NoValueCause::Plain;
+        }
+        let name = match &e.kind {
+            ExprKind::If { .. } | ExprKind::IfLet { .. } => {
+                return match missing_else(e) {
+                    Some(if_let) => NoValueCause::NoElse { if_let, returning },
+                    None => NoValueCause::Plain,
+                };
+            }
+            ExprKind::Call { callee, .. } => callee,
+            ExprKind::MethodCall { method, .. } => method,
+            _ => return NoValueCause::Plain,
+        };
+        NoValueCause::Call {
+            name: name.name.to_string(),
+            declared: value
+                .and_then(callee)
+                .map(|func| self.signatures[func.0].span)
+                .filter(|span| !span.in_prelude()),
+        }
     }
 
     /// A value of type `want`; `Poisoned` is `Error`, which every type matches. A `T` where

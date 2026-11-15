@@ -2589,7 +2589,9 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let reported = self.no_value(at, ty);
+            let value = call.slots[i].as_ref().and_then(|slot| slot.as_ref().ok());
+            let cause = self.no_value_cause(&args[i].value, value, ty, false);
+            let reported = self.no_value(at, ty, cause);
             call.slots[i] = Some(Err(Poisoned::untyped(reported)));
         }
         let broken = poison_broken_params(&mut call.bindings, sig.declared);
@@ -3720,7 +3722,8 @@ impl Checker<'_> {
                 slots[i] = Some(match type_of(&checked) {
                     Some(ty @ (Type::UNIT | Type::NEVER)) => {
                         let at = self.never_at(e.span);
-                        Err(Poisoned::untyped(self.no_value(at, ty)))
+                        let cause = self.no_value_cause(e, checked.as_ref().ok(), ty, false);
+                        Err(Poisoned::untyped(self.no_value(at, ty, cause)))
                     }
                     _ => checked,
                 });

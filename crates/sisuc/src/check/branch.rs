@@ -10,7 +10,7 @@ use super::{
     is_jumped, is_kept, payload, tail, value_span, wrap_block,
 };
 use crate::ast;
-use crate::diagnostic::{Diagnostic, DiagnosticKind, Unwrap};
+use crate::diagnostic::{Diagnostic, DiagnosticKind, NoValueCause, Unwrap};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
@@ -405,6 +405,7 @@ impl Checker<'_> {
             } => DiagnosticKind::NoValue {
                 at: sources[i].span,
                 never: false,
+                cause: self.branch_cause(&sources[i], &blocks[i]),
             }
             .into(),
             AnyJoin::Leaves {
@@ -471,11 +472,13 @@ impl Checker<'_> {
             _ if first_ty == Type::UNIT => DiagnosticKind::NoValue {
                 at: sources[first].span,
                 never: false,
+                cause: self.branch_cause(&sources[first], &blocks[first]),
             }
             .into(),
             _ if other_ty == Type::UNIT => DiagnosticKind::NoValue {
                 at: sources[other].span,
                 never: false,
+                cause: self.branch_cause(&sources[other], &blocks[other]),
             }
             .into(),
             Some(want) if fits(want, first_ty) => report(other, want, other_ty, expected.origin()),
@@ -501,7 +504,15 @@ impl Checker<'_> {
         // A branch with no value is the mistake first, as in `join_mismatch`.
         if let Some(&(i, _)) = members.iter().find(|&&(_, t)| t == Type::UNIT) {
             let at = sources[i].span;
-            return Some(DiagnosticKind::NoValue { at, never: false }.into());
+            let cause = self.branch_cause(&sources[i], &blocks[i]);
+            return Some(
+                DiagnosticKind::NoValue {
+                    at,
+                    never: false,
+                    cause,
+                }
+                .into(),
+            );
         }
         for &(i, t) in members {
             if !fits(want, t) && !self.converts_to_any(t, want) {
@@ -510,6 +521,14 @@ impl Checker<'_> {
             }
         }
         None
+    }
+
+    /// Why the branch `source`, whose checked block is `block`, has no value.
+    fn branch_cause(&self, source: &Branch<'_>, block: &CheckedBlock) -> NoValueCause {
+        let value = block.as_ref().ok().and_then(|b| b.value.as_deref());
+        source.tail.map_or(NoValueCause::Plain, |tail| {
+            self.no_value_cause(tail, value, Type::UNIT, false)
+        })
     }
 
     /// Where the branch `source`, of type `got`, is reported as a mistake against `want`, with

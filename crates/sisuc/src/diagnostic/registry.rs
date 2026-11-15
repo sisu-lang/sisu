@@ -288,6 +288,35 @@ impl Code {
     }
 }
 
+/// Why an expression has no value (E0043, E0031).
+pub(crate) enum NoValueCause {
+    /// No reason is known.
+    Plain,
+    /// An `if`, or an `if let`, whose last `else` is missing. `returning` says that a `return` of
+    /// a unit function holds it.
+    NoElse { if_let: bool, returning: bool },
+    /// A call of `name`, a function that declares no return type, at `declared`, when that
+    /// declaration is in the program.
+    Call {
+        name: String,
+        declared: Option<Span>,
+    },
+}
+
+impl NoValueCause {
+    /// The words that say the reason: the message of an E0043, the label of an E0031's tail.
+    fn reason(&self) -> Option<String> {
+        match self {
+            NoValueCause::Plain => None,
+            NoValueCause::NoElse { if_let, .. } => Some(format!(
+                "this `{}` has no `else`, so it has no value",
+                if *if_let { "if let" } else { "if" }
+            )),
+            NoValueCause::Call { name, .. } => Some(format!("`{name}` returns no value")),
+        }
+    }
+}
+
 /// What went wrong, and where: the facts each diagnostic code is built from.
 pub(crate) enum DiagnosticKind {
     /// An assignment at `at` to `name`, or to a part of it, which cannot change. `written` says
@@ -697,11 +726,13 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         form: UnknownForm,
     },
-    /// The function `function`, whose body, ending at `at`, has no value of type `want`.
+    /// The function `function`, whose body, ending at `at`, has no value of type `want`. `tail`
+    /// is the expression that the body ends in, with the reason that it has no value.
     BodyHasNoValue {
         function: String,
         want: String,
         at: Span,
+        tail: Option<(Span, NoValueCause)>,
     },
     /// A value of type `got`, at `at`, where `want` is expected; `fix` is the
     /// rewrite that would fit. `origin` is where the expected type came from, if the report
@@ -758,9 +789,13 @@ pub(crate) enum DiagnosticKind {
     SelfOutsideMethod { at: Span },
     /// A unary `-` at `at` on a `u8`.
     NegatedU8 { at: Span },
-    /// An expression at `at` that has no value: it is `unit`, or, with `never`, it never
-    /// finishes.
-    NoValue { at: Span, never: bool },
+    /// An expression at `at` that has no value: it is `unit`, for the reason `cause`, or, with
+    /// `never`, it never finishes.
+    NoValue {
+        at: Span,
+        never: bool,
+        cause: NoValueCause,
+    },
     /// The first bare `break` at `at` of a `loop` whose first `break` with a value whose type is
     /// not `never` is at `valued`.
     BareBreak { at: Span, valued: Span },
@@ -4745,11 +4780,31 @@ impl From<DiagnosticKind> for Diagnostic {
                 )
                 .with_help("write one of the bounds that wait for each other without an associated type"),
             },
-            DiagnosticKind::BodyHasNoValue { function, want, at } => Diagnostic::coded(
-                code,
+            DiagnosticKind::BodyHasNoValue {
+                function,
+                want,
                 at,
-                format!("function `{function}` must return `{want}`, but its body has no value"),
-            ),
+                tail,
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("function `{function}` must return `{want}`, but its body has no value"),
+                );
+                match tail {
+                    Some((span, cause)) if let Some(text) = cause.reason() => {
+                        let d = d.with_secondary(span, text);
+                        match cause {
+                            NoValueCause::NoElse { .. } => d.with_help(format!(
+                                "add an `else`, and make each branch give {} `{want}`",
+                                indefinite(&want)
+                            )),
+                            _ => d,
+                        }
+                    }
+                    _ => d,
+                }
+            }
             DiagnosticKind::Mismatch {
                 want,
                 got,
@@ -4950,12 +5005,26 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::NegatedU8 { at } => {
                 Diagnostic::coded(code, at, "`u8` cannot be negative")
             }
-            DiagnosticKind::NoValue { at, never } => {
-                let d = Diagnostic::coded(code, at, "expression has no value");
-                if never {
-                    d.with_label("never finishes")
-                } else {
-                    d
+            DiagnosticKind::NoValue { at, never, cause } => {
+                let message = cause
+                    .reason()
+                    .unwrap_or_else(|| "expression has no value".to_owned());
+                let d = Diagnostic::coded(code, at, message);
+                match cause {
+                    NoValueCause::Plain if never => d.with_label("never finishes"),
+                    NoValueCause::NoElse { if_let, returning } => {
+                        let form = if if_let { "if let" } else { "if" };
+                        d.with_help(if returning {
+                            format!("remove this `return`, or put it inside the `{form}`")
+                        } else {
+                            "add an `else`, and make each branch give a value".to_owned()
+                        })
+                    }
+                    NoValueCause::Call {
+                        name,
+                        declared: Some(declared),
+                    } => d.with_secondary(declared, format!("`{name}` declares no return type")),
+                    NoValueCause::Plain | NoValueCause::Call { .. } => d,
                 }
             }
             DiagnosticKind::BareBreak { at, valued } => Diagnostic::coded(

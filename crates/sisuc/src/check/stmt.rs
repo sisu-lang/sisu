@@ -971,7 +971,7 @@ impl Checker<'_> {
                 _ => None,
             },
             Some(value) if self.body.ret == Some(Type::UNIT) => {
-                let checked = self.value(value, Expectation::None);
+                let checked = self.value_in(value, Expectation::None, true);
                 let reported = match known_type(&checked) {
                     Ok(_) => self.error(DiagnosticKind::UnexpectedReturnValue { at: value.span }),
                     Err(reported) => reported,
@@ -1556,10 +1556,10 @@ impl Checker<'_> {
             return checked;
         }
         let checked = match type_of(&checked).or(misfit) {
-            Some(Type::UNIT) => Err(Poisoned::untyped(self.error(DiagnosticKind::NoValue {
-                at: v.span,
-                never: false,
-            }))),
+            Some(Type::UNIT) => {
+                let cause = self.no_value_cause(v, checked.as_ref().ok(), Type::UNIT, false);
+                Err(Poisoned::untyped(self.no_value(v.span, Type::UNIT, cause)))
+            }
             Some(Type::NEVER) | None => checked,
             Some(got) => {
                 // Checking `v` can set the first type, through a `break` of this loop inside it.

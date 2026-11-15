@@ -1106,10 +1106,8 @@ impl Checker<'_> {
     fn fallback(&mut self, rhs: &ast::Expr, expected: Expectation) -> Checked {
         let checked = self.expr(rhs, expected);
         if type_of(&checked) == Some(Type::UNIT) {
-            let reported = self.error(DiagnosticKind::NoValue {
-                at: rhs.span,
-                never: false,
-            });
+            let cause = self.no_value_cause(rhs, checked.as_ref().ok(), Type::UNIT, false);
+            let reported = self.no_value(rhs.span, Type::UNIT, cause);
             return Err(Poisoned::untyped(reported));
         }
         if let Err(failed) = &checked
