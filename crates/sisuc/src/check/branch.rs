@@ -421,7 +421,7 @@ impl Checker<'_> {
             AnyJoin::Leaves {
                 member: (i, Type::UNIT),
                 ..
-            } if !wants_unit(expected) => sources[i].no_value().into(),
+            } => sources[i].no_value().into(),
             AnyJoin::Leaves {
                 ty,
                 giver,

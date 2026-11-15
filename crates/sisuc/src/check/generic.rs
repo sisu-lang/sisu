@@ -2616,9 +2616,6 @@ impl Checker<'_> {
                 && self.known_in(&call, param).is_none()
                 && self.bind_param(&mut call, param, ty, at)
             {
-                if ty == Type::UNIT {
-                    self.settle_unit(&mut call, args, i, param);
-                }
                 continue;
             }
             if ty == Type::UNIT
