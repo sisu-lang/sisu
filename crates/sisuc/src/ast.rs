@@ -302,6 +302,29 @@ impl TypeExpr {
             TypeKind::Name(_) | TypeKind::SelfType => false,
         }
     }
+
+    /// Whether the type, or a part of it, is an associated type of `Self` or of a local name, as
+    /// `Self.Item`. A part is an argument or an element. A name is local when `local` holds.
+    pub(crate) fn names_local_member(&self, local: &impl Fn(Symbol) -> bool) -> bool {
+        match &self.kind {
+            TypeKind::Member { base, .. } => {
+                let mut root = &base.kind;
+                while let TypeKind::Member { base, .. } = root {
+                    root = &base.kind;
+                }
+                match root {
+                    TypeKind::SelfType => true,
+                    TypeKind::Name(name) => local(*name),
+                    _ => false,
+                }
+            }
+            TypeKind::Applied(applied) => {
+                applied.args.iter().any(|arg| arg.names_local_member(local))
+            }
+            TypeKind::Array(element) | TypeKind::Any(element) => element.names_local_member(local),
+            TypeKind::Name(_) | TypeKind::SelfType => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

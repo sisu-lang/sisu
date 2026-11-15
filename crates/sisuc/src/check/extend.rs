@@ -79,7 +79,7 @@ impl<'a> Checker<'_> {
             self.extend_target(extend)
         } else {
             // The checks of the target's arguments waited with no bound of the block in scope.
-            self.rescope(queued);
+            self.rescope(queued..self.queued());
             early
         };
         self.body.self_type = target.map_or(SelfType::Failed, SelfType::Known);

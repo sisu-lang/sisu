@@ -2184,6 +2184,8 @@ pub(crate) enum NotInterface {
     Array,
     /// `any I`, an interface value.
     Any,
+    /// An associated type, as `T.Item`.
+    Assoc,
 }
 
 impl NotInterface {
@@ -2198,6 +2200,7 @@ impl NotInterface {
             NotInterface::Optional => "an optional type",
             NotInterface::Array => "an array type",
             NotInterface::Any => "an interface value",
+            NotInterface::Assoc => "an associated type",
         }
     }
 }
