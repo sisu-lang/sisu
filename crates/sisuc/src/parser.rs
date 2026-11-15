@@ -75,7 +75,7 @@ pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
         labels: Vec::new(),
         loops: Vec::new(),
         prelude,
-        struct_self: false,
+        checked_self: false,
     }
     .program()
 }
@@ -584,7 +584,8 @@ struct Signature {
 enum Receiver<'o> {
     /// A function outside a class, an enum, an interface and an `extend` block: no `self`.
     Free,
-    /// A method of a class, an enum or an interface. `mut self` is an error at once.
+    /// A method of a class, a struct, an enum or an interface. `mut self` is an error at once in
+    /// a class.
     Of(&'o Owner),
     /// A method of an `extend` block. The target may be a class or an enum, which the parser
     /// cannot tell, so it records `mut self` for the checker to report.
@@ -663,9 +664,9 @@ struct Parser<'a> {
     loops: Vec<LoopPart>,
     /// Whether this is the prelude, which may declare a variant `None`.
     prelude: bool,
-    /// Whether the parser reads the body of a struct, whose methods take a `self` that cannot
-    /// change.
-    struct_self: bool,
+    /// Whether the parser reads the body of a struct, an enum or an `extend`, where `self` can be
+    /// assigned in a `mut self` method. The checker reports an assignment to `self` there.
+    checked_self: bool,
     /// `tokens`, or once a type-argument list takes the `>` of a `>=` (a split), the tokens before
     /// it. `peek` reads it with the bounds check it needs anyway, so only a split pays for one.
     window: &'a [Token],
@@ -1721,7 +1722,7 @@ impl<'a> Parser<'a> {
         } else {
             Owner::Class
         };
-        let outer = mem::replace(&mut self.struct_self, matches!(owner, Owner::Struct));
+        let outer = mem::replace(&mut self.checked_self, matches!(owner, Owner::Struct));
         let broken_methods = self.member_lines(errors, methods, |p, end| {
             match p.checked(end, |p| p.class_line(chooses, &owner))? {
                 ClassLine::Member(member) => members.push(member),
@@ -1729,7 +1730,7 @@ impl<'a> Parser<'a> {
             }
             Ok(())
         });
-        self.struct_self = outer;
+        self.checked_self = outer;
         let broken_methods = broken_methods?;
         self.bump();
         Ok(Struct {
@@ -1909,6 +1910,7 @@ impl<'a> Parser<'a> {
         let mut first_method = None;
         // Only an enum that lists an interface may choose an associated type.
         let chooses = !conforms.is_empty();
+        let outer = mem::replace(&mut self.checked_self, true);
         let broken_methods = self.member_lines(errors, methods, |p, end| {
             if first_method.is_none() && p.at(&TokenKind::Fn) {
                 first_method = Some(p.peek().span);
@@ -1919,7 +1921,9 @@ impl<'a> Parser<'a> {
                 EnumMember::Assoc(choice) => assoc.push(choice),
             }
             Ok(())
-        })?;
+        });
+        self.checked_self = outer;
+        let broken_methods = broken_methods?;
         self.bump();
         Ok(Enum {
             name,
@@ -2032,7 +2036,7 @@ impl<'a> Parser<'a> {
             labels: Vec::new(),
             loops: Vec::new(),
             prelude: self.prelude,
-            struct_self: self.struct_self,
+            checked_self: self.checked_self,
             window: self.tokens,
             halves: self.halves,
             halved: None,
@@ -2162,10 +2166,12 @@ impl<'a> Parser<'a> {
                 if self.at(&TokenKind::Mut) {
                     // `mut` is never `Eof`, so the token after it exists.
                     match (&self.tokens[self.pos + 1].kind, receiver) {
-                        (TokenKind::SelfKw, Receiver::Of(owner)) => {
+                        (TokenKind::SelfKw, Receiver::Of(owner))
+                            if matches!(owner, Owner::Class) =>
+                        {
                             return Err(self.mut_self_error(owner.clone()));
                         }
-                        (TokenKind::SelfKw, Receiver::Extension) => {
+                        (TokenKind::SelfKw, Receiver::Of(_) | Receiver::Extension) => {
                             mut_self = Some(MutSelf {
                                 keyword: self.bump().span,
                                 receiver: self.peek().span,
@@ -2190,8 +2196,11 @@ impl<'a> Parser<'a> {
                         .into());
                     }
                     self_param = Some(self.bump().span);
-                    // The annotation of a `mut self` is part of the error the checker reports.
+                    // In an `extend`, the annotation of a `mut self` is part of the error the
+                    // checker reports. In a struct or an enum, its `:` is E0011, as after `self`.
+                    // The twin in `check/extend.rs` gives E0011 in an `extend` of a struct.
                     if let Some(mut_self) = &mut mut_self
+                        && matches!(receiver, Receiver::Extension)
                         && let Some(colon) = self.eat(&TokenKind::Colon)
                     {
                         self.parse_type()?;
@@ -2311,6 +2320,7 @@ impl<'a> Parser<'a> {
             type_params: signature.type_params,
             angles: signature.angles,
             self_param,
+            mut_self: signature.mut_self,
             params: signature.params,
             ret: signature.ret,
             span: signature.fn_span.to(self.last_span()),
@@ -2346,13 +2356,16 @@ impl<'a> Parser<'a> {
         let mut fns = Vec::new();
         // Only a block that makes the target meet an interface may choose an associated type.
         let chooses = interface.is_some();
+        let outer = mem::replace(&mut self.checked_self, true);
         let broken_methods = self.member_lines(errors, methods, |p, end| {
             match p.checked(end, |p| p.extend_line(chooses))? {
                 ExtendLine::Method(method) => fns.push(method),
                 ExtendLine::Assoc(choice) => assoc.push(choice),
             }
             Ok(())
-        })?;
+        });
+        self.checked_self = outer;
+        let broken_methods = broken_methods?;
         let close = self.bump().span;
         Ok(Extend {
             keyword,
@@ -4228,14 +4241,16 @@ impl<'a> Parser<'a> {
             TokenKind::PercentEq => Some(BinaryOp::Rem),
             _ => return Ok(StmtKind::Expr(target)),
         };
-        if matches!(target.kind, ExprKind::SelfValue) {
+        // In the body of a struct, an enum or an `extend`, the checker reports `self = e`.
+        let checked_self = self.checked_self && matches!(target.kind, ExprKind::SelfValue);
+        if matches!(target.kind, ExprKind::SelfValue) && !checked_self {
             return Err(DiagnosticKind::AssignToSelf {
                 at: target.span,
-                struct_self: self.struct_self,
+                take: None,
             }
             .into());
         }
-        if !is_place(&target) && !is_range_target(&target) {
+        if !checked_self && !is_place(&target) && !is_range_target(&target) {
             return Err(DiagnosticKind::AssignToExpression {
                 at: target.span,
                 range: None,
@@ -6675,7 +6690,7 @@ mod tests {
     }
 
     #[test]
-    fn enum_errors() {
+    fn enum_errors_should_report_their_code_and_position() {
         for (src, code, line, col) in [
             ("enum E {\n    A,\n    B\n}", Code::FieldComma, 2, 6),
             (
@@ -6684,7 +6699,6 @@ mod tests {
                 3,
                 5,
             ),
-            ("enum E {\n    fn f(mut self) {}\n}", Code::MutSelf, 2, 10),
             ("enum E {\n    None\n}", Code::BuiltInName, 2, 5),
             // Each place a declaration can break.
             ("enum {\n}", Code::Expected, 1, 6),
@@ -7022,14 +7036,14 @@ mod tests {
                 "interface I {\n    mut x: i64\n}",
                 (Code::InterfaceBody, 2, 5),
             ),
-            // A requirement takes `self`, and never `mut self`.
+            // A requirement takes `self` or `mut self`, and its `self` has no type.
             (
                 "interface I {\n    fn f()\n}",
                 (Code::MethodNeedsSelf, 2, 8),
             ),
             (
-                "interface I {\n    fn f(mut self)\n}",
-                (Code::MutSelf, 2, 10),
+                "interface I {\n    fn f(mut self: i64)\n}",
+                (Code::Expected, 2, 18),
             ),
             ("interface I {\n    1\n}", (Code::Expected, 2, 5)),
             // `type` is a keyword: it is no name, and it starts an item or a choice only where the
@@ -7669,7 +7683,7 @@ mod tests {
             labels: Vec::new(),
             loops: Vec::new(),
             prelude: false,
-            struct_self: false,
+            checked_self: false,
             window: &lexed.tokens,
             halves: &OnceCell::new(),
             halved: None,
@@ -11365,7 +11379,7 @@ mod tests {
         );
     }
 
-    /// GIVEN a `mut self` with a type, in a class, an enum or an interface
+    /// GIVEN a `mut self` with a type, in a class or an interface
     /// WHEN the fix is applied
     /// THEN the `mut` and the whole type are gone, and the source has no syntax error
     #[test]
@@ -11380,16 +11394,6 @@ mod tests {
                 "class C {\n    fn f(mut self: i64, a: i64) {}\n}",
                 2,
                 "class C {\n    fn f(self, a: i64) {}\n}",
-            ),
-            (
-                "enum E {\n    A\n    fn f(mut self: i64) {}\n}",
-                3,
-                "enum E {\n    A\n    fn f(self) {}\n}",
-            ),
-            (
-                "interface I {\n    fn f(mut self: i64)\n}",
-                2,
-                "interface I {\n    fn f(self)\n}",
             ),
             (
                 "class C {\n    fn f(mut self: Box<i64>) {}\n}",
@@ -11435,22 +11439,6 @@ mod tests {
             "class C {\n    mut n: i64\n    fn add(self, by: i64) { self.n += by }\n}\n"
         );
         parse_ok(&result);
-    }
-
-    #[test]
-    fn mut_self_in_an_enum_is_an_unsafe_fix() {
-        // Whatever follows `self`, the body may still assign it, so the fix is never safe.
-        for src in [
-            "enum E {\n    fn f(mut self) {}\n}",
-            "enum E {\n    fn f(mut self, n: i64) {}\n}",
-        ] {
-            let d = parse_diagnostic(src);
-            assert_eq!(d.code(), Code::MutSelf, "{src}");
-            assert_eq!(line_col(src, d.span().start()), (2, 10), "{src}");
-            assert!(d.help().is_some(), "{src}");
-            assert_eq!(apply_fix(src, &d), src.replace("mut self", "self"), "{src}");
-            assert!(fix_edits(&d).is_some_and(|(safe, _)| !safe), "{src}");
-        }
     }
 
     /// GIVEN `struct P { mut x: i64 }`

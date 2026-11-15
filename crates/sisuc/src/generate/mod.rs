@@ -186,12 +186,17 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     // the four above while they are written (`Gen::swap_streams`).
     let places: Vec<u8> = data.iter().map(|b| b.rotate_left(7)).collect();
     let spare: [Vec<u8>; 4] = [1, 2, 4, 6].map(|n| data.iter().map(|b| b.rotate_left(n)).collect());
+    // A method that takes `mut self` reads streams of its own, apart from all of these. So the
+    // struct or enum that holds it is the same with or without it (`Gen::swap_own_streams`).
+    let own: [Vec<u8>; 4] =
+        [1, 2, 4, 6].map(|n| data.iter().rev().map(|b| b.rotate_left(n)).collect());
     let mut g = Gen::new(data);
     g.ru = Unstructured::new(&reversed);
     g.au = Unstructured::new(&rotated);
     g.cu = Unstructured::new(&mixed);
     g.mu = Unstructured::new(&places);
     g.spare = Spare::new(spare.each_ref().map(|bytes| Unstructured::new(bytes)));
+    g.own = Spare::new(own.each_ref().map(|bytes| Unstructured::new(bytes)));
     // One program in eight leaves with `let ... else` and `??`. The choice reads every byte, so
     // that it shares no bits with an early choice. The other programs are the same as they were.
     // The value 5 keeps the seeds that the tests pin outside the gate. The weight of the `??`
@@ -322,6 +327,9 @@ struct Gen<'a> {
     /// What stands in for the streams, the budget and the count of expressions while a `mut`
     /// function or a `mut` call is written: no choice of any other rule moves for it.
     spare: Spare<'a>,
+    /// What stands in for the streams, the budget and the count of expressions while a method
+    /// that takes `mut self` is written (`Gen::swap_own_streams`).
+    own: Spare<'a>,
     /// How many statements have begun, and how many `mut` calls ran as an argument of another.
     /// A `mut` call reads it to see whether a statement or a `mut` call ran in one of its
     /// arguments: either may change a local that the call passes.
@@ -382,6 +390,7 @@ impl<'a> Gen<'a> {
             cu: Unstructured::new(&[]),
             mu: Unstructured::new(&[]),
             spare: Spare::new([(); 4].map(|()| Unstructured::new(&[]))),
+            own: Spare::new([(); 4].map(|()| Unstructured::new(&[]))),
             statements: 0,
             nested: false,
             mut_fn: false,
@@ -436,6 +445,20 @@ impl<'a> Gen<'a> {
         std::mem::swap(&mut self.budget, &mut spare.budget);
         std::mem::swap(&mut self.expressions, &mut spare.expressions);
         let [u, ru, au, cu] = &mut spare.streams;
+        std::mem::swap(&mut self.u, u);
+        std::mem::swap(&mut self.ru, ru);
+        std::mem::swap(&mut self.au, au);
+        std::mem::swap(&mut self.cu, cu);
+    }
+
+    /// `swap_streams` with the streams of a method that takes `mut self`. They stand in for the
+    /// streams in use, spare or not, and go back at the second call: the struct or the enum that
+    /// holds the method keeps each choice that it had.
+    fn swap_own_streams(&mut self) {
+        let own = &mut self.own;
+        std::mem::swap(&mut self.budget, &mut own.budget);
+        std::mem::swap(&mut self.expressions, &mut own.expressions);
+        let [u, ru, au, cu] = &mut own.streams;
         std::mem::swap(&mut self.u, u);
         std::mem::swap(&mut self.ru, ru);
         std::mem::swap(&mut self.au, au);

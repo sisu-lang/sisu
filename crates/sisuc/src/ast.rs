@@ -240,6 +240,8 @@ pub(crate) struct Requirement {
     /// `<` through `>` of `type_params`; empty, after the name, when there are none.
     pub(crate) angles: Span,
     pub(crate) self_param: Span,
+    /// The `mut` in front of `self`, if written: the requirement changes the value it is called on.
+    pub(crate) mut_self: Option<MutSelf>,
     pub(crate) params: Vec<Param>,
     pub(crate) ret: Option<TypeExpr>,
     /// `fn` through the return type.

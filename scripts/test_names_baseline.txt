@@ -1015,7 +1015,6 @@ crates/sisuc/src/mir/tests/certify.rs::unmentioned_local_is_ignored
 crates/sisuc/src/mir/tests/certify.rs::unmentioned_parameter_reaches_a_return
 crates/sisuc/src/mir/tests/certify.rs::unreachable_code_certifies
 crates/sisuc/src/mir/tests/certify.rs::use_after_the_ownership_pass_panics
-crates/sisuc/src/mir/tests/certify.rs::violation_message_names_where_and_what
 crates/sisuc/src/mir/tests/certify.rs::write_into_a_borrowed_array_is_rejected
 crates/sisuc/src/mir/tests/elaborate.rs::each_exit_edge_is_elaborated_on_its_own
 crates/sisuc/src/mir/tests/elaborate.rs::free_after_reuse_is_removed
@@ -1212,7 +1211,6 @@ crates/sisuc/src/parser.rs::else_on_new_line_fix
 crates/sisuc/src/parser.rs::else_on_new_line_is_unsafe_over_a_comment
 crates/sisuc/src/parser.rs::empty_class
 crates/sisuc/src/parser.rs::enum_broken_method_recovers
-crates/sisuc/src/parser.rs::enum_errors
 crates/sisuc/src/parser.rs::enum_items
 crates/sisuc/src/parser.rs::equality_does_not_chain
 crates/sisuc/src/parser.rs::every_redundant_semicolon_fix_at_once
@@ -1259,7 +1257,6 @@ crates/sisuc/src/parser.rs::mixed_is_and_equality_do_not_chain
 crates/sisuc/src/parser.rs::multiline_call_args
 crates/sisuc/src/parser.rs::mut_is_a_keyword
 crates/sisuc/src/parser.rs::mut_on_underscore_fix_leaves_a_let_that_parses
-crates/sisuc/src/parser.rs::mut_self_in_an_enum_is_an_unsafe_fix
 crates/sisuc/src/parser.rs::mut_self_outside_the_receiver_position
 crates/sisuc/src/parser.rs::nested_switch_calls_parse_in_linear_time
 crates/sisuc/src/parser.rs::one_line_class

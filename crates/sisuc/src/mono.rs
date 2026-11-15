@@ -181,6 +181,8 @@ struct Mono {
     types: FxHashMap<Type, (Type, Option<Held>)>,
     /// The output's functions, each `None` until the worklist instantiates it.
     functions: Vec<Option<Function>>,
+    /// Whether the first parameter of each of `functions` is `mut`, known when its id is.
+    first_mut: Vec<bool>,
     /// The output, without its functions until the end: its classes name types as they arrive.
     out: Program,
     /// The checked program's conformances, which resolve each interface call.
@@ -262,6 +264,7 @@ impl Mono {
             struct_decls: Vec::with_capacity(program.structs.len()),
             types: FxHashMap::default(),
             functions: Vec::new(),
+            first_mut: Vec::new(),
             out: Program {
                 interfaces: program.interfaces,
                 lang: program.lang,
@@ -301,6 +304,7 @@ impl Mono {
             if f.type_params.is_empty() && i < user_funcs {
                 let id = FuncId(mono.functions.len());
                 mono.function_ids.insert((FuncId(i), TypeArgs::NONE), id);
+                mono.first_mut.push(first_mut(&f));
                 mono.functions.push(Some(f));
                 mono.decls.push(None);
             } else {
@@ -1006,6 +1010,7 @@ impl Mono {
             .as_ref()
             .expect("a function reached with arguments should be generic or the prelude's");
         let name = self.instance_name(decl, args.get(), done.0);
+        self.first_mut.push(first_mut(decl));
         self.functions.push(None);
         self.instances += 1;
         self.function_ids.insert((id, args), done);
@@ -1408,8 +1413,53 @@ impl Mono {
                     }
                 }
                 self.block(back, args);
+                self.plain_receiver(e);
             }
         }
+    }
+
+    /// Rewrites `e`, a `MutCall`, when its receiver is a `mut` part and the callee that mono
+    /// picked takes plain `self`: a plain-`self` method that meets a `mut self` requirement. The
+    /// part's copy-in becomes `let`s before the call, its store-back goes, and the other parts
+    /// stay. The callee has no out slot for its receiver, so the change is nothing to keep.
+    fn plain_receiver(&self, e: &mut Expr) {
+        use ExprKind as K;
+        let K::MutCall { call, muts, back } = &mut e.kind else {
+            return;
+        };
+        let K::Call { func, args, .. } = &call.kind else {
+            return;
+        };
+        let receiver = match (args.first(), muts.first()) {
+            (Some(arg), Some(m)) => matches!(arg.kind, K::Local(l) if l == m.temp),
+            _ => false,
+        };
+        if !receiver || self.first_mut[func.0] {
+            return;
+        }
+        debug_assert_eq!(
+            back.stmts.len(),
+            muts.len(),
+            "the store-back should hold one statement per part"
+        );
+        let part = muts.remove(0);
+        back.stmts.remove(0);
+        let mut stmts: Vec<Stmt> = (part.keep.into_iter())
+            .map(|(local, init)| Stmt::Let { local, init })
+            .collect();
+        stmts.push(Stmt::Let {
+            local: part.temp,
+            init: part.read,
+        });
+        let (ty, span) = (e.ty, e.span);
+        // A `MutCall` with no part left is its plain call.
+        let inner = if muts.is_empty() { hole(call) } else { hole(e) };
+        let block = Block {
+            stmts,
+            value: Some(Box::new(inner)),
+            ty,
+        };
+        *e = Expr::new(K::Block(block), ty, span);
     }
 
     /// `holds` over the checked program's ids.
@@ -1545,6 +1595,11 @@ impl Mono {
             self.expr(e, args);
         }
     }
+}
+
+/// Whether the first parameter of `f` is `mut`: for a method, whether it takes `mut self`.
+fn first_mut(f: &Function) -> bool {
+    f.params.first().is_some_and(|p| f.locals[p.0].mutable)
 }
 
 /// The expression `expr` holds, which moves out; a placeholder stays, which `mono` overwrites.

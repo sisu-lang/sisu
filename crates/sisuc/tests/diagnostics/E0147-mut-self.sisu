@@ -1,0 +1,15 @@
+// GIVEN an interface `Adder` whose `add` takes `mut self`
+// WHEN a parameter has the type `Adder`
+// THEN it reports E0147 at `Adder`, whose help offers a type parameter and no `any Adder`: the
+// `mut self` requirement keeps `Adder` from `any`
+interface Adder {
+    fn add(mut self)
+}
+
+fn _show(_a: Adder) {
+    print(1)
+}
+
+fn main() {
+    print(2)
+}

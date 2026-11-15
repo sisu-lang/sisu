@@ -2,7 +2,9 @@
 // AND the same in an enum method, an interface method and a method of an `extend` block
 // AND the same in a class method with a generic type
 // WHEN `sisu check` runs on it
-// THEN each E0018 has a fix that removes the `mut` and the whole type
+// THEN each E0018 of a class method has a fix that removes the `mut` and the whole type
+// AND the enum method and the interface method are E0011 at the `:`: each can take `mut self`,
+// with no type
 class Counter {
     mut n: i64
 

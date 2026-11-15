@@ -1,0 +1,10 @@
+error[E0147]: `Adder` is an interface, not a type
+ --> E0147-mut-self.sisu:9:14
+  |
+9 | fn _show(_a: Adder) {
+  |              ^^^^^
+  |
+  = help: use a type parameter: `T: Adder`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0147

@@ -1,0 +1,45 @@
+// GIVEN `struct T { n: i64 }` and `enum E { A; B }`, each with a `mut self` method that has
+// `self = <new>`
+// WHEN `main` calls it on a `let mut` and prints the value
+// THEN it prints "T(n: 9)" for the struct and "B" for the enum
+// AND a copy taken before the call keeps the old value
+// o2-calls: main T.reset 1
+// o2-calls: main E.flip 1
+struct T {
+    n: i64
+
+    // Recursive, and to a depth that `main` reads at run time, so that `-O2` keeps the call.
+    fn reset(mut self, depth: i64) {
+        if depth > 0 {
+            self.reset(depth - 1)
+        }
+        self = T(n: 9)
+    }
+}
+
+enum E {
+    A
+    B
+
+    // Recursive for the same reason as `T.reset`.
+    fn flip(mut self, depth: i64) {
+        if depth > 0 {
+            self.flip(depth - 1)
+        }
+        self = E.B
+    }
+}
+
+fn main() {
+    let depth = (read_line() ?? "").len()
+    let mut t = T(n: 1)
+    let t_before = t
+    t.reset(depth)
+    print(t)                          // T(n: 9)
+    print(t_before)                   // T(n: 1)
+    let mut e = E.A
+    let e_before = e
+    e.flip(depth)
+    print(e)                          // B
+    print(e_before)                   // A
+}

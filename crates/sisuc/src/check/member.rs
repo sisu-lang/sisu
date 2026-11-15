@@ -29,6 +29,9 @@ pub(super) enum Access {
     Assign,
     /// The receiver of a `.push`, which may be a class's own `push`.
     Push,
+    /// The receiver of a call of a method that may take `mut self`, and whether the call writes it
+    /// (`Change::Receiver`).
+    Receiver(bool),
     /// The place of a `mut` argument, which a `?.` cannot be.
     Mut,
 }
@@ -326,7 +329,7 @@ impl Checker<'_> {
         let write = match access {
             Access::Read => false,
             Access::Assign | Access::Mut => true,
-            Access::Push => self.field_is_array(inner, name.name),
+            Access::Push | Access::Receiver(_) => self.call_writes(inner, name.name, access),
         };
         // A path through `?.` is a place that cannot be a `mut` argument (E0170).
         let fix = payload_fix(payload, self.body.indexed) && !matches!(access, Access::Mut);
@@ -354,12 +357,14 @@ impl Checker<'_> {
     ) -> Reported {
         let chain = match access {
             Access::Read => self.body.write_chain,
-            Access::Assign | Access::Push | Access::Mut => None,
+            Access::Assign | Access::Push | Access::Receiver(_) | Access::Mut => None,
         };
         let write = match access {
             Access::Read => chain.is_some_and(|(_, change)| change != Change::MutArg),
             Access::Assign => true,
-            Access::Push => self.field_is_array(innermost(payload), name.name),
+            Access::Push | Access::Receiver(_) => {
+                self.call_writes(innermost(payload), name.name, access)
+            }
             Access::Mut => false,
         };
         let mutable = matches!(access, Access::Mut) || matches!(chain, Some((_, Change::MutArg)));
@@ -387,7 +392,7 @@ impl Checker<'_> {
         let unwrap = if write {
             self.reassign_root(receiver);
             // Only a place on one line can be replaced.
-            if matches!(payload.kind(), TypeKind::Struct(..))
+            if matches!(payload.kind(), TypeKind::Struct(..) | TypeKind::Enum(..))
                 && self.one_line(receiver.span)
                 && self.replaceable(receiver).is_some_and(|(can, _)| can)
             {
@@ -407,6 +412,45 @@ impl Checker<'_> {
             unwrap,
         };
         self.error(d)
+    }
+
+    /// Whether the call that `access` makes on the field `name` of `ty` writes the field: a
+    /// `push` onto an array or onto a value whose `push` takes `mut self`, or the call whose
+    /// receiver ends at the field, as `Access::Receiver` says.
+    fn call_writes(&mut self, ty: Type, name: Symbol, access: Access) -> bool {
+        match access {
+            Access::Receiver(writes) => return writes,
+            Access::Push if self.field_is_array(ty, name) => return true,
+            Access::Push => {}
+            Access::Read | Access::Assign | Access::Mut => return false,
+        }
+        let info = match ty.kind() {
+            TypeKind::Class(class, _) => &self.classes[class.0],
+            TypeKind::Struct(id, _) => &self.structs[id.0],
+            _ => return false,
+        };
+        let held = info
+            .field(name)
+            .and_then(|index| self.field_type(ty, index));
+        held.is_some_and(|held| self.finds_mut_self(held, Symbol::intern("push")))
+    }
+
+    /// Whether the call of `name` on a value of type `ty` finds a method that takes `mut self`, as
+    /// `find_method` finds it, with no report. When more conformances answer, each must take it.
+    pub(super) fn finds_mut_self(&mut self, ty: Type, name: Symbol) -> bool {
+        if !matches!(ty.kind(), TypeKind::Struct(..) | TypeKind::Enum(..)) {
+            return false;
+        }
+        match self.own_method(ty, name) {
+            Some(Declared::Known(func)) if self.plain_block_holds(func, ty) => {
+                return self.signatures[func.0].self_mut;
+            }
+            Some(Declared::Poisoned(_)) => return false,
+            Some(Declared::Known(_)) | None => {}
+        }
+        self.conforming_methods(ty, name);
+        !self.candidates.is_empty()
+            && (self.candidates.iter()).all(|&(func, ..)| self.signatures[func.0].self_mut)
     }
 
     /// Whether `ty` is a class or a struct type whose field `name` has an array type or an
@@ -660,10 +704,18 @@ impl Checker<'_> {
         };
         let checked = Err(Poisoned::typed(inner, held));
         // The call reports its own mistakes, and its type waits for the fix.
-        drop(self.method_call(span, Dot::Payload, checked, receiver, site, args));
+        let dot = Dot::Payload {
+            failed: value.is_err(),
+        };
+        drop(self.method_call(span, dot, checked, receiver, site, args));
         let name = site.name;
         if self.body.failed_lookups.contains(&name.span) {
             return Err(Poisoned::untyped(held));
+        }
+        // A call of a `mut self` method writes, as a write of a field of the same root does.
+        if self.finds_mut_self(inner, name.name) {
+            let reported = self.struct_may_be_none(payload, receiver, name, Access::Assign);
+            return Err(Poisoned::untyped(reported));
         }
         // A `push` onto an optional array writes: the `?.` fix makes it do nothing.
         let write = pushes_array(name, inner);

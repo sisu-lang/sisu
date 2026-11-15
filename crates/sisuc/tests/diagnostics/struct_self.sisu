@@ -8,8 +8,6 @@ struct P {
     fn b(self) {
         self = P(n: 2)
     }
-
-    fn c(mut self) {}
 }
 
 fn main() {}

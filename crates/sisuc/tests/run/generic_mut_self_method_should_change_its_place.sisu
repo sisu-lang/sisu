@@ -1,0 +1,40 @@
+// GIVEN `interface K<V> { fn put<U>(mut self, v: V, u: U) -> U }`
+// AND `struct Cell<T>: K<T> { v: T; fn put<U>(mut self, v: T, u: U) -> U { self.v = v; u } }`
+// AND `fn bump<T: K<i64>>(mut t: T) -> string`, which returns `t.put(5, "u")`
+// AND `bump` takes `depth`, which `main` reads at run time as 1, and goes `depth` levels down
+// before it calls `put`; the WHEN lines leave `depth` out
+// WHEN `main` runs `let mut c = Cell(v: 1)` and `let copy = c`, prints `bump(mut c)`, `c.v` and
+// `copy.v`, then prints `c.put(7, 8)` and `c.v`
+// THEN it prints "u", "5", "1", "8" and "7"
+// o2-calls: main bump<Cell<i64>> 1
+interface K<V> {
+    fn put<U>(mut self, v: V, u: U) -> U
+}
+
+struct Cell<T>: K<T> {
+    v: T
+
+    fn put<U>(mut self, v: T, u: U) -> U {
+        self.v = v
+        u
+    }
+}
+
+// Recursive to a depth that `main` reads at run time, so that `-O2` keeps the call.
+fn bump<T: K<i64>>(mut t: T, depth: i64) -> string {
+    if depth > 0 {
+        return bump(mut t, depth - 1)
+    }
+    t.put(5, "u")
+}
+
+fn main() {
+    let depth = 1 + (read_line() ?? "").len()
+    let mut c = Cell(v: 1)
+    let copy = c
+    print(bump(mut c, depth))         // u
+    print(c.v)                        // 5
+    print(copy.v)                     // 1
+    print(c.put(7, 8))                // 8
+    print(c.v)                        // 7
+}

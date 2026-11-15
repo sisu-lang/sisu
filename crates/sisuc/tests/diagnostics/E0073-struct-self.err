@@ -1,0 +1,21 @@
+error[E0073]: cannot assign to `self`
+  --> E0073-struct-self.sisu:11:9
+   |
+11 |         self = Counter(n: 0)
+   |         ^^^^
+   |
+help: take `mut self`
+   |
+10 |     fn reset(mut self) {
+   |              +++
+
+error[E0073]: cannot assign to `self`
+  --> E0073-struct-self.sisu:23:9
+   |
+23 |         self = Clock(ticks: 0)
+   |         ^^^^
+   |
+   = help: copy `self` into a `let mut` variable
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0073

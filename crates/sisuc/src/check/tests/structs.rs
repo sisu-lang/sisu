@@ -7,7 +7,7 @@ use Code::{
     BindingNotFound, CannotExtend, CannotInfer, CannotMatch, ConstantType, DefinedTwice, Expected,
     FieldOutOfOrder, FunctionNotFound, InstantiationCycle, IsNeedsObjects, MayBeNone, MemberKind,
     MethodAsFunction, Mismatch, MissingField, MutArgumentNotPlace, MutArgumentType, MutPlaceTwice,
-    MutSelf, NeverConstructed, NeverReassigned, NoMember, NoOperator, NotAnInterface, ReservedWord,
+    NeverConstructed, NeverReassigned, NoMember, NoOperator, NotAnInterface, ReservedWord,
     TooManyArguments, TypeArguments, TypeAsValue, UnusedMember, UnusedVariable,
     UnwrapNeedsOptional,
 };
@@ -108,24 +108,20 @@ fn write_through_a_root_that_cannot_change_should_be_e0001() {
     }
 }
 
-/// GIVEN a struct method with plain `self`. WHEN it writes a field, assigns to `self`, or another
-/// method takes `mut self`. THEN the codes are E0001, E0073 and E0018, each with no fix and a
-/// help.
+/// GIVEN a struct method with plain `self`. WHEN it writes a field or assigns to `self`. THEN
+/// the codes are E0001 and E0073, each with one unsafe fix. Another method with `mut self`
+/// gives no error.
 #[test]
 fn plain_self_should_report_its_codes() {
     let src = "struct P {\n    n: i64\n    fn a(self) {\n        self.n = 1\n    }\n    fn b(self) {\n        self = P(n: 2)\n    }\n    fn c(mut self) {}\n}\nfn main() {}";
     let (_, ds) = checked_with(PRELUDE_SOURCE, src);
     assert_eq!(
         errors(src, &ds),
-        [
-            (AssignToImmutable, (4, 9)),
-            (AssignToSelf, (7, 9)),
-            (MutSelf, (9, 10)),
-        ]
+        [(AssignToImmutable, (4, 9)), (AssignToSelf, (7, 9))]
     );
     for d in ds.iter().filter(|d| d.code().severity() == Severity::Error) {
-        assert!(d.fixes().is_empty(), "{d:?}");
-        assert!(d.help().is_some(), "{d:?}");
+        assert_eq!(d.fixes().len(), 1, "{d:?}");
+        assert!(!d.fixes()[0].safe(), "{d:?}");
     }
 }
 
@@ -900,6 +896,12 @@ fn plain_self_write_should_report_by_its_form() {
         &[(AssignToImmutable, (9, 9))],
     );
     codes_row("a class", &program("self.c.n = 2"), &[]);
+    // Each struct row has the unsafe fix "take `mut self`".
+    for body in ["self.xs.push(1)", "self.n += 1"] {
+        let (_, ds) = checked(&program(body));
+        assert_eq!(ds[0].fixes().len(), 1, "{body}: {ds:?}");
+        assert!(!ds[0].fixes()[0].safe(), "{body}: {ds:?}");
+    }
 }
 
 /// GIVEN a base that fails WHEN a struct path writes through it THEN the base's error is the only
@@ -1036,6 +1038,10 @@ fn struct_self_push_should_report_as_the_class_form() {
         ),
     ];
     error_rows(&rows);
+    // The row of the array has the unsafe fix "take `mut self`".
+    let (_, ds) = checked(&program("self.i.xs[0].push(1)"));
+    assert_eq!(ds[0].fixes().len(), 1, "{ds:?}");
+    assert!(!ds[0].fixes()[0].safe(), "{ds:?}");
 }
 
 /// GIVEN a path of `.xs[0]`, `.os[0]` or `.os[0]?` steps in a struct `T`, 10, 20 and 30 steps
@@ -1473,54 +1479,6 @@ fn conditional_struct_equality_should_follow_its_argument() {
             "{decls}fn main() {{\n    let p: Pair<any I> = Pair(a: z(), b: z())\n    print(p == p)\n}}"
         ),
         &[(NoOperator, (13, 11))],
-    );
-}
-
-/// GIVEN `struct P { n: i64 }` with `extend P { fn m(mut self) {} }`. WHEN the program is
-/// checked. THEN it is E0018 at the `mut`, with a help and no fix, as the method of a struct's
-/// own body has: a class's form has a fix that removes the `mut`. A body that changes `self` or
-/// a part of it gives no E0001 after the E0018: the body is checked as `mut self` asks.
-#[test]
-fn mut_self_on_a_struct_should_be_e0018() {
-    let changes = |body: &str| {
-        format!(
-            "struct In {{ n: i64 }}\nfn bump(mut x: i64) {{ x = 1 }}\n\
-             struct P {{ n: i64; xs: [i64]; i: In; o: In? }}\n\
-             extend P {{\n    fn m(mut self) {{ {body} }}\n}}\nfn main() {{}}"
-        )
-    };
-    let rows = [
-        (
-            "an extend of a struct",
-            "struct P { n: i64 }\nextend P {\n    fn m(mut self) {}\n}\nfn main() {}".to_string(),
-        ),
-        (
-            "an extend of an alias of a struct",
-            "struct P { n: i64 }\ntype A = P\nextend A {\n    fn m(mut self) {}\n}\nfn main() {}"
-                .to_string(),
-        ),
-        ("a write of a field of `self`", changes("self.n = 2")),
-        ("a `push` to a field of `self`", changes("self.xs.push(1)")),
-        (
-            "a write of a nested field of `self`",
-            changes("self.i.n = 2"),
-        ),
-        (
-            "a field of `self` as a `mut` argument",
-            changes("bump(mut self.n)"),
-        ),
-    ];
-    for (row, src) in &rows {
-        let (row, src) = (*row, src.as_str());
-        let d = only_error(row, src, MutSelf, (src.lines().count() - 2, 10));
-        assert!(d.fixes().is_empty(), "row `{row}`: {d:?}");
-        assert!(d.help().is_some(), "row `{row}`: {d:?}");
-    }
-    // A write through `?.` stays E0062, as for a `let mut` root, and is no E0001.
-    codes_row(
-        "a write through `?.` of a field of `self`",
-        &changes("self.o?.n = 2"),
-        &[(MutSelf, (5, 10)), (MayBeNone, (5, 28))],
     );
 }
 

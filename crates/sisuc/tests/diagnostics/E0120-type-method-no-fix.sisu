@@ -5,7 +5,7 @@
 // THEN it reports E0120 with no fix at 40:10, 44:10, 48:10, 52:10, 56:10, 57:10, 61:10, 65:10 and 70:19
 // AND it reports E0120 for an enum at 66:7, with E0137 and its own fix for the type argument
 // AND a method of an `extend` block keeps E0105 at 74:5 for a struct, and E0118 for an enum
-// AND a `mut self` method reports its own error, E0018, and no other
+// AND a `mut self` method on a parameter reports E0120 at 79:10, with an unsafe fix
 struct Tree {
     n: i64
 

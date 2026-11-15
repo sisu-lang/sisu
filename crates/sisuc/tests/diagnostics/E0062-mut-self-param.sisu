@@ -1,0 +1,62 @@
+// GIVEN an interface `Adder` whose `add` takes `mut self`, and `Holder` with an associated type
+// `Item: Adder`
+// AND `Point: Adder`, a struct
+// AND `Wrap<T: Adder>`, a struct with the field `t: T`
+// WHEN a `?.` leads to a call of `add` on six values. Their types are a type parameter, an
+// associated type, a method's type parameter, a `T??` that one `??` peeled, a field's `T`, and
+// `Point`
+// THEN it reports E0062 at each `?.`. The first five name the type (`T`, `T.Item`, `U`, `T` and
+// `T`), and the last says a struct value
+interface Adder {
+    fn add(mut self)
+}
+
+interface Holder {
+    type Item: Adder
+    fn get(self) -> Item?
+}
+
+struct Wrap<T: Adder> {
+    t: T
+}
+
+struct Tool {
+    n: i64
+
+    fn _bump<U: Adder>(self, mut o: U?) {
+        print(self.n)
+        o?.add()
+    }
+}
+
+struct Point: Adder {
+    x: i64
+
+    fn add(mut self) {
+        self.x += 1
+    }
+}
+
+fn _bump<T: Adder>(mut o: T?) {
+    o?.add()
+}
+
+fn _bump_item<T: Holder>(h: T) {
+    let mut item = h.get()
+    item?.add()
+}
+
+fn _bump_peeled<T: Adder>(o: T??) {
+    let mut p = o ?? None
+    p?.add()
+}
+
+fn _bump_field<T: Adder>(mut o: Wrap<T>?) {
+    o?.t.add()
+}
+
+fn main() {
+    let mut p: Point? = Some(Point(x: 1))
+    p?.add()
+    print(p?.x ?? 0)
+}

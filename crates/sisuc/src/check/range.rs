@@ -208,7 +208,7 @@ impl Checker<'_> {
         // A `?.` that is `safe` and has a receiver that failed is itself an error (E0049, E0062).
         let call = match (dot, &receiver) {
             (Dot::Plain, _) => GetCall::Plain,
-            (Dot::Payload, _) => GetCall::Payload,
+            (Dot::Payload { .. }, _) => GetCall::Payload,
             (Dot::Safe, Ok(_)) => GetCall::Safe,
             (Dot::Safe, Err(_)) => GetCall::SafeFailed,
         };

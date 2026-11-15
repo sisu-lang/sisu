@@ -4,7 +4,10 @@ error[E0001]: cannot assign to a part of `self`
 10 |         self.s[0] = "x"
    |         ^^^^^^^^^^^^^^^
    |
-   = help: copy `self` into a `let mut` variable
+help: take `mut self`
+   |
+ 9 |     fn change(mut self) {
+   |               +++
 
 error[E0068]: a string has no single index
   --> E0068-string-write-not-writable.sisu:10:9

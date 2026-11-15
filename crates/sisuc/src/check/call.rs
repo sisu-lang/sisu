@@ -11,6 +11,7 @@ use super::interface::{Bounds, LangPath};
 use super::member::{FieldOwner, Found};
 use super::mut_args::{Callee, MutParts, MutSite, site_of};
 use super::names::{self, ItemId, Position, Resolved};
+use super::place::{CheckedPlace, first_safe, try_unread};
 use super::prelude::PRELUDE;
 use super::reports::Reported;
 use super::unused_names::Used;
@@ -22,7 +23,7 @@ use super::{array, number, string};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
     BlockBound, Code, Definition, Diagnostic, DiagnosticKind, MethodReceiver, ReceiverArgument,
-    Suggestion, TypeReceiver, alias, suggestion,
+    Suggestion, TypeReceiver, ValueKind, alias, suggestion,
 };
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
@@ -37,8 +38,9 @@ pub(super) enum Dot {
     /// `receiver?.method(args)`.
     Safe,
     /// The check of `receiver.method(args)` on the payload of an optional `receiver`. The user
-    /// wrote `.` on the optional, so the call is neither of the others.
-    Payload,
+    /// wrote `.` on the optional, so the call is neither of the others. `failed` says that the
+    /// check of the optional failed: the payload has no value of its own in any case.
+    Payload { failed: bool },
 }
 
 /// The method that a call written as a function names.
@@ -83,7 +85,9 @@ impl Checker<'_> {
             Resolved::Item(ItemId::Struct(id)) => {
                 self.construct_class(span, FieldOwner::Struct(id), site, args, None)
             }
-            Resolved::Item(ItemId::Function(func)) => self.invoke(span, func, None, site, args),
+            Resolved::Item(ItemId::Function(func)) => {
+                self.invoke(span, func, None, site, args, MutParts::default())
+            }
             Resolved::Item(ItemId::Interface(_)) => {
                 let kind = self.wrong_kind(callee.name, callee.span, at, answer);
                 let reported =
@@ -200,6 +204,12 @@ impl Checker<'_> {
                 if let Some((idiom, ty, optional)) = idiom {
                     let (argument, takes, bound) =
                         self.receiver_call(callee.span, &idiom, name, ty, first, rest);
+                    let takes_receiver = match idiom {
+                        Idiom::Method(func, _) => {
+                            self.fixed_receiver_takes(func, Some(&first.value))
+                        }
+                        Idiom::Built => true,
+                    };
                     let receiver = if optional {
                         MethodReceiver::Optional {
                             argument,
@@ -209,7 +219,7 @@ impl Checker<'_> {
                     } else {
                         MethodReceiver::Argument {
                             argument,
-                            safe: takes,
+                            safe: takes && takes_receiver,
                         }
                     };
                     let reported = self.error(DiagnosticKind::MethodAsFunction {
@@ -235,13 +245,14 @@ impl Checker<'_> {
                 && unlabeled
                 && site.written.is_empty();
             let bound = self.method_block_bound(func, owner, name, can_take);
+            let takes_receiver = self.fixed_receiver_takes(func, None);
             let reported = self.error(DiagnosticKind::MethodAsFunction {
                 name: callee.name.to_string(),
                 at: callee.span,
                 receiver: MethodReceiver::SelfValue {
                     // `self.name<T>(args)` keeps the type arguments, which a method call
                     // does not take (E0137).
-                    safe: takes && can_take,
+                    safe: takes && can_take && takes_receiver,
                 },
                 bound,
             });
@@ -416,7 +427,8 @@ impl Checker<'_> {
     /// value of the type, the fix calls the method on it, as `unknown_call` does. A label, a
     /// `mut` on the first argument, or a type argument of the method (`typed`) leaves no fix. The
     /// fix is safe when the fixed program checks: the method takes the other arguments, and its
-    /// result meets the type that `site` expects. Checks each argument once.
+    /// result meets the type that `site` expects, and its receiver can change when it takes
+    /// `mut self` (`fixed_receiver_takes`). Checks each argument once.
     pub(super) fn method_through_type(
         &mut self,
         func: tir::FuncId,
@@ -454,10 +466,11 @@ impl Checker<'_> {
                     let expected = site.expected.ty();
                     let meets = expected.is_none()
                         || (result.is_some() && self.result_meets((expected, result)));
+                    let takes_receiver = self.fixed_receiver_takes(func, Some(&first.value));
                     Some(TypeReceiver {
                         argument,
                         takes,
-                        safe: takes && meets,
+                        safe: takes && meets && takes_receiver,
                     })
                 } else {
                     self.stray(rest);
@@ -627,6 +640,10 @@ impl Checker<'_> {
     /// `parens`, which `safe` makes `receiver?.method(args)`. A type or `math` before the `.`
     /// may make it an idiom. Type arguments on a member the receiver has not are not reported:
     /// the unknown member is. `site` writes the method's name with its type arguments.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the type path, the parked receiver and the type arguments are steps of one call"
+    )]
     pub(super) fn method_expr(
         &mut self,
         span: Span,
@@ -665,16 +682,23 @@ impl Checker<'_> {
             ) {
             checked
         } else {
-            // The receiver of a `push` is a place, checked once and held for the call.
-            let on_place = method.name.as_str() == "push" && self.is_push_place(receiver);
+            // The receiver of a `push`, or of a call that may take `mut self`, is a place,
+            // checked once and held for the call.
+            let parked = self.parks_receiver(receiver, method.name, safe);
+            let on_place = parked && method.name.as_str() == "push";
             let scrutinee = if on_place {
                 self.push_receiver(receiver)
+            } else if parked {
+                self.receiver_place(receiver, method.name)
             } else {
                 self.value_kept(receiver)
             };
             let mut call = |c: &mut Self, checked: Checked| -> Checked {
                 if !path && let Some((first, _)) = types.split_first() {
                     if let Some(value) = c.method_args(&checked, receiver, method, first, angles) {
+                        // A field read as a comparison reads the receiver.
+                        let parked = c.take_parked(receiver);
+                        c.read_parked(parked, &checked, receiver);
                         c.stray_call(type_of(&checked), method.name, args);
                         return Err(value);
                     }
@@ -699,6 +723,9 @@ impl Checker<'_> {
                         && c.could_be_value(first)
                     {
                         deferred = false;
+                        // The comparison reads the receiver.
+                        let parked = c.take_parked(receiver);
+                        c.read_parked(parked, &checked, receiver);
                         c.stray_call(type_of(&checked), method.name, args);
                         let at = receiver.span.to(method.span);
                         let text = c.source;
@@ -739,6 +766,10 @@ impl Checker<'_> {
         if deferred && !unknown {
             self.not_generic(method.name, angles);
         }
+        debug_assert!(
+            !matches!(&self.body.pushed, Some((at, _)) if *at == receiver.span),
+            "the call should take the place that it parked"
+        );
         checked
     }
 
@@ -770,6 +801,8 @@ impl Checker<'_> {
         let safe = dot == Dot::Safe;
         // The arguments are not part of the chain that an index ends; `expr` restores the flag.
         let indexed = std::mem::take(&mut self.body.indexed);
+        // The place that `method_expr` kept for the receiver: each way out reads or writes it.
+        let mut parked = self.take_parked(receiver_expr);
         // A range argument is E0023 once the call is found, as it is anywhere else. A string's
         // `get` takes its range (`string_method`), and so does the `get` of a `string?`, which is
         // E0062 first. An array's `get` takes an `i64`, so a range is E0032, found before
@@ -785,35 +818,41 @@ impl Checker<'_> {
             // `base[a..b]` is the help for a `.` call only: through `?.`, or on an optional's
             // payload, it would be E0062.
             let base = (dot == Dot::Plain).then_some(receiver_expr);
+            self.read_parked(parked.take(), &receiver, receiver_expr);
             self.refuse_method(receiver_expr, (type_of(&receiver), method), args, Some(1));
             return self.array_get_range((span, array), base, args);
         }
         let receiver_ty = type_of(&receiver);
-        let receiver = match self.generated_operator(span, receiver, site, args) {
-            Ok(checked) => {
-                self.refuse_method(receiver_expr, (receiver_ty, method), args, Some(1));
-                return checked;
-            }
+        let op = self.generated_operator(span, (receiver, receiver_expr), &mut parked, site, args);
+        let receiver = match op {
+            Ok(checked) => return checked,
             Err(receiver) => receiver,
         };
-        // A `push` onto an array writes its place, so it is not a method of the prelude's.
-        if method.name.as_str() == "push" {
-            let place = self.take_pushed(receiver_expr);
-            match type_of(&receiver) {
-                // A type that is known and is no array, a class with a `push` method of its own,
-                // reads its receiver and writes nothing.
-                Some(ty) if !matches!(ty.kind(), TypeKind::Array(_)) => {
-                    if let (Ok(read), Some(_)) = (&receiver, place) {
-                        #[cfg(test)]
-                        super::OWN_PUSH_READS.set(super::OWN_PUSH_READS.get() + 1);
-                        self.read_pushed(read, receiver_expr);
-                    }
-                }
-                _ => {
-                    self.refuse_method(receiver_expr, (receiver_ty, method), args, Some(1));
-                    return self.push(span, safe, (receiver, place), receiver_expr, args);
-                }
-            }
+        // A `push` onto an array writes its place, so it is not a method of the prelude's. A type
+        // that is known and is no array has a `push` method of its own. That method reads its
+        // receiver and writes nothing, unless it takes `mut self`.
+        let own_push =
+            type_of(&receiver).is_some_and(|ty| !matches!(ty.kind(), TypeKind::Array(_)));
+        if method.name.as_str() == "push" && !own_push {
+            self.refuse_method(receiver_expr, (receiver_ty, method), args, Some(1));
+            return self.push(span, safe, (receiver, parked), receiver_expr, args);
+        }
+        #[cfg(test)]
+        if method.name.as_str() == "push" && receiver.is_ok() && parked.is_some() {
+            super::OWN_PUSH_READS.set(super::OWN_PUSH_READS.get() + 1);
+        }
+        // Only the method of a struct or an enum, or a requirement, can take `mut self`: any
+        // other call reads the place.
+        let bound = |ty: Type| {
+            matches!(
+                ty.kind(),
+                TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..)
+            )
+        };
+        if !type_of(&receiver).is_some_and(|ty| {
+            matches!(ty.kind(), TypeKind::Struct(..) | TypeKind::Enum(..)) || bound(ty)
+        }) {
+            self.read_parked(parked.take(), &receiver, receiver_expr);
         }
         match type_of(&receiver) {
             // A built-in type, an array and an optional have a `Display` that the compiler writes,
@@ -824,7 +863,7 @@ impl Checker<'_> {
             // A method of the prelude's `extend` of an array type or `i64` answers before the
             // methods the compiler writes.
             Some(ty) if let Some(func) = self.prelude_method(ty, method.name) => {
-                return self.invoke(span, func, Some(receiver), site, args);
+                return self.invoke(span, func, Some(receiver), site, args, MutParts::default());
             }
             Some(ty) if matches!(ty.kind(), TypeKind::Array(_)) => {
                 self.refuse_builtin(receiver_expr, ty, method, args);
@@ -838,13 +877,9 @@ impl Checker<'_> {
                 self.refuse_builtin(receiver_expr, ty, method, args);
                 return self.number_method(span, receiver, ty, method, args);
             }
-            Some(ty)
-                if matches!(
-                    ty.kind(),
-                    TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..)
-                ) =>
-            {
-                return self.bound_method(span, receiver, ty, site, args);
+            Some(ty) if bound(ty) => {
+                let receiver = (receiver, receiver_expr, parked);
+                return self.bound_method(span, dot, receiver, ty, site, args);
             }
             _ => {}
         }
@@ -856,15 +891,23 @@ impl Checker<'_> {
             return self.method_of_payload(span, value, payload, site, args, indexed);
         }
         let ty = type_of(&receiver);
-        match self.find_method(&receiver, site, (span, args.is_empty())) {
-            Ok(Found::Func(func)) => self.invoke(span, func, Some(receiver), site, args),
+        let found = self.find_method(&receiver, site, (span, args.is_empty()));
+        if let Ok(Found::Func(func)) = found
+            && self.signatures[func.0].self_mut
+        {
+            let receiver = (receiver, receiver_expr, parked);
+            return self.mut_self_call(span, dot, func, receiver, site, args);
+        }
+        self.read_parked(parked, &receiver, receiver_expr);
+        match found {
+            Ok(Found::Func(func)) => {
+                self.invoke(span, func, Some(receiver), site, args, MutParts::default())
+            }
             Ok(Found::GeneratedDisplay { listed }) => {
                 self.generated_display(span, receiver, site, args, listed)
             }
             Err(reported) => {
-                if ty.is_none() {
-                    self.stamp_type_call(receiver_expr, method.name, args);
-                }
+                self.stamp_failed_call(ty, receiver_expr, method.name, args);
                 self.labels(args);
                 self.stray_call(ty, method.name, args);
                 Err(Poisoned::untyped(reported))
@@ -872,11 +915,134 @@ impl Checker<'_> {
         }
     }
 
+    /// Records the reads of `receiver`, checked from `receiver_expr`, when `parked` holds its
+    /// place: the call takes no `mut self`, so it reads the place, as a class's own `push` does.
+    pub(super) fn read_parked(
+        &mut self,
+        parked: Option<CheckedPlace>,
+        receiver: &Checked,
+        receiver_expr: &ast::Expr,
+    ) {
+        if let (Some(_), Ok(read)) = (parked, receiver) {
+            self.read_pushed(read, receiver_expr);
+        }
+    }
+
+    /// The call of `func`, a method that takes `mut self`, on `receiver`, checked from
+    /// `receiver_expr`, whose place is `parked` when `method_expr` kept it (`mut_self_receiver`).
+    fn mut_self_call(
+        &mut self,
+        span: Span,
+        dot: Dot,
+        func: tir::FuncId,
+        receiver: (Checked, &ast::Expr, Option<CheckedPlace>),
+        site: Site<'_>,
+        args: &[ast::Arg],
+    ) -> Checked {
+        match self.mut_self_receiver(dot, receiver, site.name, Some(func)) {
+            Ok((temp, parts)) => self.invoke(span, func, Some(temp), site, args, parts),
+            Err((receiver, reported)) => {
+                let checked =
+                    self.invoke(span, func, Some(receiver), site, args, MutParts::default());
+                match reported {
+                    Some(reported) => Err(Poisoned::new(type_of(&checked), reported)),
+                    None => checked,
+                }
+            }
+        }
+    }
+
+    /// The receiver of a call of `method`, which takes `mut self`: `receiver`, checked from
+    /// `receiver_expr`, whose place is `parked` when `method_expr` kept it. The place is the
+    /// first `mut` part of the call (ADR 0043): its held report is raised, and its root is
+    /// stamped as written. A receiver that is no place is E0021. One that a `?.` leads to is
+    /// E0062 until `?.` can write a value. Gives the temporary that the call takes and the parts
+    /// it starts with. When the place fails, gives the receiver to check the call with, and the
+    /// report that stands for the call, if any. `func` is the method, when the call names one and
+    /// not a requirement. An error here exists only because it takes `mut self`, so its W0002
+    /// fix is unsafe. The call does not reassign the root of its place (`stamp_call`).
+    pub(super) fn mut_self_receiver(
+        &mut self,
+        dot: Dot,
+        (receiver, receiver_expr, parked): (Checked, &ast::Expr, Option<CheckedPlace>),
+        method: &ast::Ident,
+        func: Option<tir::FuncId>,
+    ) -> Result<(Checked, MutParts), (Checked, Option<Reported>)> {
+        let errors = self.diagnostics.errors();
+        // A receiver that failed has its own report, which the `?.` led to: E0062 would repeat
+        // it. The payload of a `.` on an optional fails only when the optional did.
+        let failed = match dot {
+            Dot::Payload { failed } => failed,
+            Dot::Plain | Dot::Safe => receiver.is_err(),
+        };
+        let chain = match dot {
+            _ if failed => {
+                // The call writes the root of its receiver, as a field write does.
+                self.reassign_chain_root(receiver_expr);
+                None
+            }
+            Dot::Safe => first_safe(receiver_expr).or(Some((receiver_expr, method))),
+            Dot::Plain | Dot::Payload { .. } => first_safe(receiver_expr),
+        };
+        let reported = if let Some(chain) = chain {
+            let kind = match type_of(&receiver).map(array::innermost) {
+                // A type parameter or an associated type has no kind of its own: name the type.
+                Some(ty) if matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) => {
+                    ValueKind::Type(self.type_name(ty))
+                }
+                Some(ty) if matches!(ty.kind(), TypeKind::Enum(..)) => ValueKind::Enum,
+                _ => ValueKind::Struct,
+            };
+            let d = self.chain_call(receiver_expr, chain, (method.name, kind));
+            // The E0062 of a `.` on the optional that the `?.` gives would repeat it.
+            self.body.failed_lookups.insert(method.span);
+            Some(self.error(d))
+        } else if receiver.is_err() {
+            // The receiver's own error, or the E0062 of a `.` on an optional, is the report.
+            None
+        } else if let Some(place) = parked {
+            match func {
+                Some(func) => self.stamp_call(receiver_expr, func),
+                None => self.stamp_push(receiver_expr),
+            }
+            self.copy_written(receiver_expr, receiver_expr.span, false);
+            self.place_report(place)
+        } else {
+            // A value that is no place: the change of the call would be lost.
+            Some(self.error(DiagnosticKind::PushToTemporary {
+                at: receiver_expr.span,
+                range: None,
+                method: Some(method.name),
+            }))
+        };
+        if let Some(func) = func
+            && self.diagnostics.errors() != errors
+        {
+            self.needs_mut_self.insert(func);
+        }
+        let read = match receiver {
+            Ok(read) if reported.is_none() => read,
+            receiver => return Err((receiver, reported)),
+        };
+        let ty = read.ty;
+        let path = try_unread(read, receiver_expr)
+            .expect("the place that `method_expr` kept should read as its path");
+        let (temp, parts) = self.receiver_slot(receiver_expr, (method.name, func), path, ty);
+        Ok((Ok(temp), parts))
+    }
+
     /// Stamps the arguments of `Name.method(args)`, whose receiver has no type. E0105 reports a
     /// class or an interface there, and a failed local can have its name. An argument at a `mut`
     /// parameter of the method, or of the requirement, gets the help of a place. A name that is
-    /// none of them, or has no such method, stamps nothing.
+    /// none of them, or has no such method, stamps nothing. A local whose value failed has no type
+    /// either, nor does a field or index path that failed. When a `mut self` method has the name,
+    /// the root of such a receiver is stamped as written, as a field write stamps it. The declared
+    /// types can say that the call only reads it: then nothing is stamped. A type name is no
+    /// binding, so it has no root to stamp.
     fn stamp_type_call(&mut self, receiver: &ast::Expr, method: Symbol, args: &[ast::Arg]) {
+        if self.mut_self_names.contains(&method) && self.receiver_writes(receiver, method) {
+            self.reassign_chain_root(receiver);
+        }
         let ExprKind::Name(name) = receiver.kind else {
             return;
         };
@@ -897,6 +1063,27 @@ impl Checker<'_> {
             return;
         };
         self.stamp_mut_params(args, &muts);
+    }
+
+    /// Stamps the call `receiver.method(args)` that found no method, where `ty` is the type of
+    /// `receiver`. With no type, `stamp_type_call` stamps it. A broken method of a struct or an
+    /// enum may take `mut self`, so the call stamps the root of its receiver as written.
+    fn stamp_failed_call(
+        &mut self,
+        ty: Option<Type>,
+        receiver: &ast::Expr,
+        method: Symbol,
+        args: &[ast::Arg],
+    ) {
+        let Some(ty) = ty else {
+            self.stamp_type_call(receiver, method, args);
+            return;
+        };
+        if matches!(ty.kind(), TypeKind::Struct(..) | TypeKind::Enum(..))
+            && matches!(self.own_method(ty, method), Some(Declared::Poisoned(_)))
+        {
+            self.reassign_chain_root(receiver);
+        }
     }
 
     /// E0167 for each `mut` argument of the call `receiver.method(args)` of a method of the
@@ -987,11 +1174,13 @@ impl Checker<'_> {
     /// writes: the operator itself, as `==` and `<` make it. `Err` gives the receiver back when
     /// the call is something else: a method that the type writes, which wins (ADR 0023), or a
     /// method of another name. The arguments are checked as for any method: one count, no label,
-    /// and the call takes no type argument.
+    /// and the call takes no type argument, and E0167 refuses a `mut` argument. The operator
+    /// reads `parked`, the place of `receiver_expr` that `method_expr` kept.
     fn generated_operator(
         &mut self,
         span: Span,
-        receiver: Checked,
+        (receiver, receiver_expr): (Checked, &ast::Expr),
+        parked: &mut Option<CheckedPlace>,
         site: Site<'_>,
         args: &[ast::Arg],
     ) -> Result<Checked, Checked> {
@@ -1018,6 +1207,7 @@ impl Checker<'_> {
         {
             return Err(receiver);
         }
+        self.read_parked(parked.take(), &receiver, receiver_expr);
         if !site.written.is_empty() {
             self.not_generic(method.name, site.angles);
         }
@@ -1032,7 +1222,7 @@ impl Checker<'_> {
         }
         let labeled = self.labels(args);
         let (other, _) = self.operand(&args[0].value, Expectation::Required(ty, Origin::None));
-        Ok(match (receiver, other) {
+        let checked = match (receiver, other) {
             (Ok(lhs), Ok(rhs)) if labeled.is_none() => {
                 let eq = interface == self.lang.eq;
                 self.record_shown(ty, interface);
@@ -1066,7 +1256,9 @@ impl Checker<'_> {
                     .expect("a generated `eq` or `less` that fails should have a failed part");
                 Err(Poisoned::typed(Type::BOOL, reported))
             }
-        })
+        };
+        self.refuse_method(receiver_expr, (Some(ty), method), args, Some(1));
+        Ok(checked)
     }
 
     /// A call of `func`, which `site` writes. `receiver` is a method's `self`; `args` match the
@@ -1082,6 +1274,7 @@ impl Checker<'_> {
         receiver: Option<Checked>,
         site: Site<'_>,
         args: &[ast::Arg],
+        parts: MutParts,
     ) -> Checked {
         self.record(Used::Func(func), span);
         // A method that meets a requirement uses the interfaces that it meets.
@@ -1099,7 +1292,7 @@ impl Checker<'_> {
             muts: &muts,
             names: &names,
         };
-        let mut parts = MutParts::default();
+        let mut parts = parts;
         let shown = sig.param_shown.clone();
         let declared = sig.type_params.clone();
         let bounds = sig.bounds.clone();

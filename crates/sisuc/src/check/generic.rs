@@ -4190,12 +4190,21 @@ impl Checker<'_> {
         // that ends in such a call is ranked, so this must hold.
         // shortcut: a method named `push` that a class writes with type parameters of its own, on
         // a field, is not ranked as a waiting call; upgrade if such a call needs the context.
+        // The receiver of a call that may take `mut self` is such a place too.
+        // shortcut: a plain generic method that shares a `mut self` name is not ranked, and a
+        // literal argument of such a method takes its default type (E0032); upgrade by testing
+        // the receiver's declared type when such a call needs the context.
         if let K::MethodCall {
-            receiver, method, ..
+            receiver,
+            method,
+            safe,
+            ..
         } = &e.kind
-            && method.name.as_str() == "push"
-            && self.is_push_place(receiver)
+            && self.parks_receiver(receiver, method.name, *safe)
         {
+            if method.name.as_str() != "push" {
+                self.unranked_mut_self.insert(method.name);
+            }
             return None;
         }
         match &e.kind {

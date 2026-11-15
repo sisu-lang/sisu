@@ -1,0 +1,24 @@
+error[E0169]: a `mut` argument must be a place: a variable, a `mut` field, or an element of one of these
+  --> E0169-plain-self.sisu:13:19
+   |
+13 |         reset(mut self.tally)
+   |                   ^^^^^^^^^^ not a place
+   |
+help: take `mut self`
+   |
+12 |     fn clear(mut self) {
+   |              +++
+
+error[E0169]: a `mut` argument must be a place: a variable, a `mut` field, or an element of one of these
+  --> E0169-plain-self.sisu:17:22
+   |
+17 |         wipe_all(mut self)
+   |                      ^^^^ not a place
+   |
+help: take `mut self`
+   |
+16 |     fn wipe(mut self) {
+   |             +++
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0169

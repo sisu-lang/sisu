@@ -1,0 +1,24 @@
+error[E0001]: cannot change `self`
+  --> E0001-plain-self.sisu:15:9
+   |
+15 |         self.move_by(-1, -1)
+   |         ^^^^ `move_by` changes `self`
+   |
+help: take `mut self`
+   |
+14 |     fn home(mut self) {
+   |             +++
+
+error[E0001]: cannot change `self`
+  --> E0001-plain-self.sisu:23:9
+   |
+23 |         self.at.move_by(1, 1)
+   |         ^^^^^^^ `move_by` changes `self`
+   |
+help: take `mut self`
+   |
+22 |     fn dock(mut self) {
+   |             +++
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001

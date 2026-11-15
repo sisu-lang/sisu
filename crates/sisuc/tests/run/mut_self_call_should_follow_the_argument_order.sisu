@@ -1,0 +1,102 @@
+// GIVEN `struct C { v: i64 }` with three `mut self` methods
+// AND `change`, which sets `v` to 9 and prints its argument
+// AND `bump`, which adds 1 to `v` and gives it
+// AND `add`, which adds its argument to `v`
+// AND `let mut cs = [C(v: 1), C(v: 1)]`
+// WHEN each block runs a `mut self` call on an element of `cs` and prints the element
+// THEN an argument sees the place as it was, and a nested `mut self` call runs first
+// AND the receiver's index runs once and first
+// AND the receiver goes to the call after the arguments
+// AND an argument that changes the root changes what the call gets
+// AND `before`, a copy of `cs` taken before the call, keeps 1
+// o2-calls: before_the_change C.change 1
+// o2-calls: receiver_after_the_arguments C.add 1
+struct C {
+    v: i64
+
+    // Each method recurses while `v` is below zero, so that `-O2` keeps the calls.
+    fn change(mut self, x: i64) {
+        if self.v < 0 {
+            self.change(x)
+        }
+        self.v = 9
+        print(x)
+    }
+
+    fn bump(mut self) -> i64 {
+        if self.v < 0 {
+            self.bump()
+        }
+        self.v += 1
+        self.v
+    }
+
+    fn add(mut self, x: i64) {
+        if self.v < 0 {
+            self.add(x)
+        }
+        self.v += x
+    }
+}
+
+fn idx() -> i64 {
+    print("i")
+    0
+}
+
+fn arg() -> i64 {
+    print("a")
+    1
+}
+
+fn before_the_change() {
+    let mut cs = [C(v: 1), C(v: 1)]
+    let before = cs
+    cs[0].change(cs[0].v)             // 1
+    print(cs[0].v)                    // 9
+    print(before[0].v)                // 1
+}
+
+fn nested_call_first() {
+    let mut cs = [C(v: 1), C(v: 1)]
+    let before = cs
+    cs[0].change(cs[1].bump())        // 2
+    print(cs[1].v)                    // 2
+    print(before[1].v)                // 1
+}
+
+fn receiver_index_first() {
+    let mut cs = [C(v: 1), C(v: 1)]
+    let before = cs
+    cs[idx()].change(arg())           // i, then a, then 1
+    print(cs[0].v)                    // 9
+    print(before[0].v)                // 1
+}
+
+// The call reads `cs[0]` after `bump` gave 2, so `add` adds 2 to 2 (3 if it read it before).
+fn receiver_after_the_arguments() {
+    let mut cs = [C(v: 1), C(v: 1)]
+    let before = cs
+    cs[0].add(cs[0].bump())
+    print(cs[0].v)                    // 4
+    print(before[0].v)                // 1
+}
+
+fn argument_changes_the_root() {
+    let mut cs = [C(v: 1), C(v: 1)]
+    let before = cs
+    cs[0].add({
+        cs = [C(v: 10), C(v: 1)]
+        2
+    })
+    print(cs[0].v)                    // 12
+    print(before[0].v)                // 1
+}
+
+fn main() {
+    before_the_change()
+    nested_call_first()
+    receiver_index_first()
+    receiver_after_the_arguments()
+    argument_changes_the_root()
+}

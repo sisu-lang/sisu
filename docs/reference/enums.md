@@ -77,7 +77,7 @@ A variant is a name, and then a payload in `(` and `)` when it holds values. The
 - A variant that no live code builds also builds with a warning. [W0013](../diagnostics/W0013.md)
 - A pattern that names a variant does not build it.
 
-A method follows the rules of a [method of a class](classes.md#methods): it has `self` as its first parameter. `self` is the value of the enum. An enum has no method without `self` ([E0017](../diagnostics/E0017.md)).
+A method follows the rules of a [method of a class](classes.md#methods): it has `self` as its first parameter. `self` is the value of the enum. An enum has no method without `self` ([E0017](../diagnostics/E0017.md)). A method can take `mut self` to change the place that it is called on, as a [method of a struct](structs.md#mut-self) does.
 
 A payload can name the enum itself, as `Cons(i64, List)` does below. Some value of the enum must be possible to build ([E0027](../diagnostics/E0027.md)). In this example, `Nil` does it. An optional or an array in a payload does it too.
 
@@ -160,7 +160,7 @@ fn main() {
 
 ## Enum values
 
-An enum value behaves as a copy ([Values and memory](values.md#copied-and-shared)). The value never changes. A `let mut` binding can get a new value, and a `match` takes the value apart.
+An enum value behaves as a copy ([Values and memory](values.md#copied-and-shared)). The value never changes. A `let mut` binding can get a new value, and a `match` takes the value apart. A `mut self` method gets a new value for the place that it is called on.
 
 ```sisu
 enum Light {
@@ -180,6 +180,30 @@ fn main() {
     light = light.next()
     print(light == Light.Green)  // true
     print(light.next() == Light.Red)   // true
+}
+```
+
+A method that takes `mut self` gives its place a new value. The call has no mark, and the receiver is a place that can change ([Structs](structs.md#mut-self)).
+
+```sisu
+enum Light {
+    Red
+    Green
+
+    fn flip(mut self) {
+        self = match self {
+            Red => Light.Green
+            Green => Light.Red
+        }
+    }
+}
+
+fn main() {
+    let mut light = Light.Red
+    let before = light
+    light.flip()
+    print(light == Light.Green)   // true
+    print(before == Light.Red)    // true
 }
 ```
 

@@ -335,6 +335,8 @@ mod tests {
             "enum T{P}fn a(){P<i>.S}",
             "fn main() {\n    match 1 {\n        If => print(1)\n        _ => print(2)\n    }\n}\n",
             "fn pick(c: bool) -> i64 {\n    rows: loop {..\n        break loop {\n            if c { break rows 1 }\n            break 2\n        }\n    }\n}\n\nfn main() {\n    print(pick(true))\n}\n",
+            "struct Pile {\n    n: i64\n    fn change(mut self, mut other: Pile) { other.n = 1 }\n}\nfn main() {\n    let mut pile = Pile(n: 0)\n    pile.change(mut pile)\n}\n",
+            "struct Pile {\n    n: i64\n    fn show(mut self) { print(self.n) }\n}\nfn main() {\n    let pile = Pile(n: 0)\n    pile.show()\n}\n",
         ];
         let failures: Vec<String> = crate::on_compiler_stack(|| {
             rows.iter()

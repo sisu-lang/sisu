@@ -3,8 +3,8 @@
 
 use super::*;
 use Code::{
-    AssignToSelf, BindingNotFound, CannotExtend, DefinedTwice, MethodNeedsSelf, Mismatch, NoMain,
-    SelfOutside, SelfOutsideMethod, UnknownType,
+    BindingNotFound, CannotExtend, DefinedTwice, MethodNeedsSelf, Mismatch, NoMain, SelfOutside,
+    SelfOutsideMethod, UnknownType,
 };
 
 const IF: &str = r#"if c { "a" } else { [] }"#;
@@ -274,7 +274,7 @@ fn a_failed_self_should_give_no_error_of_its_own() {
         (
             "extend mut",
             "extend Missing {\n    fn m(mut self) { self = 1 }\n}\nfn main() {}\n".into(),
-            vec![EXTEND_MISSING, (AssignToSelf, (2, 22))],
+            vec![EXTEND_MISSING],
         ),
         (
             "extend unused",

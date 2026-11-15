@@ -707,10 +707,12 @@ fn finish(functions: &mut [Function], program: &tir::Program) {
     if cfg!(debug_assertions) {
         quiet_checked(functions);
     }
-    for function in functions {
+    for function in &mut *functions {
         pairs::remove_pairs(function);
-        if cfg!(debug_assertions) {
-            certified(function);
+    }
+    if cfg!(debug_assertions) {
+        for function in &*functions {
+            certified(function, functions);
         }
     }
 }
@@ -761,9 +763,9 @@ fn modes_checked(functions: &[Function]) {
     }
 }
 
-/// Panics on the first rule `function` breaks.
-fn certified(function: &Function) {
-    if let Err(violation) = certify::certify(function) {
+/// Panics on the first rule `function`, one of `functions`, breaks.
+fn certified(function: &Function, functions: &[Function]) {
+    if let Err(violation) = certify::certify_in(function, functions) {
         panic!(
             "mir certifier: fn {}, bb{}, {}: {}",
             function.name,

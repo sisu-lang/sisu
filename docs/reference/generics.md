@@ -430,6 +430,45 @@ fn main() {
 - `Self` in an interface is the type that conforms to it, as in `fn eq(self, other: Self) -> bool`.
 - An interface can require other interfaces: `interface Shape: Display`. A type that conforms to `Shape` conforms to `Display` too.
 - A method in an interface can have type parameters of its own. Such an interface can be a bound, but not an `any` type.
+- A requirement can take `mut self`: `fn bump(mut self)`. A struct or an enum meets it with `mut self` or with plain `self`, and a class meets it with plain `self`. A method with `mut self` does not meet a requirement with plain `self`. [E0152](../diagnostics/E0152.md)
+- A call of a requirement with `mut self` through a bound changes the place of the receiver, if the method that the type has takes `mut self`. A method with plain `self` writes nothing back.
+- An interface with a requirement that takes `mut self`, or one that inherits such an interface, cannot be an `any` type for now. [E0164](../diagnostics/E0164.md)
+
+A requirement that takes `mut self` changes the place that it is called on. The call needs a receiver that can change, such as a `let mut`.
+
+```sisu
+interface Counter {
+    fn bump(mut self)
+}
+
+struct Tally: Counter {
+    n: i64
+
+    fn bump(mut self) {
+        self.n += 1
+    }
+}
+
+struct Plain: Counter {
+    n: i64
+
+    fn bump(self) {}
+}
+
+fn twice<T: Counter>(t: T) -> T {
+    let mut u = t
+    u.bump()
+    u.bump()
+    u
+}
+
+fn main() {
+    let a = twice(Tally(n: 0))
+    let b = twice(Plain(n: 5))
+    print(a.n)               // 2
+    print(b.n)               // 5
+}
+```
 
 ### Conformance after the declaration
 
@@ -756,6 +795,7 @@ fn main() {
 - An interface cannot be `any` when it has a generic method, an associated type, or `Self` in a place other than the receiver. So `any Eq` and `any Ord` are errors. [E0164](../diagnostics/E0164.md)
 - The same is true when it inherits an interface with `Self` in its arguments, as in `interface Node: Link<Self>`. [E0164](../diagnostics/E0164.md)
 - The same is true when it inherits an interface that has one of these requirements. [E0164](../diagnostics/E0164.md)
+- For now, the same is true when it has a requirement that takes `mut self`, or inherits an interface that has one. A call through `any` would write into a box that copies share. [E0164](../diagnostics/E0164.md)
 
 A value that is no object converts in the same way. A number, a `string` and a `char` conform to `Display`, and an enum can list an interface as a class does:
 
