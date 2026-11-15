@@ -242,6 +242,12 @@ error[E0059]: `print` takes one value
     |
 160 |     let _s: string = print(1, 2)
     |                      ^^^^^^^^^^^
+    |
+help: join the values into one string
+    |
+160 -     let _s: string = print(1, 2)
+160 +     let _s: string = print("{1} {2}")
+    |
 
 error[E0043]: `print` returns no value
    --> E0032-failed-call-result.sisu:160:22

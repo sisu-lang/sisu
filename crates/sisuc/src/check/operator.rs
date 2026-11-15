@@ -47,9 +47,12 @@ impl Checker<'_> {
                 // The operator gives a new poisoned value, so no value outlives the cut reports.
                 self.diagnostics.drop_since(before);
             }
+            // `i64(` and `)` give an `i64`, so the context must expect one or nothing.
+            let convert = (!literal && matches!(expected.ty(), None | Some(Type::I64)))
+                .then_some(operand.span);
             let reported = self
                 .diagnostics
-                .error(DiagnosticKind::NegatedU8 { at: span });
+                .error(DiagnosticKind::NegatedU8 { at: span, convert });
             return Err(Poisoned {
                 mismatch: literal,
                 ..Poisoned::untyped(reported)
@@ -1146,9 +1149,10 @@ impl Checker<'_> {
         let scrutinee = self.value(lhs, Expectation::None);
         let Some(TypeKind::Optional(payload)) = type_of(&scrutinee).map(Type::kind) else {
             let reported = match known_type(&scrutinee) {
-                Ok(_) => self
-                    .diagnostics
-                    .error(DiagnosticKind::CoalesceNotOptional { at: lhs.span }),
+                Ok(_) => self.diagnostics.error(DiagnosticKind::CoalesceNotOptional {
+                    at: lhs.span,
+                    default: Span::new(lhs.span.end(), rhs.span.end()),
+                }),
                 Err(reported) => reported,
             };
             // Only its own diagnostics matter.

@@ -167,7 +167,7 @@ impl Checker<'_> {
         if ty == Type::U8 && !(0..=i64::from(u8::MAX)).contains(&value) {
             // Only `-9223372036854775808` parses to a negative literal.
             let reported = self.diagnostics.error(if value < 0 {
-                DiagnosticKind::NegatedU8 { at }
+                DiagnosticKind::NegatedU8 { at, convert: None }
             } else {
                 DiagnosticKind::IntegerDoesNotFit {
                     text: self.source.text(literal).to_string(),

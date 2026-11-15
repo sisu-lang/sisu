@@ -3,6 +3,12 @@ error[E0059]: `print` takes one value
   |
 2 |     print(1, 2)
   |     ^^^^^^^^^^^
+  |
+help: join the values into one string
+  |
+2 -     print(1, 2)
+2 +     print("{1} {2}")
+  |
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0059
