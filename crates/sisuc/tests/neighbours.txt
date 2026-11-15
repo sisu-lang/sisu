@@ -45,7 +45,11 @@ class Fox: Pet {
     fn tail(self) -> i64 { 1 }
 }
 class Rock {}
-struct Stone {}
+// `peek` takes `mut self` and never changes `self`, so its W0002 fix is safe, unless a call of it
+// needs the `mut`. It gives no value: a `let mut` that only its call writes is then W0014.
+struct Stone {
+    fn peek(mut self) { print(1) }
+}
 struct Point {
     x: i64
     y: i64
@@ -232,6 +236,17 @@ fn main() {
 enum Eb {
     A
 }
+// A method that a syntax error took may take `mut self`, so its call stamps `s` as written.
+struct Sb {
+    n: i64
+    fn m(mut self) {
+        self.n =
+    }
+}
+fn sb() {
+    let mut s = Sb(n: 1)
+    s.m()
+}
 extend Eb: Nope {}
 type Ae = Sa
 extend Ae {}
@@ -411,6 +426,11 @@ $[0].bump()
 $?.bump()
 $.p.bump()
 id($.none())
+# A call of `Stone.peek`, a `mut self` method that never changes `self`: on a `let mut` that
+# nothing reads, on a `_` name, and in the argument of a generic call, which does not rank it.
+let mut pk = $; pk.peek()
+let mut _pk = $; _pk.peek()
+id($.peek())
 # A generated `eq` and `less`, and an array's `get` with a range, whose names `mut self` methods of
 # `Ms` share. A `mut self` call on an element after a `?.`, and an array's own `len` on an element
 # of an array of arrays, beside the `mut self` `len` of `Ms`.
