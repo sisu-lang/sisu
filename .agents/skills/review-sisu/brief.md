@@ -210,7 +210,9 @@ vague or generic error, or with none.
   each program the head newly accepts, newly rejects or reports
   differently, with the codes, positions and text of both. It compares the
   message, the labels, the help and the fixes too; `--codes` compares only
-  codes and positions.
+  codes and positions. `--apply` applies each safe fix that only one build
+  gives. It prints `lost fix` or `new broken fix` when the result leaves
+  its report, removes another one or adds a syntax error.
 - When the diff re-blesses expected files by a fixed rewording, run
   `python3 scripts/golden_diff.py <base>..<head> OLD NEW [OLD NEW]...`
   and sample a few files rather than read them all. It fails on any
