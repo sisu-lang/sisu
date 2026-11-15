@@ -228,7 +228,7 @@ impl Checker<'_> {
         }
         let typed = typed_slots(&slots);
         let mut failed = (slots.iter().flatten().find_map(|c| known_type(c).err()))
-            .or_else(|| self.refuse_unit_elements(elements, &mut slots, &typed));
+            .or_else(|| self.refuse_unit_elements(elements, &mut slots, &typed, &optional));
         let mut joined: Option<Type> = None;
         if failed.is_none() {
             match self.join_objects(&mut slots, &typed) {
@@ -308,18 +308,28 @@ impl Checker<'_> {
     }
 
     /// E0043 at each `unit` element beside an element of another type, which has no value
-    /// there, with the proof of the first. The type of the first such other element is the type
-    /// that the `unit` element must give. `typed` holds each element that has a type, with it.
+    /// there, with the proof of the first. The `unit` element must give the type of the first
+    /// such other element. That type is made optional when an element that is not `unit` makes
+    /// the literal optional: one of an optional type, or one that `optional` marks (see
+    /// `Ranked::optional`), such as `None` or `Some(2)`. `typed` holds each element that has a
+    /// type, with it.
     fn refuse_unit_elements(
         &mut self,
         elements: &[ast::Expr],
         slots: &mut [Option<Checked>],
         typed: &[(usize, Type)],
+        optional: &[bool],
     ) -> Option<Reported> {
         let other = typed
             .iter()
             .map(|&(_, ty)| ty)
             .find(|&ty| !takes_unit(ty) && ty != Type::NEVER)?;
+        let lifts = slots.iter().zip(optional).any(|(slot, &marked)| {
+            let ty = slot.as_ref().and_then(type_of);
+            ty != Some(Type::UNIT)
+                && (marked || ty.is_some_and(|ty| matches!(ty.kind(), TypeKind::Optional(_))))
+        });
+        let other = if lifts { as_optional(other) } else { other };
         let mut failed = None;
         for &(i, ty) in typed {
             if ty == Type::UNIT {
