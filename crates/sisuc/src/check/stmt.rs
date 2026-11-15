@@ -230,11 +230,11 @@ impl Checker<'_> {
         arm: bool,
         unused: &mut Vec<Unused>,
     ) {
-        // An optional join wraps a whole branch value, an inner `if` too.
-        let checked = match &checked.kind {
-            ExprKind::Wrap(inner) => inner,
-            _ => checked,
-        };
+        // A join wraps a whole branch value, an inner `if` too, in an optional or an `any`.
+        let mut checked = checked;
+        while let ExprKind::Wrap(inner) | ExprKind::ToAny(inner) = &checked.kind {
+            checked = inner;
+        }
         match (&source.kind, &checked.kind) {
             (
                 ast::ExprKind::If {
