@@ -194,6 +194,7 @@ const REACH: &[&str] = &[
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
+    "reach: a `unit?` function ends in a `unit` value",
     "reach: a loop runs its body",
     "reach: a string literal holds an escape",
     "reach: an `if` statement jumps in every branch",
@@ -1437,6 +1438,27 @@ impl Walk {
         }
         if let Some(ret) = &f.ret {
             self.type_expr(ret);
+            // As the checker reads it: the tail of the body, which is not a jump.
+            let tail = match f.body.stmts.last().map(|s| &s.kind) {
+                Some(ast::StmtKind::Expr(e)) if !e.is_jump() => Some(&e.kind),
+                _ => None,
+            };
+            if ret.optional == 1
+                && matches!(&ret.kind, ast::TypeKind::Name(name) if name.as_str() == "unit")
+                && matches!(
+                    tail,
+                    Some(
+                        ast::ExprKind::Block(_)
+                            | ast::ExprKind::Match { .. }
+                            | ast::ExprKind::If {
+                                else_block: Some(_),
+                                ..
+                            }
+                    )
+                )
+            {
+                self.mark("reach: a `unit?` function ends in a `unit` value");
+            }
         }
         self.ast_block(&f.body);
     }

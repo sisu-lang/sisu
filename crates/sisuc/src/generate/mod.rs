@@ -329,6 +329,9 @@ struct Gen<'a> {
     mu: Unstructured<'a>,
     /// What chooses the `unit` loops of a printed `unit`, apart from the streams above.
     nu: Unstructured<'a>,
+    /// How many calls of a `unit?` function the printed `unit` values hold. The program writes
+    /// the functions `uq0`, `uq1` and so on after `main` (`Gen::optional_units`).
+    optional_units: usize,
     /// What stands in for the streams, the budget and the count of expressions while a `mut`
     /// function or a `mut` call is written: no choice of any other rule moves for it.
     spare: Spare<'a>,
@@ -395,6 +398,7 @@ impl<'a> Gen<'a> {
             cu: Unstructured::new(&[]),
             mu: Unstructured::new(&[]),
             nu: Unstructured::new(&[]),
+            optional_units: 0,
             spare: Spare::new([(); 4].map(|()| Unstructured::new(&[]))),
             own: Spare::new([(); 4].map(|()| Unstructured::new(&[]))),
             statements: 0,

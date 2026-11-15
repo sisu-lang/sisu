@@ -311,6 +311,7 @@ impl Gen<'_> {
     }
 
     /// A block that binds a `()`: of `{}`, a block with no tail or a call of a `unit` function.
+    /// Now and then it binds the `()` again from a call of a `unit?` function (`optional_units`).
     /// Then it prints, stores or compares it. Now and then a `unit` loop (`unit_loop`) follows
     /// as a statement, binds the `()` again, or stands for an operand.
     fn printed_unit(&mut self) {
@@ -326,6 +327,11 @@ impl Gen<'_> {
         self.w.text("{ let u = ");
         self.unit_value();
         self.w.text("; ");
+        if self.unit_pick(4) == 0 {
+            let name = format!("uq{}", self.optional_units);
+            self.optional_units += 1;
+            self.w.text(&format!("let u = {name}(u) ?? u; "));
+        }
         match self.unit_pick(4) {
             0 => self.w.text(tail),
             1 => {
@@ -349,6 +355,24 @@ impl Gen<'_> {
             }
         }
         self.w.text(" }");
+    }
+
+    /// `fn uq<n>(u: unit) -> unit? { .. }` for each call that `printed_unit` wrote. The body ends
+    /// in a `unit` value: `u`, or an `if` or a `match` whose branches are each `u`. The function
+    /// gives it as `Some(())`. The functions come after `main` and draw only from `nu`, so no
+    /// other choice moves.
+    pub(crate) fn optional_units(&mut self) {
+        let bodies = [
+            "u",
+            "if true { u } else { u }",
+            "match 0 { 0 => u; _ => u }",
+        ];
+        for n in 0..self.optional_units {
+            let body = bodies[self.unit_pick(bodies.len())];
+            self.w
+                .text(&format!("fn uq{n}(u: unit) -> unit? {{ {body} }}"));
+            self.w.line();
+        }
     }
 
     /// A value for `print`, in a `form` from 0 to 4: as it is, interpolated alone, interpolated
