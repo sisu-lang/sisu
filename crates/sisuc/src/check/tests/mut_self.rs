@@ -1631,3 +1631,215 @@ fn mut_self_with_a_type_should_report_only_the_expected_paren() {
     let src = "struct Q { x: i64 }\nextend Q {\n    fn g(mut self: Q) { print(self.x) }\n}\nfn main() {}\n";
     assert_eq!(all_codes(src), [(Expected, on(src, 3, ":"))]);
 }
+
+/// `T` with the `mut self` method `bump` and the plain `self` method `peek`, then `H`, which holds
+/// a `T`, in six lines.
+const BUMP: &str = "struct T {\n    n: i64\n    fn bump(mut self, k: i64) { self.n += k }\n    fn peek(self, k: i64) { print(self.n + k) }\n}\nstruct H { t: T }\n";
+
+/// `BUMP`, then a `main` with `body` in it.
+fn bump_main(body: &str) -> String {
+    format!("{BUMP}fn main() {{\n{body}\n}}\n")
+}
+
+/// E0070 and E0120 have a fix that calls the method on its first argument. It is safe only when
+/// the receiver can change or the method takes plain `self`. Each row: the program, the code, and
+/// whether the fix is safe. A safe fix gives a program with no error.
+#[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows")]
+fn call_as_method_fix_should_be_safe_only_when_the_receiver_can_change() {
+    let in_f = |s: &str| format!("{BUMP}fn f({s}\nfn main() {{}}\n");
+    let rows: Vec<(&str, String, Code, bool)> = vec![
+        (
+            "E0120, `let mut`",
+            bump_main("    let mut t = T(n: 1)\n    T.bump(t, 1)\n    print(t.n)"),
+            Code::MemberKind,
+            true,
+        ),
+        (
+            "E0120, `let`",
+            bump_main("    let t = T(n: 1)\n    T.bump(t, 1)\n    print(t.n)"),
+            Code::MemberKind,
+            false,
+        ),
+        (
+            "E0120, plain parameter",
+            in_f("t: T) { T.bump(t, 1) }"),
+            Code::MemberKind,
+            false,
+        ),
+        (
+            "E0120, `mut` parameter",
+            in_f("mut t: T) { T.bump(t, 1) }"),
+            Code::MemberKind,
+            true,
+        ),
+        (
+            "E0120, field of `let mut`",
+            bump_main("    let mut h = H(t: T(n: 1))\n    T.bump(h.t, 1)\n    print(h.t.n)"),
+            Code::MemberKind,
+            true,
+        ),
+        (
+            "E0120, field of `let`",
+            bump_main("    let h = H(t: T(n: 1))\n    T.bump(h.t, 1)\n    print(h.t.n)"),
+            Code::MemberKind,
+            false,
+        ),
+        (
+            "E0120, element of `let mut`",
+            bump_main("    let mut ts = [T(n: 1)]\n    T.bump(ts[0], 1)\n    print(ts[0].n)"),
+            Code::MemberKind,
+            true,
+        ),
+        (
+            "E0120, plain `self` method, `let` (passes before the fix)",
+            bump_main("    let t = T(n: 1)\n    T.peek(t, 1)"),
+            Code::MemberKind,
+            true,
+        ),
+        (
+            "E0070, `let mut`",
+            bump_main("    let mut t = T(n: 1)\n    bump(t, 1)\n    print(t.n)"),
+            Code::MethodAsFunction,
+            true,
+        ),
+        (
+            "E0070, `let`",
+            bump_main("    let t = T(n: 1)\n    bump(t, 1)\n    print(t.n)"),
+            Code::MethodAsFunction,
+            false,
+        ),
+        (
+            "E0070, plain parameter",
+            in_f("t: T) { bump(t, 1) }"),
+            Code::MethodAsFunction,
+            false,
+        ),
+        (
+            "E0070, `mut` parameter",
+            in_f("mut t: T) { bump(t, 1) }"),
+            Code::MethodAsFunction,
+            true,
+        ),
+        (
+            "E0070, plain `self` method, `let` (passes before the fix)",
+            bump_main("    let t = T(n: 1)\n    peek(t, 1)"),
+            Code::MethodAsFunction,
+            true,
+        ),
+    ];
+    let mut red = Vec::new();
+    for (row, src, code, safe) in &rows {
+        let (_, ds) = checked(src);
+        let Some(d) = ds.iter().find(|d| d.code() == *code) else {
+            red.push(format!("row `{row}`: no {code:?} in {ds:?}"));
+            continue;
+        };
+        let Some(fix) = d.fixes().first() else {
+            red.push(format!("row `{row}`: no fix"));
+            continue;
+        };
+        if fix.safe() != *safe {
+            red.push(format!("row `{row}`: safe is {}", fix.safe()));
+            continue;
+        }
+        if *safe {
+            let fixed = fix.apply(src);
+            let left = errors(&fixed, &diags(&fixed));
+            if !left.is_empty() {
+                red.push(format!("row `{row}`: the fixed program gives {left:?}"));
+            }
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+/// `T` with the `mut self` method `bump`. A bare `bump(1)` is in a plain `self` method on line 4,
+/// and in a `mut self` method on line 5.
+const BARE_BUMP: &str = "struct T {\n    n: i64\n    fn bump(mut self, k: i64) { self.n += k }\n    fn read(self) { bump(1) }\n    fn write(mut self) { bump(1) }\n}\nfn main() {}\n";
+
+/// The `self` form of E0070, a bare `bump(1)` in a method of `T`: its fix is safe only in a
+/// `mut self` method. In that method, the failed call counts as a write of `self`, so W0002 is
+/// not reported.
+#[test]
+fn self_form_of_call_as_method_should_be_safe_only_in_a_mut_self_method() {
+    let src = BARE_BUMP;
+    let (_, ds) = checked(src);
+    let found: Vec<_> = (ds.iter())
+        .map(|d| {
+            (
+                d.code(),
+                at(src, d.span()),
+                d.fixes().first().map(Fix::safe),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (Code::MethodAsFunction, on(src, 4, "bump"), Some(false)),
+            (Code::MethodAsFunction, on(src, 5, "bump"), Some(true)),
+        ]
+    );
+}
+
+/// A failed call of a `mut self` method as a function or through its type would change its
+/// receiver. So W0002 does not report a `let mut` or a `mut` parameter at the root of it.
+/// A plain `self` method changes nothing, so W0002 stays. Each row: the program and the codes
+/// it gives after `BUMP`.
+#[test]
+fn call_as_method_error_should_count_as_a_write_of_a_mut_self_receiver() {
+    let in_f = |s: &str| format!("{BUMP}fn f({s}\nfn main() {{}}\n");
+    let rows = [
+        (
+            bump_main("    let mut t = T(n: 1)\n    T.bump(t, 1)\n    print(t.n)"),
+            vec![Code::MemberKind],
+        ),
+        (
+            bump_main("    let mut t = T(n: 1)\n    bump(t, 1)\n    print(t.n)"),
+            vec![Code::MethodAsFunction],
+        ),
+        (
+            bump_main("    let mut h = H(t: T(n: 1))\n    T.bump(h.t, 1)\n    print(h.t.n)"),
+            vec![Code::MemberKind],
+        ),
+        (
+            bump_main("    let mut ts = [T(n: 1)]\n    T.bump(ts[0], 1)\n    print(ts[0].n)"),
+            vec![Code::MemberKind],
+        ),
+        (in_f("mut t: T) { T.bump(t, 1) }"), vec![Code::MemberKind]),
+        (
+            in_f("mut t: T) { bump(t, 1) }"),
+            vec![Code::MethodAsFunction],
+        ),
+        (
+            bump_main("    let mut t = T(n: 1)\n    T.peek(t, 1)"),
+            vec![NeverReassigned, Code::MemberKind],
+        ),
+        (
+            bump_main("    let mut t = T(n: 1)\n    peek(t, 1)"),
+            vec![NeverReassigned, Code::MethodAsFunction],
+        ),
+    ];
+    let mut red = Vec::new();
+    for (src, wanted) in rows {
+        let found: Vec<_> = (all_codes(&src).into_iter())
+            .filter(|&(code, _)| !matches!(code, Code::UnusedItem | UnusedMember))
+            .map(|(code, _)| code)
+            .collect();
+        if found != wanted {
+            red.push(format!("row `{src}`: found {found:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
