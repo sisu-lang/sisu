@@ -1,0 +1,9 @@
+interface Source {
+    type Item
+}
+
+interface _Boxed: Source, Self.Item {}
+
+fn main() {
+    print(1)
+}

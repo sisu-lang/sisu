@@ -309,44 +309,44 @@ const INHERITED: [(&str, &[Code]); 31] = [
         "interface J: Missing {}\ninterface K: J {}\ninterface I {\n    type A: K\n    fn a(self) -> Self.A\n}\nfn g<T: I>(x: T) { x.a().zz() }\n",
         &[UnknownType],
     ),
-    // The list reads a parameter before the flag is set: the closures that it found are forgotten.
-    // The wanted codes are the two of the list, with none for the bounds after it.
+    // A member in the list is reported from its text (E0151), and the failure of the list is known
+    // before the bounds of the parameters: the bounds after the list draw no code.
     (
         "interface Conv<A> {}\ninterface J: Missing, Conv<Self.Zed> {\n    type C: Conv<Self.Zed>\n    type D: Conv<Self.Zed>\n}\n",
-        &[UnknownType, UnknownType],
+        &[UnknownType, InheritedArgument],
     ),
     // The same with the failed bound after the read, through another interface, and with an
     // interface parameter in place of `Self`.
     (
         "interface Conv<A> {}\ninterface J: Conv<Self.Zed>, Missing {\n    type C: Conv<Self.Zed>\n    type D: Conv<Self.Zed>\n}\n",
-        &[UnknownType, UnknownType],
+        &[InheritedArgument, UnknownType],
     ),
     (
         "interface Conv<A> {}\ninterface K: Missing {}\ninterface J: K, Conv<Self.Zed> {\n    type C: Conv<Self.Zed>\n    type D: Conv<Self.Zed>\n}\n",
-        &[UnknownType, UnknownType],
+        &[UnknownType, InheritedArgument],
     ),
     (
         "interface Conv<A> {}\ninterface J<T: J<T>>: Missing, Conv<T.Zed> {\n    type C: Conv<T.Zed>\n    type D: Conv<T.Zed>\n}\n",
-        &[UnknownType, UnknownType],
+        &[UnknownType, InheritedArgument],
     ),
     // The list itself fails at an associated path: the interface is unknown from then on.
     (
         "interface Conv<A> {}\ninterface Holds {\n    type X\n}\ninterface J: Conv<Self.A.X> {\n    type A: Holds\n    type C: Conv<Self.A.X>\n}\n",
-        &[UnknownType],
+        &[InheritedArgument],
     ),
     // The list reads an associated type of another interface, whose bound is `J`.
     (
         "interface Conv<A> {}\ninterface K {\n    type X: J<Self>\n}\ninterface J<T: K>: Missing, Conv<T.X.Y> {\n    type C: Conv<T.X.Z>\n    type D: Conv<T.X.Z>\n}\n",
-        &[UnknownType, UnknownType],
+        &[UnknownType, InheritedArgument],
     ),
-    // A requirement and the bound of an interface parameter give the same codes, as they did.
+    // A requirement and the bound of an interface parameter follow the same rule.
     (
         "interface Conv<A> {}\ninterface J: Missing, Conv<Self.Zed> {\n    fn m(self, x: Self.Zed)\n    fn n<U: Conv<Self.Zed>>(self, u: U)\n}\n",
-        &[UnknownType, UnknownType],
+        &[UnknownType, InheritedArgument],
     ),
     (
         "interface Conv<A> {}\ninterface J<T: Conv<Self.Zed>>: Missing {\n    type C: Conv<Self.Zed>\n}\n",
-        &[UnknownType, UnknownType],
+        &[UnknownType],
     ),
     // An argument of the inherited interface fails.
     (

@@ -47,8 +47,9 @@ mod unused;
 mod unused_names;
 
 /// The `PARAM_STEPS` that checking the four language interfaces takes, which every test's count
-/// holds: `Self` and one more step for each.
-const LANG_PARAM_STEPS: usize = 8;
+/// holds. Each has only `Self`, which each of the two loops of pass 1b indexes in one step. Its
+/// name lookup takes one step, and is not done twice.
+const LANG_PARAM_STEPS: usize = 12;
 
 thread_local! {
     /// Whether this test judges unused names; `judge_unused` sets it.
