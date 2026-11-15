@@ -1110,7 +1110,7 @@ fn a_default_of_a_value_that_is_not_optional_should_offer_its_removal() {
         // true for a jump at any depth.
         row(
             "C16",
-            "loop { let x = a ?? loop { break 1 }; print(x); break }",
+            "loop { let x = a ?? { loop { break }; 1 }; print(x); break }",
             vec![none(("x = ", "a"))],
         ),
         // A default that never finishes, with no jump, keeps its fix.
@@ -1119,7 +1119,8 @@ fn a_default_of_a_value_that_is_not_optional_should_offer_its_removal() {
             "print(a ?? panic(\"x\"))",
             remove(("print(", "a"), "a ?? panic(\"x\")", "a", After::Clean),
         ),
-        // A poisoned default has no `tir` to read, so it gets no fix.
+        // A poisoned default has no `tir` to read, so it gets no fix. It follows an earlier
+        // error, or only the left side could give it a type, as for `[]` and `None`.
         row(
             "C18",
             "let y = nope; print(a ?? y)",
@@ -1136,5 +1137,11 @@ fn a_default_of_a_value_that_is_not_optional_should_offer_its_removal() {
                 none(("x = ", "a")),
             ],
         ),
+        row(
+            "C20",
+            "let xs = [1]; print(xs ?? [])",
+            vec![none(("print(", "xs"))],
+        ),
+        row("C21", "print(a ?? None)", vec![none(("print(", "a"))]),
     ]);
 }

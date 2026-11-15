@@ -1153,9 +1153,9 @@ impl Checker<'_> {
             let reported = match known_type(&scrutinee) {
                 // The fix deletes the default. So the default needs no report of its own, which
                 // the fix would hide. It needs no jump either: a `break` types its loop, and each
-                // jump changes how the code flows. A poisoned default has no `tir` to read, and
-                // it always follows an earlier error. Both exits of the check sort the reports,
-                // so they are in the order of the text.
+                // jump changes how the code flows. A poisoned default has no `tir` to read: it
+                // follows an earlier error, or only the left side could type it, as `[]` and
+                // `None`. Both exits of the check sort the reports, so they are in text order.
                 Ok(_) => self.diagnostics.error(DiagnosticKind::CoalesceNotOptional {
                     at: lhs.span,
                     default: (self.diagnostics.len() == before
