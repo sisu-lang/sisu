@@ -559,9 +559,14 @@ impl Checker<'_> {
         }
         let name = match &e.kind {
             ExprKind::If { .. } | ExprKind::IfLet { .. } => {
-                // A branch with no value of its own gives the `if` the value `unit`.
+                // A branch with no value of its own gives the `if` the value `unit`. Where an
+                // optional is wanted, an `if` without an `else` has no value (see `unlifted`).
+                let optional =
+                    want.is_some_and(|want| matches!(want.kind(), TypeKind::Optional(_)));
                 return match missing_else(e) {
-                    Some(if_let) if value.is_some_and(|value| valueless(value).is_none()) => {
+                    Some(if_let)
+                        if !optional && value.is_some_and(|value| valueless(value).is_none()) =>
+                    {
                         NoValueCause::UnitIf {
                             if_let,
                             want: want.map(|want| self.type_name(want)),
