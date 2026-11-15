@@ -19,10 +19,13 @@ before you delete the plan workspace, because the ledger is there.
 Take the facts from these sources, which hold more than the context after a compaction.
 
 - The ledger: `<main checkout>/.scratch/<feature>/progress.md`, or the plan workspace's `progress.md`.
+  A branch with no ledger uses `<main checkout>/.scratch/<branch name>/` as its `<feature>` folder:
+  create it for `kaizen.md`, and take the facts from the other sources.
 - Each review run: the rulings, the fix briefs, the reports and `RUN/retro.md`.
   Kept runs are in `<main checkout>/.scratch/reviews/`.
 - When the work has review runs: `python3 .agents/skills/review-sisu/scripts/review_round.py stats <runs>`, on the runs of this work only.
-- `git log --oneline origin/main..HEAD`.
+- `git log --oneline <base>..HEAD`, where `<base>` is `origin/main`, or the stage's base on a
+  stacked branch.
 - The session itself: each user correction, each rejected proposal, and each
   tool call that was blocked, failed or ran again.
 
@@ -64,5 +67,7 @@ Then give the user each proposal of kinds 1, 2, 3 and 5, and each cleanup,
 the most severe first. For each one, give the change, the files and the
 cost. The user picks which ones to make. A picked change goes on its own
 branch and pull request, or into the current branch when the user says so.
+When a picked change in the current branch gets a new review, the next run
+adds a section with the date to the same `kaizen.md`.
 
 The step is done when each lesson of question 3 is a proposal or a memory.
