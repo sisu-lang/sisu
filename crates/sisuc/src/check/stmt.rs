@@ -23,6 +23,7 @@ use crate::diagnostic::{
     ClashForm, ClashKind, Diagnostic, DiagnosticKind, NeverReassignedForm, NoReturn, RangePlace,
     Unwrap, UnwrapHelp, closest,
 };
+use crate::lexer::{Token, TokenKind};
 use crate::source::{Span, removal_end};
 use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeKind};
@@ -1143,12 +1144,35 @@ impl Checker<'_> {
         self.fail_loops(at.., reported);
     }
 
-    /// Skips a `break` value that is not checked, by the error `reported`: a jump in it may name
-    /// any open loop, so every open loop gets no type and no open loop label is reported unused.
-    fn skip_value(&mut self, reported: Reported) {
+    /// Skips the `break` value at `value`, which is not checked, by the error `reported`: a jump in
+    /// it may name any open loop label, so no open loop label is reported unused. Only a loop that
+    /// a `break` in the value names gets no type, with the loops inside it, as for a misspelled
+    /// loop label. A `continue` gives no loop a value. Any other `break` names the loop of the
+    /// `break` that holds the value, which fails already, or a loop inside the value. A label
+    /// inside the value that shadows an open label (`break (outer: loop { break outer 2 })`) also
+    /// fails the open loop: a missed error, never a false one.
+    fn skip_value(&mut self, value: Span, reported: Reported) {
         let labels: Vec<Span> = self.open_labels().map(|l| l.span).collect();
         self.body.failed_labels.extend(labels);
-        self.fail_loops(.., reported);
+        // A parsed value has balanced brackets, so `lex` cannot fail here; if it does, any loop
+        // may be named.
+        let Ok(lexed) = crate::lexer::lex(self.source.text(value)) else {
+            self.fail_loops(.., reported);
+            return;
+        };
+        for (at, token) in lexed.tokens.iter().enumerate() {
+            #[cfg(test)]
+            super::SKIP_TOKEN_STEPS.set(super::SKIP_TOKEN_STEPS.get() + 1);
+            if token.kind == TokenKind::Break
+                && let Some(Token {
+                    kind: TokenKind::Ident(name),
+                    ..
+                }) = lexed.tokens.get(at + 1)
+                && let Some((open, _)) = self.open_label(*name)
+            {
+                self.fail_loops(open.., reported);
+            }
+        }
     }
 
     /// "no loop label `name`" for `name` after `keyword`, offering the closest open loop label,
@@ -1263,8 +1287,8 @@ impl Checker<'_> {
             // The loop label may have meant the name, so the loop gets no type, and the value
             // is not checked.
             self.frame(target).failed.get_or_insert(reported);
-            if value.is_some() {
-                self.skip_value(reported);
+            if let Some(v) = value {
+                self.skip_value(v.span, reported);
             }
             return Err(Poisoned::untyped(reported));
         }
@@ -1557,7 +1581,7 @@ impl Checker<'_> {
                     at: v.span,
                     loop_at,
                 });
-                self.skip_value(reported);
+                self.skip_value(v.span, reported);
                 reported
             };
             self.frame(target).failed.get_or_insert(reported);
