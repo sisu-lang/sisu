@@ -496,3 +496,69 @@ fn a_string_join_rollback_should_visit_only_the_locals_it_drops() {
     };
     assert_near_linear(steps(100), steps(200), steps(300));
 }
+
+/// GIVEN the negation of a `u8` that is no literal
+/// WHEN the program is checked
+/// THEN E0042 offers an unsafe fix that converts the value to `i64` first, when the context
+/// expects an `i64` or nothing
+#[test]
+fn a_negated_u8_should_offer_a_conversion() {
+    let row = |id, body: &'static str, reports| FixRow {
+        id,
+        src: format!("fn g(x: i64) {{}}\nfn main() {{\n    let a: u8 = 3\n    {body}\n}}"),
+        reports,
+    };
+    let convert = |at: Needle, from, to, after| {
+        vec![
+            Report::new(Code::NegatedU8, at)
+                .fix(false, 2, (from, to))
+                .after(after),
+        ]
+    };
+    let none = |at: Needle| vec![Report::new(Code::NegatedU8, at)];
+    let clean = After::Clean;
+    fix_rows(&[
+        row(
+            "N1",
+            "print(-a)",
+            convert(("print(", "-a"), "-a", "-i64(a)", clean),
+        ),
+        row(
+            "N2",
+            "let b: i64 = -a",
+            convert(("i64 = ", "-a"), "-a", "-i64(a)", clean),
+        ),
+        row("N3", "g(-a)", convert(("g(", "-a"), "-a", "-i64(a)", clean)),
+        row(
+            "N4",
+            "print(-(a + a))",
+            convert(("print(", "-(a + a)"), "-(a + a)", "-i64((a + a))", clean),
+        ),
+        row("N5", "let b: u8 = -a", none(("u8 = ", "-a"))),
+        row("N6", "let b: u8 = -3", none(("u8 = ", "-3"))),
+        row(
+            "N7",
+            "print(-a + a)",
+            convert(
+                ("print(", "-a"),
+                "-a + a",
+                "-i64(a) + a",
+                After::Errors(&[Code::Mismatch]),
+            ),
+        ),
+        row("N8", "let b: i64? = -a", none(("i64? = ", "-a"))),
+        // The fix stays inside a group.
+        row(
+            "N10",
+            "let b: i64 = (-a)",
+            convert(("i64 = ", "(-a)"), "(-a)", "(-i64(a))", clean),
+        ),
+        FixRow {
+            id: "N9",
+            src: "fn h(o: i64?) {\n    let a: u8 = 3\n    print(o ?? -a)\n}\nfn main() {}"
+                .to_owned(),
+            // The default of `??` expects the optional, so there is no fix.
+            reports: none(("?? ", "-a")),
+        },
+    ]);
+}

@@ -288,6 +288,37 @@ impl Code {
     }
 }
 
+/// Why an expression has no value (E0043, E0031).
+pub(crate) enum NoValueCause {
+    /// No reason is known.
+    Plain,
+    /// The expression never finishes: it is `never`, not `unit`.
+    Never,
+    /// An `if`, or an `if let`, whose last `else` is missing. `returning` says that a `return` of
+    /// a unit function holds it.
+    NoElse { if_let: bool, returning: bool },
+    /// A call of `name`, a function that declares no return type, at `declared`, when that
+    /// declaration is in the program.
+    Call {
+        name: String,
+        declared: Option<Span>,
+    },
+}
+
+impl NoValueCause {
+    /// The words that say the reason: the message of an E0043, the label of an E0031's tail.
+    fn reason(&self) -> Option<String> {
+        match self {
+            NoValueCause::Plain | NoValueCause::Never => None,
+            NoValueCause::NoElse { if_let, .. } => Some(format!(
+                "this `{}` has no `else`, so it has no value",
+                if *if_let { "if let" } else { "if" }
+            )),
+            NoValueCause::Call { name, .. } => Some(format!("`{name}` returns no value")),
+        }
+    }
+}
+
 /// What went wrong, and where: the facts each diagnostic code is built from.
 pub(crate) enum DiagnosticKind {
     /// An assignment at `at` to `name`, or to a part of it, which cannot change. `written` says
@@ -697,11 +728,13 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         form: UnknownForm,
     },
-    /// The function `function`, whose body, ending at `at`, has no value of type `want`.
+    /// The function `function`, whose body, ending at `at`, has no value of type `want`. `tail`
+    /// is the expression that the body ends in, with the reason that it has no value.
     BodyHasNoValue {
         function: String,
         want: String,
         at: Span,
+        tail: Option<(Span, NoValueCause)>,
     },
     /// A value of type `got`, at `at`, where `want` is expected; `fix` is the
     /// rewrite that would fit. `origin` is where the expected type came from, if the report
@@ -734,12 +767,22 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         first: Earlier,
     },
-    /// A `for` over the value at `at`, of type `found`, which is no array or range.
-    ForNeedsArray { found: String, at: Span },
+    /// A `for` over the value at `at`, of type `found`, which is no array or range. `from_zero`
+    /// when `0..` before the value makes a range: the value is an `i64`, and its text does not
+    /// start with `{`.
+    ForNeedsArray {
+        found: String,
+        at: Span,
+        from_zero: bool,
+    },
     /// A `return` at `at` with no value, in a function that returns a `want`.
     ReturnNeedsValue { want: String, at: Span },
-    /// A `return` with the value at `at`, in a function that returns none.
-    UnexpectedReturnValue { at: Span },
+    /// A `return` with the value at `at`, in a function that returns none. `function` is that
+    /// function, when the body belongs to one.
+    UnexpectedReturnValue {
+        at: Span,
+        function: Option<NoReturn>,
+    },
     /// A `break` or `continue` (`keyword`) at `at`, outside a loop.
     JumpOutsideLoop { keyword: &'static str, at: Span },
     /// The parameter `name`, at `at`, which an earlier parameter at `first` already has.
@@ -756,11 +799,11 @@ pub(crate) enum DiagnosticKind {
     },
     /// A `self` at `at`, outside a method.
     SelfOutsideMethod { at: Span },
-    /// A unary `-` at `at` on a `u8`.
-    NegatedU8 { at: Span },
-    /// An expression at `at` that has no value: it is `unit`, or, with `never`, it never
-    /// finishes.
-    NoValue { at: Span, never: bool },
+    /// A unary `-` at `at` on a `u8`. `convert` is the operand, when `i64(` and `)` around it make
+    /// an `i64` that the context accepts.
+    NegatedU8 { at: Span, convert: Option<Span> },
+    /// An expression at `at` that has no value, for the reason `cause`.
+    NoValue { at: Span, cause: NoValueCause },
     /// The first bare `break` at `at` of a `loop` whose first `break` with a value whose type is
     /// not `never` is at `valued`.
     BareBreak { at: Span, valued: Span },
@@ -794,8 +837,9 @@ pub(crate) enum DiagnosticKind {
         right: String,
         at: Span,
     },
-    /// The left side of a `??`, at `at`, which is not optional.
-    CoalesceNotOptional { at: Span },
+    /// The left side of a `??`, at `at`, which is not optional. `default` is the `??` and its
+    /// default, for the fix that deletes them. It is none when the default has a report.
+    CoalesceNotOptional { at: Span, default: Option<Span> },
     /// The receiver at `at` of a `?.`, which is not optional. `value` is its path as written,
     /// when it has one. `access` is everything between the receiver and the member name: the
     /// `?.` and any space or comment around it.
@@ -904,11 +948,14 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         call: Option<bool>,
     },
-    /// The field `name` of `owner`, at `at`, called as a method.
+    /// The field `name` of `owner`, at `at`, called as a method. `parens` is the argument list
+    /// with no argument and the space before it, when the call has no argument and no type
+    /// argument.
     FieldNotMethod {
         name: String,
         owner: String,
         at: Span,
+        parens: Option<Span>,
     },
     /// A call of `function` (`print` or `eprint`) at `at` with no argument or several, or one that
     /// returns nothing.
@@ -1662,6 +1709,11 @@ fn method_form_message(name: &str, takes: bool) -> String {
     }
 }
 
+/// The label at a function that declares no return type.
+fn no_return_type(name: &str) -> String {
+    format!("`{name}` declares no return type")
+}
+
 /// How written type arguments do not fit what they follow.
 pub(crate) enum ArgumentsForm {
     /// A generic declaration that takes `want` of them, with `found`.
@@ -1679,10 +1731,20 @@ pub(crate) enum ArgumentsForm {
     Variant { instead: Option<String> },
 }
 
+/// A function that declares no return type, with a `return` that has a value.
+pub(crate) struct NoReturn {
+    /// Its own name, and where it is written.
+    pub(crate) name: String,
+    pub(crate) at: Span,
+    /// The offset of the `{` of its body, and the type of the value: a fix adds `-> type` there.
+    pub(crate) add: Option<(usize, String)>,
+}
+
 /// What is wrong with the argument of a `print` or `eprint` call.
 pub(crate) enum PrintProblem {
-    /// The call has no argument or several.
-    Count,
+    /// The call has no argument or several. `join` is the span of the values, and the string
+    /// that holds them all, when one string can.
+    Count { join: Option<(Span, String)> },
     /// The argument has no value: it is a call that returns nothing.
     NoValue,
 }
@@ -4745,11 +4807,31 @@ impl From<DiagnosticKind> for Diagnostic {
                 )
                 .with_help("write one of the bounds that wait for each other without an associated type"),
             },
-            DiagnosticKind::BodyHasNoValue { function, want, at } => Diagnostic::coded(
-                code,
+            DiagnosticKind::BodyHasNoValue {
+                function,
+                want,
                 at,
-                format!("function `{function}` must return `{want}`, but its body has no value"),
-            ),
+                tail,
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("function `{function}` must return `{want}`, but its body has no value"),
+                );
+                match tail {
+                    Some((span, cause)) if let Some(text) = cause.reason() => {
+                        let d = d.with_secondary(span, text);
+                        match cause {
+                            NoValueCause::NoElse { .. } => d.with_help(format!(
+                                "add an `else`, and make each branch give {} `{want}`",
+                                indefinite(&want)
+                            )),
+                            _ => d,
+                        }
+                    }
+                    _ => d,
+                }
+            }
             DiagnosticKind::Mismatch {
                 want,
                 got,
@@ -4909,16 +4991,51 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
-            DiagnosticKind::ForNeedsArray { found, at } => Diagnostic::coded(
-                code,
+            DiagnosticKind::ForNeedsArray {
+                found,
                 at,
-                format!("`for` needs an array or a range; this is `{found}`"),
-            ),
+                from_zero,
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`for` needs an array or a range; this is `{found}`"),
+                );
+                if from_zero {
+                    d.with_fix(Fix {
+                        message: "use a range that starts at `0`".to_owned(),
+                        safe: false,
+                        edits: vec![Edit {
+                            span: Span::new(at.start(), at.start()),
+                            replacement: "0..".to_owned(),
+                        }],
+                    })
+                } else {
+                    d
+                }
+            }
             DiagnosticKind::ReturnNeedsValue { want, at } => {
                 Diagnostic::coded(code, at, format!("`return` needs a value of type `{want}`"))
             }
-            DiagnosticKind::UnexpectedReturnValue { at } => {
-                Diagnostic::coded(code, at, "this function returns no value")
+            DiagnosticKind::UnexpectedReturnValue { at, function } => {
+                let d = Diagnostic::coded(code, at, "this function returns no value");
+                match function {
+                    Some(NoReturn { name, at, add }) => {
+                        let d = d.with_secondary(at, no_return_type(&name));
+                        match add {
+                            Some((open, ty)) => d.with_fix(Fix {
+                                message: format!("add `-> {ty}` to `{name}`"),
+                                safe: false,
+                                edits: vec![Edit {
+                                    span: Span::new(open, open),
+                                    replacement: format!("-> {ty} "),
+                                }],
+                            }),
+                            None => d,
+                        }
+                    }
+                    None => d,
+                }
             }
             DiagnosticKind::JumpOutsideLoop { keyword, at } => {
                 Diagnostic::coded(code, at, format!("`{keyword}` outside a loop"))
@@ -4947,15 +5064,48 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::SelfOutsideMethod { at } => {
                 Diagnostic::coded(code, at, "`self` is only available in a method")
             }
-            DiagnosticKind::NegatedU8 { at } => {
-                Diagnostic::coded(code, at, "`u8` cannot be negative")
+            DiagnosticKind::NegatedU8 { at, convert } => {
+                let d = Diagnostic::coded(code, at, "`u8` cannot be negative");
+                match convert {
+                    Some(operand) => d.with_fix(Fix {
+                        message: "convert the value to `i64` first".to_owned(),
+                        safe: false,
+                        edits: vec![
+                            Edit {
+                                span: Span::new(operand.start(), operand.start()),
+                                replacement: "i64(".to_owned(),
+                            },
+                            Edit {
+                                span: Span::new(operand.end(), operand.end()),
+                                replacement: ")".to_owned(),
+                            },
+                        ],
+                    }),
+                    None => d,
+                }
             }
-            DiagnosticKind::NoValue { at, never } => {
-                let d = Diagnostic::coded(code, at, "expression has no value");
-                if never {
-                    d.with_label("never finishes")
-                } else {
-                    d
+            DiagnosticKind::NoValue { at, cause } => {
+                let message = cause
+                    .reason()
+                    .unwrap_or_else(|| "expression has no value".to_owned());
+                let d = Diagnostic::coded(code, at, message);
+                match cause {
+                    NoValueCause::Never => d.with_label("never finishes"),
+                    NoValueCause::NoElse { if_let, returning } => {
+                        let form = if if_let { "if let" } else { "if" };
+                        d.with_help(if returning {
+                            format!(
+                                "remove this `return`, or write `return` with no value inside the `{form}`"
+                            )
+                        } else {
+                            "add an `else`, and make each branch give a value".to_owned()
+                        })
+                    }
+                    NoValueCause::Call {
+                        name,
+                        declared: Some(declared),
+                    } => d.with_secondary(declared, no_return_type(&name)),
+                    NoValueCause::Plain | NoValueCause::Call { .. } => d,
                 }
             }
             DiagnosticKind::BareBreak { at, valued } => Diagnostic::coded(
@@ -5012,8 +5162,20 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::CannotCompare { left, right, at } => {
                 Diagnostic::coded(code, at, format!("cannot compare `{left}` with `{right}`"))
             }
-            DiagnosticKind::CoalesceNotOptional { at } => {
-                Diagnostic::coded(code, at, "the left side of `??` is not optional")
+            DiagnosticKind::CoalesceNotOptional { at, default } => {
+                let d = Diagnostic::coded(code, at, "the left side of `??` is not optional");
+                // The fix would also remove the reports of the default.
+                match default {
+                    Some(span) => d.with_fix(Fix {
+                        message: "remove the `??` and its default".to_owned(),
+                        safe: true,
+                        edits: vec![Edit {
+                            span,
+                            replacement: String::new(),
+                        }],
+                    }),
+                    None => d,
+                }
             }
             DiagnosticKind::SafeAccessNotOptional { value, at, access } => {
                 Diagnostic::coded(code, at, format!("{} is not optional", named(value))).with_fix(
@@ -5228,23 +5390,54 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
-            DiagnosticKind::FieldNotMethod { name, owner, at } => Diagnostic::coded(
-                code,
+            DiagnosticKind::FieldNotMethod {
+                name,
+                owner,
                 at,
-                format!("`{name}` is a field of `{owner}`, not a method"),
-            ),
+                parens,
+            } => {
+                let d = Diagnostic::coded(
+                    code,
+                    at,
+                    format!("`{name}` is a field of `{owner}`, not a method"),
+                );
+                match parens {
+                    Some(parens) => d.with_fix(Fix {
+                        message: "remove the `()`".to_owned(),
+                        safe: true,
+                        edits: vec![Edit {
+                            span: parens,
+                            replacement: String::new(),
+                        }],
+                    }),
+                    None => d,
+                }
+            }
             DiagnosticKind::PrintArgument {
                 function,
                 problem,
                 at,
-            } => Diagnostic::coded(
-                code,
-                at,
-                match problem {
-                    PrintProblem::Count => format!("`{function}` takes one value"),
-                    PrintProblem::NoValue => format!("the argument of `{function}` has no value"),
-                },
-            ),
+            } => match problem {
+                PrintProblem::Count { join } => {
+                    let d = Diagnostic::coded(code, at, format!("`{function}` takes one value"));
+                    match join {
+                        Some((values, text)) => d.with_fix(Fix {
+                            message: "join the values into one string".to_owned(),
+                            safe: false,
+                            edits: vec![Edit {
+                                span: values,
+                                replacement: text,
+                            }],
+                        }),
+                        None => d,
+                    }
+                }
+                PrintProblem::NoValue => Diagnostic::coded(
+                    code,
+                    at,
+                    format!("the argument of `{function}` has no value"),
+                ),
+            },
             DiagnosticKind::PrintNever { function, at } => Diagnostic::coded(
                 code,
                 at,

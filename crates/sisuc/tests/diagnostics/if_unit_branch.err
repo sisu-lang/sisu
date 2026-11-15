@@ -1,6 +1,9 @@
-error[E0043]: expression has no value
+error[E0043]: `nothing` returns no value
  --> if_unit_branch.sisu:4:39
   |
+1 | fn nothing() {}
+  |    ------- `nothing` declares no return type
+...
 4 |     let y: i64 = if true { 1 } else { nothing() }
   |                                       ^^^^^^^^^
 

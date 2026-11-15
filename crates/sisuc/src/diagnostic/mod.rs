@@ -14,12 +14,12 @@ pub(crate) use registry::{
     ForeignPattern, ForeignRange, GetCall, GuardHelp, Hop, Immutable, Implied, IndexUsage,
     InterfaceBodyForm, Join, LetField, Literal, LiteralKind, LowerName, MainForm, Make,
     MatchIdiomForm, MathFix, Member, MethodReceiver, MismatchFix, MismatchOrigin, MissingBound,
-    MissingFix, MutDiffers, NanFix, NestingForm, NeverReassignedForm, NoOperatorForm, NotAny,
-    NotConformForm, NotInterface, NotMutForm, NotPlace, Operand, Owner, Panic, Peel, PeelIs,
-    PeelLayers, Plain, PowerFix, PrecisionHelp, PrintProblem, RETIRED, RangeForm, RangePlace,
-    RangePush, RangeTarget, RangeWrite, ReceiverArgument, SliceOf, SpecForm, SpecLimit, Spelled,
-    TypeReceiver, TypedLiteral, Unbuilt, Ungenerated, UnknownForm, Unwrap, UnwrapHelp, UsedBy,
-    VariantLabels, WideKind, Written, copy_help, invisible,
+    MissingFix, MutDiffers, NanFix, NestingForm, NeverReassignedForm, NoOperatorForm, NoReturn,
+    NoValueCause, NotAny, NotConformForm, NotInterface, NotMutForm, NotPlace, Operand, Owner,
+    Panic, Peel, PeelIs, PeelLayers, Plain, PowerFix, PrecisionHelp, PrintProblem, RETIRED,
+    RangeForm, RangePlace, RangePush, RangeTarget, RangeWrite, ReceiverArgument, SliceOf, SpecForm,
+    SpecLimit, Spelled, TypeReceiver, TypedLiteral, Unbuilt, Ungenerated, UnknownForm, Unwrap,
+    UnwrapHelp, UsedBy, VariantLabels, WideKind, Written, copy_help, invisible,
 };
 #[cfg(test)]
 pub(crate) use registry::{NAME_STEPS, string_index_names};

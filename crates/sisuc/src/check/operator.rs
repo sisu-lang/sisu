@@ -47,9 +47,12 @@ impl Checker<'_> {
                 // The operator gives a new poisoned value, so no value outlives the cut reports.
                 self.diagnostics.drop_since(before);
             }
+            // `i64(` and `)` give an `i64`, so the context must expect one or nothing.
+            let convert = (!literal && matches!(expected.ty(), None | Some(Type::I64)))
+                .then_some(operand.span);
             let reported = self
                 .diagnostics
-                .error(DiagnosticKind::NegatedU8 { at: span });
+                .error(DiagnosticKind::NegatedU8 { at: span, convert });
             return Err(Poisoned {
                 mismatch: literal,
                 ..Poisoned::untyped(reported)
@@ -1106,10 +1109,8 @@ impl Checker<'_> {
     fn fallback(&mut self, rhs: &ast::Expr, expected: Expectation) -> Checked {
         let checked = self.expr(rhs, expected);
         if type_of(&checked) == Some(Type::UNIT) {
-            let reported = self.error(DiagnosticKind::NoValue {
-                at: rhs.span,
-                never: false,
-            });
+            let cause = self.no_value_cause(rhs, checked.as_ref().ok(), Type::UNIT, false);
+            let reported = self.no_value(rhs.span, cause);
             return Err(Poisoned::untyped(reported));
         }
         if let Err(failed) = &checked
@@ -1147,14 +1148,25 @@ impl Checker<'_> {
     ) -> Checked {
         let scrutinee = self.value(lhs, Expectation::None);
         let Some(TypeKind::Optional(payload)) = type_of(&scrutinee).map(Type::kind) else {
+            let before = self.diagnostics.len();
+            let default = self.fallback(rhs, Expectation::Poisoned);
             let reported = match known_type(&scrutinee) {
-                Ok(_) => self
-                    .diagnostics
-                    .error(DiagnosticKind::CoalesceNotOptional { at: lhs.span }),
+                // The fix deletes the default. So the default needs no report of its own, which
+                // the fix would hide. It needs no jump either: a `break` types its loop, and each
+                // jump changes how the code flows. A poisoned default has no `tir` to read: it
+                // follows an earlier error, or only the left side could type it, as `[]` and
+                // `None`. A left side that ends in `}` would end a `let ... else` value in `}`
+                // (E0173), so it gets no fix either. Both exits of the check sort the reports, so
+                // they are in text order.
+                Ok(_) => self.diagnostics.error(DiagnosticKind::CoalesceNotOptional {
+                    at: lhs.span,
+                    default: (self.diagnostics.len() == before
+                        && matches!(&default, Ok(e) if !e.exits())
+                        && !self.source.text(lhs.span).ends_with('}'))
+                    .then(|| Span::new(lhs.span.end(), rhs.span.end())),
+                }),
                 Err(reported) => reported,
             };
-            // Only its own diagnostics matter.
-            drop(self.fallback(rhs, Expectation::Poisoned));
             return Err(Poisoned::untyped(reported));
         };
         // `??` groups to the right, so a `None` that starts a right `??` has no type to take:
