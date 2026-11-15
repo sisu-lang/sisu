@@ -380,6 +380,14 @@ class Rulings(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("not Accept, Reject or Defer: sol 2: Pending", result.stdout)
 
+    def test_rulings_should_name_the_wanted_form_of_a_ruling_with_a_note(self) -> None:
+        result = self.rulings(
+            "sol 1: Accept (option a): x.\nsol 2: Accept: y.\nopus 1: Accept: x.\n"
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("sol 1: Accept (option a)", result.stdout)
+        self.assertIn('write "sol 1: Accept: <reason>"', result.stdout)
+
     def test_rulings_should_fail_on_two_words_that_only_start_with_a_ruling(self) -> None:
         result = self.rulings(
             "sol 1: Accept: x.\nsol 2: Accept/Reject: later.\nopus 1: Accept: x.\n"
@@ -409,6 +417,19 @@ class Rulings(unittest.TestCase):
         (self.run_dir / "rulings-2.md").write_text("opus 1: Accept: x.\nopus 2: Reject: y.\n")
         result = subprocess.run(
             ["python3", SCRIPT, "rulings", self.run_dir, "--report", "opus", "--round", "2"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("opus: 2 findings: 1 Accept, 1 Reject", result.stdout)
+
+    def test_rulings_should_take_the_file_stem_of_the_round_as_the_stem(self) -> None:
+        (self.run_dir / "opus-3.md").write_text(REPORT + "### 1. A\n### 2. B\n")
+        (self.run_dir / "rulings-3.md").write_text("opus-3 1: Accept: x.\nopus 2: Reject: y.\n")
+        result = subprocess.run(
+            ["python3", SCRIPT, "rulings", self.run_dir, "--report", "opus", "--round", "3"],
             capture_output=True,
             text=True,
             check=False,
@@ -541,6 +562,27 @@ class SaveReport(unittest.TestCase):
         result = self.save("--agent", "abc", "--round", "2", stem=str(self.root / "opus-2.md"))
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertEqual((self.root / "opus-2.md").read_text(), "Verdict: x\n")
+
+    def test_save_report_should_write_the_reply_to_the_out_file(self) -> None:
+        self.transcript({"type": "text", "text": "Verdict: x"})
+        out = self.root / "g1-task-1-tests-review.md"
+        transcripts = ["--transcripts", str(self.root / "projects")]
+        result = subprocess.run(
+            ["python3", SCRIPT, "save-report", "--agent", "abc", "--out", out, *transcripts],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(out.read_text(), "Verdict: x\n")
+        self.assertFalse((self.root / "opus.md").exists())
+
+    def test_save_report_should_stop_on_a_stem_and_an_out_file(self) -> None:
+        self.transcript({"type": "text", "text": "Verdict: x"})
+        result = self.save("--agent", "abc", "--out", str(self.root / "x.md"))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("not both", result.stderr)
 
     def test_save_report_should_stop_on_the_path_of_another_round(self) -> None:
         self.transcript({"type": "text", "text": "Verdict: x"})

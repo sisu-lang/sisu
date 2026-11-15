@@ -111,8 +111,9 @@ on.
 Give every finding one ruling, and write each ruling as one line of
 `RUN/rulings-<round>.md`:
 `<stem> <n>: Accept | Reject | Defer to <where>: <reason>`, where `<stem>` is
-the report's stem. When two reviewers report one defect, give both lines the
-same ruling and name the other line. Then run `python3 <skill base>/scripts/review_round.py rulings RUN --round <round> --report <stem>`,
+the report's stem, such as `opus`, or its file stem, such as `opus-2`. The
+ruling is one word before the colon; put a note in the reason. When two
+reviewers report one defect, give both lines the same ruling and name the other line. Then run `python3 <skill base>/scripts/review_round.py rulings RUN --round <round> --report <stem>`,
 with the same `--report` options as `verify`. It fails on a finding that has
 no ruling, and its counts go into the report to the user.
 
