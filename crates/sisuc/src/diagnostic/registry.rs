@@ -1709,6 +1709,11 @@ fn method_form_message(name: &str, takes: bool) -> String {
     }
 }
 
+/// The label at a function that declares no return type.
+fn no_return_type(name: &str) -> String {
+    format!("`{name}` declares no return type")
+}
+
 /// How written type arguments do not fit what they follow.
 pub(crate) enum ArgumentsForm {
     /// A generic declaration that takes `want` of them, with `found`.
@@ -5016,7 +5021,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d = Diagnostic::coded(code, at, "this function returns no value");
                 match function {
                     Some(NoReturn { name, at, add }) => {
-                        let d = d.with_secondary(at, format!("`{name}` declares no return type"));
+                        let d = d.with_secondary(at, no_return_type(&name));
                         match add {
                             Some((open, ty)) => d.with_fix(Fix {
                                 message: format!("add `-> {ty}` to `{name}`"),
@@ -5099,7 +5104,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     NoValueCause::Call {
                         name,
                         declared: Some(declared),
-                    } => d.with_secondary(declared, format!("`{name}` declares no return type")),
+                    } => d.with_secondary(declared, no_return_type(&name)),
                     NoValueCause::Plain | NoValueCause::Call { .. } => d,
                 }
             }

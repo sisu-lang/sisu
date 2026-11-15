@@ -1148,22 +1148,20 @@ impl Checker<'_> {
     ) -> Checked {
         let scrutinee = self.value(lhs, Expectation::None);
         let Some(TypeKind::Optional(payload)) = type_of(&scrutinee).map(Type::kind) else {
-            let mark = self.diagnostics.mark();
             let before = self.diagnostics.len();
-            // Only its own diagnostics matter.
-            drop(self.fallback(rhs, Expectation::Poisoned));
+            let default = self.fallback(rhs, Expectation::Poisoned);
             let reported = match known_type(&scrutinee) {
-                // The fix deletes the default with its reports, so it needs a default with none.
-                // The report goes before them: the order of the reports is the order of the text.
-                Ok(_) => self.diagnostics.insert_at(
-                    mark,
-                    DiagnosticKind::CoalesceNotOptional {
-                        at: lhs.span,
-                        default: (self.diagnostics.len() == before)
-                            .then(|| Span::new(lhs.span.end(), rhs.span.end())),
-                    }
-                    .into(),
-                ),
+                // The fix deletes the default. So the default needs no report of its own, which
+                // the fix would hide. It needs no jump either: a `break` types its loop, and each
+                // jump changes how the code flows. A poisoned default has no `tir` to read, and
+                // it always follows an earlier error. Both exits of the check sort the reports,
+                // so they are in the order of the text.
+                Ok(_) => self.diagnostics.error(DiagnosticKind::CoalesceNotOptional {
+                    at: lhs.span,
+                    default: (self.diagnostics.len() == before
+                        && matches!(&default, Ok(e) if !e.exits()))
+                    .then(|| Span::new(lhs.span.end(), rhs.span.end())),
+                }),
                 Err(reported) => reported,
             };
             return Err(Poisoned::untyped(reported));

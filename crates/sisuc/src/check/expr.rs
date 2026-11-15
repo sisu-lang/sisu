@@ -77,7 +77,8 @@ fn missing_else(mut e: &ast::Expr) -> Option<bool> {
 }
 
 /// The function that the call `value` calls, through the block and the `MutCall` that a call with
-/// `mut` arguments becomes.
+/// `mut` arguments becomes. `Checker::mut_call` (`check/mut_args.rs`) owns these forms: a change
+/// there checks this function.
 fn callee(value: &tir::Expr) -> Option<tir::FuncId> {
     match &value.kind {
         tir::ExprKind::Call { func, .. } => Some(*func),

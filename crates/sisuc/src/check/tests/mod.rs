@@ -2448,6 +2448,7 @@ fn lowers_not_equal() {
 /// AND an unsafe fix adds the type
 /// BUT there is no fix for `main` or for a method that answers an interface requirement
 #[test]
+#[expect(clippy::too_many_lines, reason = "a table of programs, one row each")]
 fn a_value_returned_from_a_function_with_no_return_type_should_offer_the_type() {
     let row = |id, src: &str, reports| FixRow {
         id,
@@ -2548,6 +2549,29 @@ fn a_value_returned_from_a_function_with_no_return_type_should_offer_the_type() 
             "F11",
             "interface Sh { fn area(self) }\nstruct Q: Sh { n: i64\n    fn area(self) { return 5 }\n}\nfn main() {}",
             vec![no_fix(("    fn ", "area"))],
+        ),
+        // After the clash it is not known which function is `main`: neither gets a fix.
+        row(
+            "F14",
+            "fn main() { return 5 }\nfn main() { return 5 }",
+            vec![
+                no_fix(("fn ", "main")),
+                Report::new(Code::DefinedTwice, ("}\nfn ", "main")).secondary(&[("fn ", "main")]),
+                Report::new(Code::UnexpectedReturnValue, ("}\nfn main() { return ", "5"))
+                    .secondary(&[("}\nfn ", "main")]),
+            ],
+        ),
+        // With no `main`, no function is `main`: the fix stays.
+        row(
+            "F15",
+            "fn five() { return 5 }",
+            vec![
+                Report::new(Code::NoMain, ("", "")),
+                Report::new(Code::UnexpectedReturnValue, ("return ", "5"))
+                    .secondary(&[("fn ", "five")])
+                    .fix(false, 1, ("{ return 5 }", "-> i64 { return 5 }"))
+                    .after(After::Errors(&[Code::NoMain])),
+            ],
         ),
         row("F12", &long_names, vec![secondary_only("x")]),
         row("F13", aliases, vec![secondary_only("x")]),

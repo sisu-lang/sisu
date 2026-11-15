@@ -1016,13 +1016,20 @@ impl Checker<'_> {
             return None;
         };
         let sig = &self.signatures[f.0];
-        let free = sig.name != "main" && !self.named_for_requirement.contains(&f);
+        let main = match self.names.function(Symbol::intern("main")) {
+            Some(Declared::Known(id)) => id == f,
+            // After a clash it is not known which function is `main`.
+            Some(Declared::Poisoned(_)) => true,
+            None => false,
+        };
+        let free = !main && !self.named_for_requirement.contains(&f);
         Some(NoReturn {
             name: own_name(&sig.name).to_owned(),
             at: sig.span,
             add: free
-                .then(|| Some((sig.header.end(), self.whole_type_name(ty)?)))
-                .flatten(),
+                .then(|| self.whole_type_name(ty))
+                .flatten()
+                .map(|name| (sig.header.end(), name)),
         })
     }
 
