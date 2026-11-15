@@ -1995,11 +1995,12 @@ fn a_skipped_break_value_should_fail_only_the_loops_its_breaks_can_give_a_value(
     );
 }
 
-/// A skipped `break` value is lexed and walked once. `chain(n)` nests `n` skipped values, each in
-/// the `if` that `while` needs. So a value that is lexed again at each depth makes the count
-/// quadratic. The parser stops at 256 levels of nesting, which 30 links stay under: a link adds 3.
+/// The walk over skipped `break` values takes at most one step for each token of the program.
+/// `chain(n)` nests `n` skipped values, each in the `if` that `while` needs. So a value that is
+/// walked again at each depth makes the count quadratic. The parser stops at 256 levels of
+/// nesting, which 30 links stay under: a link adds 3.
 #[test]
-fn skipped_break_values_should_be_lexed_once() {
+fn skipped_break_value_token_walk_should_stay_linear() {
     let chain = |n: usize| {
         let value = (0..n).fold("1".to_string(), |inner, _| {
             format!("if c {{ while c {{ break ({inner}) }}; 1 }} else {{ 2 }}")
