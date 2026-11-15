@@ -300,6 +300,6 @@ impl Checker<'_> {
 }
 
 /// The function's or method's own name: `m` of `P.m`.
-fn own_name(name: &str) -> &str {
+pub(super) fn own_name(name: &str) -> &str {
     name.rsplit('.').next().unwrap_or(name)
 }

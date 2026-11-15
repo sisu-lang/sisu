@@ -1,8 +1,13 @@
-error[E0043]: expression has no value
+error[E0043]: `greet` returns no value
  --> E0043.sisu:6:13
   |
 6 |     let x = greet()
   |             ^^^^^^^
+  |
+ ::: E0043.sisu:1:4
+  |
+1 | fn greet() {
+  |    ----- `greet` declares no return type
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0043

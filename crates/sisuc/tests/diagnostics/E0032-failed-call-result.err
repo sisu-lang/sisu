@@ -242,8 +242,14 @@ error[E0059]: `print` takes one value
     |
 160 |     let _s: string = print(1, 2)
     |                      ^^^^^^^^^^^
+    |
+help: join the values into one string
+    |
+160 -     let _s: string = print(1, 2)
+160 +     let _s: string = print("{1} {2}")
+    |
 
-error[E0043]: expression has no value
+error[E0043]: `print` returns no value
    --> E0032-failed-call-result.sisu:160:22
     |
 160 |     let _s: string = print(1, 2)
@@ -333,7 +339,7 @@ error[E0053]: `[i64].push` takes 1 argument, found 2
 182 |     let _s: string = xs.push(1, 2)
     |                      ^^^^^^^^^^^^^
 
-error[E0043]: expression has no value
+error[E0043]: `push` returns no value
    --> E0032-failed-call-result.sisu:182:22
     |
 182 |     let _s: string = xs.push(1, 2)
@@ -716,7 +722,7 @@ error[E0032]: expected `Flag`, found `i64`
 274 |     let _s: string = e.eq(1)
     |                           ^
 
-error[E0043]: expression has no value
+error[E0043]: `print` returns no value
    --> E0032-failed-call-result.sisu:277:22
     |
 277 |     let _s: string = print(n: 1)
@@ -764,7 +770,7 @@ error[E0055]: this call takes no labels on its arguments
     |
     = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
 
-error[E0043]: expression has no value
+error[E0043]: `print` returns no value
    --> E0032-failed-call-result.sisu:286:22
     |
 286 |     let _s: string = print(u())

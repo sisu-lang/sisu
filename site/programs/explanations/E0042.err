@@ -3,6 +3,11 @@ error[E0042]: `u8` cannot be negative
   |
 3 |     let n = -b
   |             ^^
+  |
+help: convert the value to `i64` first
+  |
+3 |     let n = -i64(b)
+  |              ++++ +
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0042

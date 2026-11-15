@@ -37,6 +37,12 @@ error[E0058]: `v` is a field of `Node`, not a method
    |
 61 |     print(c.v())
    |             ^
+   |
+help: remove the `()`
+   |
+61 -     print(c.v())
+61 +     print(c.v)
+   |
 
 error[E0120]: `A` is a variant; build it with `E.A`
   --> E0057-member-of-optional.sisu:65:13
