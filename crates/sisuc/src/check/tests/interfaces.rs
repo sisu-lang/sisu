@@ -512,7 +512,7 @@ fn inherited_requirements_should_be_found_without_arguments() {
 /// index each parameter, and one for each type name that is looked up. Each of the two loops of
 /// pass 1b sets the scope of an interface up once.
 #[test]
-fn the_scope_of_an_interface_should_be_set_up_once_in_each_loop() {
+fn the_scope_of_an_interface_should_cost_steps_linear_in_its_parameters() {
     let steps = |n: usize| {
         let params: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
         let requirements = (0..n)
@@ -4949,7 +4949,7 @@ fn an_associated_type_read_through_a_later_interface_should_check_as_when_writte
 }
 
 /// The rows of the second test.
-const MEMBER_ARGUMENT_ROWS: [(&str, &str, &[Wanted]); 21] = [
+const MEMBER_ARGUMENT_ROWS: [(&str, &str, &[Wanted]); 17] = [
     (
         "n9, written after",
         "interface It {\n    type Item\n}\ninterface G<X> {}\ninterface J: K, G<Self.Item> {}\ninterface K: It {}\nfn main() {}",
@@ -4977,11 +4977,6 @@ const MEMBER_ARGUMENT_ROWS: [(&str, &str, &[Wanted]); 21] = [
             (Code::UnknownType, (5, 21)),
             (Code::InheritedArgument, (6, 16)),
         ],
-    ),
-    (
-        "m4, a member over a struct (green before and after)",
-        "interface Has {\n    type Item\n}\nstruct C: Has {\n    type Item = i64\n}\ninterface G<X> {}\ninterface J: G<C.Item> {}\nfn f(x: C.Item) -> i64 { x }\nfn main() { print(f(1)) }",
-        &[(Code::UnknownType, (8, 16)), (Code::UnknownType, (9, 9))],
     ),
     (
         "e1, mutual parameters",
@@ -5032,11 +5027,6 @@ const MEMBER_ARGUMENT_ROWS: [(&str, &str, &[Wanted]); 21] = [
         &[(Code::NotAnInterface, (6, 17))],
     ),
     (
-        "e11, a member over an applied base (green before and after)",
-        "interface G<X> {}\nstruct Box<T> {\n    v: T\n}\ninterface J<T>: G<Box<T>.Item> {}\nfn main() {}",
-        &[(Code::UnknownType, (5, 19))],
-    ),
-    (
         "e8, a member of a parameter as an entry, written after",
         "interface It {\n    type Item\n}\ninterface J<T: K>: T.Item {}\ninterface K: It {}\nfn main() {}",
         &[(Code::NotAnInterface, (4, 20))],
@@ -5047,14 +5037,36 @@ const MEMBER_ARGUMENT_ROWS: [(&str, &str, &[Wanted]); 21] = [
         &[(Code::NotAnInterface, (5, 20))],
     ),
     (
-        "x1, a member over a struct (green before and after)",
-        "interface Has {\n    type Item\n}\nstruct C: Has {\n    type Item = i64\n}\ninterface J: C.Item {}\nfn main() {}",
-        &[(Code::UnknownType, (7, 14))],
-    ),
-    (
         "x2, a member of an own associated type",
         "interface Has {\n    type Inner\n}\ninterface G<X> {}\ninterface K: G<Item.Inner> {\n    type Item: Has\n}\nfn main() {}",
         &[(Code::InheritedArgument, (5, 16))],
+    ),
+];
+
+/// An inherited interface takes no argument that names an associated type of `Self`, of a
+/// parameter or of its own. Such an argument is reported from its text, as E0151. No closure that
+/// is not final is read for it. An entry that is such a type is E0148.
+#[test]
+fn an_inheritance_argument_that_names_a_member_should_be_reported_from_its_text() {
+    check_rows(&MEMBER_ARGUMENT_ROWS);
+}
+
+/// The rows of the test of a member over another base.
+const OTHER_BASE_ROWS: [(&str, &str, &[Wanted]); 4] = [
+    (
+        "m4, a member over a struct (green before and after)",
+        "interface Has {\n    type Item\n}\nstruct C: Has {\n    type Item = i64\n}\ninterface G<X> {}\ninterface J: G<C.Item> {}\nfn f(x: C.Item) -> i64 { x }\nfn main() { print(f(1)) }",
+        &[(Code::UnknownType, (8, 16)), (Code::UnknownType, (9, 9))],
+    ),
+    (
+        "e11, a member over an applied base (green before and after)",
+        "interface G<X> {}\nstruct Box<T> {\n    v: T\n}\ninterface J<T>: G<Box<T>.Item> {}\nfn main() {}",
+        &[(Code::UnknownType, (5, 19))],
+    ),
+    (
+        "x1, a member over a struct (green before and after)",
+        "interface Has {\n    type Item\n}\nstruct C: Has {\n    type Item = i64\n}\ninterface J: C.Item {}\nfn main() {}",
+        &[(Code::UnknownType, (7, 14))],
     ),
     (
         "x3, a member over an unknown name (green before and after)",
@@ -5063,13 +5075,11 @@ const MEMBER_ARGUMENT_ROWS: [(&str, &str, &[Wanted]); 21] = [
     ),
 ];
 
-/// An inherited interface takes no argument that names an associated type of `Self`, of a
-/// parameter or of its own. Such an argument is reported from its text, as E0151. No closure that
-/// is not final is read for it. An entry that is such a type is E0148. A member over any other
-/// base is read as before.
+/// A member in an inheritance list can have another base, such as a struct or an unknown name.
+/// Such a member is resolved as any other type name.
 #[test]
-fn an_inheritance_argument_that_names_a_member_should_be_reported_from_its_text() {
-    check_rows(&MEMBER_ARGUMENT_ROWS);
+fn an_inheritance_member_over_another_base_should_resolve_as_before() {
+    check_rows(&OTHER_BASE_ROWS);
 }
 
 /// The rows of the third test.
