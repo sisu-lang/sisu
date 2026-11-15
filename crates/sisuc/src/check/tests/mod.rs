@@ -260,6 +260,30 @@ fn fix_removes_its_code(src: &str, d: &Diagnostic) {
     assert!(!left.contains(&d.code()), "{result}: {left:?}");
 }
 
+/// Why applying the safe fixes of `d` to `src` breaks the rule of
+/// `each_safe_fix_should_remove_exactly_its_diagnostic`, if it does: the result holds one report
+/// fewer of the code of `d`, and each other code keeps its count. A fix may reveal errors, so a
+/// code may be added.
+fn safe_fix_removes_only(src: &str, d: &Diagnostic) -> Option<String> {
+    let edits: Vec<_> = (d.fixes().iter())
+        .filter(|f| f.safe())
+        .flat_map(Fix::edits)
+        .collect();
+    let result = apply(src, &edits);
+    let mut gone: Vec<Code> = diags(src).iter().map(Diagnostic::code).collect();
+    for code in diags(&result).iter().map(Diagnostic::code) {
+        if let Some(i) = gone.iter().position(|&c| c == code) {
+            gone.remove(i);
+        }
+    }
+    (gone != [d.code()]).then(|| {
+        format!(
+            "the safe fix removes {gone:?}, wanted {:?}: {result}",
+            d.code()
+        )
+    })
+}
+
 /// `src` with every fix of `d` applied, which must still lex and parse.
 fn applied(src: &str, d: &Diagnostic) -> String {
     let edits: Vec<_> = d.fixes().iter().flat_map(Fix::edits).collect();
@@ -359,8 +383,10 @@ impl Report {
         if found != wanted {
             return Some(format!("fixes {found:?}, wanted {wanted:?}"));
         }
-        if d.fixes().iter().any(Fix::safe) {
-            fix_removes_its_code(src, d);
+        if d.fixes().iter().any(Fix::safe)
+            && let Some(why) = safe_fix_removes_only(src, d)
+        {
+            return Some(why);
         }
         let edits: Vec<_> = d.fixes().iter().flat_map(Fix::edits).collect();
         let left = || {
@@ -2423,6 +2449,16 @@ fn a_value_returned_from_a_function_with_no_return_type_should_offer_the_type() 
     // The call of `five` in `main` has no value while `five` returns none.
     let no_value =
         || Report::new(Code::NoValue, ("let _ = ", "five()")).secondary(&[("fn ", "five")]);
+    // A type name that is cut with `...` is no text for a fix: a name of 50 letters, six deep.
+    let name = "A".repeat(50);
+    let nested = (0..6).fold("i64".to_owned(), |inner, _| format!("{name}<{inner}>"));
+    let long_names =
+        format!("struct {name}<T> {{ v: T }}\nfn f(x: {nested}) {{ return x }}\nfn main() {{}}");
+    // The same, through a chain of aliases of a `Pair`.
+    let aliases = "struct Pair<A, B> { a: A\n b: B }\ntype T0 = i64\ntype T1 = Pair<T0, T0>\ntype T2 = Pair<T1, T1>\ntype T3 = Pair<T2, T2>\ntype T4 = Pair<T3, T3>\ntype T5 = Pair<T4, T4>\ntype T6 = Pair<T5, T5>\nfn f(x: T6) { return x }\nfn main() {}";
+    let secondary_only = |value| {
+        Report::new(Code::UnexpectedReturnValue, ("return ", value)).secondary(&[("fn ", "f")])
+    };
     fix_rows(&[
         row(
             "F1",
@@ -2497,6 +2533,8 @@ fn a_value_returned_from_a_function_with_no_return_type_should_offer_the_type() 
             "interface Sh { fn area(self) }\nstruct Q: Sh { n: i64\n    fn area(self) { return 5 }\n}\nfn main() {}",
             vec![no_fix(("    fn ", "area"))],
         ),
+        row("F12", &long_names, vec![secondary_only("x")]),
+        row("F13", aliases, vec![secondary_only("x")]),
     ]);
 }
 

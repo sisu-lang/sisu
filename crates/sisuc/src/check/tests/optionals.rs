@@ -1000,6 +1000,7 @@ fn a_default_of_a_value_that_is_not_optional_should_offer_its_removal() {
                 .after(after),
         ]
     };
+    let none = |at: Needle| Report::new(Code::CoalesceNotOptional, at);
     fix_rows(&[
         row(
             "C1",
@@ -1025,6 +1026,40 @@ fn a_default_of_a_value_that_is_not_optional_should_offer_its_removal() {
                 "a",
                 After::Errors(&[Code::Mismatch]),
             ),
+        ),
+        row(
+            "C5",
+            "print(a ?? b)",
+            vec![
+                none(("print(", "a")),
+                Report::new(Code::BindingNotFound, ("?? ", "b")).fix(false, 1, ("?? b", "?? a")),
+            ],
+        ),
+        // `??` groups to the right: the outer E0048 holds the inner one, so only the inner one
+        // has a fix.
+        row(
+            "C6",
+            "print(a ?? 4 ?? 5)",
+            vec![
+                none(("print(", "a")),
+                Report::new(Code::CoalesceNotOptional, ("?? ", "4"))
+                    .fix(true, 1, ("4 ?? 5", "4"))
+                    .after(After::Errors(&[Code::CoalesceNotOptional])),
+            ],
+        ),
+        row(
+            "C7",
+            "print(a ?? { let z: u8 = 300; 1 })",
+            vec![
+                none(("print(", "a")),
+                Report::new(Code::IntegerDoesNotFit, ("z: u8 = ", "300")),
+            ],
+        ),
+        // The default has only a warning, which the fix would remove with the default.
+        row(
+            "C8",
+            "print(a ?? { let mut z = 1; z })",
+            vec![none(("print(", "a"))],
         ),
     ]);
 }

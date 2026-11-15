@@ -2796,7 +2796,9 @@ fn a_type_argument_on_a_struct_without_type_parameters_should_report_e0137_first
 fn a_call_of_a_field_should_offer_to_read_it() {
     let row = |id, body: &'static str, reports| FixRow {
         id,
-        src: format!("struct P {{ x: i64 }}\nfn main() {{\n    let p = P(x: 1)\n    {body}\n}}"),
+        src: format!(
+            "struct P {{ x: i64 }}\nfn main() {{\n    let p = P(x: 1)\n    let o: P? = p\n    {body}\n}}"
+        ),
         reports,
     };
     let read = |at: Needle, from, to| {
@@ -2823,6 +2825,27 @@ fn a_call_of_a_field_should_offer_to_read_it() {
             "M5",
             "print(p.x<i64>())",
             vec![Report::new(TypeArguments, ("print(", "p.x"))],
+        ),
+        // The fix deletes `()` and no `)` of a group.
+        row(
+            "M6",
+            "print((p.x()))",
+            read(("p.", "x"), "(p.x())", "(p.x)"),
+        ),
+        row(
+            "M7",
+            "print(\"{(p.x())}\")",
+            read(("p.", "x"), "(p.x())", "(p.x)"),
+        ),
+        row(
+            "M8",
+            "print((o?.x()))",
+            read(("o?.", "x"), "(o?.x())", "(o?.x)"),
+        ),
+        row(
+            "M9",
+            "print(((p.x())) + 1)",
+            read(("p.", "x"), "((p.x()))", "((p.x))"),
         ),
     ]);
 }
