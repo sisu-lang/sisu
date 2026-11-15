@@ -221,7 +221,7 @@ It also counts the rulings of each reviewer, the origin of each later
 blocking finding, and the classes of `retro.md`.
 
 - A pull request that changes this skill, its brief or a seat gives the output in its body, so that the next change can compare.
-- At the end of a plan or a `solve-issues` batch, run it on the runs of that work only, such as `.scratch/reviews/sisu-review-m9p2-*`. Give the user each retro class that two or more findings share, with the hook or the test that would catch it.
+- After the final review of a branch, and at the end of a plan or a `solve-issues` batch, run the `kaizen` skill. It runs `stats` on the runs of that work only, such as `.scratch/reviews/sisu-review-m9p2-*`.
 
 Then delete everything in `RUN` except the briefs, the reports and `probes`:
 `find RUN -mindepth 1 -maxdepth 1 -type d ! -name probes -exec rm -rf {} +`.
