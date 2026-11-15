@@ -4940,7 +4940,7 @@ const LATER_INTERFACE_ROWS: [(&str, &str, &[Wanted]); 34] = [
 ];
 
 /// A read of an associated type through an interface that stands later in the program gives what
-/// it gives when that interface stands first (#624): the lists of inheritance are all resolved
+/// it gives when that interface stands first (#624). The lists of inheritance are all resolved
 /// before any signature. A row for the order that stands first gave the wanted codes before the
 /// fix too.
 #[test]
@@ -4979,8 +4979,8 @@ const MEMBER_ARGUMENT_ROWS: [(&str, &str, &[Wanted]); 21] = [
         ],
     ),
     (
-        "m4, a member over a class (green before and after)",
-        "interface Has {\n    type Item\n}\nclass C: Has {\n    type Item = i64\n}\ninterface G<X> {}\ninterface J: G<C.Item> {}\nfn f(x: C.Item) -> i64 { x }\nfn main() { print(f(1)) }",
+        "m4, a member over a struct (green before and after)",
+        "interface Has {\n    type Item\n}\nstruct C: Has {\n    type Item = i64\n}\ninterface G<X> {}\ninterface J: G<C.Item> {}\nfn f(x: C.Item) -> i64 { x }\nfn main() { print(f(1)) }",
         &[(Code::UnknownType, (8, 16)), (Code::UnknownType, (9, 9))],
     ),
     (
@@ -5033,7 +5033,7 @@ const MEMBER_ARGUMENT_ROWS: [(&str, &str, &[Wanted]); 21] = [
     ),
     (
         "e11, a member over an applied base (green before and after)",
-        "interface G<X> {}\nclass Box<T> {\n    v: T\n}\ninterface J<T>: G<Box<T>.Item> {}\nfn main() {}",
+        "interface G<X> {}\nstruct Box<T> {\n    v: T\n}\ninterface J<T>: G<Box<T>.Item> {}\nfn main() {}",
         &[(Code::UnknownType, (5, 19))],
     ),
     (
@@ -5047,8 +5047,8 @@ const MEMBER_ARGUMENT_ROWS: [(&str, &str, &[Wanted]); 21] = [
         &[(Code::NotAnInterface, (5, 20))],
     ),
     (
-        "x1, a member over a class (green before and after)",
-        "interface Has {\n    type Item\n}\nclass C: Has {\n    type Item = i64\n}\ninterface J: C.Item {}\nfn main() {}",
+        "x1, a member over a struct (green before and after)",
+        "interface Has {\n    type Item\n}\nstruct C: Has {\n    type Item = i64\n}\ninterface J: C.Item {}\nfn main() {}",
         &[(Code::UnknownType, (7, 14))],
     ),
     (
@@ -5085,8 +5085,8 @@ const QUEUED_CHECK_ROWS: [(&str, &str, &[Wanted]); 3] = [
         &[(Code::InheritedArgument, (6, 24))],
     ),
     (
-        "e5, a requirement that applies a class to the parameter",
-        "interface O {}\nclass Box<X: O> {\n    v: X\n}\ninterface K<X: O> {}\ninterface J<T: O>: K<T> {\n    fn f(self, x: Box<T>)\n}\nfn main() {}",
+        "e5, a requirement that applies a struct to the parameter",
+        "interface O {}\nstruct Box<X: O> {\n    v: X\n}\ninterface K<X: O> {}\ninterface J<T: O>: K<T> {\n    fn f(self, x: Box<T>)\n}\nfn main() {}",
         &[],
     ),
 ];
@@ -5107,8 +5107,8 @@ const MEMBER_BOUND_ROWS: [(&str, &str, &[Wanted]); 2] = [
         &[(Code::UnknownType, (5, 23))],
     ),
     (
-        "q5-self, the same inside one interface",
-        "interface Has2<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface J {\n    type C: Conv<Self.A.Inner>\n    type B\n    type A: Has2<Self.B>\n}\nfn main() {}",
+        "q5-self, the same inside one interface, with a requirement that reads the closure",
+        "interface Has2<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface J {\n    type C: Conv<Self.A.Inner>\n    type B\n    type A: Has2<Self.B>\n    fn f(self) -> Self.A.Inner\n}\nfn main() {}",
         &[(Code::UnknownType, (6, 25))],
     ),
 ];

@@ -47,8 +47,8 @@ mod unused;
 mod unused_names;
 
 /// The `PARAM_STEPS` that checking the four language interfaces takes, which every test's count
-/// holds. Each has only `Self`. It takes a step to index in each of the two loops of pass 1b.
-/// The second loop adds 4. Its name lookup takes a step too, and is not done twice.
+/// holds. Each has only `Self`, which each of the two loops of pass 1b indexes in one step. Its
+/// name lookup takes one step, and is not done twice.
 const LANG_PARAM_STEPS: usize = 12;
 
 thread_local! {
