@@ -1031,8 +1031,9 @@ impl Checker<'_> {
         Ok(tir::Expr::new(ExprKind::Return(value), Type::NEVER, span))
     }
 
-    /// The function whose body returns a value of type `ty` though it declares no return type.
-    /// It has the offset of its `{`, so that a fix adds the type there. `main` has none: a type
+    /// The function whose body returns a value of type `ty` though it returns `unit`: it declares
+    /// no return type, or writes one that is `unit`. It has the offset of its `{`, so that a fix
+    /// adds the type there, or the written type, which the fix replaces. `main` has none: a type
     /// there is wrong. A method for a requirement has none: the type makes it fail E0152. A type
     /// whose name is cut has none: the fix would not parse. A `unit` has none: the function
     /// returns `unit` already.
@@ -1051,6 +1052,7 @@ impl Checker<'_> {
         Some(NoReturn {
             name: own_name(&sig.name).to_owned(),
             at: sig.span,
+            written: self.written_ret(f),
             add: free
                 .then(|| self.whole_type_name(ty))
                 .flatten()

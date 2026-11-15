@@ -304,11 +304,12 @@ pub(crate) enum NoValueCause {
     /// never finishes: its value is `unit`. `want` is the type that the context wants, when it
     /// wants one.
     UnitIf { if_let: bool, want: Option<String> },
-    /// A call of `name`, a function that declares no return type, at `declared`, when that
-    /// declaration is in the program.
+    /// A call of `name`, a function that returns `unit`, when its declaration is in the
+    /// program: `declared` is its name, or the return type that it writes, with that type as
+    /// written.
     Call {
         name: String,
-        declared: Option<Span>,
+        declared: Option<(Span, Option<String>)>,
     },
 }
 
@@ -1718,9 +1719,13 @@ fn method_form_message(name: &str, takes: bool) -> String {
     }
 }
 
-/// The label at a function that declares no return type.
-fn no_return_type(name: &str) -> String {
-    format!("`{name}` declares no return type")
+/// The label at a function that returns `unit`: at its name when it declares no return type,
+/// or at `written`, the return type that it writes.
+fn declares(name: &str, written: Option<&str>) -> String {
+    match written {
+        Some(written) => format!("`{name}` declares `-> {written}`"),
+        None => format!("`{name}` declares no return type"),
+    }
 }
 
 /// How written type arguments do not fit what they follow.
@@ -1745,7 +1750,10 @@ pub(crate) struct NoReturn {
     /// Its own name, and where it is written.
     pub(crate) name: String,
     pub(crate) at: Span,
-    /// The offset of the `{` of its body, and the type of the value: a fix adds `-> type` there.
+    /// Where it writes its return type, and that type as written, when it writes one.
+    pub(crate) written: Option<(Span, String)>,
+    /// The offset of the `{` of its body, and the type of the value: a fix adds `-> type` there,
+    /// or replaces the written type with it.
     pub(crate) add: Option<(usize, String)>,
 }
 /// What made a tree pass the nesting limit.
@@ -5019,10 +5027,26 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::UnexpectedReturnValue { at, function } => {
                 let d = Diagnostic::coded(code, at, "this function returns no value");
                 match function {
-                    Some(NoReturn { name, at, add }) => {
-                        let d = d.with_secondary(at, no_return_type(&name));
-                        match add {
-                            Some((open, ty)) => d.with_fix(Fix {
+                    Some(NoReturn {
+                        name,
+                        at,
+                        written,
+                        add,
+                    }) => {
+                        let d = match &written {
+                            Some((at, shown)) => d.with_secondary(*at, declares(&name, Some(shown))),
+                            None => d.with_secondary(at, declares(&name, None)),
+                        };
+                        match (add, written) {
+                            (Some((_, ty)), Some((at, _))) => d.with_fix(Fix {
+                                message: format!("replace the return type of `{name}` with `{ty}`"),
+                                safe: false,
+                                edits: vec![Edit {
+                                    span: at,
+                                    replacement: ty,
+                                }],
+                            }),
+                            (Some((open, ty)), None) => d.with_fix(Fix {
                                 message: format!("add `-> {ty}` to `{name}`"),
                                 safe: false,
                                 edits: vec![Edit {
@@ -5030,7 +5054,7 @@ impl From<DiagnosticKind> for Diagnostic {
                                     replacement: format!("-> {ty} "),
                                 }],
                             }),
-                            None => d,
+                            (None, _) => d,
                         }
                     }
                     None => d,
@@ -5106,8 +5130,8 @@ impl From<DiagnosticKind> for Diagnostic {
                     )),
                     NoValueCause::Call {
                         name,
-                        declared: Some(declared),
-                    } => d.with_secondary(declared, no_return_type(&name)),
+                        declared: Some((declared, written)),
+                    } => d.with_secondary(declared, declares(&name, written.as_deref())),
                     NoValueCause::Plain | NoValueCause::Call { .. } => d,
                 }
             }

@@ -2801,6 +2801,17 @@ impl Checker<'_> {
         name
     }
 
+    /// Where the function `f` writes its return type, and the type as written, when it writes
+    /// one.
+    fn written_ret(&self, f: tir::FuncId) -> Option<(Span, String)> {
+        let sig = &self.signatures[f.0];
+        let shown = match &sig.ret_shown {
+            Some(shown) => shown.to_string(),
+            None => self.type_name(sig.ret?),
+        };
+        Some((sig.ret_span?, shown))
+    }
+
     /// The name of `ty` as a program writes it, or `None` when `type_name` cut it with `...`:
     /// text for a fix must parse.
     fn whole_type_name(&self, ty: Type) -> Option<String> {

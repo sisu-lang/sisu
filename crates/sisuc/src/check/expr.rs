@@ -585,12 +585,15 @@ impl Checker<'_> {
             ExprKind::MethodCall { method, .. } => method,
             _ => return NoValueCause::Plain,
         };
+        let func = value
+            .and_then(callee)
+            .filter(|func| !self.signatures[func.0].span.in_prelude());
         NoValueCause::Call {
             name: name.name.to_string(),
-            declared: value
-                .and_then(callee)
-                .map(|func| self.signatures[func.0].span)
-                .filter(|span| !span.in_prelude()),
+            declared: func.map(|func| match self.written_ret(func) {
+                Some((at, shown)) => (at, Some(shown)),
+                None => (self.signatures[func.0].span, None),
+            }),
         }
     }
 
