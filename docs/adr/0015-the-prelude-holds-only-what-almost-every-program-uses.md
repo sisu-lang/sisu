@@ -71,6 +71,6 @@ same reason.
 - A function that does not meet the rule goes in a module, such as `os` and
   `io` in milestone 11.
 
-Note (2026-11-14, ADR 0051): `Error`, `Convert` and `AnyError` are in `lang.sisu`, not in the prelude.
-`read_file`, `write_file` and `IoError` are a temporary exception to "almost
-every program" until milestone 11 moves them into `io`.
+Note (2026-11-14, ADR 0051): `Error`, `Convert` and `AnyError` will be in `lang.sisu`, not in the prelude.
+`read_file`, `write_file` and `IoError` will be a temporary exception to
+"almost every program" until milestone 11 moves them into `io`.

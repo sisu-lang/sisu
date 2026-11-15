@@ -176,7 +176,7 @@ An array has these methods:
 | `xs.first()` | The element type, optional | The first element, or `None` when `xs` is empty |
 | `xs.last()` | The element type, optional | The last element, or `None` when `xs` is empty |
 | `xs.get(i)` | The element type, optional | The element at `i`, or `None` when `i` is outside the array |
-| `xs.push(x)` | none | Adds `x` after the last element, and writes `xs` |
+| `xs.push(x)` | `unit` | Adds `x` after the last element, and writes `xs` |
 
 ```sisu
 fn main() {

@@ -687,7 +687,7 @@ fn main() {
 
 - The names of the pattern are in scope in the first block only, and not in the `else` block.
 - An `if let` with an `else` is an expression, as an `if` is.
-- An `if let` without an `else` whose branch gives `unit` gives a `unit` value. When its branch has a value of another type, it has no value. [E0043](../diagnostics/E0043.md)
+- An `if let` without an `else` whose branch gives `unit` gives a `unit` value. When its branch has a value of another type, it has no value. Where `unit?` is expected, an `if let` without an `else` has no value either. [E0043](../diagnostics/E0043.md)
 
 ```sisu
 fn main() {

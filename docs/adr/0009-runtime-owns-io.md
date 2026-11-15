@@ -45,5 +45,5 @@ return only integers, `bool`, floats and pointers.
   turns bytes into a string, such as a read from standard input, validates
   them.
 
-Note (2026-11-14, ADR 0051): File functions return results, while the standard streams still panic.
+Note (2026-11-14, ADR 0051): File functions will return results, while the standard streams still panic.
 The `i64(s)` parse is runtime code until milestone 11.

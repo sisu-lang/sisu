@@ -116,7 +116,7 @@ fn main() {
 - The values of the branches must have one type. [E0032](../diagnostics/E0032.md)
 - When one branch is a `T` and another a `T?`, the `if` is a `T?`.
 - A branch of the type `never` takes the type of the others ([Types](types.md#never)).
-- An `if` without an `else` whose branch gives `unit` gives a `unit` value. When its branch has a value of another type, the `if` has no value. It is a statement. [E0043](../diagnostics/E0043.md)
+- An `if` without an `else` whose branch gives `unit` gives a `unit` value. When its branch has a value of another type, the `if` has no value. It is a statement. Where `unit?` is expected, an `if` without an `else` has no value either. [E0043](../diagnostics/E0043.md)
 - An `else if` is an `if` in the `else` branch.
 
 ```sisu
@@ -360,7 +360,7 @@ fn main() {
 
 ## Expressions as statements
 
-An expression can stand as a statement, such as a call of `print`. When its value is not used, and its type is not `unit` or `unit?`, the program builds with a warning ([W0004](../diagnostics/W0004.md)).
+An expression can stand as a statement, such as a call of `print`. When its value is not used, the program builds with a warning ([W0004](../diagnostics/W0004.md)). There is no warning for the types `unit`, `unit?` and `never`, or for a call of `dbg`. For an `if`, an `if let` or a `match`, the check applies to the value of each branch.
 
 ```sisu
 fn main() {
