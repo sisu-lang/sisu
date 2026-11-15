@@ -1143,5 +1143,33 @@ fn a_default_of_a_value_that_is_not_optional_should_offer_its_removal() {
             vec![none(("print(", "xs"))],
         ),
         row("C21", "print(a ?? None)", vec![none(("print(", "a"))]),
+        // A left side that ends in `}` gets no fix: in a `let ... else`, the value would then
+        // end in `}` (E0173). The rule reads the text, so it holds outside a `let ... else` too.
+        row(
+            "C22",
+            "let Some(v) = { a } ?? 0 else { return }; print(v)",
+            vec![none(("Some(v) = ", "{ a }"))],
+        ),
+        row(
+            "C23",
+            "let Some(v) = if a > 1 { a } else { 2 } ?? 0 else { return }; print(v)",
+            vec![none(("Some(v) = ", "if a > 1 { a } else { 2 }"))],
+        ),
+        row(
+            "C24",
+            "let Some(v) = match a { _ => a } ?? 0 else { return }; print(v)",
+            vec![none(("Some(v) = ", "match a { _ => a }"))],
+        ),
+        row("C25", "print({ a } ?? 4)", vec![none(("print(", "{ a }"))]),
+        row(
+            "C26",
+            "let Some(v) = (a) ?? 0 else { return }; print(v)",
+            remove(
+                ("Some(v) = ", "(a)"),
+                "(a) ?? 0",
+                "(a)",
+                After::Errors(&[Code::UnwrapNeedsOptional]),
+            ),
+        ),
     ]);
 }
