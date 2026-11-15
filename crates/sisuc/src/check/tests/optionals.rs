@@ -987,6 +987,10 @@ fn a_block_made_never_before_its_tail_should_keep_its_error() {
 /// WHEN the program is checked
 /// THEN E0048 offers a safe fix that removes the `??` and its default, which never runs
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one row for each default that gets the fix, and each that gets none"
+)]
 fn a_default_of_a_value_that_is_not_optional_should_offer_its_removal() {
     let row = |id, body: &'static str, reports| FixRow {
         id,
@@ -1066,6 +1070,71 @@ fn a_default_of_a_value_that_is_not_optional_should_offer_its_removal() {
             "C8",
             "print(a ?? { let mut z = 1; z })",
             vec![none(("print(", "a"))],
+        ),
+        // A jump in the default types its loop and changes how the code flows: the fix would
+        // delete it, so the default gets no fix.
+        row(
+            "C10",
+            "loop { let x = a ?? break; print(x) }",
+            vec![none(("x = ", "a"))],
+        ),
+        row(
+            "C11",
+            "let v = loop { let x = a ?? break 5; print(x) }; print(v)",
+            vec![none(("x = ", "a"))],
+        ),
+        row(
+            "C12",
+            "let v = loop { let x = a ?? break \"s\"; if x > 1 { break 5 } }; print(v)",
+            vec![
+                none(("x = ", "a")),
+                Report::new(Code::Mismatch, ("break ", "5")).secondary(&[("?? ", "break \"s\"")]),
+            ],
+        ),
+        row(
+            "C13",
+            "for i in 0..3 { let x = a ?? continue; print(x + i) }",
+            vec![none(("x = ", "a"))],
+        ),
+        row(
+            "C14",
+            "let x = a ?? return; print(x)",
+            vec![none(("x = ", "a"))],
+        ),
+        row(
+            "C15",
+            "loop { let x = a ?? { if a > 1 { break }; 1 }; print(x) }",
+            vec![none(("x = ", "a"))],
+        ),
+        // A loop of its own in the default also gets no fix: the rule reads `exits`, which is
+        // true for a jump at any depth.
+        row(
+            "C16",
+            "loop { let x = a ?? loop { break 1 }; print(x); break }",
+            vec![none(("x = ", "a"))],
+        ),
+        // A default that never finishes, with no jump, keeps its fix.
+        row(
+            "C17",
+            "print(a ?? panic(\"x\"))",
+            remove(("print(", "a"), "a ?? panic(\"x\")", "a", After::Clean),
+        ),
+        // A poisoned default has no `tir` to read, so it gets no fix.
+        row(
+            "C18",
+            "let y = nope; print(a ?? y)",
+            vec![
+                Report::new(Code::BindingNotFound, ("y = ", "nope")),
+                none(("print(", "a")),
+            ],
+        ),
+        row(
+            "C19",
+            "let y = nope; loop { let x = a ?? { if a > 1 { break }; y }; print(x) }",
+            vec![
+                Report::new(Code::BindingNotFound, ("y = ", "nope")),
+                none(("x = ", "a")),
+            ],
         ),
     ]);
 }
