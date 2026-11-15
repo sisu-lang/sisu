@@ -4233,8 +4233,8 @@ fn main() {
     for key in keys {
         assert!(walk.seen.contains(key), "the walk should mark {key}");
     }
-    // `exchange` has the shape of a `mut self` call: its first argument is a `mut` part. No
-    // `mut self` method is called here, so only the method key holds.
+    // `exchange` has the shape of a `mut self` call: its first argument is a `mut` part. The one
+    // `mut self` call here is on a local and has no `mut` argument, so only the method key holds.
     let part = "struct Cell {
     n: i64
 
@@ -4252,6 +4252,7 @@ fn main() {
     let mut cell = Cell(n: 0)
     let mut row = Row(c: Cell(n: 0), cs: [Cell(n: 1)])
     let mut cells = [Cell(n: 2)]
+    cell.step()
     let _ = exchange(mut cell, Cell(n: 3))
     let _ = exchange(mut row.c, Cell(n: 3))
     let _ = exchange(mut cells[0], Cell(n: 3))
