@@ -1065,8 +1065,11 @@ fn without_value(e: &tir::Expr, lifted: bool) -> Option<(Span, bool)> {
     if !unit && !optional_unit(e.ty) {
         return None;
     }
+    // The tail of a `never` block is unreachable, so no code reads its value.
     let tail = |block: &tir::Block| {
-        (block.value.as_deref()).and_then(|value| without_value(value, lifted))
+        (block.value.as_deref())
+            .filter(|_| block.ty != Type::NEVER)
+            .and_then(|value| without_value(value, lifted))
     };
     // A branch with a value beside no `else`: an `if let` on an enum is a `match` of two arms.
     let has_value = |block: &tir::Block| !matches!(block.ty, Type::UNIT | Type::NEVER);

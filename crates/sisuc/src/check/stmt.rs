@@ -331,13 +331,19 @@ impl Checker<'_> {
     /// `discard` of the value of `block`, whose checked form is `checked`, if it has one.
     pub(super) fn discard_tail(&mut self, block: &ast::Block, checked: &tir::Block) {
         let mut unused = Vec::new();
-        self.collect_tail(block, checked, &mut unused);
+        if let (Some(source), Some(value)) = (tail(block), &checked.value) {
+            self.collect(source, value, false, &mut unused);
+        }
         self.report_unused(unused);
     }
 
-    /// `collect` of the value of `block`, whose checked form is `checked`, if it has one.
+    /// `collect` of the value of `block`, a branch or an arm whose checked form is `checked`, if
+    /// it has one. The tail of a `never` branch is unreachable: W0001 reports it, and the join
+    /// does not take its value.
     fn collect_tail(&mut self, block: &ast::Block, checked: &tir::Block, unused: &mut Vec<Unused>) {
-        if let (Some(source), Some(value)) = (tail(block), &checked.value) {
+        if checked.ty != Type::NEVER
+            && let (Some(source), Some(value)) = (tail(block), &checked.value)
+        {
             self.collect(source, value, false, unused);
         }
     }
