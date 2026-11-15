@@ -1,0 +1,35 @@
+// A statement discards a `unit?` branch beside an `else if` that has no `else`. The join wraps
+// the `unit` of that `else if`, and no code reads the value.
+// GIVEN an enum `U` whose method `log` prints `log`, and a function `g` that prints `g`. A
+//   function `run` discards `o?.log()` beside `else if d { g() }`. It does this in a statement,
+//   as the tail of a `unit` function, in a `match` arm and in a `for` body.
+// WHEN `main` calls `run` with `c` false and `d` true, then with `c` true
+// THEN the first call prints `g` for each form, and then `end`. The second call prints `log` for
+//   each form, and then `end`.
+enum U {
+    A
+    fn log(self) {
+        print("log")
+    }
+}
+
+fn g() {
+    print("g")
+}
+
+fn tail(o: U?, c: bool, d: bool) {
+    if c { o?.log() } else if d { g() }
+}
+
+fn run(o: U?, c: bool, d: bool) {
+    if c { o?.log() } else if d { g() }
+    tail(o, c, d)
+    match c { true => o?.log(); false => if d { g() } }
+    for _i in [1] { if c { o?.log() } else if d { g() } }
+    print("end")
+}
+
+fn main() {
+    run(Some(U.A), false, true)
+    run(Some(U.A), true, true)
+}

@@ -7324,9 +7324,37 @@ fn generated_programs_should_reach_each_gap_rule() {
 }
 
 /// The forms in which `program` holds a `unit` loop of a printed `unit` (`Gen::unit_loop`). The
-/// loop follows the bound `u` as a statement, binds `u` again, or stands for an operand.
+/// loop follows the bound `u` as a statement, binds `u` again, or stands for an operand. A
+/// printed `unit` whose tail follows the bound `u` directly has no loop.
 fn unit_loop_forms(program: &str) -> FxHashSet<&'static str> {
     let mut forms = FxHashSet::default();
+    let tails = [
+        "[u, u] }",
+        "[u, u] == [u] }",
+        "[u] != [u] }",
+        "Some(u) == Some(u) }",
+        "u < u }",
+        "u >= u }",
+    ];
+    for (start, _) in program.match_indices("{ let u = ") {
+        let value = &program[start + "{ let u = ".len()..];
+        // The `; ` after the bound value, outside the brackets of that value.
+        let mut depth = 0_i32;
+        let end = value.char_indices().find_map(|(i, c)| {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                ';' if depth == 0 => return Some(i),
+                _ => {}
+            }
+            None
+        });
+        if let Some(rest) = end.and_then(|end| value[end..].strip_prefix("; "))
+            && tails.iter().any(|tail| rest.starts_with(tail))
+        {
+            forms.insert("no loop");
+        }
+    }
     // Only a `unit` loop names its counter `v<n>` and sets it to 1: a `mut` copy names it `w<n>`.
     for (start, _) in program.match_indices("({ let mut v") {
         let counter = &program[start + "({ let mut v".len()..];
@@ -7365,10 +7393,11 @@ fn unit_loop_forms(program: &str) -> FxHashSet<&'static str> {
 
 /// GIVEN the programs of the seeds `0..FUZZ_SEEDS`, which the nightly reads and no others
 /// WHEN the test reads the `unit` loops of their printed `unit` values, in order
-/// THEN a loop is a statement in one, binds `u` again in one, and is an operand in one
+/// THEN a loop is a statement in one, binds `u` again in one, and is an operand in one. One
+///   printed `unit` has no loop.
 #[test]
 fn generated_programs_should_reach_each_form_of_a_unit_loop() {
-    let all = ["a statement", "binds `u` again", "an operand"];
+    let all = ["a statement", "binds `u` again", "an operand", "no loop"];
     let mut seen = FxHashSet::default();
     for n in 0..FUZZ_SEEDS {
         seen.extend(unit_loop_forms(&generate(&seed(n)).program));

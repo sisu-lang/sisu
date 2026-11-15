@@ -464,6 +464,46 @@ fn a_discarded_optional_unit_should_check_clean_beside_a_block_with_no_value() {
             "match n { 1 => loop { break o?.log() }; _ => {} }",
         ),
         ("while with a bare break", "while c { if c { break } }"),
+        (
+            "else if with no else",
+            "if c { o?.log() } else if c { g() }",
+        ),
+        (
+            "else if with an empty block",
+            "if c { o?.log() } else if c {}",
+        ),
+        (
+            "arm that is an if",
+            "match n { 1 => o?.log(); _ => if c { g() } }",
+        ),
+        (
+            "if in the then branch",
+            "if c { if c { g() } } else { o?.log() }",
+        ),
+        (
+            "if after a let in the else branch",
+            "if c { o?.log() } else { let z = 1; if c { g() } }",
+        ),
+        (
+            "chain of else ifs",
+            "if c { g() } else if c { o?.log() } else if c { g() }",
+        ),
+        (
+            "else if in a for body",
+            "for i in [1] { if c { o?.log() } else if c { g() } }",
+        ),
+        (
+            "else if in a while body",
+            "while c { if c { o?.log() } else if c { g() }; break }",
+        ),
+        (
+            "else if in a block arm",
+            "match n { 1 => { if c { o?.log() } else if c { g() } }; _ => {} }",
+        ),
+        (
+            "else if after a statement",
+            "if c { o?.log() } else if c { g() }\n    g()",
+        ),
     ];
     for (row, used) in in_main {
         clean_row(row, &with_safe_call(used));
@@ -473,6 +513,18 @@ fn a_discarded_optional_unit_should_check_clean_beside_a_block_with_no_value() {
         "None arm as a tail",
         &format!("{}\n{tail}", with_safe_call("")),
     );
+    for (row, tail) in [
+        (
+            "else if as the tail of a unit function",
+            "fn f(o: U?, c: bool) -> unit {\n    if c { o?.log() } else if c { g() }\n}",
+        ),
+        (
+            "else if as the tail of main",
+            "fn f(o: U?, c: bool) {\n    if c { o?.log() } else if c { g() }\n}",
+        ),
+    ] {
+        clean_row(row, &format!("{}\n{tail}", with_safe_call("")));
+    }
 }
 
 /// A comparison of a `unit` holds the other operands to `unit`, in either order. A `unit?`, a
@@ -954,6 +1006,10 @@ fn lift_rows(rows: &[LiftRow<'_>]) {
 /// Where its `unit` lifts to `unit?`, it is E0043 at that `if`. The value can come through a
 /// block, a branch, an arm, a `return`, an argument, an element, a `break`, an `==` or a `??`.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table holds a row for each place that lifts the value"
+)]
 fn an_if_without_else_should_give_no_optional_unit_value() {
     let at = |text| vec![(Code::NoValue, text)];
     let rows = [
@@ -1033,9 +1089,48 @@ fn an_if_without_else_should_give_no_optional_unit_value() {
             "",
             at("if c"),
         ),
+        (
+            "used else if beside a unit?",
+            "let y = if c { p?.log() } else if d { g() }",
+            "",
+            at("if d"),
+        ),
+        (
+            "if let on an enum",
+            "let v = V.B; let y: unit? = if let V.A = v { g() }",
+            ENUM_V,
+            at("if let"),
+        ),
+        (
+            "if let on an enum as an argument",
+            "let v = V.B; h(if let V.A = v { g() })",
+            ENUM_V,
+            at("if let"),
+        ),
+        (
+            "if let on an enum in a return",
+            "",
+            "enum V {\n    A\n    B\n}\nfn r(v: V) -> unit? { return if let V.A = v { g() } }",
+            at("if let"),
+        ),
+        (
+            "if let on an enum in an else of a body",
+            "",
+            "enum V {\n    A\n    B\n}\nfn b(c: bool, v: V) -> unit? { if c { g() } else if let V.A = v { g() } }",
+            at("if let"),
+        ),
+        (
+            "if let on an enum in an else of a let",
+            "let v = V.B; let y: unit? = if let V.A = v { g() } else if let V.B = v { g() }",
+            ENUM_V,
+            at("if let V.B"),
+        ),
     ];
     lift_rows(&rows);
 }
+
+/// An enum `V` with two variants, for the `if let` rows of the `with_lift` tables.
+const ENUM_V: &str = "enum V {\n    A\n    B\n}";
 
 /// A `unit` value lifts to `unit?` with no report. A body that ends in an `if` without an `else`
 /// is E0031, as an `i64?` body is. These rows pass before and after the fix of their
@@ -1079,6 +1174,30 @@ fn a_unit_value_should_lift_and_a_body_if_should_keep_its_report() {
             vec![],
         ),
         ("safe call in a statement", "if c { p?.log() }", "", vec![]),
+        (
+            "body if let on an enum",
+            "",
+            "enum V {\n    A\n    B\n}\nfn a(v: V) -> unit? { if let V.A = v { g() } }",
+            vec![(Code::BodyHasNoValue, "}")],
+        ),
+        (
+            "if let on an enum in a statement",
+            "let v = V.B; if let V.A = v { g() }",
+            ENUM_V,
+            vec![],
+        ),
+        (
+            "if let on an enum beside a unit? in a statement",
+            "let v = V.B; if c { p?.log() } else if let V.A = v { g() }",
+            ENUM_V,
+            vec![],
+        ),
+        (
+            "if let on an enum with an else",
+            "let v = V.B; let y: unit? = if let V.A = v { g() } else { g() }",
+            ENUM_V,
+            vec![],
+        ),
     ];
     lift_rows(&rows);
 }
