@@ -531,22 +531,7 @@ impl Checker<'_> {
         // The checks that the first loop queued waited without the bounds of the parameters.
         self.rescope(head.queued.clone());
         self.put_assoc_in_scope(id, this.args);
-        // The bounds that name a member read other lists, which are final now.
-        for (k, assoc) in head.declared.iter().enumerate() {
-            if !assoc.bounds.iter().any(ast::TypeExpr::names_member) {
-                continue;
-            }
-            let ty = self.body.assoc.at(k).ty;
-            for (found, written) in head.bounds[k].iter_mut().zip(&assoc.bounds) {
-                if written.names_member() {
-                    *found = self.bound(written, ty);
-                }
-            }
-            self.interfaces[id.0].assoc[k].bounds = Bounds {
-                list: head.bounds[k].iter().flatten().copied().collect(),
-                failed: head.bounds[k].iter().any(Option::is_none),
-            };
-        }
+        self.member_bounds(id, &mut head);
         // A read in these bounds can find the closure of an associated type whose bounds that
         // name a member were not in yet.
         self.body.assoc_conforming.clear();
@@ -632,6 +617,26 @@ impl Checker<'_> {
                     taken.remove(&param.name.name);
                 }
             }
+        }
+    }
+
+    /// Resolves the bounds of the associated types of `id` that name a member, which waited for
+    /// the second loop: they read other lists, which are final now.
+    fn member_bounds(&mut self, id: InterfaceId, head: &mut Head<'_>) {
+        for (k, assoc) in head.declared.iter().enumerate() {
+            if !assoc.bounds.iter().any(ast::TypeExpr::names_member) {
+                continue;
+            }
+            let ty = self.body.assoc.at(k).ty;
+            for (found, written) in head.bounds[k].iter_mut().zip(&assoc.bounds) {
+                if written.names_member() {
+                    *found = self.bound(written, ty);
+                }
+            }
+            self.interfaces[id.0].assoc[k].bounds = Bounds {
+                list: head.bounds[k].iter().flatten().copied().collect(),
+                failed: head.bounds[k].iter().any(Option::is_none),
+            };
         }
     }
 
