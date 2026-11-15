@@ -982,3 +982,49 @@ fn a_block_made_never_before_its_tail_should_keep_its_error() {
         "the dead `let` should warn"
     );
 }
+
+/// GIVEN a `??` whose left side is not optional
+/// WHEN the program is checked
+/// THEN E0048 offers a safe fix that removes the `??` and its default, which never runs
+#[test]
+fn a_default_of_a_value_that_is_not_optional_should_offer_its_removal() {
+    let row = |id, body: &'static str, reports| FixRow {
+        id,
+        src: format!("fn main() {{\n    let a = 3\n    let o: i64? = None\n    {body}\n}}"),
+        reports,
+    };
+    let remove = |at: Needle, from, to, after| {
+        vec![
+            Report::new(Code::CoalesceNotOptional, at)
+                .fix(true, 1, (from, to))
+                .after(after),
+        ]
+    };
+    fix_rows(&[
+        row(
+            "C1",
+            "print(a ?? 4)",
+            remove(("print(", "a"), "a ?? 4", "a", After::Clean),
+        ),
+        row(
+            "C2",
+            "print(o ?? 1 ?? 2)",
+            remove(("o ?? ", "1"), "1 ?? 2", "1", After::Clean),
+        ),
+        row(
+            "C3",
+            "print((a) ?? 4)",
+            remove(("print(", "(a)"), "(a) ?? 4", "(a)", After::Clean),
+        ),
+        row(
+            "C4",
+            "let s: string = a ?? \"x\"",
+            remove(
+                ("string = ", "a"),
+                "a ?? \"x\"",
+                "a",
+                After::Errors(&[Code::Mismatch]),
+            ),
+        ),
+    ]);
+}

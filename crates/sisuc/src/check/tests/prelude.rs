@@ -2384,3 +2384,93 @@ fn match_in_the_prelude_should_give_an_internal_error_when_it_is_wrong() {
         );
     }
 }
+
+/// GIVEN a call of `print` or `eprint` with several values
+/// WHEN the program is checked
+/// THEN E0059 offers an unsafe fix that joins the values into one string
+/// BUT there is no fix for `dbg`, for no value, or for a label
+/// BUT there is no fix when a value that the fix puts into the string has a line break
+#[test]
+fn a_print_of_several_values_should_offer_one_string() {
+    let row = |id, stmt: &'static str, reports| FixRow {
+        id,
+        src: format!(
+            "fn f(s: string) -> i64 {{ 1 }}\nfn main() {{\n    let a = 3\n    let b = 4\n    {stmt}\n}}"
+        ),
+        reports,
+    };
+    let join = |stmt: &'static str, from, to| {
+        vec![
+            Report::new(Code::PrintArgument, ("    ", stmt))
+                .fix(false, 1, (from, to))
+                .after(After::Clean),
+        ]
+    };
+    let none = |stmt: &'static str| vec![Report::new(Code::PrintArgument, ("    ", stmt))];
+    fix_rows(&[
+        row(
+            "P1",
+            "print(\"a is\", a)",
+            join("print(\"a is\", a)", "\"a is\", a", "\"a is {a}\""),
+        ),
+        row(
+            "P2",
+            "eprint(\"a is\", a)",
+            join("eprint(\"a is\", a)", "\"a is\", a", "\"a is {a}\""),
+        ),
+        row(
+            "P3",
+            "print(a, b)",
+            join("print(a, b)", "a, b", "\"{a} {b}\""),
+        ),
+        row(
+            "P4",
+            "print(\"x\", \"y\")",
+            join("print(\"x\", \"y\")", "\"x\", \"y\"", "\"x y\""),
+        ),
+        row(
+            "P5",
+            "print(\"a={a}\", b)",
+            join("print(\"a={a}\", b)", "\"a={a}\", b", "\"a={a} {b}\""),
+        ),
+        row(
+            "P6",
+            "print(\"a\", f(\"x\"), a + 1)",
+            join(
+                "print(\"a\", f(\"x\"), a + 1)",
+                "\"a\", f(\"x\"), a + 1",
+                "\"a {f(\"x\")} {a + 1}\"",
+            ),
+        ),
+        row(
+            "P7",
+            "print(\"a\\tb\", a)",
+            join("print(\"a\\tb\", a)", "\"a\\tb\", a", "\"a\\tb {a}\""),
+        ),
+        row(
+            "P8",
+            "print((\"a\"), a)",
+            join("print((\"a\"), a)", "(\"a\"), a", "\"{(\"a\")} {a}\""),
+        ),
+        row("P9", "dbg(\"a\", a)", none("dbg(\"a\", a)")),
+        row("P10", "print()", none("print()")),
+        row(
+            "P11",
+            "print(x: \"a\", a)",
+            vec![
+                Report::new(Code::PrintArgument, ("    ", "print(x: \"a\", a)")),
+                Report::new(Code::LabeledArgument, ("print(", "x")),
+            ],
+        ),
+        row(
+            "P12",
+            "print(\"a\", if a > 1 {\n        1\n    } else { 2 })",
+            none("print(\"a\", if a > 1 {\n        1\n    } else { 2 })"),
+        ),
+        row(
+            "P13",
+            "print(\"a\",\n    a)",
+            join("print(\"a\",\n    a)", "\"a\",\n    a", "\"a {a}\""),
+        ),
+    ]);
+}

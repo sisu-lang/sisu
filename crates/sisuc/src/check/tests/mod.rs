@@ -268,6 +268,160 @@ fn applied(src: &str, d: &Diagnostic) -> String {
     result
 }
 
+/// What applying the fixes of a diagnostic of a row of `fix_rows` must give.
+#[derive(Clone, Copy)]
+enum After {
+    /// Not checked: the diagnostic has no fix, or the row does not pin the result.
+    Unchecked,
+    /// No error is left.
+    Clean,
+    /// Exactly these errors are left: the fixes reveal them.
+    Errors(&'static [Code]),
+}
+
+/// A span of a program: the text before it, and its own text. The span is the first match of
+/// the two together.
+type Needle = (&'static str, &'static str);
+
+/// The report that a row of `fix_rows` must give for one error.
+struct Report {
+    code: Code,
+    /// The primary span: the text of the span, and the text before it that the program writes
+    /// as the first match of both.
+    at: Needle,
+    /// The same for each secondary span, in order.
+    secondary: Vec<Needle>,
+    /// For each fix: whether it is safe, how many edits it has, and `(from, to)`. Applying the
+    /// fix alone changes the text `from` of the program into `to`.
+    fixes: Vec<(bool, usize, (&'static str, &'static str))>,
+    after: After,
+}
+
+impl Report {
+    fn new(code: Code, at: Needle) -> Report {
+        Report {
+            code,
+            at,
+            secondary: Vec::new(),
+            fixes: Vec::new(),
+            after: After::Unchecked,
+        }
+    }
+
+    fn secondary(mut self, spans: &[Needle]) -> Report {
+        self.secondary.extend_from_slice(spans);
+        self
+    }
+
+    /// A fix with `edits` edits that changes the text `from` of the program into `to`.
+    fn fix(mut self, safe: bool, edits: usize, (from, to): (&'static str, &'static str)) -> Report {
+        self.fixes.push((safe, edits, (from, to)));
+        self
+    }
+
+    fn after(mut self, after: After) -> Report {
+        self.after = after;
+        self
+    }
+
+    /// Why the diagnostic `d` of `src` is not this report, if it is not.
+    fn differs(&self, src: &str, d: &Diagnostic) -> Option<String> {
+        let spans = |ds: Vec<Span>| -> Vec<(usize, usize)> {
+            ds.into_iter().map(|s| (s.start(), s.end())).collect()
+        };
+        let want = |(before, text): Needle| {
+            let start = src
+                .find(&format!("{before}{text}"))
+                .unwrap_or_else(|| panic!("`{before}{text}` should be in {src}"))
+                + before.len();
+            (start, start + text.len())
+        };
+        let primary = spans(vec![d.span()]);
+        let secondary = spans(d.secondary().iter().map(|(s, _)| *s).collect());
+        let wanted_secondary: Vec<_> = self.secondary.iter().map(|&s| want(s)).collect();
+        if (d.code(), primary[0], &secondary) != (self.code, want(self.at), &wanted_secondary) {
+            return Some(format!(
+                "found {:?} at {primary:?} with {secondary:?}, wanted {:?} at {:?} with {wanted_secondary:?}",
+                d.code(),
+                self.code,
+                want(self.at),
+            ));
+        }
+        let found: Vec<_> = (d.fixes().iter())
+            .map(|f| {
+                let edits: Vec<_> = f.edits().iter().collect();
+                (f.safe(), edits.len(), apply(src, &edits))
+            })
+            .collect();
+        let wanted: Vec<_> = (self.fixes.iter())
+            .map(|&(safe, edits, (from, to))| (safe, edits, src.replacen(from, to, 1)))
+            .collect();
+        if found != wanted {
+            return Some(format!("fixes {found:?}, wanted {wanted:?}"));
+        }
+        if d.fixes().iter().any(Fix::safe) {
+            fix_removes_its_code(src, d);
+        }
+        let edits: Vec<_> = d.fixes().iter().flat_map(Fix::edits).collect();
+        let left = || {
+            let result = apply(src, &edits);
+            parse_ok(&result);
+            let (_, ds) = checked(&result);
+            errors(&result, &ds)
+                .into_iter()
+                .map(|(code, _)| code)
+                .collect::<Vec<_>>()
+        };
+        match self.after {
+            After::Unchecked => None,
+            After::Clean => Some(left())
+                .filter(|l| !l.is_empty())
+                .map(|l| format!("fixes leave {l:?}")),
+            After::Errors(codes) => Some(left())
+                .filter(|l| l != codes)
+                .map(|l| format!("fixes leave {l:?}, wanted {codes:?}")),
+        }
+    }
+}
+
+/// One row of `fix_rows`: a program, and the report of each of its errors, in order.
+struct FixRow {
+    id: &'static str,
+    src: String,
+    reports: Vec<Report>,
+}
+
+/// Checks each row, and asserts once at the end, so that a red run lists each red row.
+fn fix_rows(rows: &[FixRow]) {
+    let mut red = Vec::new();
+    for row in rows {
+        let (_, ds) = checked(&row.src);
+        let errors: Vec<_> = (ds.iter())
+            .filter(|d| d.code().severity() == Severity::Error)
+            .collect();
+        if errors.len() != row.reports.len() {
+            let codes: Vec<_> = errors.iter().map(|d| d.code()).collect();
+            red.push(format!(
+                "row `{}`: errors {codes:?}, wanted {} reports",
+                row.id,
+                row.reports.len()
+            ));
+            continue;
+        }
+        for (d, report) in errors.into_iter().zip(&row.reports) {
+            if let Some(why) = report.differs(&row.src, d) {
+                red.push(format!("row `{}`: {why}", row.id));
+            }
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
 fn at(src: &str, span: Span) -> (usize, usize) {
     line_col(src, span.start())
 }
@@ -2246,6 +2400,106 @@ fn lowers_not_equal() {
     );
 }
 
+/// GIVEN a `return` with a value in a function that declares no return type
+/// WHEN the program is checked
+/// THEN E0037 points at the value, and a secondary points at the function
+/// AND an unsafe fix adds the type
+/// BUT there is no fix for `main` or for a method that answers an interface requirement
+#[test]
+fn a_value_returned_from_a_function_with_no_return_type_should_offer_the_type() {
+    let row = |id, src: &str, reports| FixRow {
+        id,
+        src: src.to_owned(),
+        reports,
+    };
+    let five = |value, from, to| {
+        Report::new(Code::UnexpectedReturnValue, ("return ", value))
+            .secondary(&[("fn ", "five")])
+            .fix(false, 1, (from, to))
+            .after(After::Clean)
+    };
+    let no_fix =
+        |name| Report::new(Code::UnexpectedReturnValue, ("return ", "5")).secondary(&[name]);
+    // The call of `five` in `main` has no value while `five` returns none.
+    let no_value =
+        || Report::new(Code::NoValue, ("let _ = ", "five()")).secondary(&[("fn ", "five")]);
+    fix_rows(&[
+        row(
+            "F1",
+            "fn five() {\n    return 5\n}\nfn main() { let _ = five() }",
+            vec![five("5", "five() {", "five() -> i64 {"), no_value()],
+        ),
+        row(
+            "F2",
+            "fn five(){ return 5 }\nfn main() { let _ = five() }",
+            vec![five("5", "five(){", "five()-> i64 {"), no_value()],
+        ),
+        row(
+            "F3",
+            "struct Q { n: i64\n    fn five(self) { return 5 }\n}\nfn main() {}",
+            vec![five("5", "five(self) {", "five(self) -> i64 {")],
+        ),
+        row(
+            "F4",
+            "enum E { A\n    fn five(self) { return 5 }\n}\nfn main() {}",
+            vec![five("5", "five(self) {", "five(self) -> i64 {")],
+        ),
+        row(
+            "F5",
+            "fn five<T>(x: T) { return x }\nfn main() {}",
+            vec![
+                Report::new(Code::UnexpectedReturnValue, ("return ", "x"))
+                    .secondary(&[("fn ", "five")])
+                    .fix(false, 1, ("(x: T) {", "(x: T) -> T {"))
+                    .after(After::Clean),
+            ],
+        ),
+        row(
+            "F6",
+            "fn five(c: bool) { if c { return 5 }\n    return 6 }\nfn main() {}",
+            vec![
+                five("5", "bool) {", "bool) -> i64 {"),
+                five("6", "bool) {", "bool) -> i64 {"),
+            ],
+        ),
+        row(
+            "F7",
+            "fn five() { return \"a\" }\nfn main() {}",
+            vec![
+                Report::new(Code::UnexpectedReturnValue, ("return ", "\"a\""))
+                    .secondary(&[("fn ", "five")])
+                    .fix(false, 1, ("five() {", "five() -> string {"))
+                    .after(After::Clean),
+            ],
+        ),
+        row(
+            "F8",
+            "fn five() { return Some(1) }\nfn main() {}",
+            vec![
+                Report::new(Code::UnexpectedReturnValue, ("return ", "Some(1)"))
+                    .secondary(&[("fn ", "five")])
+                    .fix(false, 1, ("five() {", "five() -> i64? {"))
+                    .after(After::Clean),
+            ],
+        ),
+        row(
+            "F9",
+            "fn main() { return 5 }",
+            vec![no_fix(("fn ", "main"))],
+        ),
+        row(
+            "F10",
+            "interface Sh { fn area(self) }\nstruct Q { n: i64 }\nextend Q: Sh { fn area(self) { return 5 } }\nfn main() {}",
+            vec![no_fix(("extend Q: Sh { fn ", "area"))],
+        ),
+        row(
+            "F11",
+            "interface Sh { fn area(self) }\nstruct Q: Sh { n: i64\n    fn area(self) { return 5 }\n}\nfn main() {}",
+            vec![no_fix(("    fn ", "area"))],
+        ),
+    ]);
+}
+
 #[test]
 fn unknown_type_in_signature() {
     diagnostic(
@@ -3283,10 +3537,11 @@ fn unknown_field() {
 }
 
 #[test]
-fn field_called_as_method() {
+fn a_field_called_as_a_method_should_get_a_safe_fix() {
     let src = "class P {\n    x: i64\n}\nfn main() {\n    let p = P(x: 1)\n    print(p.x())\n}";
     let d = diagnostic(src, Code::FieldNotMethod, (6, 13, "x"), &[]);
-    assert!(d.fixes().is_empty(), "{d:?}");
+    assert_eq!(fixes(src, &d), [(true, vec![(6, 14, "()", String::new())])]);
+    fix_removes_its_code(src, &d);
 }
 
 #[test]
