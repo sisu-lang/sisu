@@ -19,8 +19,8 @@ use super::{
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{
-    ClashForm, ClashKind, DiagnosticKind, NeverReassignedForm, RangePlace, Unwrap, UnwrapHelp,
-    closest,
+    ClashForm, ClashKind, Diagnostic, DiagnosticKind, NeverReassignedForm, RangePlace, Unwrap,
+    UnwrapHelp, closest,
 };
 use crate::source::{Span, removal_end};
 use crate::symbol::Symbol;
@@ -1853,6 +1853,7 @@ impl Checker<'_> {
             loop_named: false,
             read: false,
             mut_param: false,
+            mut_self_writers: Vec::new(),
             hides_name: false,
             also: Vec::new(),
             shown: None,
@@ -1900,7 +1901,7 @@ impl Checker<'_> {
     /// parameter of a body with a `todo` does not wait. Otherwise a `let mut` that was never
     /// reassigned gets W0002, and so does a `mut` parameter, unless a requirement spells its `mut`.
     fn retire(&mut self, name: Symbol, b: Binding) {
-        let never = !b.reassigned && !b.loop_named;
+        let never = !b.reassigned && b.mut_self_writers.is_empty() && !b.loop_named;
         // The fix removes the `mut` and the white space up to the name, but not a comment.
         let remove = b.keyword.filter(|_| never).map(|k| {
             Span::new(
@@ -1924,6 +1925,14 @@ impl Checker<'_> {
                     .collect(),
                 _ => Vec::new(),
             };
+            // The W0002 fix of a method that writes the binding makes its calls read it. A
+            // binding that nothing else writes then gets W0002 at the same place; any other
+            // loses its warning, so the fix is unsafe.
+            let needs = if b.reassigned || b.keyword.is_none() || b.mut_self_writers.len() > 1 {
+                b.mut_self_writers
+            } else {
+                Vec::new()
+            };
             self.pending.push(Pending {
                 func,
                 param,
@@ -1932,6 +1941,7 @@ impl Checker<'_> {
                 fix,
                 remove,
                 copy: b.copy,
+                needs,
             });
             return;
         }
@@ -1949,9 +1959,9 @@ impl Checker<'_> {
         }
     }
 
-    /// Reports W0002 on the `mut self` of the method `func`, when nothing in its body wrote
+    /// Keeps W0002 for the `mut self` of the method `func`, when nothing in its body wrote
     /// `self` or called a `mut self` method on it. Like a `mut` parameter, it gets none beside a
-    /// `todo`, or for a requirement that spells its `mut`.
+    /// `todo`, or for a requirement that spells its `mut`. `unused_mut_selves` reports it.
     pub(super) fn warn_unused_mut_self(&mut self, func: tir::FuncId, mut_self: &ast::MutSelf) {
         if !self.body.self_mut
             || self.body.self_written != 0
@@ -1961,13 +1971,22 @@ impl Checker<'_> {
         {
             return;
         }
-        self.warn(DiagnosticKind::NeverReassigned {
-            name: "self".to_string(),
-            at: mut_self.receiver,
-            form: NeverReassignedForm::SelfParam {
-                remove: mut_self_removal(self.source.comments, mut_self),
-            },
-        });
+        let remove = mut_self_removal(self.source.comments, mut_self);
+        self.unused_mut_self.push((func, mut_self.receiver, remove));
+    }
+
+    /// The W0002 of each `mut self` that `warn_unused_mut_self` kept, once every body is checked
+    /// and the unused pass has run. Its fix is unsafe when a call of the method needs the `mut`.
+    pub(super) fn unused_mut_selves(&mut self) -> Vec<Diagnostic> {
+        let kept = std::mem::take(&mut self.unused_mut_self);
+        kept.into_iter()
+            .map(|(func, at, remove)| {
+                let safe = !self.needs_mut_self.contains(&func);
+                let form = NeverReassignedForm::SelfParam { remove, safe };
+                let name = "self".to_string();
+                DiagnosticKind::NeverReassigned { name, at, form }.into()
+            })
+            .collect()
     }
 
     /// The form of W0002 for `b`, which nothing reassigns, when it is a `mut` parameter that a

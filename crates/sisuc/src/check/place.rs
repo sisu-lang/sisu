@@ -1060,6 +1060,17 @@ impl Checker<'_> {
     /// the root of a path that crosses no class object is reassigned, as `reassign_root` says.
     /// The root of a class field's base is written.
     pub(super) fn stamp_push(&mut self, target: &ast::Expr) {
+        self.stamp_change(target, None);
+    }
+
+    /// Stamps what the place `target` of a call of the `mut self` method `func` writes, as
+    /// `stamp_push` does. The binding at the root keeps `func` in its `mut_self_writers`.
+    pub(super) fn stamp_call(&mut self, target: &ast::Expr, func: tir::FuncId) {
+        self.stamp_change(target, Some(func));
+    }
+
+    /// `stamp_push`, or `stamp_call` when `by` names the method.
+    fn stamp_change(&mut self, target: &ast::Expr, by: Option<tir::FuncId>) {
         let (&ast::ExprKind::Name(name), false) =
             (&place_root(target).kind, self.crosses_class(target))
         else {
@@ -1068,7 +1079,15 @@ impl Checker<'_> {
         let stamp = self.write_stamp();
         if let Some(b) = self.lookup(name) {
             b.written = stamp;
-            b.reassigned |= b.kind == BindingKind::Var;
+            if b.kind == BindingKind::Var {
+                match by {
+                    None => b.reassigned = true,
+                    Some(func) if !b.mut_self_writers.contains(&func) => {
+                        b.mut_self_writers.push(func);
+                    }
+                    Some(_) => {}
+                }
+            }
         }
     }
 

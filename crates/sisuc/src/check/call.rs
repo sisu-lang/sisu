@@ -941,7 +941,7 @@ impl Checker<'_> {
         site: Site<'_>,
         args: &[ast::Arg],
     ) -> Checked {
-        match self.mut_self_receiver(dot, receiver, site.name) {
+        match self.mut_self_receiver(dot, receiver, site.name, Some(func)) {
             Ok((temp, parts)) => self.invoke(span, func, Some(temp), site, args, parts),
             Err((receiver, reported)) => {
                 let checked =
@@ -960,13 +960,17 @@ impl Checker<'_> {
     /// stamped as written. A receiver that is no place is E0021. One that a `?.` leads to is
     /// E0062 until `?.` can write a value. Gives the temporary that the call takes and the parts
     /// it starts with. When the place fails, gives the receiver to check the call with, and the
-    /// report that stands for the call, if any.
+    /// report that stands for the call, if any. `func` is the method, when the call names one and
+    /// not a requirement. An error here exists only because it takes `mut self`, so its W0002
+    /// fix is unsafe. The call does not reassign the root of its place (`stamp_call`).
     pub(super) fn mut_self_receiver(
         &mut self,
         dot: Dot,
         (receiver, receiver_expr, parked): (Checked, &ast::Expr, Option<CheckedPlace>),
         method: &ast::Ident,
+        func: Option<tir::FuncId>,
     ) -> Result<(Checked, MutParts), (Checked, Option<Reported>)> {
+        let errors = self.diagnostics.errors();
         // A receiver that failed has its own report, which the `?.` led to: E0062 would repeat
         // it. The payload of a `.` on an optional fails only when the optional did.
         let failed = match dot {
@@ -999,7 +1003,10 @@ impl Checker<'_> {
             // The receiver's own error, or the E0062 of a `.` on an optional, is the report.
             None
         } else if let Some(place) = parked {
-            self.stamp_push(receiver_expr);
+            match func {
+                Some(func) => self.stamp_call(receiver_expr, func),
+                None => self.stamp_push(receiver_expr),
+            }
             self.copy_written(receiver_expr, receiver_expr.span, false);
             self.place_report(place)
         } else {
@@ -1010,6 +1017,11 @@ impl Checker<'_> {
                 method: Some(method.name),
             }))
         };
+        if let Some(func) = func
+            && self.diagnostics.errors() != errors
+        {
+            self.needs_mut_self.insert(func);
+        }
         let read = match receiver {
             Ok(read) if reported.is_none() => read,
             receiver => return Err((receiver, reported)),
@@ -1017,7 +1029,7 @@ impl Checker<'_> {
         let ty = read.ty;
         let path = try_unread(read, receiver_expr)
             .expect("the place that `method_expr` kept should read as its path");
-        let (temp, parts) = self.receiver_slot(receiver_expr, method.name, path, ty);
+        let (temp, parts) = self.receiver_slot(receiver_expr, (method.name, func), path, ty);
         Ok((Ok(temp), parts))
     }
 

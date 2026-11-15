@@ -2884,9 +2884,10 @@ pub(crate) enum NeverReassignedForm {
     /// A `mut` parameter, of a class type when `class`. Removing its `mut` changes every caller,
     /// so there is no fix.
     Param { class: bool },
-    /// A method's `mut self`. Removing the `mut` changes no caller, so the fix removes `remove`:
-    /// the `mut` and the white space after it, up to a comment.
-    SelfParam { remove: Span },
+    /// A method's `mut self`. The fix removes `remove`: the `mut` and the white space after it,
+    /// up to a comment. It is `safe` when no call of the method has a diagnostic that exists only
+    /// because the method takes `mut self`: the fix then changes no caller.
+    SelfParam { remove: Span, safe: bool },
 }
 
 /// What owns a method.
@@ -3443,7 +3444,7 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::NeverReassigned {
                 at,
-                form: NeverReassignedForm::SelfParam { remove },
+                form: NeverReassignedForm::SelfParam { remove, safe },
                 ..
             } => Diagnostic::coded(
                 code,
@@ -3453,7 +3454,7 @@ impl From<DiagnosticKind> for Diagnostic {
             .with_label("never reassigned")
             .with_fix(Fix {
                 message: "remove `mut`".to_string(),
-                safe: true,
+                safe,
                 edits: vec![Edit {
                     span: remove,
                     replacement: String::new(),

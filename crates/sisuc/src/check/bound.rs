@@ -67,7 +67,7 @@ impl Checker<'_> {
                 args,
             );
         }
-        match self.mut_self_receiver(dot, (receiver, receiver_expr, parked), site.name) {
+        match self.mut_self_receiver(dot, (receiver, receiver_expr, parked), site.name, None) {
             Ok(receiver) => self.requirement_call(span, picked, receiver, ty, site, args),
             Err((receiver, reported)) => {
                 let receiver = (receiver, MutParts::default());

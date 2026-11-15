@@ -101,6 +101,9 @@ pub(super) struct MutParts {
     unmarked: Vec<(usize, MarkCheck)>,
     /// The `mut self` method that the call runs, when the first of `marked` is its receiver.
     receiver: Option<Symbol>,
+    /// That method, when the call names one and not a requirement: E0171 at its receiver exists
+    /// only because it takes `mut self`.
+    func: Option<tir::FuncId>,
 }
 
 /// What `marks` keeps of a place that an argument names.
@@ -629,17 +632,19 @@ impl Checker<'_> {
         self.slot(&arg.value, (path, ty), parts)
     }
 
-    /// The temp that stands for the receiver `receiver` of a call of a `mut self` method, and the
-    /// call's parts. The receiver's place is `path` of type `ty`, and its part comes first.
+    /// The temp that stands for the receiver `receiver` of a call of the `mut self` method
+    /// `method`, and the call's parts. `func` is the method when the call names one. The
+    /// receiver's place is `path` of type `ty`, and its part comes first.
     pub(super) fn receiver_slot(
         &mut self,
         receiver: &ast::Expr,
-        method: Symbol,
+        (method, func): (Symbol, Option<tir::FuncId>),
         path: Path,
         ty: Type,
     ) -> (tir::Expr, MutParts) {
         let mut parts = MutParts {
             receiver: Some(method),
+            func,
             ..MutParts::default()
         };
         let temp = self.slot(receiver, (path, ty), &mut parts);
@@ -1011,7 +1016,7 @@ impl Checker<'_> {
     /// Reports each `mut` argument of a call whose place is the place of an earlier one, or
     /// holds it, or is held by it (E0171). Gives the parts, in argument order.
     pub(super) fn mut_overlaps(&mut self, taken: MutParts) -> Vec<MutPart> {
-        let method = taken.receiver;
+        let (method, func) = (taken.receiver, taken.func);
         let (parts, keys): (Vec<MutPart>, Vec<MutPlaceKey>) = taken.marked.into_iter().unzip();
         for (first, second, how) in twice(&keys) {
             let (a, b) = (&parts[first], &parts[second]);
@@ -1036,6 +1041,11 @@ impl Checker<'_> {
                 };
                 (method, form)
             });
+            if receiver.is_some()
+                && let Some(func) = func
+            {
+                self.needs_mut_self.insert(func);
+            }
             self.error(DiagnosticKind::MutPlaceTwice {
                 first: a.span,
                 second: b.span,

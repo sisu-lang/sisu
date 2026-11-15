@@ -417,6 +417,9 @@ struct Binding {
     read: bool,
     /// Whether the binding is a `mut` parameter, whose store-back reads it.
     mut_param: bool,
+    /// The `mut self` methods whose calls write the binding, which these writes do not count as
+    /// reassigned: the W0002 fix of one makes its calls read the binding.
+    mut_self_writers: Vec<tir::FuncId>,
     /// A pattern made this local to hide a poisoned name: it is no value.
     hides_name: bool,
     /// Where each later alternative of an or-pattern binds the name again.
@@ -898,6 +901,13 @@ struct Checker<'src> {
     uses: Vec<Use>,
     /// Each binding of a function or a method that nothing reads, in check order.
     pending: Vec<Pending>,
+    /// Each `mut self` that W0002 warns about: its method, the span of `self`, and what the fix
+    /// removes. The calls of the method are in other bodies, so `unused_mut_selves` reports it
+    /// when every body is checked.
+    unused_mut_self: Vec<(tir::FuncId, Span, Span)>,
+    /// The `mut self` methods that a call needs as they are: the call has a diagnostic that
+    /// exists only because the method takes `mut self`. The W0002 fix of one is unsafe.
+    needs_mut_self: FxHashSet<tir::FuncId>,
     /// Whether a type argument was recorded: see `tir::Program::instantiates`.
     instantiates: bool,
     /// Each `dbg` call: the body that holds it, if any, the type of its operand, and its span.
@@ -1310,6 +1320,8 @@ pub(crate) fn check<'src>(
     } else {
         diagnostics.extend(checker.unjudged());
     }
+    // The pass above marks each method whose W0002 fix would take a W0014 away.
+    diagnostics.extend(checker.unused_mut_selves());
     diagnostics.sort_by_key(order);
     let interfaces = checker.lowered_interfaces();
     let (enums, structs) = (checker.lowered_enums, checker.lowered_structs);
@@ -1521,6 +1533,8 @@ impl<'src> Checker<'src> {
             extend_head: None,
             uses: Vec::new(),
             pending: Vec::new(),
+            unused_mut_self: Vec::new(),
+            needs_mut_self: FxHashSet::default(),
             instantiates: false,
             dbg_shown: Vec::new(),
             read_shown: Vec::new(),
