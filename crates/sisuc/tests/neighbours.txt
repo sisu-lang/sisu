@@ -318,6 +318,8 @@ olg()?.log()
 mu
 su.u
 xu[0]
+# An `if` without an `else` that gives a `unit`: it has no value to lift to `unit?`.
+if d { g() }
 
 [failed values]
 # A type parameter read: in the function whose bound failed, `u` is unknown.
@@ -344,6 +346,8 @@ let _a = if c { [[Some(p)]] } else { [[$]] }
 let _a = match k { 0 => [Some(p)]; _ => [$, Some(Some(p))] }
 let _a = [Some(p), $]
 let _a = [$, Some(p)]
+# An untyped array literal beside a `unit?`, which lifts each `unit` element to `unit?`.
+let _a = [olg()?.log(), $]
 # Joins of `if`, `else if`, `match` and `??`, in both orders.
 let _a = if c { Some(p) } else { $ }
 let _a = if c { $ } else { Some(Some(p)) }

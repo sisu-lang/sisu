@@ -429,6 +429,10 @@ fn with_safe_call(used: &str) -> String {
 /// A statement discards a `unit?` branch or arm beside a block with no value or a `None` arm. It
 /// also discards a `unit?` that is the `break` value of its `loop`. Each checks clean, as a `unit`.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table holds a row for each place that discards the value"
+)]
 fn a_discarded_optional_unit_should_check_clean_beside_a_block_with_no_value() {
     with_prelude();
     let in_main = [
@@ -503,6 +507,30 @@ fn a_discarded_optional_unit_should_check_clean_beside_a_block_with_no_value() {
         (
             "else if after a statement",
             "if c { o?.log() } else if c { g() }\n    g()",
+        ),
+        (
+            "else if as the tail of a while body",
+            "while c { if c { break }; if c { o?.log() } else if c { g() } }",
+        ),
+        (
+            "else if as the tail of a while let body",
+            "while let Some(v) = o { if c { break }; if c { o?.log() } else if c { g() } }",
+        ),
+        (
+            "else if as the tail of a loop body",
+            "loop { if c { break }; if c { o?.log() } else if c { g() } }",
+        ),
+        (
+            "else if in the then branch of an if without an else",
+            "if c { if c { o?.log() } else if c { g() } }",
+        ),
+        (
+            "else if in the then branch of a dropped if",
+            "if c { if c { o?.log() } else if c { g() } } else {}",
+        ),
+        (
+            "else if as an arm that is not a block",
+            "match n { 1 => o?.log(); _ => if c { o?.log() } else if c { g() } }",
         ),
     ];
     for (row, used) in in_main {
@@ -1124,6 +1152,12 @@ fn an_if_without_else_should_give_no_optional_unit_value() {
             "let v = V.B; let y: unit? = if let V.A = v { g() } else if let V.B = v { g() }",
             ENUM_V,
             at("if let V.B"),
+        ),
+        (
+            "untyped array beside a unit?",
+            "let z = [p?.log(), if c { g() }]",
+            "",
+            at("if c"),
         ),
     ];
     lift_rows(&rows);
