@@ -1620,3 +1620,134 @@ fn a_value_after_a_jump_should_report_only_unreachable_code_where_it_is_discarde
         red.join("\n")
     );
 }
+
+/// A `main` that has `used` on line 18 and writes `p` after it, so `p` is always written. Before
+/// it come `items` and the declarations the rows share. The struct `P` has two `mut self`
+/// methods: `bump` returns `unit` and `get` returns `i64`. The enum `U` has a method. The
+/// function `g` returns `unit`, `h` takes a `unit?` and `k` returns `i64`.
+fn with_mut_self(items: &str, used: &str) -> String {
+    format!(
+        "struct P {{\n    x: i64\n    fn bump(mut self) {{ self.x += 1 }}\n    fn get(mut self) -> i64 {{ self.x += 1; self.x }}\n}}\nenum U {{\n    A\n    fn log(self) {{}}\n}}\nfn g() {{}}\nfn h(x: unit?) {{}}\nfn k() -> i64 {{ 1 }}\n{items}\nfn main() {{\n    let mut p = P(x: 1)\n    let c = false\n    let o: U? = None\n    {used}\n    p.x = 2\n}}"
+    )
+}
+
+/// A row of the `with_mut_self` table: its name, its `items`, its use, and each report wanted in
+/// it. A report is its code, a text whose last start in the program is its start, and whether it
+/// names the call as its cause.
+type MutSelfRow<'a> = (&'a str, &'a str, &'a str, Vec<(Code, &'a str, bool)>);
+
+/// A call of a `mut self` method gives the value of a call of a function: `p.bump()` is a `unit`
+/// value as `g()` is, and `p.get()` an `i64` as `k()` is.
+#[test]
+fn a_mut_self_call_should_give_the_value_of_a_function_call() {
+    let rows: &[MutSelfRow<'_>] = &[
+        ("bound", "", "let u = p.bump()", vec![]),
+        (
+            "typed i64",
+            "",
+            "let x: i64 = p.bump()",
+            vec![(Code::NoValue, "p.bump()", true)],
+        ),
+        ("typed unit?", "", "let y: unit? = p.bump()", vec![]),
+        ("unit? argument", "", "h(p.bump())", vec![]),
+        (
+            "unit? tail",
+            "fn f(mut p: P) -> unit? { p.x = 2; p.bump() }",
+            "f(mut p)",
+            vec![],
+        ),
+        (
+            "if for unit?",
+            "",
+            "let y: unit? = if c { p.bump() }",
+            vec![(Code::NoValue, "if c", false)],
+        ),
+        (
+            "if for unit? argument",
+            "",
+            "h(if c { p.bump() })",
+            vec![(Code::NoValue, "if c", false)],
+        ),
+        (
+            "dropped join",
+            "",
+            "if c { o?.log() } else if c { p.bump() }",
+            vec![],
+        ),
+        ("array of unit", "", "let a = [p.bump(), g()]", vec![]),
+        (
+            "array beside i64",
+            "",
+            "let a = [p.bump(), 1]",
+            vec![(Code::NoValue, "p.bump()", true)],
+        ),
+        ("equal", "", "let b = p.bump() == g()", vec![]),
+        ("interpolation", "", "let s = \"{p.bump()}\"", vec![]),
+        ("statement", "", "p.bump()", vec![]),
+        (
+            "unit tail",
+            "fn t(mut p: P) -> unit { p.x = 2; p.bump() }",
+            "t(mut p)",
+            vec![],
+        ),
+        ("i64 typed", "", "let x: i64 = p.get()", vec![]),
+        (
+            "i64 statement",
+            "",
+            "p.get()",
+            vec![(Code::UnusedValue, "p.get()", false)],
+        ),
+        (
+            "after a jump",
+            "",
+            "let u = if c { return; if c { p.bump() } } else { p.bump() }",
+            vec![(Code::UnreachableCode, "if c { p.bump() } }", false)],
+        ),
+    ];
+    mut_self_rows(rows);
+}
+
+/// Checks each row of `rows` in `with_mut_self`, as written and with function calls. The second
+/// form has `g()` in place of `p.bump()` and `k()` in place of `p.get()`, in the wanted texts too.
+/// Lists every row that is red.
+fn mut_self_rows(rows: &[MutSelfRow<'_>]) {
+    with_prelude();
+    let swap = |text: &str| text.replace("p.bump()", "g()").replace("p.get()", "k()");
+    let mut red = Vec::new();
+    for (row, items, used, wanted) in rows {
+        let forms = [
+            ("as written", with_mut_self(items, used), false),
+            (
+                "with functions",
+                with_mut_self(&swap(items), &swap(used)),
+                true,
+            ),
+        ];
+        for (form, src, swapped) in forms {
+            let wanted: Vec<_> = (wanted.iter())
+                .map(|&(code, text, note)| {
+                    let text = if swapped { swap(text) } else { text.to_owned() };
+                    let offset = src
+                        .rfind(&text)
+                        .expect("each wanted text is in its program");
+                    (code, line_col(&src, offset), note)
+                })
+                .collect();
+            let Ok(found) = std::panic::catch_unwind(|| reports(&src)) else {
+                red.push(format!("row `{row}`, {form}: the checker panicked"));
+                continue;
+            };
+            if found != wanted {
+                red.push(format!(
+                    "row `{row}`, {form}: found {found:?}, wanted {wanted:?}"
+                ));
+            }
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}

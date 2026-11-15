@@ -218,6 +218,7 @@ fn g() {}
 fn setu(mut x: unit) { x = {} }
 struct Su {
     u: unit
+    fn touch(mut self) { self.u = g() }
 }
 enum Lg {
     A
@@ -420,6 +421,8 @@ if d { g() }
 # An `if` whose `then` block jumps before an `if` without an `else`: the tail of a `never` block
 # is unreachable, so no code reads its value.
 if c { return; if d { 1 } } else { g() }
+# A call of a `mut self` method that returns `unit`.
+su.touch()
 # A bare `self` in `main` and in a generic function, where it is no place and has no value.
 self
 # An optional struct whose fields hold arrays of `Ms`.
