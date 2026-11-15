@@ -1548,6 +1548,119 @@ fn unused_warnings_should_see_a_mut_self_call() {
     assert_eq!(fix.apply(src), src.replacen("(mut self)", "(self)", 1));
 }
 
+/// GIVEN a `mut self` method that never changes `self`. WHEN a call of it has a diagnostic that
+/// exists only because the method takes `mut self`, before or after the method in the file. THEN
+/// `sisu check` reports W0002 at `self` with an unsafe fix that removes `mut`, and keeps the
+/// diagnostic of the call. With no such call, the fix stays safe.
+#[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows")]
+fn unused_mut_self_fix_should_be_unsafe_when_a_call_needs_the_mut() {
+    judge_unused();
+    let pile = "struct Pile {\n    n: i64\n    fn show(mut self) { print(self.n) }\n}\n";
+    let bump = "struct T {\n    n: i64\n    fn bump(mut self) { print(self.n) }\n}\n";
+    let rows = [
+        (
+            "E0171 at the call",
+            "struct Pile {\n    n: i64\n    fn change(mut self, mut other: Pile) { other.n = 1 }\n}\nfn main() {\n    let mut pile = Pile(n: 0)\n    pile.change(mut pile)\n}\n".to_string(),
+            Some(MutPlaceTwice),
+            false,
+        ),
+        (
+            "E0001 at the call",
+            format!("{pile}fn main() {{\n    let pile = Pile(n: 0)\n    pile.show()\n}}\n"),
+            Some(AssignToImmutable),
+            false,
+        ),
+        (
+            "E0001 at a call before the method",
+            format!("fn main() {{\n    let pile = Pile(n: 0)\n    pile.show()\n}}\n{pile}"),
+            Some(AssignToImmutable),
+            false,
+        ),
+        (
+            "no call needs the `mut`",
+            format!("{pile}fn main() {{\n    let mut pile = Pile(n: 0)\n    pile.show()\n}}\n"),
+            None,
+            true,
+        ),
+        (
+            "E0021 on a temporary",
+            format!("{bump}fn main() {{\n    T(n: 0).bump()\n}}\n"),
+            Some(AssignToExpression),
+            false,
+        ),
+        (
+            "E0062 at a `?.` call",
+            format!(
+                "{bump}fn main() {{\n    let mut o: T? = Some(T(n: 0))\n    o?.bump()\n}}\n"
+            ),
+            Some(MayBeNone),
+            false,
+        ),
+        (
+            "E0001 at a `?.` call on a `let`",
+            format!("{bump}fn main() {{\n    let o: T? = Some(T(n: 0))\n    o?.bump()\n}}\n"),
+            Some(AssignToImmutable),
+            false,
+        ),
+        (
+            "E0001 at a call on a plain `self`",
+            format!(
+                "{bump}extend T {{\n    fn look(self) {{ self.bump() }}\n}}\nfn main() {{\n    let t = T(n: 0)\n    t.look()\n}}\n"
+            ),
+            Some(AssignToImmutable),
+            false,
+        ),
+        (
+            "E0001 at a call of an enum's method",
+            "enum E {\n    A\n    B\n    fn flip(mut self) { print(1) }\n}\nfn main() {\n    let e = E.A\n    e.flip()\n}\n".to_string(),
+            Some(AssignToImmutable),
+            false,
+        ),
+        (
+            "E0001 at a call of a method of an `extend` block",
+            "struct T {\n    n: i64\n}\nextend T {\n    fn bump(mut self) { print(self.n) }\n}\nfn main() {\n    let t = T(n: 0)\n    t.bump()\n}\n".to_string(),
+            Some(AssignToImmutable),
+            false,
+        ),
+        (
+            "W0014 at a local that a write also changes",
+            format!(
+                "{bump}fn main() {{\n    let xs = [T(n: 1)]\n    let mut a = xs[0]\n    a.n = 2\n    a.bump()\n}}\n"
+            ),
+            Some(UnusedVariable),
+            false,
+        ),
+        (
+            "W0014 at a local that another `mut self` call changes",
+            "struct T {\n    n: i64\n    fn bump(mut self) { print(self.n) }\n    fn bop(mut self) { self.n = 1 }\n}\nfn main() {\n    let mut t = T(n: 0)\n    t.bump()\n    t.bop()\n}\n".to_string(),
+            Some(UnusedVariable),
+            false,
+        ),
+    ];
+    for (row, src, kept, safe) in rows {
+        let (_, ds) = checked(&src);
+        let d = ds
+            .iter()
+            .find(|d| {
+                d.code() == NeverReassigned && &src[d.span().start()..d.span().end()] == "self"
+            })
+            .unwrap_or_else(|| panic!("row `{row}`: W0002 should be at `self`: {ds:?}"));
+        let [fix] = d.fixes() else {
+            panic!("row `{row}`: W0002 should have one fix: {d:?}");
+        };
+        assert_eq!(fix.safe(), safe, "row `{row}`: {d:?}");
+        assert_eq!(
+            fix.apply(&src),
+            src.replacen("(mut self", "(self", 1),
+            "row `{row}`"
+        );
+        if let Some(code) = kept {
+            assert!(ds.iter().any(|d| d.code() == code), "row `{row}`: {ds:?}");
+        }
+    }
+}
+
 /// GIVEN `extend<T> G<T>: K { fn add(mut self) {} }`, a `struct T` whose `f` does `self = T(n: 9)`,
 /// and one whose `f` loops with `self = T(n: self.n + 1)`. WHEN `sisu check` runs on each. THEN
 /// no row has W0002, and the loop has no W0011: a write of `self` counts as a change.
