@@ -292,6 +292,8 @@ impl Code {
 pub(crate) enum NoValueCause {
     /// No reason is known.
     Plain,
+    /// The expression never finishes: it is `never`, not `unit`.
+    Never,
     /// An `if`, or an `if let`, whose last `else` is missing. `returning` says that a `return` of
     /// a unit function holds it.
     NoElse { if_let: bool, returning: bool },
@@ -307,7 +309,7 @@ impl NoValueCause {
     /// The words that say the reason: the message of an E0043, the label of an E0031's tail.
     fn reason(&self) -> Option<String> {
         match self {
-            NoValueCause::Plain => None,
+            NoValueCause::Plain | NoValueCause::Never => None,
             NoValueCause::NoElse { if_let, .. } => Some(format!(
                 "this `{}` has no `else`, so it has no value",
                 if *if_let { "if let" } else { "if" }
@@ -789,13 +791,8 @@ pub(crate) enum DiagnosticKind {
     SelfOutsideMethod { at: Span },
     /// A unary `-` at `at` on a `u8`.
     NegatedU8 { at: Span },
-    /// An expression at `at` that has no value: it is `unit`, for the reason `cause`, or, with
-    /// `never`, it never finishes.
-    NoValue {
-        at: Span,
-        never: bool,
-        cause: NoValueCause,
-    },
+    /// An expression at `at` that has no value, for the reason `cause`.
+    NoValue { at: Span, cause: NoValueCause },
     /// The first bare `break` at `at` of a `loop` whose first `break` with a value whose type is
     /// not `never` is at `valued`.
     BareBreak { at: Span, valued: Span },
@@ -5005,17 +5002,19 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::NegatedU8 { at } => {
                 Diagnostic::coded(code, at, "`u8` cannot be negative")
             }
-            DiagnosticKind::NoValue { at, never, cause } => {
+            DiagnosticKind::NoValue { at, cause } => {
                 let message = cause
                     .reason()
                     .unwrap_or_else(|| "expression has no value".to_owned());
                 let d = Diagnostic::coded(code, at, message);
                 match cause {
-                    NoValueCause::Plain if never => d.with_label("never finishes"),
+                    NoValueCause::Never => d.with_label("never finishes"),
                     NoValueCause::NoElse { if_let, returning } => {
                         let form = if if_let { "if let" } else { "if" };
                         d.with_help(if returning {
-                            format!("remove this `return`, or put it inside the `{form}`")
+                            format!(
+                                "remove this `return`, or write `return` with no value inside the `{form}`"
+                            )
                         } else {
                             "add an `else`, and make each branch give a value".to_owned()
                         })

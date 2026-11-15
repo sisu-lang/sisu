@@ -404,7 +404,6 @@ impl Checker<'_> {
                 ..
             } => DiagnosticKind::NoValue {
                 at: sources[i].span,
-                never: false,
                 cause: self.branch_cause(&sources[i], &blocks[i]),
             }
             .into(),
@@ -471,13 +470,11 @@ impl Checker<'_> {
         match expected.ty() {
             _ if first_ty == Type::UNIT => DiagnosticKind::NoValue {
                 at: sources[first].span,
-                never: false,
                 cause: self.branch_cause(&sources[first], &blocks[first]),
             }
             .into(),
             _ if other_ty == Type::UNIT => DiagnosticKind::NoValue {
                 at: sources[other].span,
-                never: false,
                 cause: self.branch_cause(&sources[other], &blocks[other]),
             }
             .into(),
@@ -505,14 +502,7 @@ impl Checker<'_> {
         if let Some(&(i, _)) = members.iter().find(|&&(_, t)| t == Type::UNIT) {
             let at = sources[i].span;
             let cause = self.branch_cause(&sources[i], &blocks[i]);
-            return Some(
-                DiagnosticKind::NoValue {
-                    at,
-                    never: false,
-                    cause,
-                }
-                .into(),
-            );
+            return Some(DiagnosticKind::NoValue { at, cause }.into());
         }
         for &(i, t) in members {
             if !fits(want, t) && !self.converts_to_any(t, want) {

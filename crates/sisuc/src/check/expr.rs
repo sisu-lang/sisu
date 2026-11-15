@@ -57,7 +57,9 @@ fn missing_else(mut e: &ast::Expr) -> Option<bool> {
         let Some(block) = else_block else {
             return Some(if_let);
         };
-        // `else if` is an `else` block that holds the inner `if`, and nothing else.
+        // `else if` is an `else` block that holds the inner `if`, and nothing else, with the span
+        // of that `if`. A block in braces has its braces in its span: the `else` it belongs to
+        // is there, so the outer `if` has an `else`.
         let [
             ast::Stmt {
                 kind: ast::StmtKind::Expr(inner),
@@ -67,6 +69,9 @@ fn missing_else(mut e: &ast::Expr) -> Option<bool> {
         else {
             return None;
         };
+        if block.span != inner.span {
+            return None;
+        }
         e = inner;
     }
 }
@@ -464,24 +469,20 @@ impl Checker<'_> {
             Some(ty @ (Type::UNIT | Type::NEVER)) => {
                 let at = self.never_at(e.span);
                 let cause = self.no_value_cause(e, checked.as_ref().ok(), ty, returning);
-                Err(Poisoned::untyped(self.no_value(at, ty, cause)))
+                Err(Poisoned::untyped(self.no_value(at, cause)))
             }
             _ => checked,
         }
     }
 
-    /// Reports a value of `ty`, `unit` or `never`, used at `at`; `cause` is the reason of a
-    /// `unit` value (see `no_value_cause`).
-    pub(super) fn no_value(&mut self, at: Span, ty: Type, cause: NoValueCause) -> Reported {
-        self.error(DiagnosticKind::NoValue {
-            at,
-            never: ty == Type::NEVER,
-            cause,
-        })
+    /// Reports a value that is `unit` or `never`, used at `at`; `cause` says which (see
+    /// `no_value_cause`).
+    pub(super) fn no_value(&mut self, at: Span, cause: NoValueCause) -> Reported {
+        self.error(DiagnosticKind::NoValue { at, cause })
     }
 
     /// Why `e`, whose checked form is `value`, has no value: an `if` or an `if let` that has no
-    /// `else` at the end of its chain, or a call. A value of type `never` has no cause. `value`
+    /// `else` at the end of its chain, or a call. A value of type `never` never finishes. `value`
     /// shows the callee, through the `mut` arguments of the call.
     pub(super) fn no_value_cause(
         &self,
@@ -490,6 +491,9 @@ impl Checker<'_> {
         ty: Type,
         returning: bool,
     ) -> NoValueCause {
+        if ty == Type::NEVER {
+            return NoValueCause::Never;
+        }
         if ty != Type::UNIT {
             return NoValueCause::Plain;
         }

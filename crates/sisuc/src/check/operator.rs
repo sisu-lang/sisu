@@ -1107,7 +1107,7 @@ impl Checker<'_> {
         let checked = self.expr(rhs, expected);
         if type_of(&checked) == Some(Type::UNIT) {
             let cause = self.no_value_cause(rhs, checked.as_ref().ok(), Type::UNIT, false);
-            let reported = self.no_value(rhs.span, Type::UNIT, cause);
+            let reported = self.no_value(rhs.span, cause);
             return Err(Poisoned::untyped(reported));
         }
         if let Err(failed) = &checked

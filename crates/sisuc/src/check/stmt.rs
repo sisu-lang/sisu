@@ -1558,7 +1558,7 @@ impl Checker<'_> {
         let checked = match type_of(&checked).or(misfit) {
             Some(Type::UNIT) => {
                 let cause = self.no_value_cause(v, checked.as_ref().ok(), Type::UNIT, false);
-                Err(Poisoned::untyped(self.no_value(v.span, Type::UNIT, cause)))
+                Err(Poisoned::untyped(self.no_value(v.span, cause)))
             }
             Some(Type::NEVER) | None => checked,
             Some(got) => {
