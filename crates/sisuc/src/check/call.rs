@@ -420,7 +420,8 @@ impl Checker<'_> {
     /// value of the type, the fix calls the method on it, as `unknown_call` does. A label, a
     /// `mut` on the first argument, or a type argument of the method (`typed`) leaves no fix. The
     /// fix is safe when the fixed program checks: the method takes the other arguments, and its
-    /// result meets the type that `site` expects. Checks each argument once.
+    /// result meets the type that `site` expects. A `mut self` method makes it unsafe, since the
+    /// first argument may be no place that can change. Checks each argument once.
     pub(super) fn method_through_type(
         &mut self,
         func: tir::FuncId,
@@ -461,7 +462,7 @@ impl Checker<'_> {
                     Some(TypeReceiver {
                         argument,
                         takes,
-                        safe: takes && meets,
+                        safe: takes && meets && !self.signatures[func.0].self_mut,
                     })
                 } else {
                     self.stray(rest);
