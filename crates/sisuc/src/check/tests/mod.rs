@@ -2594,6 +2594,12 @@ fn a_value_returned_from_a_function_with_no_return_type_should_offer_the_type() 
         ),
         row("F12", &long_names, vec![secondary_only("x")]),
         row("F13", aliases, vec![secondary_only("x")]),
+        // A function with no return type returns `unit` already: `-> unit` changes nothing.
+        row(
+            "F16",
+            "fn g() {}\nfn f() { return g() }\nfn main() {}",
+            vec![secondary_only("g()")],
+        ),
     ]);
 }
 
