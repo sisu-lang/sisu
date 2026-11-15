@@ -2600,6 +2600,36 @@ fn a_value_returned_from_a_function_with_no_return_type_should_offer_the_type() 
             "fn g() {}\nfn f() { return g() }\nfn main() {}",
             vec![secondary_only("g()")],
         ),
+        // A written `-> unit`: the label points at it, and the fix replaces it.
+        row(
+            "F17",
+            "fn f() -> unit { return 5 }\nfn main() {}",
+            vec![
+                Report::new(Code::UnexpectedReturnValue, ("return ", "5"))
+                    .secondary(&[("f() -> ", "unit")])
+                    .fix(false, 1, ("f() -> unit {", "f() -> i64 {"))
+                    .after(After::Clean),
+            ],
+        ),
+        row(
+            "F18",
+            "fn g() {}\nfn f() -> unit { return g() }\nfn main() {}",
+            vec![
+                Report::new(Code::UnexpectedReturnValue, ("return ", "g()"))
+                    .secondary(&[("f() -> ", "unit")]),
+            ],
+        ),
+        // The same through an alias of `unit`.
+        row(
+            "F19",
+            "type U = unit\nfn f() -> U { return 5 }\nfn main() {}",
+            vec![
+                Report::new(Code::UnexpectedReturnValue, ("return ", "5"))
+                    .secondary(&[("f() -> ", "U")])
+                    .fix(false, 1, ("f() -> U {", "f() -> i64 {"))
+                    .after(After::Clean),
+            ],
+        ),
     ]);
 }
 

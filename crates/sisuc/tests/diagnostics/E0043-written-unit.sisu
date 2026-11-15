@@ -1,0 +1,12 @@
+// GIVEN a call of a function that writes `-> unit`, where an `i64` is expected
+// WHEN `sisu check` runs on it
+// THEN it reports E0043 "`greet` returns `unit`" at the call
+// AND a label at the written `unit` says that `greet` declares `-> unit`
+fn greet() -> unit {
+    print(1)
+}
+
+fn main() {
+    let x: i64 = greet()
+    print(x)
+}

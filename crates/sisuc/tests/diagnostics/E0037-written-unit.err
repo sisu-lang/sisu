@@ -1,0 +1,16 @@
+error[E0037]: this function returns no value
+ --> E0037-written-unit.sisu:7:12
+  |
+6 | fn show() -> unit {
+  |              ---- `show` declares `-> unit`
+7 |     return 5
+  |            ^
+  |
+help: replace the return type of `show` with `i64`
+  |
+6 - fn show() -> unit {
+6 + fn show() -> i64 {
+  |
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0037

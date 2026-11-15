@@ -339,6 +339,13 @@ fn value_rows() -> Vec<Row> {
             "opt([if c { 5 }])",
             (text("if c { 5 }", 0), Cause::NoElse),
         ),
+        // A written `-> unit`: the secondary label points at it.
+        row_with(
+            "R45",
+            "fn gu() -> unit {}\n",
+            "let x: i64 = gu()",
+            (text("gu()", 1), call(Some(text("unit", 0)))),
+        ),
         row_with(
             "R37",
             "struct W: U { fn m(self) {} }\n",

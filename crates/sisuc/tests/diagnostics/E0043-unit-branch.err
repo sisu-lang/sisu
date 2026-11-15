@@ -1,0 +1,42 @@
+error[E0043]: this `if` has no `else`, so its value is `unit`
+  --> E0043-unit-branch.sisu:13:18
+   |
+13 |     let x: i64 = if c { g() }
+   |                  ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give `i64`
+
+error[E0043]: this `if` has no `else`, so its value is `unit`
+  --> E0043-unit-branch.sisu:14:7
+   |
+14 |     h(if c { g() })
+   |       ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give `i64`
+
+error[E0043]: this `if` has no `else`, so its value is `unit`
+  --> E0043-unit-branch.sisu:15:15
+   |
+15 |     print(1 + if c { g() })
+   |               ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give `i64`
+
+error[E0043]: this `if let` has no `else`, so its value is `unit`
+  --> E0043-unit-branch.sisu:16:18
+   |
+16 |     let y: i64 = if let Some(v) = o { g() }
+   |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give `i64`
+
+error[E0043]: this `if` has no `else`, so its value is `unit`
+  --> E0043-unit-branch.sisu:17:18
+   |
+17 |     let z: i64 = if c { return }
+   |                  ^^^^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give `i64`
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0043

@@ -1,0 +1,14 @@
+// GIVEN a function that returns `i64` whose body ends in an `if` without an `else` whose branch
+//   gives `unit`
+// WHEN `sisu check` runs on it
+// THEN it reports E0031 at the closing `}` of the function
+// AND a label at the `if` says that its value is `unit`
+fn g() {}
+
+fn f(c: bool) -> i64 {
+    if c { g() }
+}
+
+fn main() {
+    print(f(true))
+}
