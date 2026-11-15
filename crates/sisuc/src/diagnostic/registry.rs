@@ -7147,12 +7147,12 @@ pub(crate) fn copy_help(
 const STRUCT_SELF_HELP: &str = "copy `self` into a `let mut` variable";
 
 /// The indefinite article before the type `ty`: "an" before a vowel letter, except the types
-/// `u8` and the like, which say "you".
+/// `u8` and the like, and `unit`, which say "you".
 fn indefinite(ty: &str) -> &'static str {
-    let unsigned = ty
-        .strip_prefix('u')
-        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
-    if !unsigned && ty.starts_with(['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U']) {
+    let you = ty.strip_prefix('u').is_some_and(|rest| {
+        rest.starts_with(|c: char| c.is_ascii_digit()) || rest.starts_with("nit")
+    });
+    if !you && ty.starts_with(['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U']) {
         "an"
     } else {
         "a"
