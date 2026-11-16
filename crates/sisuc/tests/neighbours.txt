@@ -439,6 +439,10 @@ $.less($)
 $.get(0..1)
 $?.ps[0].bump()
 $.pss[0].len()
+# A `break` value that the checker skips: a value in a `while` (E0141) and a labeled `break` out of
+# an inner `loop`. Only the loops that a jump in the value can give a value get no type.
+while c { break $ }
+w: while c { let _a = loop { break w $ } }
 # A `loop` in the `break` value of a loop, and a negated value, where the origin of the expected
 # type is kept for a label (E0032).
 let _a = loop { if c { break 1 }; break loop { break $ } }
