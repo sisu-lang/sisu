@@ -707,6 +707,9 @@ pub(crate) enum ExprKind {
     /// A string literal, decoded.
     Str(String),
     None,
+    /// The value of type `unit` of a block with no tail, and of a `loop` that a bare `break` ends,
+    /// where its value is used.
+    Unit,
     Local(LocalId),
     Call {
         func: FuncId,
@@ -924,6 +927,9 @@ pub(crate) struct Arm {
     pub(crate) body: Block,
     /// False when earlier arms take every value the pattern matches (W0006).
     pub(crate) reachable: bool,
+    /// True for the `_` arm that the checker makes for an `if let` on an enum without an `else`.
+    /// Such an arm has no value, so the `match` gives no value to lift.
+    pub(crate) made: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1200,6 +1206,7 @@ impl ExprKind {
             | ExprKind::Char(_)
             | ExprKind::Str(_)
             | ExprKind::None
+            | ExprKind::Unit
             | ExprKind::ReadLine
             | ExprKind::Local(_) => false,
             ExprKind::Break { .. } | ExprKind::Continue { .. } | ExprKind::Return(_) => true,
@@ -1296,6 +1303,7 @@ impl Expr {
             | ExprKind::Char(_)
             | ExprKind::Str(_)
             | ExprKind::None
+            | ExprKind::Unit
             | ExprKind::ReadLine
             | ExprKind::Local(_)
             | ExprKind::Continue { .. }
@@ -1506,6 +1514,7 @@ impl Expr {
             | K::Char(_)
             | K::Str(_)
             | K::None
+            | K::Unit
             | K::Local(_)
             | K::ReadLine
             | K::Break { value: None, .. }
@@ -1758,6 +1767,7 @@ impl Printer<'_> {
             ExprKind::Char(c) => write!(f, "{c:?}"),
             ExprKind::Str(s) => write!(f, "{s:?}"),
             ExprKind::None => f.write_str("None"),
+            ExprKind::Unit => f.write_str("()"),
             ExprKind::Local(id) => self.local(f, *id),
             ExprKind::Call { func, types, args } => {
                 let callee = &self.program.functions[func.0];
@@ -2573,6 +2583,7 @@ mod tests {
                 ty: Type::I64,
             },
             reachable: true,
+            made: false,
         };
         let arms = vec![
             arm(
@@ -2697,6 +2708,7 @@ mod tests {
                 ty: Type::I64,
             },
             reachable: true,
+            made: false,
         };
         let wild = Pattern {
             kind: PatternKind::Wild,
@@ -3675,6 +3687,7 @@ mod tests {
             guard,
             body: valued(k),
             reachable: true,
+            made: false,
         };
         let place = Place::Index {
             base: Box::new(Place::Field {

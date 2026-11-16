@@ -1,0 +1,12 @@
+// GIVEN a `return` with a value in a function that writes `-> unit`
+// WHEN `sisu check` runs on it
+// THEN it reports E0037 at the value
+// AND a label at the written `unit` says that the function declares `-> unit`
+// AND the fix replaces the written `unit` with the type of the value
+fn show() -> unit {
+    return 5
+}
+
+fn main() {
+    show()
+}

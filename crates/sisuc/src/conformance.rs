@@ -180,13 +180,13 @@ pub(crate) enum Generated {
 
 /// The generated rule (spec, "Generated conformances"): what the compiler writes for `ty` and the
 /// language interface `interface`, when no written conformance covers `ty`. `Display` holds for
-/// every type but `unit` and `never`, a type parameter and a class included, and asks nothing.
-/// `Eq` holds for scalars and `string`, and for an array or an optional of a type that has `Eq`.
-/// It holds for an enum whose payload types have it, and for a struct whose field types have it.
-/// It never holds for a class. `Ord` holds for numbers, `char` and `string`, never for `bool`, and
-/// nothing else has it. `AnyObject` holds for a class and for nothing else. An interface of the
-/// program has no generated rule. The caller asks the parts, so that the checker and `mono` each
-/// keep their own answers.
+/// every type but `never`, a type parameter and a class included, and asks nothing. `Eq` holds
+/// for scalars, `unit` and `string`, and for an array or an optional of a type that has `Eq`. It
+/// holds for an enum whose payload types have it, and for a struct whose field types have it. It
+/// never holds for a class. `Ord` holds for numbers, `char`, `string` and `unit`, never for
+/// `bool`, and nothing else has it. All `unit` values are equal. `AnyObject` holds for a class and
+/// for nothing else. An interface of the program has no generated rule. The caller asks the
+/// parts, so that the checker and `mono` each keep their own answers.
 pub(crate) fn generated(lang: LangInterfaces, ty: Type, interface: InterfaceId) -> Generated {
     let holds = |yes: bool| {
         if yes {
@@ -197,7 +197,7 @@ pub(crate) fn generated(lang: LangInterfaces, ty: Type, interface: InterfaceId) 
     };
     let kind = ty.kind();
     if interface == lang.display {
-        return holds(!matches!(kind, TypeKind::Unit | TypeKind::Never));
+        return holds(kind != TypeKind::Never);
     }
     if interface == lang.any_object {
         return holds(matches!(kind, TypeKind::Class(..)));
@@ -207,13 +207,13 @@ pub(crate) fn generated(lang: LangInterfaces, ty: Type, interface: InterfaceId) 
         TypeKind::I64 | TypeKind::U8 | TypeKind::F64 | TypeKind::Char | TypeKind::String
     );
     if interface == lang.ord {
-        return holds(number);
+        return holds(number || kind == TypeKind::Unit);
     }
     if interface != lang.eq {
         return Generated::Fails;
     }
     match kind {
-        _ if number || kind == TypeKind::Bool => Generated::Holds,
+        _ if number || matches!(kind, TypeKind::Bool | TypeKind::Unit) => Generated::Holds,
         TypeKind::Array(part) | TypeKind::Optional(part) => Generated::Element(part),
         TypeKind::Enum(id, args) => Generated::Payloads(id, args),
         TypeKind::Struct(id, args) => Generated::Fields(id, args),
@@ -2629,9 +2629,10 @@ mod tests {
                 ask(class_named(program, "Label", &[node]), lang.eq),
                 Holds::No
             );
-            // `Display` holds for everything but `unit` and `never`.
+            // `Display` holds for everything but `never`.
             assert_eq!(ask(node, lang.display), Holds::Generated);
-            assert_eq!(ask(Type::UNIT, lang.display), Holds::No);
+            assert_eq!(ask(Type::UNIT, lang.display), Holds::Generated);
+            assert_eq!(ask(Type::NEVER, lang.display), Holds::No);
         });
     }
 

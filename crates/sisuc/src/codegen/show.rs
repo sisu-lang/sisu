@@ -403,9 +403,8 @@ impl<'ctx> Codegen<'ctx, '_> {
                 self.call(self.helper(Helper::Show(mode), ty), &args);
             }
             TypeKind::Any(..) => self.show_any(sink, ty, value, quoted, mode),
-            _ => {
-                unreachable!("only a type with a value should be written, never `unit` or `never`")
-            }
+            TypeKind::Unit => self.show_text("sisu_show_str", sink, "()"),
+            _ => unreachable!("only a type with a value should be written, never `never`"),
         }
     }
 

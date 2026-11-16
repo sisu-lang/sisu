@@ -2,7 +2,7 @@
 //   type
 // WHEN `sisu check` runs on it
 // THEN it reports E0031 at the closing `}` of the function
-// AND a label at the call says that `greet` returns no value
+// AND a label at the call says that `greet` returns `unit`
 // AND it has no help
 fn greet() {
     print(1)

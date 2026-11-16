@@ -476,22 +476,24 @@ fn main() {
 
 ## unit
 
-`unit` is the type of an expression that gives no value, such as a call of `print`. A program cannot write the name `unit` yet: `-> unit` is an error ([E0030](../diagnostics/E0030.md)).
+`unit` is the type of an expression that gives no other value, such as a call of `print`. `unit` is an ordinary type: a program writes its name, and it can be a type argument, such as `[unit]`, `unit?` and `Stack<unit>`.
 
 ```sisu
 fn main() {
-    print(print("x"))                // error[E0059]
-    print(print("a") == 1)           // error[E0043]
+    let x: i64 = print("x")          // error[E0043]
+    let y: i64 = 1 + print("a")      // error[E0043]
 }
 ```
 
 **Rules**
 
-- `unit` cannot be a type argument, such as `[unit]`, `unit?` and `Stack<unit>`, as the rule in [Type arguments](generics.md#type-arguments) says.
-- `unit` has no literal. A `unit` value comes from a call, such as `print(...)`.
-- `unit` has no `Display`, no `Eq` and no `Ord`.
-- A `unit` value cannot be printed. [E0059](../diagnostics/E0059.md)
-- A `unit` value cannot be compared.
+- `unit` has no literal. A `unit` value comes from a call of a function with no return type, such as `print(...)`. A block that does not end in an expression gives one too, and so does a `loop` whose `break`s have no value.
+- `unit` has a `Display`, which writes `()`, and an `Eq` and an `Ord`, under which all `unit` values are equal.
+- `match` on a `unit` value is an error. [E0124](../diagnostics/E0124.md)
+- A `unit` value fits where no type is expected, such as in `let u = g()` and `print(g())`. Where a type is expected, it fits only `unit`, `unit?` or a type parameter of the called function. Arithmetic, `-`, conversions and conditions do not take it. [E0043](../diagnostics/E0043.md)
+- Where `unit?` is expected, a `unit` value becomes a `Some`, as a `T` becomes a `T?`. So `let x: unit? = g()` gives `Some` of a `unit` when `g` returns `unit`.
+- An `if` without an `else` gives no `unit?` value, as it gives no value of another optional type. [E0043](../diagnostics/E0043.md) A function body that ends in one has no value, except where the return type is `unit`. [E0031](../diagnostics/E0031.md)
+- A statement that does not use a `unit?` value, such as `o?.log()`, gives no warning. [W0004](../diagnostics/W0004.md)
 
 ## Conversions
 

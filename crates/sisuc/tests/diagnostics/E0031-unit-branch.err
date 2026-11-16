@@ -1,0 +1,12 @@
+error[E0031]: function `f` must return `i64`, but its body has no value
+  --> E0031-unit-branch.sisu:10:1
+   |
+ 9 |     if c { g() }
+   |     ------------ this `if` has no `else`, so its value is `unit`
+10 | }
+   | ^
+   |
+   = help: add an `else`, and make each branch give an `i64`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0031

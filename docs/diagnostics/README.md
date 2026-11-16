@@ -68,7 +68,7 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0056](E0056.md) | error | constructor without every field |
 | [E0057](E0057.md) | error | method read as a field |
 | [E0058](E0058.md) | error | field called as a method |
-| [E0059](E0059.md) | error | `print`, `eprint` or `dbg` of something it cannot print |
+| [E0059](E0059.md) | error | `print`, `eprint` or `dbg` with a wrong number of values |
 | [E0061](E0061.md) | error | `print`, `eprint` or `dbg` of an expression that never finishes |
 | [E0062](E0062.md) | error | optional used as if it were present |
 | [E0063](E0063.md) | error | field or method that does not exist |
@@ -106,7 +106,6 @@ reports the code, and `site/programs/explanations/<code>.json`. After you edit a
 | [E0095](E0095.md) | error | `}` in a string |
 | [E0096](E0096.md) | error | empty interpolation |
 | [E0097](E0097.md) | error | comment inside an interpolation |
-| [E0098](E0098.md) | error | value that cannot be interpolated |
 | [E0099](E0099.md) | error | `todo` written another way |
 | [E0100](E0100.md) | error | conversion that can fail, in a constant |
 | [E0101](E0101.md) | error | float without digits on both sides of `.` |
@@ -215,7 +214,7 @@ both, and apply every safe fix to the Broken program.
 A new code takes the next free number in its series, in the order codes land
 on `main`. A code is never reused or renumbered.
 
-E0012, E0014, E0019, E0022 and E0060 are the retired codes. When the compiler stops reporting a code,
+E0012, E0014, E0019, E0022, E0060 and E0098 are the retired codes. When the compiler stops reporting a code,
 its variant leaves `DiagnosticKind` and its row leaves the table above. Its
 file stays here and gains a `Status: retired` line after its title, naming
 the ADR that retired it, and `sisu explain` serves it from `RETIRED`, the

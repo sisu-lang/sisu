@@ -8,7 +8,7 @@ use super::mut_args::Callee;
 use super::reports::Reported;
 use super::{Checked, Checker, Expectation, Origin, Poisoned, type_of};
 use crate::ast;
-use crate::diagnostic::{DiagnosticKind, Expected, MismatchFix, PrintProblem};
+use crate::diagnostic::{DiagnosticKind, Expected, MismatchFix};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Stream, Type, TypeKind};
@@ -93,10 +93,10 @@ impl Checker<'_> {
 
     /// The argument of a call of `function` (`print`, `eprint` or `dbg`) at `span`, checked with
     /// `expected`, with whether the arguments had a label. Every type shows through `Display` but
-    /// `unit` and `never`. `Err` is the call's own result when its argument is wrong, which this
-    /// has reported. `context` holds two parts: the type `expected` that the argument must have,
-    /// and the type `ret` of the call when it fails. `dbg` has the type of its argument, so its
-    /// `ret` is none.
+    /// `never`, and an `if` without an `else` whose branch has a value shows nothing. `Err` is
+    /// the call's own result when its argument is wrong, which this has reported. `context` holds
+    /// two parts: the type `expected` that the argument must have, and the type `ret` of the
+    /// call when it fails. `dbg` has the type of its argument, so its `ret` is none.
     fn shown<'a>(
         &mut self,
         span: Span,
@@ -104,31 +104,31 @@ impl Checker<'_> {
         function: &'static str,
         (expected, ret): (Expectation, Option<Type>),
     ) -> Result<(&'a ast::Arg, Checked, Option<Reported>), Checked> {
-        // Not `value()`: a `unit` argument needs this code, not "expression has no value".
-        let wrong = |problem, at| DiagnosticKind::PrintArgument {
-            function,
-            problem,
-            at,
-        };
         let labeled = self.labels(args);
         let [arg] = args else {
             let join = self.join_values(function, args);
-            let reported = self
-                .diagnostics
-                .error(wrong(PrintProblem::Count { join }, span));
+            let kind = DiagnosticKind::PrintArgument {
+                function,
+                join,
+                at: span,
+            };
+            let reported = self.diagnostics.error(kind);
             self.stray(args);
             return Err(Err(Poisoned::new(ret, reported)));
         };
         self.refuse_mut(args, Callee::Unnamed(&function));
         // The argument is an operand, not a value part of the value, so a hint does not reach it.
+        // Not `value()`: a `never` argument needs its own code.
         let checked = read_jump(self.expr(&arg.value, expected.plain()));
         let error = match type_of(&checked) {
-            Some(Type::UNIT) => wrong(PrintProblem::NoValue, arg.value.span),
             Some(Type::NEVER) => DiagnosticKind::PrintNever {
                 function,
                 at: self.never_at(arg.value.span),
             },
-            _ => return Ok((arg, checked, labeled)),
+            _ => match self.missing_value(&arg.value, &checked, Expectation::None, false) {
+                Some((at, cause)) => DiagnosticKind::NoValue { at, cause },
+                None => return Ok((arg, checked, labeled)),
+            },
         };
         Err(Err(Poisoned::new(ret, self.diagnostics.error(error))))
     }

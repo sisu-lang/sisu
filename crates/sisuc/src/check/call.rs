@@ -76,7 +76,7 @@ impl Checker<'_> {
                     Via::Not | Via::Error => self.failed_alias(callee.span, args),
                 }
             }
-            Resolved::BuiltinType(to) if to != Type::BOOL => {
+            Resolved::BuiltinType(to) if !matches!(to, Type::BOOL | Type::UNIT) => {
                 self.convert(span, callee.span, to, args)
             }
             Resolved::Item(ItemId::Class(class)) => {

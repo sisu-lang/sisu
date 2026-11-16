@@ -1,0 +1,17 @@
+// GIVEN a `let` whose value is an `if`, whose `then` block returns before an `if` without an `else`
+// WHEN the program runs, once on each branch
+// THEN the `else` branch gives its `unit`, and the unreachable `if` adds no error
+fn g() {}
+fn f(c: bool, d: bool) {
+    let u = if c {
+        return
+        if d { 1 }
+    } else {
+        g()
+    }
+    print(u)    // ()
+}
+fn main() {
+    f(false, false)
+    f(true, true)
+}

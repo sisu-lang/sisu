@@ -864,6 +864,7 @@ impl Gen<'_> {
                 g.w.line();
             });
         }
+        self.optional_units();
         // After `main`, so that the interfaces move no choice of the items before them. They are
         // written only when `main` calls `shapes`, which uses each one.
         let expected = if called {

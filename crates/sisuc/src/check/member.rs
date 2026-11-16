@@ -1097,7 +1097,8 @@ fn may_be_none(
 }
 
 /// `receiver?.name`, whose `member` was checked on `bind`, the payload of `scrutinee`: its type
-/// `U` makes the result a `U?`, or `unit` for a method with no value.
+/// `U` makes the result a `U?`, a `unit?` too. A statement discards it as a `unit` (see
+/// `Checker::discard`).
 pub(super) fn safe_value(
     span: Span,
     bind: tir::LocalId,
@@ -1105,7 +1106,6 @@ pub(super) fn safe_value(
     member: Checked,
 ) -> Checked {
     let ty = match known_type(&member) {
-        Ok(Type::UNIT) => Type::UNIT,
         Ok(ty) => as_optional(ty),
         // A misfit's found type is optional already (see `Checker::report_unbound`).
         Err(reported) => {
@@ -1120,7 +1120,7 @@ pub(super) fn safe_value(
         (Ok(scrutinee), Ok(member)) => (scrutinee, member),
         (Err(failed), _) | (_, Err(failed)) => return Err(Poisoned::typed(ty, failed.reported())),
     };
-    let none = (ty != Type::UNIT).then_some(tir::Expr::new(tir::ExprKind::None, ty, span));
+    let none = Some(tir::Expr::new(tir::ExprKind::None, ty, span));
     let value = if member.ty == ty {
         member
     } else {

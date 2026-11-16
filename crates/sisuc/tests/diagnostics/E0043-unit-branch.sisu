@@ -1,0 +1,29 @@
+// GIVEN an `if` without an `else` whose branch gives `unit` or never finishes, where another type
+//   is expected
+// WHEN `sisu check` runs on it
+// THEN it reports E0043 "this `if` has no `else`, so its value is `unit`" at the `if`
+// AND the help names the expected type where the context has one. A generic parameter, an array
+//   element, a join, an `==` and a comparison give one
+fn g() {}
+
+fn h(a: i64) {}
+
+fn k2<T>(x: T, y: T) {}
+
+fn main() {
+    let c = true
+    let o: i64? = None
+    let x: i64 = if c { g() }
+    h(if c { g() })
+    print(1 + if c { g() })
+    let y: i64 = if let Some(v) = o { g() }
+    let z: i64 = if c { return }
+    print(x + y + z)
+    let d = false
+    k2(1, if c { g() })
+    let w = if d { 1 } else { if c { g() } }
+    print(1 == if c { g() })
+    let v = if d { if c { g() } } else { 1 }
+    print(1 < if c { g() })
+    let u = [1, if c { g() }]
+}

@@ -1,0 +1,61 @@
+// GIVEN generic functions, a struct, an enum and methods with a `T?` parameter
+// AND a function `g` that returns `unit`
+// WHEN the program passes `g()` for a `T` beside a `None`, or for a `T?`
+// THEN `g()` binds `T` to `unit`, and the `None` is a `unit?`
+// AND a `g()` for a `T?` is a `Some`, so a comparison with `None` prints false
+fn g() {}
+
+fn opt<T>(o: T?, d: T) -> T { o ?? d }
+
+fn later<T>(d: T, o: T?) -> T { o ?? d }
+
+fn is_none<T>(a: T?) -> bool { a == None }
+
+fn first<T>(a: T, b: T?) -> T { b ?? a }
+
+struct P<T> {
+    a: T?
+    b: T
+}
+
+struct W<T> {
+    a: T?
+}
+
+enum Bx<T> {
+    One(T?)
+    Two(T?, T)
+}
+
+struct K {
+    n: i64
+    fn m<T>(self, a: T?, _b: T) -> bool { a == None }
+    fn m2<T>(self, a: T?) -> bool { a == None }
+}
+
+fn main() {
+    print(opt(None, g()))           // ()
+    print(later(g(), None))         // ()
+    let u = g()
+    print(opt(None, u))             // ()
+    let p = P(a: None, b: g())
+    print(p.a == None)              // true
+    print(p.b)                      // ()
+    match Bx.Two(None, g()) {
+        Bx.Two(a, _) => print(a == None)    // true
+        Bx.One(_) => print("One")
+    }
+    let k = K(n: 1)
+    print(k.m(None, g()))           // true
+    print(is_none(g()))             // false
+    print(first(g(), g()))          // ()
+    print(k.m2(g()))                // false
+    print(W(a: g()).a == None)      // false
+    let w: W<unit> = W(a: g())
+    print(w.a == None)              // false
+    match Bx.One(g()) {
+        Bx.One(a) => print(a == None)       // false
+        Bx.Two(_, _) => print("Two")
+    }
+    print(k.n)                      // 1
+}

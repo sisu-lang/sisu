@@ -204,6 +204,11 @@ impl<'ctx> Codegen<'ctx, '_> {
         lhs: BasicValueEnum<'ctx>,
         rhs: BasicValueEnum<'ctx>,
     ) -> IntValue<'ctx> {
+        if ty == Type::UNIT {
+            // All `unit` values are equal, so `<=` and `>=` hold and `<` and `>` do not.
+            let holds = matches!(op, CompareOp::Le | CompareOp::Ge);
+            return self.context.bool_type().const_int(u64::from(holds), false);
+        }
         if ty == Type::STRING {
             let order = self.str_compare(lhs, rhs);
             let zero = self.context.i64_type().const_zero();

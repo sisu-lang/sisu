@@ -231,6 +231,7 @@ impl Checker<'_> {
         arms: &[ast::Arm],
         expected: Expectation,
     ) -> Checked {
+        let dropped = self.body.dropped == Some(span);
         let (expected, siblings) = expected.split_hint();
         let checked = self.value_kept(scrutinee);
         let mut position = type_of(&checked);
@@ -248,7 +249,7 @@ impl Checker<'_> {
         let form = LetValue::Match { ty: position };
         let (blocks, ty) = self.ranked(|c| {
             let sources = c.arm_branches(arms, &form, expected);
-            c.join(&sources, (expected, siblings), |c, i, expected| {
+            c.join(&sources, (expected, siblings), dropped, |c, i, expected| {
                 let arm = &arms[i];
                 let (bound, guard, so_far) = c.bound_branch(arm_key(arm), |c| {
                     c.bind_pattern(None, &form, &arm.pattern, Some(arm))
@@ -261,8 +262,10 @@ impl Checker<'_> {
                 patterns[i] = Some(pattern);
                 guards[i] = guard;
                 if let ast::ExprKind::Block(block) = &arm.body.kind {
+                    c.body.dropped = dropped.then_some(block.span);
                     return c.resume_block(block, expected, so_far);
                 }
+                c.body.dropped = dropped.then_some(arm.body.span);
                 let value = c.expr(&arm.body, expected);
                 c.pop_scope();
                 value.map(|value| tir::Block {
@@ -320,6 +323,7 @@ impl Checker<'_> {
                     guard: guard.transpose().map_err(|p| p.reported())?,
                     body: body.map_err(|p| p.reported())?,
                     reachable,
+                    made: false,
                 })
             })
             .collect();
@@ -1535,11 +1539,13 @@ impl Checker<'_> {
                     guard: None,
                     body: then_block,
                     reachable: true,
+                    made: false,
                 },
                 tir::Arm {
                     pattern: other,
                     bindings: Vec::new(),
                     guard: None,
+                    made: else_block.is_none(),
                     body: else_block.unwrap_or_else(empty_block),
                     reachable: true,
                 },

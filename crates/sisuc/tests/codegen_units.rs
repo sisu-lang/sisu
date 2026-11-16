@@ -92,6 +92,13 @@ fn before_pipeline(unit: &str) -> &str {
     unit.split("\n; after ").next().expect("a split has a head")
 }
 
+/// The right-hand side of the instruction that defines `%name` in `body`, one function of the IR.
+fn definition<'a>(body: &'a str, name: &str) -> Option<&'a str> {
+    let head = format!("%{name} = ");
+    body.lines()
+        .find_map(|line| line.trim_start().strip_prefix(head.as_str()))
+}
+
 /// The stdout of `sisu build <flags> <name>.sisu` run in `dir`, which must succeed.
 fn emit(dir: &Path, name: &str, flags: &[&str]) -> String {
     let out = Command::new(env!("CARGO_BIN_EXE_sisu"))
@@ -932,4 +939,88 @@ fn split_build_should_succeed_when_threads_cannot_start() {
         .map(|entry| entry.expect("reads an entry").file_name())
         .collect();
     assert_eq!(left, Vec::<std::ffi::OsString>::new());
+}
+
+/// GIVEN a program that pushes 100 000 `unit` values into each of two `[unit]` arrays
+/// WHEN `sisu build --emit ir -O2` builds it
+/// THEN each size that a `sisu_alloc` or `sisu_realloc` call gets adds the header to a capacity
+///   times an element size of 0
+/// AND each `sisu_alloc`, `sisu_realloc` and `sisu_free` call after the pipeline gets only the
+///   24 bytes of the header
+/// AND no store writes a `unit` element
+#[test]
+fn unit_array_should_allocate_no_payload() {
+    let dir = fixture(
+        "unit_array_should_allocate_no_payload",
+        &[(
+            "units.sisu",
+            include_str!("run/unit_array_should_have_no_storage.sisu"),
+        )],
+    );
+    let ir = emit(&dir, "units", &["--emit", "ir", "-O2"]);
+    let mut elements = Vec::new();
+    for body in before_pipeline(&ir).split("\ndefine ").skip(1) {
+        for line in body.lines() {
+            let Some((_, args)) = ["@sisu_alloc(", "@sisu_realloc("]
+                .iter()
+                .find_map(|callee| line.split_once(callee))
+            else {
+                continue;
+            };
+            // A size that is a value, not a constant: `add nuw i64 <mul>, <header>`.
+            for size in args.split(", ").filter_map(|arg| arg.strip_prefix("i64 %")) {
+                let size = size.trim_end_matches(')');
+                let added =
+                    definition(body, size).and_then(|add| add.strip_prefix("add nuw i64 %"));
+                let product = added.and_then(|add| add.split_once(',')).map(|(m, _)| m);
+                elements.extend(product.and_then(|m| definition(body, m)));
+            }
+        }
+    }
+    assert!(
+        !elements.is_empty(),
+        "the IR should size an array block from its capacity:\n{ir}"
+    );
+    for product in &elements {
+        assert!(
+            product.starts_with("mul ") && product.ends_with(", 0"),
+            "an element of `unit` should have no bytes: {product}"
+        );
+    }
+    let heap_calls: Vec<&str> = (after_pipeline(&ir).lines())
+        .filter(|line| {
+            line.contains(" call ")
+                && ["@sisu_alloc(", "@sisu_realloc(", "@sisu_free("]
+                    .iter()
+                    .any(|callee| line.contains(callee))
+        })
+        .collect();
+    assert!(
+        !heap_calls.is_empty(),
+        "the IR should allocate an array:\n{ir}"
+    );
+    for line in &heap_calls {
+        let (_, args) = line.split_once('(').expect("a call has arguments");
+        let ints: Vec<&str> = (args.split(", "))
+            .filter_map(|arg| arg.strip_prefix("i64 "))
+            .map(|int| int.trim_end_matches(')'))
+            .collect();
+        // `sisu_alloc` and `sisu_free` take the size, then the alignment. `sisu_realloc` takes
+        // the old size, the alignment, then the new size.
+        let sizes = if line.contains("@sisu_realloc(") {
+            vec![ints[0], ints[2]]
+        } else {
+            vec![ints[0]]
+        };
+        assert_eq!(
+            sizes,
+            vec!["24"; sizes.len()],
+            "a block of `unit` elements should hold only its header: {line}"
+        );
+    }
+    assert!(
+        !ir.lines()
+            .any(|line| line.trim_start().starts_with("store {}")),
+        "no store should write a `unit` element:\n{ir}"
+    );
 }

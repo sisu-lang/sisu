@@ -334,7 +334,7 @@ fn main() {
 - Each path through the body must end in a value or in a statement that never finishes ([Reachability](statements.md#the-end-of-a-function)). [E0031](../diagnostics/E0031.md)
 - The value must have the type `T`. [E0032](../diagnostics/E0032.md)
 - When `T` is an optional `U?`, a `U` value becomes a `U?` ([Types](types.md#optionals)).
-- A function without a return type gives no value, so a call of it has no value. [E0043](../diagnostics/E0043.md)
+- A function without a return type returns `unit`, so a call of it gives a `unit` value. Where a type other than `unit`, `unit?` or a type parameter of the called function is expected, the value is an error. [E0043](../diagnostics/E0043.md)
 - When the body of a function without a return type ends in a value, the program builds with a warning. [W0004](../diagnostics/W0004.md)
 - For `return`, see [return](statements.md#return).
 
@@ -354,7 +354,7 @@ fn main() {
 
 ### A call without a value
 
-A function without a return type has the return type `unit`. A call of it gives no value to print or to compare ([unit](types.md#unit)).
+A function without a return type has the return type `unit`. A call of it gives a `unit` value, which fits only where `unit`, `unit?` or a type parameter of the called function is expected ([unit](types.md#unit)).
 
 ```sisu
 fn log(text: string) {
@@ -362,7 +362,7 @@ fn log(text: string) {
 }
 
 fn main() {
-    print(log("hi") == 1)             // error[E0043]
+    let n: i64 = log("hi")            // error[E0043]
 }
 ```
 

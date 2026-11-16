@@ -153,7 +153,6 @@ codes! {
     BraceInString = "E0095",
     EmptyInterpolation = "E0096",
     CommentInInterpolation = "E0097",
-    CannotInterpolate = "E0098",
     TodoForm = "E0099",
     ConversionInConstant = "E0100",
     FloatNeedsDigits = "E0101",
@@ -268,6 +267,10 @@ pub(crate) const RETIRED: &[(&str, &str)] = &[
         "E0060",
         include_str!("../../../../docs/diagnostics/E0060.md"),
     ),
+    (
+        "E0098",
+        include_str!("../../../../docs/diagnostics/E0098.md"),
+    ),
 ];
 
 impl Code {
@@ -298,11 +301,16 @@ pub(crate) enum NoValueCause {
     /// An `if`, or an `if let`, whose last `else` is missing. `returning` says that a `return` of
     /// a unit function holds it.
     NoElse { if_let: bool, returning: bool },
-    /// A call of `name`, a function that declares no return type, at `declared`, when that
-    /// declaration is in the program.
+    /// An `if`, or an `if let`, whose last `else` is missing and whose branch gives `unit` or
+    /// never finishes: its value is `unit`. `want` is the type that the context wants, when it
+    /// wants one.
+    UnitIf { if_let: bool, want: Option<String> },
+    /// A call of `name`, a function that returns `unit`, when its declaration is in the
+    /// program: `declared` is its name, or the return type that it writes, with that type as
+    /// written.
     Call {
         name: String,
-        declared: Option<Span>,
+        declared: Option<(Span, Option<String>)>,
     },
 }
 
@@ -315,7 +323,11 @@ impl NoValueCause {
                 "this `{}` has no `else`, so it has no value",
                 if *if_let { "if let" } else { "if" }
             )),
-            NoValueCause::Call { name, .. } => Some(format!("`{name}` returns no value")),
+            NoValueCause::UnitIf { if_let, .. } => Some(format!(
+                "this `{}` has no `else`, so its value is `unit`",
+                if *if_let { "if let" } else { "if" }
+            )),
+            NoValueCause::Call { name, .. } => Some(format!("`{name}` returns `unit`")),
         }
     }
 }
@@ -967,11 +979,11 @@ pub(crate) enum DiagnosticKind {
         at: Span,
         parens: Option<Span>,
     },
-    /// A call of `function` (`print` or `eprint`) at `at` with no argument or several, or one that
-    /// returns nothing.
+    /// A call of `function` (`print`, `eprint` or `dbg`) at `at` with no argument or several.
+    /// `join` is the span of the values, and the string that holds them all, when one string can.
     PrintArgument {
         function: &'static str,
-        problem: PrintProblem,
+        join: Option<(Span, String)>,
         at: Span,
     },
     /// The argument at `at` of a call of `function`, which never finishes.
@@ -1162,8 +1174,6 @@ pub(crate) enum DiagnosticKind {
     EmptyInterpolation { at: Span },
     /// The `//` at `at`, inside an interpolation.
     CommentInInterpolation { at: Span },
-    /// The interpolated value at `at`, of type `ty`, which interpolation cannot write as text.
-    CannotInterpolate { ty: String, at: Span },
     /// The printed or interpolated optional at `at`, which may print `None`. `value` is its path
     /// as written, when it has one.
     PrintsOptional { value: Option<String>, at: Span },
@@ -1729,9 +1739,13 @@ fn method_form_message(name: &str, takes: bool) -> String {
     }
 }
 
-/// The label at a function that declares no return type.
-fn no_return_type(name: &str) -> String {
-    format!("`{name}` declares no return type")
+/// The label at a function that returns `unit`: at its name when it declares no return type,
+/// or at `written`, the return type that it writes.
+fn declares(name: &str, written: Option<&str>) -> String {
+    match written {
+        Some(written) => format!("`{name}` declares `-> {written}`"),
+        None => format!("`{name}` declares no return type"),
+    }
 }
 
 /// How written type arguments do not fit what they follow.
@@ -1756,19 +1770,12 @@ pub(crate) struct NoReturn {
     /// Its own name, and where it is written.
     pub(crate) name: String,
     pub(crate) at: Span,
-    /// The offset of the `{` of its body, and the type of the value: a fix adds `-> type` there.
+    /// Where it writes its return type, and that type as written, when it writes one.
+    pub(crate) written: Option<(Span, String)>,
+    /// The offset of the `{` of its body, and the type of the value: a fix adds `-> type` there,
+    /// or replaces the written type with it.
     pub(crate) add: Option<(usize, String)>,
 }
-
-/// What is wrong with the argument of a `print` or `eprint` call.
-pub(crate) enum PrintProblem {
-    /// The call has no argument or several. `join` is the span of the values, and the string
-    /// that holds them all, when one string can.
-    Count { join: Option<(Span, String)> },
-    /// The argument has no value: it is a call that returns nothing.
-    NoValue,
-}
-
 /// What made a tree pass the nesting limit.
 pub(crate) enum NestingForm {
     /// Nested expressions, blocks, patterns or types.
@@ -4859,7 +4866,7 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::UnknownType { name, at, form } => match form {
                 UnknownForm::Name { suggestion } => similar(
                     Diagnostic::coded(code, at, format!("cannot find type `{name}`")).with_help(
-                        "the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums, structs and arrays such as `[i64]`",
+                        "the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`",
                     ),
                     at,
                     suggestion,
@@ -4939,7 +4946,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     Some((span, cause)) if let Some(text) = cause.reason() => {
                         let d = d.with_secondary(span, text);
                         match cause {
-                            NoValueCause::NoElse { .. } => d.with_help(format!(
+                            NoValueCause::NoElse { .. } | NoValueCause::UnitIf { .. } => d.with_help(format!(
                                 "add an `else`, and make each branch give {} `{want}`",
                                 indefinite(&want)
                             )),
@@ -5137,10 +5144,26 @@ impl From<DiagnosticKind> for Diagnostic {
             DiagnosticKind::UnexpectedReturnValue { at, function } => {
                 let d = Diagnostic::coded(code, at, "this function returns no value");
                 match function {
-                    Some(NoReturn { name, at, add }) => {
-                        let d = d.with_secondary(at, no_return_type(&name));
-                        match add {
-                            Some((open, ty)) => d.with_fix(Fix {
+                    Some(NoReturn {
+                        name,
+                        at,
+                        written,
+                        add,
+                    }) => {
+                        let d = match &written {
+                            Some((at, shown)) => d.with_secondary(*at, declares(&name, Some(shown))),
+                            None => d.with_secondary(at, declares(&name, None)),
+                        };
+                        match (add, written) {
+                            (Some((_, ty)), Some((at, _))) => d.with_fix(Fix {
+                                message: format!("replace the return type of `{name}` with `{ty}`"),
+                                safe: false,
+                                edits: vec![Edit {
+                                    span: at,
+                                    replacement: ty,
+                                }],
+                            }),
+                            (Some((open, ty)), None) => d.with_fix(Fix {
                                 message: format!("add `-> {ty}` to `{name}`"),
                                 safe: false,
                                 edits: vec![Edit {
@@ -5148,7 +5171,7 @@ impl From<DiagnosticKind> for Diagnostic {
                                     replacement: format!("-> {ty} "),
                                 }],
                             }),
-                            None => d,
+                            (None, _) => d,
                         }
                     }
                     None => d,
@@ -5218,10 +5241,14 @@ impl From<DiagnosticKind> for Diagnostic {
                             "add an `else`, and make each branch give a value".to_owned()
                         })
                     }
+                    NoValueCause::UnitIf { want, .. } => d.with_help(format!(
+                        "add an `else`, and make each branch give {}",
+                        want.map_or_else(|| "a value".to_owned(), |want| format!("`{want}`"))
+                    )),
                     NoValueCause::Call {
                         name,
-                        declared: Some(declared),
-                    } => d.with_secondary(declared, no_return_type(&name)),
+                        declared: Some((declared, written)),
+                    } => d.with_secondary(declared, declares(&name, written.as_deref())),
                     NoValueCause::Plain | NoValueCause::Call { .. } => d,
                 }
             }
@@ -5530,31 +5557,20 @@ impl From<DiagnosticKind> for Diagnostic {
                     None => d,
                 }
             }
-            DiagnosticKind::PrintArgument {
-                function,
-                problem,
-                at,
-            } => match problem {
-                PrintProblem::Count { join } => {
-                    let d = Diagnostic::coded(code, at, format!("`{function}` takes one value"));
-                    match join {
-                        Some((values, text)) => d.with_fix(Fix {
-                            message: "join the values into one string".to_owned(),
-                            safe: false,
-                            edits: vec![Edit {
-                                span: values,
-                                replacement: text,
-                            }],
-                        }),
-                        None => d,
-                    }
+            DiagnosticKind::PrintArgument { function, join, at } => {
+                let d = Diagnostic::coded(code, at, format!("`{function}` takes one value"));
+                match join {
+                    Some((values, text)) => d.with_fix(Fix {
+                        message: "join the values into one string".to_owned(),
+                        safe: false,
+                        edits: vec![Edit {
+                            span: values,
+                            replacement: text,
+                        }],
+                    }),
+                    None => d,
                 }
-                PrintProblem::NoValue => Diagnostic::coded(
-                    code,
-                    at,
-                    format!("the argument of `{function}` has no value"),
-                ),
-            },
+            }
             DiagnosticKind::PrintNever { function, at } => Diagnostic::coded(
                 code,
                 at,
@@ -6076,9 +6092,6 @@ impl From<DiagnosticKind> for Diagnostic {
             }
             DiagnosticKind::CommentInInterpolation { at } => {
                 Diagnostic::coded(code, at, "a comment cannot appear inside an interpolation")
-            }
-            DiagnosticKind::CannotInterpolate { ty, at } => {
-                Diagnostic::coded(code, at, format!("cannot interpolate `{ty}`"))
             }
             DiagnosticKind::PrintsOptional { value, at } => {
                 let (subject, call) = match value {
@@ -7488,12 +7501,12 @@ fn take_self(d: Diagnostic, take: SelfTake) -> Diagnostic {
 }
 
 /// The indefinite article before the type `ty`: "an" before a vowel letter, except the types
-/// `u8` and the like, which say "you".
+/// `u8` and the like, and `unit`, which say "you".
 fn indefinite(ty: &str) -> &'static str {
-    let unsigned = ty
-        .strip_prefix('u')
-        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()));
-    if !unsigned && ty.starts_with(['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U']) {
+    let you = ty.strip_prefix('u').is_some_and(|rest| {
+        rest.starts_with(|c: char| c.is_ascii_digit()) || rest.starts_with("nit")
+    });
+    if !you && ty.starts_with(['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U']) {
         "an"
     } else {
         "a"

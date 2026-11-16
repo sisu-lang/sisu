@@ -152,11 +152,14 @@ fn a_panic_with_a_broken_message_should_keep_its_type() {
 
 /// A `unit` right side of `??` is the "no value" error, reported once.
 #[test]
-fn coalesce_unit_is_not_a_value() {
-    codes(
+fn a_unit_right_of_coalesce_should_report_no_value() {
+    let d = diagnostic(
         "fn g() {}\nfn f(x: i64?) {\n    print(x ?? g())\n}\nfn main() {}",
-        &[(Code::NoValue, (3, 16))],
+        Code::NoValue,
+        (3, 16, "g()"),
+        &[(1, 4)],
     );
+    assert!(unit_values::names_a_call(&d));
 }
 
 /// `eprint` is `print` to standard error: the same operand rules, and a node of its own.
@@ -176,7 +179,7 @@ fn eprint_should_report_the_argument_errors_of_print() {
     for (statement, code, pos) in [
         ("eprint()", Code::PrintArgument, (6, 5)),
         ("eprint(1, 2)", Code::PrintArgument, (6, 5)),
-        ("eprint(nothing())", Code::PrintArgument, (6, 12)),
+        ("eprint(if true { 1 })", Code::NoValue, (6, 12)),
         ("eprint(panic(\"x\"))", Code::PrintNever, (6, 12)),
     ] {
         codes(
@@ -2195,7 +2198,7 @@ fn dbg_should_check_clean_with_the_type_of_its_argument() {
 #[test]
 fn dbg_should_report_the_argument_errors_of_print() {
     for (statement, code, pos) in [
-        ("dbg(greet())", Code::PrintArgument, (3, 9)),
+        ("dbg(if true { 1 })", Code::NoValue, (3, 9)),
         ("dbg(panic(\"x\"))", Code::PrintNever, (3, 9)),
         ("dbg()", Code::PrintArgument, (3, 5)),
         ("dbg(1, 2)", Code::PrintArgument, (3, 5)),

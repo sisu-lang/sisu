@@ -1,4 +1,4 @@
-error[E0043]: `nothing` returns no value
+error[E0043]: `nothing` returns `unit`
  --> if_unit_branch.sisu:4:39
   |
 1 | fn nothing() {}

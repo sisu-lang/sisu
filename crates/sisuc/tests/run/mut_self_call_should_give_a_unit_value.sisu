@@ -1,0 +1,18 @@
+// GIVEN a struct with a `mut self` method that declares no return type
+// WHEN a `let`, an optional `unit` and an interpolation take the value of its call
+// THEN each call gives `()` and writes the struct
+struct P {
+    x: i64
+    fn bump(mut self) { self.x += 1 }
+}
+fn f(mut p: P) -> unit? { p.bump() }
+fn main() {
+    let mut p = P(x: 1)
+    let u = p.bump()
+    print(u)                     // ()
+    let y: unit? = p.bump()
+    print(y ?? u)                // ()
+    print("{p.bump()}")          // ()
+    print(f(mut p) ?? u)         // ()
+    print(p.x)                   // 5
+}

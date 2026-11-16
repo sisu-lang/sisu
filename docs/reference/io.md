@@ -38,16 +38,16 @@ a warning
 
 **The call**
 
-- The argument is one value of any type except `unit` and `never` ([Text of other types](strings.md#text-of-other-types)).
-- A call that returns nothing is an error. So are no argument and more than one argument. [E0059](../diagnostics/E0059.md)
+- The argument is one value of any type except `never` ([Text of other types](strings.md#text-of-other-types)). A `unit` value writes `()`.
+- No argument and more than one argument are errors. [E0059](../diagnostics/E0059.md)
 - An argument of the type `never`, such as a call of `panic`, is an error. [E0061](../diagnostics/E0061.md)
 - An optional builds with a warning, because the text can be `None`. Unwrap it with `if let`, give a default with `??`, or call `to_string()`. [W0015](../diagnostics/W0015.md)
-- `print` and `eprint` give no value. [E0043](../diagnostics/E0043.md)
+- `print` and `eprint` give a `unit` value ([unit](types.md#unit)).
 
 **The text**
 
 - The text of a value is the same as in an interpolation ([Strings and formatting](strings.md#text-of-a-value)). `print("{x}")` and `print(x)` write the same text.
-- An interpolation takes any type except `unit` and `never`. [E0098](../diagnostics/E0098.md)
+- An interpolation takes any type except `never`. A `unit` value writes `()`.
 - The line break is one `\n` byte. A `\r` is written only when the text holds it.
 
 **Order of the streams**
@@ -93,7 +93,7 @@ example.sisu:6:17: double(21) = 42
 
 **The argument**
 
-- An argument of the type `unit` is an error, as for `print`. [E0059](../diagnostics/E0059.md)
+- An argument that has no value is an error, as for `print`. [E0043](../diagnostics/E0043.md)
 - An argument of the type `never` is an error, as for `print`. [E0061](../diagnostics/E0061.md)
 - `dbg` runs its argument once and gives its value, so `dbg(f())` calls `f` once.
 - `dbg` gives no warning for an optional.

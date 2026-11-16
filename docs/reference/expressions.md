@@ -84,7 +84,7 @@ fn main() {
 **Rules**
 
 - A name that a statement in the block declares is in scope only to the end of the block.
-- A block that does not end in an expression has no value. [E0043](../diagnostics/E0043.md)
+- A block that does not end in an expression gives a `unit` value ([unit](types.md#unit)).
 - A block that reaches a [`return`](statements.md#return), [`break` or `continue`](statements.md#break-and-continue) has the type `never` ([Types](types.md#never)).
 - A statement cannot start with `{`. [E0081](../diagnostics/E0081.md)
 
@@ -116,7 +116,7 @@ fn main() {
 - The values of the branches must have one type. [E0032](../diagnostics/E0032.md)
 - When one branch is a `T` and another a `T?`, the `if` is a `T?`.
 - A branch of the type `never` takes the type of the others ([Types](types.md#never)).
-- An `if` without an `else` has no value. It is a statement. [E0043](../diagnostics/E0043.md)
+- An `if` without an `else` whose branch gives `unit` gives a `unit` value. When its branch has a value of another type, the `if` has no value. It is a statement. Where `unit?` is expected, an `if` without an `else` has no value either. [E0043](../diagnostics/E0043.md)
 - An `else if` is an `if` in the `else` branch.
 
 ```sisu
@@ -168,8 +168,9 @@ fn main() {
 
 **Loops with no value**
 
-- A loop whose `break`s have no value has no value. This is also true when the other `break`s have values of the type `never`. [E0043](../diagnostics/E0043.md)
-- A loop that has a `break` with no value and a `break` with a value is an error. [E0043](../diagnostics/E0043.md)
+- A loop whose `break`s have no value gives a `unit` value. This is also true when the other `break`s have values of the type `never`.
+- A `break` with no value gives `unit`. So a loop that has a `break` with no value and a `break` with a value of another type is an error. [E0043](../diagnostics/E0043.md)
+- A `break` with a `unit?` value is the exception. Then a `break` with no value gives `Some` of a `unit`, and the loop gives a `unit?`. So `loop { if c { break Some(g()) }; break }` is never `None`.
 
 ```sisu
 fn wait(ready: bool) {
@@ -211,7 +212,7 @@ fn main() {
 **Other rules**
 
 - A call of a function that does not exist is an error. [E0052](../diagnostics/E0052.md)
-- A call of a function that has no return type has no value. [E0043](../diagnostics/E0043.md)
+- A call of a function that has no return type gives a `unit` value ([unit](types.md#unit)).
 - A call written with the name of a type, such as `f64(n)`, is a conversion ([Types](types.md#conversions)).
 
 ```sisu
@@ -359,7 +360,7 @@ fn main() {
 
 ## Expressions as statements
 
-An expression can stand as a statement, such as a call of `print`. When its value is not used, and it is not a call that returns no value, the program builds with a warning ([W0004](../diagnostics/W0004.md)).
+An expression can stand as a statement, such as a call of `print`. When its value is not used, the program builds with a warning ([W0004](../diagnostics/W0004.md)). There is no warning for the types `unit`, `unit?` and `never`, or for a call of `dbg`. For an `if`, an `if let` or a `match`, the check applies to the value of each branch.
 
 ```sisu
 fn main() {
@@ -371,14 +372,17 @@ fn main() {
 
 An expression that has no value cannot be used as a value: as the value of a `let`, an argument or an operand ([E0043](../diagnostics/E0043.md)). These expressions have no value:
 
+- an `if` without an `else` whose branch has a value of a type other than `unit`
+- an expression of the type `never` ([Types](types.md#never))
+
+These expressions give a `unit` value. It fits only where `unit`, `unit?` or a type parameter of the called function is expected ([unit](types.md#unit)).
+
 - a call of a function that has no return type, such as `print(1)`
-- an `if` without an `else`
 - a block that does not end in an expression
 - a `loop` whose `break`s have no value
-- an expression of the type `never` ([Types](types.md#never))
 
 ```sisu
 fn main() {
-    let x = print(1)             // error[E0043]
+    let x: i64 = print(1)        // error[E0043]
 }
 ```

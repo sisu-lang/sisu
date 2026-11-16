@@ -214,8 +214,22 @@ fn take<T>(mut x: T?) { x = None }
 fn take2<T>(mut x: T?, n: i64) { x = None }
 fn keep<T>(mut x: T?) -> T? { x }
 fn opt<T>(v: T?) -> T? { v }
+fn g() {}
+fn setu(mut x: unit) { x = {} }
+struct Su {
+    u: unit
+    fn touch(mut self) { self.u = g() }
+}
+enum Lg {
+    A
+    fn log(self) {}
+}
+fn olg() -> Lg? { None }
 fn generic<U: Named, V, W: Km>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?, w: W?, st: St) {
     let mut mq: (any Pet)? = op
+    let mut mu = g()
+    let mut su = Su(u: g())
+    let mut xu = [g()]
     {stmt}
 }
 fn main() {
@@ -229,6 +243,9 @@ fn main() {
     let st = St(n: 1)
     generic(Cat(), Rock(), c, d, k, n, p, op, ob, Some(Ms(n: 1)), st)
     let mut mq: (any Pet)? = op
+    let mut mu = g()
+    let mut su = Su(u: g())
+    let mut xu = [g()]
     {stmt}
 }
 
@@ -392,6 +409,20 @@ Am(n: 1)
 ocs()?.s.n
 ocs()?.s.xs
 ocs()?.s.xs[0]
+# A `unit` value, and a `unit?` value: a safe call of a method that returns `unit`.
+g()
+olg()?.log()
+# `unit` places: a mutable local, a field and an element.
+mu
+su.u
+xu[0]
+# An `if` without an `else` that gives a `unit`: it has no value to lift to `unit?`.
+if d { g() }
+# An `if` whose `then` block jumps before an `if` without an `else`: the tail of a `never` block
+# is unreachable, so no code reads its value.
+if c { return; if d { 1 } } else { g() }
+# A call of a `mut self` method that returns `unit`.
+su.touch()
 # A bare `self` in `main` and in a generic function, where it is no place and has no value.
 self
 # An optional struct whose fields hold arrays of `Ms`.
@@ -456,6 +487,8 @@ let _a = if c { [[Some(p)]] } else { [[$]] }
 let _a = match k { 0 => [Some(p)]; _ => [$, Some(Some(p))] }
 let _a = [Some(p), $]
 let _a = [$, Some(p)]
+# An untyped array literal beside a `unit?`, which lifts each `unit` element to `unit?`.
+let _a = [olg()?.log(), $]
 # Joins of `if`, `else if`, `match` and `??`, in both orders.
 let _a = if c { Some(p) } else { $ }
 let _a = if c { $ } else { Some(Some(p)) }
@@ -487,6 +520,8 @@ if let _l = $ {}
 let x: Result<i64, string> = Ok(loop { break $ })
 let x: i64? = id(loop { break $ })
 let x = id(loop { break $ })
+# A `mut` argument at a parameter of type `unit`.
+setu(mut $)
 # A `mut` argument: a place, or a value that is none, for a generic `mut` parameter.
 take(mut $)
 take(x: mut $)
@@ -633,3 +668,14 @@ let _r: Result<u8, bool> = Ok($ + 1)
 let _r: Result<u8, bool> = Ok(-$)
 let _r: Result<[u8], bool> = Ok([1, $])
 let _x = k == id($)
+# A comparison, and contexts that discard the value: a branch beside an empty `else`, and an arm
+# beside a `None` arm of a `match` that is a statement.
+$ < 1
+if c { $ } else {}
+match k { 0 => $; _ => None }
+# A bare `break` beside a `break` of the value: in a `let`, in a statement, and through a label
+# from an inner loop, with the bare `break` in the inner loop or in the outer loop.
+let _a = loop { if c { break $ }; break }
+loop { if c { break $ }; break }
+outer: loop { loop { if c { break outer $ }; break outer } }
+outer: loop { loop { if c { break outer $ }; break }; break outer }

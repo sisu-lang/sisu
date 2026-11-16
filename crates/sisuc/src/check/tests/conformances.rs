@@ -2085,12 +2085,13 @@ fn to_string_should_not_answer_a_call_of_a_field_of_that_name() {
 }
 
 /// A receiver that failed but kept its type leaves the call a `string`, and the call adds no
-/// error of its own: the part `{g()}` of the receiver has no value, which is the one error.
+/// error of its own: the part `{if true { 1 }}` of the receiver has no value, which is the one
+/// error.
 #[test]
 fn to_string_on_a_receiver_that_failed_should_report_only_the_receiver() {
     codes(
-        "fn g() {}\nfn f() {\n    print(\"{g()}\".to_string())\n}\nfn main() {}",
-        &[(Code::CannotInterpolate, (3, 13))],
+        "fn f() {\n    print(\"{if true { 1 }}\".to_string())\n}\nfn main() {}",
+        &[(Code::NoValue, (2, 13))],
     );
 }
 

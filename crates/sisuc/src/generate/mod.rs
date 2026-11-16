@@ -185,6 +185,8 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     // The `mut` functions and the `mut` calls choose by their own streams, which stand in for
     // the four above while they are written (`Gen::swap_streams`).
     let places: Vec<u8> = data.iter().map(|b| b.rotate_left(7)).collect();
+    // So do the `unit` loops of a printed `unit`: a seed writes what it wrote before them.
+    let loops: Vec<u8> = data.iter().map(|b| !b).collect();
     let spare: [Vec<u8>; 4] = [1, 2, 4, 6].map(|n| data.iter().map(|b| b.rotate_left(n)).collect());
     // A method that takes `mut self` reads streams of its own, apart from all of these. So the
     // struct or enum that holds it is the same with or without it (`Gen::swap_own_streams`).
@@ -195,6 +197,7 @@ pub(crate) fn generate(data: &[u8]) -> Generated {
     g.au = Unstructured::new(&rotated);
     g.cu = Unstructured::new(&mixed);
     g.mu = Unstructured::new(&places);
+    g.nu = Unstructured::new(&loops);
     g.spare = Spare::new(spare.each_ref().map(|bytes| Unstructured::new(bytes)));
     g.own = Spare::new(own.each_ref().map(|bytes| Unstructured::new(bytes)));
     // One program in eight leaves with `let ... else` and `??`. The choice reads every byte, so
@@ -324,6 +327,11 @@ struct Gen<'a> {
     cu: Unstructured<'a>,
     /// What chooses where a `mut` function or a `mut` call goes, apart from the streams above.
     mu: Unstructured<'a>,
+    /// What chooses the `unit` loops of a printed `unit`, apart from the streams above.
+    nu: Unstructured<'a>,
+    /// How many calls of a `unit?` function the printed `unit` values hold. The program writes
+    /// the functions `uq0`, `uq1` and so on after `main` (`Gen::optional_units`).
+    optional_units: usize,
     /// What stands in for the streams, the budget and the count of expressions while a `mut`
     /// function or a `mut` call is written: no choice of any other rule moves for it.
     spare: Spare<'a>,
@@ -389,6 +397,8 @@ impl<'a> Gen<'a> {
             au: Unstructured::new(&[]),
             cu: Unstructured::new(&[]),
             mu: Unstructured::new(&[]),
+            nu: Unstructured::new(&[]),
+            optional_units: 0,
             spare: Spare::new([(); 4].map(|()| Unstructured::new(&[]))),
             own: Spare::new([(); 4].map(|()| Unstructured::new(&[]))),
             statements: 0,
@@ -435,6 +445,11 @@ impl<'a> Gen<'a> {
     /// One of `0..n`, `n > 0`, for where a `mut` function or a `mut` call goes.
     fn mut_pick(&mut self, n: usize) -> usize {
         self.mu.choose_index(n).unwrap_or(0)
+    }
+
+    /// One of `0..n`, `n > 0`, for a `unit` loop of a printed `unit`.
+    fn unit_pick(&mut self, n: usize) -> usize {
+        self.nu.choose_index(n).unwrap_or(0)
     }
 
     /// Swaps `u`, `ru`, `au` and `cu` with the spare streams, and the budget and the count of

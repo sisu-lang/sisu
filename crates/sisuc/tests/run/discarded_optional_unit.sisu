@@ -1,0 +1,60 @@
+// A `unit?` value that a statement discards runs for its effect only, as a `unit` does.
+// GIVEN an enum `U` whose method `log` prints `log`, and a function `run`. `run` discards
+//   `o?.log()` beside an empty branch, and in a `match` arm beside an empty block or a `None` arm.
+//   It also discards it in a `while` or `for` body, and as the `break` value of a `loop`.
+//   A loop also has a bare `break` beside a `break` of `g()` or of `o?.log()`, also through a
+//   label.
+// WHEN `main` calls `run` with `o` as `None`, as `Some(U.A)`, and as `Some(U.B)` with `c` false
+// THEN `log` runs once for each form whose branch runs when `o` holds a value, and never when
+//   `o` is `None`. `g` prints `g` each time that its `break` runs.
+enum U {
+    A
+    B
+    fn log(self) {
+        print("log")
+    }
+}
+
+fn g() {
+    print("g")
+}
+
+// The `match` is the tail of a function that returns `unit`.
+fn tail(o: U?, n: i64) {
+    match n { 1 => o?.log(); _ => None }
+}
+
+fn run(o: U?, u: U, c: bool, n: i64) {
+    print("if")
+    if c { o?.log() } else {}                // log when c is true
+    if c { o?.log() } else { let _z = 1 }    // log when c is true
+    if c {} else { o?.log() }                // log when c is false
+    print("match")
+    match n { 1 => o?.log(); _ => {} }       // log when n is 1
+    match u { U.A => o?.log(); U.B => {} }   // log when u is U.A
+    match n { 1 => o?.log(); _ => None }     // log when n is 1
+    tail(o, n)                               // log when n is 1
+    print("loops")
+    let mut i = 0
+    while i < 1 {
+        if c { o?.log() } else {}            // log when c is true
+        i = i + 1
+    }
+    for _x in [1] { if c { o?.log() } else {} }               // log when c is true
+    for _x in [1] { match n { 1 => o?.log(); _ => None } }    // log when n is 1
+    loop { break o?.log() }                                   // log
+    loop { if c { break o?.log() } else { break None } }      // log when c is true
+    outer: loop { loop { break outer o?.log() } }             // log
+    print("bare")
+    loop { if c { break g() }; break }                        // g when c is true
+    loop { if c { break o?.log() }; break }                   // log when c is true
+    for _i in 0..2 { loop { if c { break g() }; break } }     // g twice when c is true
+    outer: loop { loop { if c { break outer o?.log() }; break outer } }        // log when c is true
+    outer: loop { loop { if c { break outer o?.log() }; break }; break outer } // log when c is true
+}
+
+fn main() {
+    run(None, U.A, true, 1)        // if, match, loops, bare, 3 g
+    run(Some(U.A), U.A, true, 1)   // if, 2 logs, match, 4 logs, loops, 6 logs, bare, g, log, 2 g, 2 logs
+    run(Some(U.B), U.B, false, 2)  // if, 1 log, match, loops, 2 logs, bare
+}

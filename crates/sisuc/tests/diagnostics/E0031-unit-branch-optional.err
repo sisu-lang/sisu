@@ -1,0 +1,102 @@
+error[E0031]: function `f` must return `i64?`, but its body has no value
+  --> E0031-unit-branch-optional.sisu:17:1
+   |
+16 |     if c { g() }
+   |     ------------ this `if` has no `else`, so it has no value
+17 | }
+   | ^
+   |
+   = help: add an `else`, and make each branch give an `i64?`
+
+error[E0031]: function `b` must return `unit?`, but its body has no value
+  --> E0031-unit-branch-optional.sisu:21:1
+   |
+20 |     if c { return None }
+   |     -------------------- this `if` has no `else`, so it has no value
+21 | }
+   | ^
+   |
+   = help: add an `else`, and make each branch give a `unit?`
+
+error[E0043]: this `if` has no `else`, so it has no value
+  --> E0031-unit-branch-optional.sisu:25:19
+   |
+25 |     let y: i64? = if c { g() }
+   |                   ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give a value
+
+error[E0043]: this `if` has no `else`, so it has no value
+  --> E0031-unit-branch-optional.sisu:30:10
+   |
+30 |     k(1, if c { g() })
+   |          ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give a value
+
+error[E0043]: this `if` has no `else`, so it has no value
+  --> E0031-unit-branch-optional.sisu:31:23
+   |
+31 |     let e = [Some(1), if c { g() }]
+   |                       ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give a value
+
+error[E0043]: this `if` has no `else`, so it has no value
+  --> E0031-unit-branch-optional.sisu:32:11
+   |
+32 |     m([o, if c { g() }])
+   |           ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give a value
+
+error[E0043]: this `if` has no `else`, so it has no value
+  --> E0031-unit-branch-optional.sisu:33:31
+   |
+33 |     let x = if d { o } else { if c { g() } }
+   |                               ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give a value
+
+error[E0043]: this `if` has no `else`, so it has no value
+  --> E0031-unit-branch-optional.sisu:34:16
+   |
+34 |     print(o == if c { g() })
+   |                ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give a value
+
+error[E0043]: this `if` has no `else`, so it has no value
+  --> E0031-unit-branch-optional.sisu:35:20
+   |
+35 |     let w = if d { if c { g() } } else { o }
+   |                    ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give a value
+
+error[E0043]: this `if` has no `else`, so it has no value
+  --> E0031-unit-branch-optional.sisu:36:11
+   |
+36 |     print(if c { g() } == o)
+   |           ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give a value
+
+error[E0043]: this `if` has no `else`, so it has no value
+  --> E0031-unit-branch-optional.sisu:37:21
+   |
+37 |     let a1 = [1, o, if c { g() }]
+   |                     ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give a value
+
+error[E0043]: this `if` has no `else`, so it has no value
+  --> E0031-unit-branch-optional.sisu:38:24
+   |
+38 |     let a2 = [1, None, if c { g() }]
+   |                        ^^^^^^^^^^^^
+   |
+   = help: add an `else`, and make each branch give a value
+
+sisu: 12 errors
+sisu: for more on a code, run `sisu explain <code>`: E0031, E0043

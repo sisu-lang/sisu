@@ -1,13 +1,13 @@
 //! Branches: `if`, `if let` and the join of branch types.
 
 use super::any::{AnyJoin, SEED, is_target};
-use super::expr::fits;
+use super::expr::{fits, takes_unit};
 use super::generic::{Ahead, Rank, Ranked};
 use super::pattern::{LetPattern, arm_key};
 use super::reports::Reported;
 use super::{
     Checked, CheckedBlock, Checker, Expectation, Misfit, Origin, Poisoned, as_optional, block_type,
-    is_jumped, is_kept, payload, tail, value_span, wrap_block,
+    is_jumped, is_kept, payload, tail, value_span,
 };
 use crate::ast;
 use crate::diagnostic::{Diagnostic, DiagnosticKind, NoValueCause, Unwrap};
@@ -24,6 +24,17 @@ pub(super) fn failed_join(ty: Result<Type, Poisoned>, part: Option<Reported>) ->
             part.expect("a join with a type should fail by a failed part"),
         ),
     })
+}
+
+/// `span`, the span of an `if` with no `else`, when its `then` block has a value: such an `if` has
+/// none (see `Poisoned::valueless`). `if_let` says that it is an `if let`, and goes with it.
+fn valueless_join(
+    (span, if_let): (Span, bool),
+    else_block: Option<&ast::Block>,
+    then: &CheckedBlock,
+) -> Option<(Span, bool)> {
+    let value = block_type(then).is_some_and(|ty| !matches!(ty, Type::UNIT | Type::NEVER));
+    (else_block.is_none() && value).then_some((span, if_let))
 }
 
 /// The proof of the first failed branch among `blocks`, of a join that failed by a branch.
@@ -44,14 +55,15 @@ impl Checker<'_> {
         else_block: Option<&ast::Block>,
         expected: Expectation,
     ) -> Checked {
+        let dropped = self.body.dropped == Some(span);
         let (cond, _) = self.operand(cond, Expectation::Required(Type::BOOL, Origin::Condition));
         let (then, other, ty) = self.branches(
-            then_block,
-            else_block,
-            expected,
+            (then_block, else_block),
+            (expected, dropped),
             |_| None,
             |c, expected| c.block(then_block, expected),
         );
+        let valueless = valueless_join((span, false), else_block, &then);
         let part = (cond.as_ref().err())
             .or_else(|| then.as_ref().err())
             .or_else(|| other.as_ref().and_then(|other| other.as_ref().err()))
@@ -66,7 +78,10 @@ impl Checker<'_> {
                 ty,
                 span,
             )),
-            (.., ty) => failed_join(ty, part),
+            (.., ty) => failed_join(ty, part).map_err(|failed| Poisoned {
+                valueless,
+                ..failed
+            }),
         }
     }
 
@@ -83,6 +98,7 @@ impl Checker<'_> {
         else_block: Option<&ast::Block>,
         expected: Expectation,
     ) -> Checked {
+        let dropped = self.body.dropped == Some(span);
         // Ranking the `if let` for context may have checked its value (see `rank_value`).
         let (scrutinee, form) =
             if let Some((_, Ahead::Let(checked, form))) = self.kept(value.span, false) {
@@ -93,15 +109,20 @@ impl Checker<'_> {
             };
         let mut checked = None;
         let bind = |c: &mut Self| Some(c.bind_pattern(Some(Unwrap::IfLet), &form, pattern, None));
-        let (then, other, ty) =
-            self.branches(then_block, else_block, expected, bind, |c, expected| {
+        let (then, other, ty) = self.branches(
+            (then_block, else_block),
+            (expected, dropped),
+            bind,
+            |c, expected| {
                 let (bound, block) =
                     c.let_block(Unwrap::IfLet, &form, pattern, then_block, expected);
                 checked = Some(bound);
                 block
-            });
+            },
+        );
         let bound = checked.expect("`branches` should check the first block, which sets it");
         let ty = ty?;
+        let valueless = valueless_join((span, true), else_block, &then);
         let kind = match (scrutinee, then, other.transpose(), bound) {
             (Ok(scrutinee), Ok(then_block), Ok(else_block), LetPattern::Some { bind }) => {
                 tir::ExprKind::IfSome {
@@ -130,7 +151,10 @@ impl Checker<'_> {
                     .or_else(|| other.err().map(|p| p.reported()))
                     .or(pattern)
                     .expect("a failed `if let` should have a failed part");
-                return Err(Poisoned::typed(ty, part));
+                return Err(Poisoned {
+                    valueless,
+                    ..Poisoned::typed(ty, part)
+                });
             }
         };
         Ok(tir::Expr::new(kind, ty, span))
@@ -138,16 +162,17 @@ impl Checker<'_> {
 
     /// The blocks of an `if` or `if let`, `then` checking the first, and their type:
     /// `unit` without an `else`; see `join`. `bind` binds what the first block sees, for the
-    /// ranking of its value.
+    /// ranking of its value. With `dropped`, no code uses the value (see `Body::dropped`).
     fn branches(
         &mut self,
-        then_block: &ast::Block,
-        else_block: Option<&ast::Block>,
-        expected: Expectation,
+        (then_block, else_block): (&ast::Block, Option<&ast::Block>),
+        (expected, dropped): (Expectation, bool),
         bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
         then: impl FnOnce(&mut Self, Expectation) -> CheckedBlock,
     ) -> (CheckedBlock, Option<CheckedBlock>, Result<Type, Poisoned>) {
         let Some(else_block) = else_block else {
+            // Without an `else`, no code uses the value of the `then` block.
+            self.body.dropped = Some(then_block.span);
             return (then(self, Expectation::None), None, Ok(Type::UNIT));
         };
         let (expected, siblings) = expected.split_hint();
@@ -157,13 +182,15 @@ impl Checker<'_> {
                 c.block_branch(then_block, expected, bind),
                 c.block_branch(else_block, expected, |_| None),
             ];
-            c.join(&sources, (expected, siblings), |c, i, expected| {
+            c.join(&sources, (expected, siblings), dropped, |c, i, expected| {
                 if i == 0 {
+                    c.body.dropped = dropped.then_some(then_block.span);
                     let then = then
                         .take()
                         .expect("`join` should check the `then` branch once");
                     then(c, expected)
                 } else {
+                    c.body.dropped = dropped.then_some(else_block.span);
                     c.block(else_block, expected)
                 }
             })
@@ -182,10 +209,12 @@ impl Checker<'_> {
     /// type of the hinted value's siblings, is that first type. A failed or `unit` branch sets
     /// what the branches after it expect only until a branch of another known type is checked.
     /// Then a `never` branch, and after it an `Error` one, takes the others' type. A `T` and a
-    /// `T?` join to `T?`, the `T` branches wrapped; other types that differ are reported. A join
-    /// that fails for a branch that rejected `expected` is a mismatch too. With no branches, the
-    /// type is `never`. A `never` join with a branch that only a failed `break` or `continue`
-    /// makes `never` is `Err` with that mark (see `Poisoned::jumped`): one such branch is enough.
+    /// `T?` join to `T?`, the `T` branches wrapped; other types that differ are reported. A `unit`
+    /// branch that an `if` without an `else` gives has no value to wrap: E0043, unless `dropped`
+    /// says that no code uses the join's value (see `Body::dropped`). A join that fails for a
+    /// branch that rejected `expected` is a mismatch too. With no branches, the type is `never`. A
+    /// `never` join with a branch that only a failed `break` or `continue` makes `never` is `Err`
+    /// with that mark (see `Poisoned::jumped`): one such branch is enough.
     ///
     /// In a poisoned context (`Expectation::Poisoned`), the branches are in the same rank order
     /// as with no expected type. Only a branch of literals expects the type of the first branch.
@@ -198,6 +227,7 @@ impl Checker<'_> {
         &mut self,
         sources: &[Branch<'_>],
         (expected, siblings): (Expectation, Option<(Type, Origin)>),
+        dropped: bool,
         mut check: impl FnMut(&mut Self, usize, Expectation) -> CheckedBlock,
     ) -> (Vec<CheckedBlock>, Result<Type, Poisoned>) {
         let mut order: Vec<usize> = (0..sources.len()).collect();
@@ -228,18 +258,18 @@ impl Checker<'_> {
                 kept += 1;
             }
             let block = self.waiting(expected, |c| check(c, i, carried));
-            // The first branch of a known type anchors the rest; a failed or `unit` one only
-            // until then. An `any` branch widens the anchor, which only the hints read.
+            // The first branch of a known type, a `unit` one too, anchors the rest; a failed one
+            // only until then. An `any` branch widens the anchor, which only the hints read.
             match (block_type(&block), anchor) {
                 (Some(Type::NEVER), _) => {}
-                (Some(t), None | Some(None | Some(Type::UNIT))) => {
+                (Some(t), None | Some(None)) => {
                     anchor = Some(Some(t));
                     origin = Origin::Branch {
                         at: sources[i].span,
                         ty: t,
                     };
                 }
-                (Some(t), Some(Some(a))) if t != a && t != Type::UNIT => {
+                (Some(t), Some(Some(a))) if t != a => {
                     if let Some(wider) = self.any_join(a, t) {
                         anchor = Some(Some(wider));
                         origin = Origin::None;
@@ -273,8 +303,11 @@ impl Checker<'_> {
                         if is_target(ty) {
                             unwrap_some_object(block, ty);
                             self.any_block(block, ty, source.span, Origin::None);
+                        } else if dropped {
+                            // No code reads the value, so a branch with none wraps as well.
+                            super::wrap_block(block, ty, source.span);
                         } else {
-                            wrap_block(block, ty);
+                            self.lift_block(block, ty, source.span);
                         }
                     }
                 }
@@ -400,11 +433,12 @@ impl Checker<'_> {
         };
         let d = match failed {
             AnyJoin::Leaves {
+                ty,
                 member: (i, Type::UNIT),
                 ..
             } => DiagnosticKind::NoValue {
                 at: sources[i].span,
-                cause: self.branch_cause(&sources[i], &blocks[i]),
+                cause: self.branch_cause(&sources[i], &blocks[i], Some(ty)),
             }
             .into(),
             AnyJoin::Leaves {
@@ -443,8 +477,9 @@ impl Checker<'_> {
     /// The mistake when the branch `first`, of type `first_ty`, and the later branch `other`,
     /// of type `other_ty`, do not join. With a type expected, the branch that fits it neither as
     /// is nor as its payload is the mistake; without one, `other` is, against `first_ty`. A
-    /// branch with no value is that mistake, not a type mismatch. `givers` are the branches that
-    /// can give the join its type, in the order of the check, and the origin of the anchor.
+    /// branch with no value is that mistake, not a type mismatch, unless the expected type takes a
+    /// `unit`. `givers` are the branches that can give the join its type, in the order of the
+    /// check, and the origin of the anchor.
     fn join_mismatch(
         &mut self,
         (sources, blocks): (&[Branch<'_>], &[CheckedBlock]),
@@ -468,14 +503,14 @@ impl Checker<'_> {
             self.leaves_any(at, tail, want, got, origin)
         };
         match expected.ty() {
-            _ if first_ty == Type::UNIT => DiagnosticKind::NoValue {
+            want if first_ty == Type::UNIT && !wants_unit(expected) => DiagnosticKind::NoValue {
                 at: sources[first].span,
-                cause: self.branch_cause(&sources[first], &blocks[first]),
+                cause: self.branch_cause(&sources[first], &blocks[first], want.or(Some(other_ty))),
             }
             .into(),
-            _ if other_ty == Type::UNIT => DiagnosticKind::NoValue {
+            want if other_ty == Type::UNIT && !wants_unit(expected) => DiagnosticKind::NoValue {
                 at: sources[other].span,
-                cause: self.branch_cause(&sources[other], &blocks[other]),
+                cause: self.branch_cause(&sources[other], &blocks[other], want.or(Some(first_ty))),
             }
             .into(),
             Some(want) if fits(want, first_ty) => report(other, want, other_ty, expected.origin()),
@@ -499,9 +534,11 @@ impl Checker<'_> {
             return None;
         }
         // A branch with no value is the mistake first, as in `join_mismatch`.
-        if let Some(&(i, _)) = members.iter().find(|&&(_, t)| t == Type::UNIT) {
+        if let Some(&(i, _)) = members.iter().find(|&&(_, t)| t == Type::UNIT)
+            && !wants_unit(expected)
+        {
             let at = sources[i].span;
-            let cause = self.branch_cause(&sources[i], &blocks[i]);
+            let cause = self.branch_cause(&sources[i], &blocks[i], Some(want));
             return Some(DiagnosticKind::NoValue { at, cause }.into());
         }
         for &(i, t) in members {
@@ -513,11 +550,17 @@ impl Checker<'_> {
         None
     }
 
-    /// Why the branch `source`, whose checked block is `block`, has no value.
-    fn branch_cause(&self, source: &Branch<'_>, block: &CheckedBlock) -> NoValueCause {
+    /// Why the branch `source`, whose checked block is `block`, has no value where `want` is
+    /// wanted, when one type is.
+    fn branch_cause(
+        &self,
+        source: &Branch<'_>,
+        block: &CheckedBlock,
+        want: Option<Type>,
+    ) -> NoValueCause {
         let value = block.as_ref().ok().and_then(|b| b.value.as_deref());
         source.tail.map_or(NoValueCause::Plain, |tail| {
-            self.no_value_cause(tail, value, Type::UNIT, false)
+            self.no_value_cause(tail, value, (Type::UNIT, want), false)
         })
     }
 
@@ -744,16 +787,22 @@ type Pair = ((usize, Type), (usize, Type));
 
 /// What one branch of an `if` expects after the other, of type `ty`, when the `if` expects
 /// nothing: `ty` made optional, unless it is one or the branch is `exact`; `Error` after
-/// `Error`; nothing after `unit` or `never`. A type that the branches before give is a hint, not
+/// `Error`; nothing after `never`. A type that the branches before give is a hint, not
 /// an expected type. The hint comes from `origin`.
 fn after_branch(ty: Option<Type>, exact: bool, origin: Origin) -> Expectation {
     match ty {
         None => Expectation::Poisoned,
-        Some(Type::UNIT | Type::NEVER) => Expectation::None,
+        Some(Type::NEVER) => Expectation::None,
         Some(ty) => Expectation::Hint {
             want: if exact { ty } else { as_optional(ty) },
             siblings: ty,
             origin,
         },
     }
+}
+
+/// Whether `expected` takes a `unit`: there a `unit` branch is a value, and a branch of another
+/// type beside it is the mistake.
+fn wants_unit(expected: Expectation) -> bool {
+    expected.ty().is_some_and(takes_unit)
 }

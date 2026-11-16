@@ -2,7 +2,7 @@ error[E0031]: function `five` must return `i64`, but its body has no value
   --> E0031-call-tail.sisu:13:1
    |
 12 |     greet()
-   |     ------- `greet` returns no value
+   |     ------- `greet` returns `unit`
 13 | }
    | ^
 

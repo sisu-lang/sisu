@@ -1,0 +1,44 @@
+// GIVEN `unit` places: a local, a struct field, an element and an optional
+// WHEN the program passes each one as a `mut` argument
+// THEN the call writes the place back, and each place prints its value
+struct S {
+    u: unit
+}
+
+struct T {
+    u: unit
+    n: i64
+}
+
+fn keep<V>(mut x: V) { x = x }
+
+fn set(mut x: unit) { x = {} }
+
+fn seto(mut x: unit?) { x = None }
+
+fn bump(mut t: T) {
+    t.u = {}
+    t.n += 1
+}
+
+fn main() {
+    let mut u = {}
+    keep(mut u)
+    print(u)                // ()
+    set(mut u)
+    print(u)                // ()
+    let mut s = S(u: {})
+    set(mut s.u)
+    print(s.u)              // ()
+    let mut xs = [{}]
+    set(mut xs[0])
+    print(xs)               // [()]
+    let mut o: unit? = Some({})
+    seto(mut o)
+    print(o.to_string())    // None
+    let mut t = T(u: {}, n: 1)
+    bump(mut t)
+    print(t.n)              // 2
+    keep(mut t)
+    print(t.n)              // 2
+}

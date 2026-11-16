@@ -1,0 +1,13 @@
+error[E0043]: `greet` returns `unit`
+  --> E0043-written-unit.sisu:10:18
+   |
+10 |     let x: i64 = greet()
+   |                  ^^^^^^^
+   |
+  ::: E0043-written-unit.sisu:5:15
+   |
+ 5 | fn greet() -> unit {
+   |               ---- `greet` declares `-> unit`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0043

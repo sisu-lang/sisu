@@ -1198,6 +1198,7 @@ impl Mono {
             | K::Char(_)
             | K::Str(_)
             | K::None
+            | K::Unit
             | K::Local(_)
             | K::ReadLine
             | K::Break { value: None, .. }
@@ -2365,6 +2366,7 @@ mod tests {
             guard: None,
             body: block(param),
             reachable: true,
+            made: false,
         };
         for (case, kind) in [
             (

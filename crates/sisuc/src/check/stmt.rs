@@ -68,6 +68,17 @@ impl Default for BlockSoFar {
 // long `match` statements need fixes.
 const SHARED_FIX_SITES: usize = 8;
 
+/// Whether an unused value of type `ty` gets no W0004: `unit` and `never`, and `unit?`, which
+/// `o?.notify()` makes as a statement.
+fn is_silent(ty: Type) -> bool {
+    matches!(ty, Type::UNIT | Type::NEVER) || optional_unit(ty)
+}
+
+/// Whether `ty` is `unit?`.
+pub(super) fn optional_unit(ty: Type) -> bool {
+    matches!(ty.kind(), TypeKind::Optional(payload) if payload == Type::UNIT)
+}
+
 impl Checker<'_> {
     /// `never` once a statement is `never`, else the type of the last statement (`unit` when
     /// there is none). Warns "unreachable code" on the first statement after a `never` one.
@@ -123,6 +134,8 @@ impl Checker<'_> {
                     kept: value.kept && none,
                     // The block is `never` exactly when `ty` is, and then `jumped` says why.
                     jumped,
+                    // A `never` before the tail leaves its `if` unused.
+                    valueless: value.valueless.filter(|_| ty == Some(Type::UNIT)),
                     reported: value.reported,
                 });
             }
@@ -148,6 +161,7 @@ impl Checker<'_> {
         end: usize,
     ) {
         let done = so_far.done;
+        let dropped = self.body.dropped == Some(block.span);
         so_far.stmts.reserve(end - done);
         for (i, stmt) in (done..).zip(&block.stmts[done..end]) {
             if so_far.ty == Some(Type::NEVER) && !so_far.warned {
@@ -155,6 +169,11 @@ impl Checker<'_> {
                 so_far.warned = true;
             }
             let last = i + 1 == block.stmts.len();
+            if let StmtKind::Expr(e) = &stmt.kind
+                && (!last || dropped)
+            {
+                self.body.dropped = Some(e.span);
+            }
             let (checked, invalid_jump) =
                 self.jumps(|c| c.stmt(stmt, if last { expected } else { Expectation::None }));
             let stmt_ty = match checked {
@@ -213,11 +232,11 @@ impl Checker<'_> {
         arm: bool,
         unused: &mut Vec<Unused>,
     ) {
-        // An optional join wraps a whole branch value, an inner `if` too.
-        let checked = match &checked.kind {
-            ExprKind::Wrap(inner) => inner,
-            _ => checked,
-        };
+        // A join wraps a whole branch value, an inner `if` too, in an optional or an `any`.
+        let mut checked = checked;
+        while let ExprKind::Wrap(inner) | ExprKind::ToAny(inner) = &checked.kind {
+            checked = inner;
+        }
         match (&source.kind, &checked.kind) {
             (
                 ast::ExprKind::If {
@@ -278,7 +297,7 @@ impl Checker<'_> {
             // Its value comes from `break`s anywhere in its body, so the warning points at the
             // loop, from its loop label through `loop`.
             (ast::ExprKind::Loop { label, keyword, .. }, _) => {
-                if !matches!(checked.ty, Type::UNIT | Type::NEVER) {
+                if !is_silent(checked.ty) {
                     unused.push(Unused {
                         ty: self.type_name(checked.ty),
                         at: label.as_ref().map_or(*keyword, |l| l.span).to(*keyword),
@@ -299,7 +318,7 @@ impl Checker<'_> {
                 );
                 // `dbg` is meant to be run, so its value may go unused.
                 let dbg = matches!(checked.kind, ExprKind::Dbg { .. });
-                if !dbg && !matches!(checked.ty, Type::UNIT | Type::NEVER) {
+                if !dbg && !is_silent(checked.ty) {
                     unused.push(Unused {
                         ty: self.type_name(checked.ty),
                         at: source.span,
@@ -314,13 +333,19 @@ impl Checker<'_> {
     /// `discard` of the value of `block`, whose checked form is `checked`, if it has one.
     pub(super) fn discard_tail(&mut self, block: &ast::Block, checked: &tir::Block) {
         let mut unused = Vec::new();
-        self.collect_tail(block, checked, &mut unused);
+        if let (Some(source), Some(value)) = (tail(block), &checked.value) {
+            self.collect(source, value, false, &mut unused);
+        }
         self.report_unused(unused);
     }
 
-    /// `collect` of the value of `block`, whose checked form is `checked`, if it has one.
+    /// `collect` of the value of `block`, a branch or an arm whose checked form is `checked`, if
+    /// it has one. The tail of a `never` branch is unreachable: W0001 reports it, and the join
+    /// does not take its value.
     fn collect_tail(&mut self, block: &ast::Block, checked: &tir::Block, unused: &mut Vec<Unused>) {
-        if let (Some(source), Some(value)) = (tail(block), &checked.value) {
+        if checked.ty != Type::NEVER
+            && let (Some(source), Some(value)) = (tail(block), &checked.value)
+        {
             self.collect(source, value, false, unused);
         }
     }
@@ -446,7 +471,10 @@ impl Checker<'_> {
                 let nan = self.body.nans != nans;
                 let frame =
                     LoopFrame::new(LoopKind::While, *keyword, label.clone(), Expectation::None);
-                let (checked, frame) = self.loop_body(frame, |c| c.block(body, Expectation::None));
+                let (checked, frame) = self.loop_body(frame, |c| {
+                    c.body.dropped = Some(body.span);
+                    c.block(body, Expectation::None)
+                });
                 let broken = frame.broken;
                 if endless {
                     // Writing `loop` over a failed loop (a failed jump, label or `break` value in
@@ -518,6 +546,7 @@ impl Checker<'_> {
                     Expectation::None,
                 );
                 let ((bound, checked), _) = self.loop_body(frame, |c| {
+                    c.body.dropped = Some(body.span);
                     c.let_block(Unwrap::WhileLet, &form, pattern, body, Expectation::None)
                 });
                 if let Ok(checked) = &checked {
@@ -721,6 +750,7 @@ impl Checker<'_> {
         });
         let frame = LoopFrame::new(LoopKind::For, keyword, label.cloned(), Expectation::None);
         let ((x, checked), _) = self.loop_body(frame, |c| {
+            c.body.dropped = Some(body.span);
             c.unwrapping_block("for", name, bound, body, Expectation::None)
         });
         if let Ok(checked) = &checked {
@@ -1009,10 +1039,12 @@ impl Checker<'_> {
         Ok(tir::Expr::new(ExprKind::Return(value), Type::NEVER, span))
     }
 
-    /// The function whose body returns a value of type `ty` though it declares no return type.
-    /// It has the offset of its `{`, so that a fix adds the type there. `main` has none: a type
+    /// The function whose body returns a value of type `ty` though it returns `unit`: it declares
+    /// no return type, or writes one that is `unit`. It has the offset of its `{`, so that a fix
+    /// adds the type there, or the written type, which the fix replaces. `main` has none: a type
     /// there is wrong. A method for a requirement has none: the type makes it fail E0152. A type
-    /// whose name is cut has none: the fix would not parse.
+    /// whose name is cut has none: the fix would not parse. A `unit` has none: the function
+    /// returns `unit` already.
     fn no_return(&self, ty: Type) -> Option<NoReturn> {
         let Some(Owner::Func(f)) = self.body.owner else {
             return None;
@@ -1024,10 +1056,11 @@ impl Checker<'_> {
             Some(Declared::Poisoned(_)) => true,
             None => false,
         };
-        let free = !main && !self.named_for_requirement.contains(&f);
+        let free = !main && !self.named_for_requirement.contains(&f) && ty != Type::UNIT;
         Some(NoReturn {
             name: own_name(&sig.name).to_owned(),
             at: sig.span,
+            written: self.written_ret(f),
             add: free
                 .then(|| self.whole_type_name(ty))
                 .flatten()
@@ -1428,7 +1461,10 @@ impl Checker<'_> {
             label.cloned(),
             expected.for_inner_loop(),
         );
-        let (mut checked, mut frame) = self.loop_body(frame, |c| c.block(body, Expectation::None));
+        let (mut checked, mut frame) = self.loop_body(frame, |c| {
+            c.body.dropped = Some(body.span);
+            c.block(body, Expectation::None)
+        });
         self.join_deferred(&mut frame);
         if let Ok(checked) = &mut checked {
             self.discard_tail(body, checked);
@@ -1440,9 +1476,18 @@ impl Checker<'_> {
                 }
             }
         }
-        if let (Some(at), Some(valued)) = (frame.bare, frame.valued) {
-            let reported = self.error(DiagnosticKind::BareBreak { at, valued });
-            frame.failed.get_or_insert(reported);
+        if let (Some(at), Some((valued, got))) = (frame.bare, frame.valued) {
+            // A bare `break` gives a `unit`, so it joins `unit` values and `unit?` values. The
+            // type of the values decides, also when the body or the context failed.
+            let ty = frame.first.map_or(got, |(ty, _)| ty);
+            if ty == Type::UNIT || optional_unit(ty) {
+                if let Ok(body) = &mut checked {
+                    body.each_expr_mut(&mut |e| fill_bare_breaks(e, 0, ty, frame.crossed));
+                }
+            } else {
+                let reported = self.error(DiagnosticKind::BareBreak { at, valued });
+                frame.failed.get_or_insert(reported);
+            }
         }
         let ty = frame.loop_type();
         match (checked, ty) {
@@ -1631,15 +1676,14 @@ impl Checker<'_> {
             return checked;
         }
         let checked = match type_of(&checked).or(misfit) {
-            Some(Type::UNIT) => {
-                let cause = self.no_value_cause(v, checked.as_ref().ok(), Type::UNIT, false);
-                Err(Poisoned::untyped(self.no_value(v.span, cause)))
+            Some(Type::UNIT) if self.missing_value(v, &checked, hint, false).is_some() => {
+                self.refuse_unwanted(v, checked, hint, false)
             }
             Some(Type::NEVER) | None => checked,
             Some(got) => {
                 // Checking `v` can set the first type, through a `break` of this loop inside it.
                 let frame = self.frame(target);
-                frame.valued.get_or_insert(span);
+                frame.valued.get_or_insert((span, got));
                 let (expected, first) = (frame.expected, frame.first);
                 let hinted = matches!(expected, Expectation::Hint { .. });
                 if waiting {
@@ -1682,6 +1726,8 @@ impl Checker<'_> {
             Some(ty) if !fits(ty, got) && (!hinted || !is_target(ty)) => {
                 (self.against(v, checked, expected).0, ty)
             }
+            // The loop as a whole lifts a `T` value to the expected `T?`.
+            Some(ty) if ty != got => (self.refuse_unlifted(checked), got),
             _ => (checked, got),
         };
         // A misfit left is reported against the first value, as a value of its type is.
@@ -2286,6 +2332,35 @@ fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool, widened
         if !crossed {
             super::WIDENED_BREAKS.set(super::WIDENED_BREAKS.get() + 1);
         }
+    }
+}
+
+/// Gives each bare `break` in `e` that ends the loop `depth` loops out from `e` a `unit` value,
+/// wrapped into `ty` when that is `unit?`. It enters nested loops only when `crossed`: when a
+/// `break` in one targets that loop.
+fn fill_bare_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
+    let nested = matches!(e.kind, ExprKind::Loop(_));
+    if nested && !crossed {
+        return;
+    }
+    #[cfg(test)]
+    super::FILL_STEPS.set(super::FILL_STEPS.get() + 1);
+    let inner = depth + usize::from(nested);
+    e.each_child_mut(&mut |child| fill_bare_breaks(child, inner, ty, crossed));
+    let span = e.span;
+    if let ExprKind::Break {
+        depth: target,
+        value: value @ None,
+    } = &mut e.kind
+        && *target == depth
+    {
+        let unit = tir::Expr::new(ExprKind::Unit, Type::UNIT, span);
+        let filled = if ty == Type::UNIT {
+            unit
+        } else {
+            super::wrap(unit, ty)
+        };
+        *value = Some(Box::new(filled));
     }
 }
 

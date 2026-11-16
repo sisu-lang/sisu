@@ -108,8 +108,7 @@ fn main() {
 - A class, a struct, an enum or a function that is not generic takes no type arguments. [E0137](../diagnostics/E0137.md)
 - The type arguments of a variant go on its enum: `Tree<i64>.Node(...)`, not `Tree.Node<i64>(...)`. [E0137](../diagnostics/E0137.md)
 - A type argument can be an optional, such as `i64?` in `Box<i64?>`.
-- A type argument cannot be `unit` or `never`. `unit` is the type of a call that gives no value, such as `print(1)`. [E0138](../diagnostics/E0138.md)
-- The section [unit](types.md#unit) is in development. It removes the rule for `unit`.
+- A type argument can be `unit`, such as `T` in `id(print(1))` ([unit](types.md#unit)). It cannot be `never`, such as the type of `panic("x")`. [E0138](../diagnostics/E0138.md)
 
 ```sisu
 class Box<T> {
@@ -639,7 +638,7 @@ fn main() {
 - Every type that can be a type argument has a `Display`.
 - A class prints its name and its type arguments, never its fields. A class with a `to_string` method prints the text of that method.
 - An enum that writes `to_string` prints its own text.
-- `to_string()` is a method of every type except `unit` and `never`. It gives the text that `print` writes, as a `string`.
+- `to_string()` is a method of every type except `never`. It gives the text that `print` writes, as a `string`.
 - A method named `to_string` must be `fn to_string(self) -> string`.
 - When the bounds of a written `to_string` do not hold for the receiver, the generated one answers. An example is `extend<T: Eq> Box<T>` and a `Box<Node>`. For any other method, bounds that fail are an error.
 

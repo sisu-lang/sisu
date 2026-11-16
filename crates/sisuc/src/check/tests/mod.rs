@@ -44,6 +44,7 @@ mod shadowing;
 mod strings;
 mod structs;
 mod u8;
+mod unit_values;
 mod unused;
 mod unused_names;
 
@@ -892,15 +893,13 @@ fn jump_should_be_an_error_when_no_loop_holds_it() {
 }
 
 #[test]
-fn block_value_and_type() {
+fn a_block_should_take_the_value_and_type_of_its_tail() {
     contains(
         "fn main() {\n    let a: u8 = { let w = 2\n 3 }\n}",
         &["(block (let w#0 2) 3u8)"],
     );
-    codes(
-        "fn main() {\n    let u = { print(1) }\n}",
-        &[(Code::NoValue, (2, 13))],
-    );
+    // A block whose tail is a `unit` is a `unit`.
+    clean("fn main() {\n    let u = { print(1) }\n}");
 }
 
 #[test]
@@ -1808,6 +1807,25 @@ fn widening_walk_enters_only_crossed_loops() {
     assert_eq!(entered("outer: ", "if c { break outer None }"), 1);
 }
 
+/// The walk that gives each bare `break` a `unit` enters a nested loop only when a `break` in one
+/// targets the outer loop: a `unit` loop in each `unit` loop stays linear. Depth 2 shows the
+/// nesting; 20 is ten times that.
+#[test]
+fn bare_break_walk_should_stay_linear_in_nested_loops() {
+    let steps = |depth: usize| {
+        let mut e = "g()".to_string();
+        for _ in 0..depth {
+            e = format!("loop {{ if c {{ break g() }}; {e}; break }}");
+        }
+        FILL_STEPS.set(0);
+        lowered(&format!(
+            "fn g() {{}}\nfn f(c: bool) {{ {e} }}\nfn main() {{}}"
+        ));
+        FILL_STEPS.get()
+    };
+    assert_near_linear(steps(20), steps(40), steps(60));
+}
+
 /// `??` expects a `T` or a `T?` of its right side, so the loop keeps its values' `i64`.
 #[test]
 fn loop_after_coalesce_is_its_values_type() {
@@ -2523,9 +2541,10 @@ fn a_value_returned_from_a_function_with_no_return_type_should_offer_the_type() 
     };
     let no_fix =
         |name| Report::new(Code::UnexpectedReturnValue, ("return ", "5")).secondary(&[name]);
-    // The call of `five` in `main` has no value while `five` returns none.
+    // The call of `five` in `main` is a `unit` where an `i64` is wanted, while `five` returns
+    // none.
     let no_value =
-        || Report::new(Code::NoValue, ("let _ = ", "five()")).secondary(&[("fn ", "five")]);
+        || Report::new(Code::NoValue, ("let _: i64 = ", "five()")).secondary(&[("fn ", "five")]);
     // A type name that is cut with `...` is no text for a fix: a name of 50 letters, six deep.
     let name = "A".repeat(50);
     let nested = (0..6).fold("i64".to_owned(), |inner, _| format!("{name}<{inner}>"));
@@ -2539,12 +2558,12 @@ fn a_value_returned_from_a_function_with_no_return_type_should_offer_the_type() 
     fix_rows(&[
         row(
             "F1",
-            "fn five() {\n    return 5\n}\nfn main() { let _ = five() }",
+            "fn five() {\n    return 5\n}\nfn main() { let _: i64 = five() }",
             vec![five("5", "five() {", "five() -> i64 {"), no_value()],
         ),
         row(
             "F2",
-            "fn five(){ return 5 }\nfn main() { let _ = five() }",
+            "fn five(){ return 5 }\nfn main() { let _: i64 = five() }",
             vec![five("5", "five(){", "five()-> i64 {"), no_value()],
         ),
         row(
@@ -2635,6 +2654,42 @@ fn a_value_returned_from_a_function_with_no_return_type_should_offer_the_type() 
         ),
         row("F12", &long_names, vec![secondary_only("x")]),
         row("F13", aliases, vec![secondary_only("x")]),
+        // A function with no return type returns `unit` already: `-> unit` changes nothing.
+        row(
+            "F16",
+            "fn g() {}\nfn f() { return g() }\nfn main() {}",
+            vec![secondary_only("g()")],
+        ),
+        // A written `-> unit`: the label points at it, and the fix replaces it.
+        row(
+            "F17",
+            "fn f() -> unit { return 5 }\nfn main() {}",
+            vec![
+                Report::new(Code::UnexpectedReturnValue, ("return ", "5"))
+                    .secondary(&[("f() -> ", "unit")])
+                    .fix(false, 1, ("f() -> unit {", "f() -> i64 {"))
+                    .after(After::Clean),
+            ],
+        ),
+        row(
+            "F18",
+            "fn g() {}\nfn f() -> unit { return g() }\nfn main() {}",
+            vec![
+                Report::new(Code::UnexpectedReturnValue, ("return ", "g()"))
+                    .secondary(&[("f() -> ", "unit")]),
+            ],
+        ),
+        // The same through an alias of `unit`.
+        row(
+            "F19",
+            "type U = unit\nfn f() -> U { return 5 }\nfn main() {}",
+            vec![
+                Report::new(Code::UnexpectedReturnValue, ("return ", "5"))
+                    .secondary(&[("f() -> ", "U")])
+                    .fix(false, 1, ("f() -> U {", "f() -> i64 {"))
+                    .after(After::Clean),
+            ],
+        ),
     ]);
 }
 
@@ -2710,25 +2765,33 @@ fn arity() {
 
 #[test]
 fn print_should_take_exactly_one_value() {
-    for (row, src, at) in [
-        ("no argument", "fn main() { print() }", (1, 13)),
-        ("two arguments", "fn main() { print(1, 2) }", (1, 13)),
+    for (row, src, code, at) in [
         (
-            "unit argument",
-            "fn g() {}\nfn main() { print(g()) }",
-            (2, 19),
+            "no argument",
+            "fn main() { print() }",
+            Code::PrintArgument,
+            (1, 13),
+        ),
+        (
+            "two arguments",
+            "fn main() { print(1, 2) }",
+            Code::PrintArgument,
+            (1, 13),
+        ),
+        (
+            "argument with no value",
+            "fn main() { print(if true { 1 }) }",
+            Code::NoValue,
+            (1, 19),
         ),
     ] {
-        codes_row(row, src, &[(Code::PrintArgument, at)]);
+        codes_row(row, src, &[(code, at)]);
     }
 }
 
 #[test]
-fn bind_unit() {
-    codes(
-        "fn g() {}\nfn main() { let x = g() }",
-        &[(Code::NoValue, (2, 21))],
-    );
+fn binding_a_unit_should_check_clean() {
+    clean("fn g() {}\nfn main() { let x = g() }");
 }
 
 #[test]
@@ -2928,19 +2991,25 @@ fn and_needs_bool() {
 }
 
 #[test]
-fn unit_operand() {
-    codes(
+fn a_unit_operand_should_report_no_value() {
+    let d = diagnostic(
         "fn g() {}\nfn main() { print(1 + g()) }",
-        &[(Code::NoValue, (2, 23))],
+        Code::NoValue,
+        (2, 23, "g()"),
+        &[(1, 4)],
     );
+    assert!(unit_values::names_a_call(&d));
 }
 
 #[test]
-fn unit_argument() {
-    codes(
+fn a_unit_argument_should_report_no_value() {
+    let d = diagnostic(
         "fn g() {}\nfn f(a: i64) {}\nfn main() { f(g()) }",
-        &[(Code::NoValue, (3, 15))],
+        Code::NoValue,
+        (3, 15, "g()"),
+        &[(1, 4)],
     );
+    assert!(unit_values::names_a_call(&d));
 }
 
 #[test]
@@ -4959,20 +5028,16 @@ fn failed_join_blames_the_branch_that_does_not_fit() {
     }
 }
 
-/// A `unit` or `never` branch types no `None` beside it.
+/// A `never` branch types no `None` beside it, and a `unit` branch types it as a `unit?`.
 #[test]
-fn none_beside_unit_or_never_needs_a_type() {
-    for (value, col) in [
-        ("if c { g() } else { None }", 25),
-        ("if c { return } else { None }", 28),
-    ] {
-        codes(
-            &format!(
-                "fn g() {{}}\nfn f(c: bool) {{\n    {value}\n    print(1)\n}}\nfn main() {{}}"
-            ),
-            &[(Code::CannotInfer, (3, col))],
-        );
-    }
+fn none_beside_unit_or_never_should_join_or_need_a_type() {
+    clean(
+        "fn g() {}\nfn f(c: bool) {\n    if c { g() } else { None }\n    print(1)\n}\nfn main() {}",
+    );
+    codes(
+        "fn f(c: bool) {\n    if c { return } else { None }\n    print(1)\n}\nfn main() {}",
+        &[(Code::CannotInfer, (2, 28))],
+    );
 }
 
 /// Every position that expects a `T?` wraps a `T`.
@@ -5182,11 +5247,8 @@ fn none_equals_none() {
 }
 
 #[test]
-fn equal_unit() {
-    codes(
-        "fn g() {}\nfn main() { print(g() == g()) }",
-        &[(Code::NoValue, (2, 19)), (Code::NoValue, (2, 26))],
-    );
+fn comparing_units_should_check_clean() {
+    clean("fn g() {}\nfn main() { print(g() == g()) }");
 }
 
 #[test]
@@ -5338,11 +5400,11 @@ fn safe_optional_field_not_wrapped() {
 }
 
 #[test]
-fn lowers_safe_unit_method() {
+fn a_safe_unit_method_call_should_wrap_the_call_in_some() {
     f_contains(
-        C,
+        "struct T {\n    v: i64\n    fn m(self) {}\n}\n",
         "fn f(t: T?) { t?.m() }",
-        "(if-some #1 t#0 (block (call T.m #1)) (block))",
+        "(if-some #1 t#0 (block (wrap (call T.m #1))) (block None))",
     );
 }
 
@@ -5441,16 +5503,13 @@ fn equal_should_spill_a_counted_operand_before_an_exit() {
     );
 }
 
-/// `print` of a call that returns nothing is reported at the argument, and a bad argument count on
-/// the whole call; an object and an array print.
+/// `print` of an `if` with no value is reported at the argument, and a bad argument count on the
+/// whole call; an object and an array print.
 #[test]
 fn print_should_report_a_value_at_the_argument_and_a_count_on_the_call() {
     codes(
-        "class P {\n    x: i64\n}\nfn nothing() {}\nfn main() {\n    print(P(x: 1))\n    print(nothing())\n    print([1])\n    print(1, 2)\n}",
-        &[
-            (Code::PrintArgument, (7, 11)),
-            (Code::PrintArgument, (9, 5)),
-        ],
+        "struct P {\n    x: i64\n}\nfn main() {\n    print(P(x: 1))\n    print(if true { 1 })\n    print([1])\n    print(1, 2)\n}",
+        &[(Code::NoValue, (6, 11)), (Code::PrintArgument, (8, 5))],
     );
 }
 
@@ -5473,20 +5532,25 @@ fn duplicate_member_of_the_same_kind() {
 }
 
 #[test]
-fn unit_branch_says_no_value() {
-    codes(
-        "fn nothing() {}\nfn main() { let y: i64 = if true { 1 } else { nothing() } }",
-        &[(Code::NoValue, (2, 47))],
-    );
-    codes(
-        "fn nothing() {}\nfn main() { let y: i64 = if true { nothing() } else { 1 } }",
-        &[(Code::NoValue, (2, 36))],
-    );
-    // Without a type expected, the branch with no value is still the one named.
-    codes(
-        "fn nothing() {}\nfn main() { let x = if true { nothing() } else { 1 } }",
-        &[(Code::NoValue, (2, 31))],
-    );
+fn a_unit_branch_beside_a_value_should_report_no_value() {
+    for (src, column) in [
+        (
+            "fn nothing() {}\nfn main() { let y: i64 = if true { 1 } else { nothing() } }",
+            47,
+        ),
+        (
+            "fn nothing() {}\nfn main() { let y: i64 = if true { nothing() } else { 1 } }",
+            36,
+        ),
+        // Without a type expected, the branch with no value is still the one named.
+        (
+            "fn nothing() {}\nfn main() { let x = if true { nothing() } else { 1 } }",
+            31,
+        ),
+    ] {
+        let d = diagnostic_row(src, src, Code::NoValue, (2, column, "nothing()"), &[(1, 4)]);
+        assert!(unit_values::names_a_call(&d), "{src}");
+    }
 }
 
 /// Branches of two other types still report a mismatch.

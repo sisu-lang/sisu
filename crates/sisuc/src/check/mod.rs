@@ -124,6 +124,10 @@ struct Poisoned {
     /// `match`, it is at least one branch (see `join`). The flow keeps the `never`, as a jump
     /// statement does; a place that reads the value takes it as untyped (`read_jump`).
     jumped: bool,
+    /// The span of a failed `if` without an `else` whose branch has a value, as in `if 1 { 2 }`,
+    /// and whether it is an `if let`. Such an `if` has no value, so a use of it is E0043 (see
+    /// `missing_value`).
+    valueless: Option<(Span, bool)>,
     /// The proof of the report, or of the promise, that made the value poisoned.
     reported: Reported,
 }
@@ -158,6 +162,7 @@ impl Poisoned {
             found: None,
             kept: false,
             jumped: false,
+            valueless: None,
             reported,
         }
     }
@@ -492,8 +497,9 @@ struct LoopFrame {
     crossed: bool,
     /// The first bare `break`.
     bare: Option<Span>,
-    /// The first `break` whose value's type is not `never`.
-    valued: Option<Span>,
+    /// The first `break` whose value's type is not `never`, and that type. It holds the type
+    /// also when `first` stays unset, as it does under a `Poisoned` expectation.
+    valued: Option<(Span, Type)>,
     /// The token of the error that failed the loop: a failed jump, loop label or `break` value
     /// in it. It then has no type.
     failed: Option<Reported>,
@@ -654,6 +660,8 @@ thread_local! {
     /// How many values `wrap_breaks` has wrapped in a walk that enters no nested loop, on this
     /// thread.
     pub(crate) static WIDENED_BREAKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many expressions `fill_bare_breaks` has visited on this thread.
+    pub(super) static FILL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `object_in_some` has been called on this thread.
     pub(crate) static OBJECT_IN_SOME_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many calls written `.push` have read a place of a type that is no array, on this
@@ -1073,6 +1081,10 @@ struct Body {
     misfits: Vec<Option<Diagnostic>>,
     /// The safe method call being checked: `receiver?.method(...)` at this span.
     safe_call: Option<Span>,
+    /// The span of the expression or block being checked whose value no code uses: a statement,
+    /// the body of a loop or of a `unit` function, or a branch or arm of such a value. A join
+    /// there wraps a branch with no value to lift, as nothing reads it (see `Checker::join`).
+    dropped: Option<Span>,
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
     /// The last string literal that is `never` because a part is: its span, and the span of the
@@ -2609,6 +2621,9 @@ impl Checker<'_> {
                 Some(ret) => Expectation::Required(ret, c.returns()),
             };
             c.show_value(&f.body, ret);
+            if ret == Some(Type::UNIT) {
+                c.body.dropped = Some(f.body.span);
+            }
             let mut body = c.block(&f.body, expected);
             if let (Some(Type::UNIT), Ok(checked)) = (ret, &body) {
                 c.discard_tail(&f.body, checked);
@@ -2620,7 +2635,18 @@ impl Checker<'_> {
                 && let TypeKind::Optional(payload) = want.kind()
                 && block_type(&body) == Some(payload)
             {
-                wrap_block(&mut body, want);
+                // A `unit` body is a value of a `unit?` function only when it ends in one: a
+                // valueless `if` is E0043, and an empty body or an `if` without an `else` gets
+                // E0031, as an `i64?` body does. An `if` without an `else` lower down in the
+                // value is E0043 (see `lift_block`).
+                let valueless = (body.as_ref().ok())
+                    .and_then(|block| block.value.as_deref())
+                    .and_then(expr::valueless);
+                if let Some((at, if_let)) = valueless {
+                    body = Err(Poisoned::untyped(c.no_value(at, expr::no_else(if_let))));
+                } else if payload != Type::UNIT || tail(&f.body).is_some_and(|e| !without_else(e)) {
+                    c.lift_block(&mut body, want, value_span(&f.body));
+                }
             }
             c.pop_scope();
             if let Some(mut_self) = &f.mut_self {
@@ -2644,8 +2670,12 @@ impl Checker<'_> {
                 let d = if got == Type::UNIT {
                     let end = f.body.span.end();
                     let value = body.as_ref().ok().and_then(|b| b.value.as_deref());
-                    let tail = tail(&f.body)
-                        .map(|e| (e.span, self.no_value_cause(e, value, Type::UNIT, false)));
+                    let tail = tail(&f.body).map(|e| {
+                        (
+                            e.span,
+                            self.no_value_cause(e, value, (Type::UNIT, Some(want)), false),
+                        )
+                    });
                     DiagnosticKind::BodyHasNoValue {
                         function: f.name.name.to_string(),
                         want: self.type_name(want),
@@ -2817,6 +2847,17 @@ impl Checker<'_> {
         name
     }
 
+    /// Where the function `f` writes its return type, and the type as written, when it writes
+    /// one.
+    fn written_ret(&self, f: tir::FuncId) -> Option<(Span, String)> {
+        let sig = &self.signatures[f.0];
+        let shown = match &sig.ret_shown {
+            Some(shown) => shown.to_string(),
+            None => self.type_name(sig.ret?),
+        };
+        Some((sig.ret_span?, shown))
+    }
+
     /// The name of `ty` as a program writes it, or `None` when `type_name` cut it with `...`:
     /// text for a fix must parse.
     fn whole_type_name(&self, ty: Type) -> Option<String> {
@@ -2912,6 +2953,7 @@ pub(crate) fn built_in_type(name: &str) -> Option<Type> {
         "bool" => Some(Type::BOOL),
         "char" => Some(Type::CHAR),
         "string" => Some(Type::STRING),
+        "unit" => Some(Type::UNIT),
         _ => None,
     }
 }
@@ -2946,6 +2988,20 @@ fn tail(block: &ast::Block) -> Option<&ast::Expr> {
         }) if !e.is_jump() => Some(e),
         _ => None,
     }
+}
+
+/// Whether `e` is an `if` or an `if let` without an `else`.
+fn without_else(e: &ast::Expr) -> bool {
+    matches!(
+        e.kind,
+        ast::ExprKind::If {
+            else_block: None,
+            ..
+        } | ast::ExprKind::IfLet {
+            else_block: None,
+            ..
+        }
+    )
 }
 
 /// Where a block's value comes from: its last statement, or the block itself when empty.
@@ -2996,15 +3052,16 @@ fn wrap(e: tir::Expr, ty: Type) -> tir::Expr {
     tir::Expr::new(tir::ExprKind::Wrap(Box::new(e)), ty, span)
 }
 
-/// Makes a block of type `T` one of the optional `ty` by wrapping its value.
-fn wrap_block(block: &mut CheckedBlock, ty: Type) {
+/// Makes a block of type `T` one of the optional `ty` by wrapping its value. A block with no value
+/// is a `unit`: it gets a `unit` at `span` as its value first.
+fn wrap_block(block: &mut CheckedBlock, ty: Type, span: Span) {
     match block {
         Ok(block) => {
-            let value = block
-                .value
-                .take()
-                .expect("a block checked as a value type should end in its value");
-            block.value = Some(Box::new(wrap(*value, ty)));
+            let value = (block.value.take()).map_or_else(
+                || tir::Expr::new(tir::ExprKind::Unit, Type::UNIT, span),
+                |value| *value,
+            );
+            block.value = Some(Box::new(wrap(value, ty)));
             block.ty = ty;
         }
         Err(poisoned) => poisoned.ty = Some(ty),

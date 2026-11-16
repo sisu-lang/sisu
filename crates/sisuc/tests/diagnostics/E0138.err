@@ -1,8 +1,8 @@
-error[E0138]: `unit` cannot be a type argument
- --> E0138.sisu:5:17
+error[E0138]: `never` cannot be a type argument
+ --> E0138.sisu:6:16
   |
-5 | fn size(c: Cell<unit>) -> i64 {
-  |                 ^^^^
+6 |     let a = id(panic("x"))
+  |                ^^^^^^^^^^
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0138

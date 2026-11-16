@@ -1,8 +1,8 @@
 error[E0043]: this `if let` has no `else`, so it has no value
- --> E0043-return-if-let.sisu:6:12
+ --> E0043-return-if-let.sisu:7:12
   |
-6 |     return if let Some(v) = o { print(v) }
-  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+7 |     return if let Some(v) = o { v }
+  |            ^^^^^^^^^^^^^^^^^^^^^^^^
   |
   = help: remove this `return`, or write `return` with no value inside the `if let`
 

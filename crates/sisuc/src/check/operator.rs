@@ -1,13 +1,13 @@
 //! Operators: arithmetic, comparison, equality, `is` and `??`.
 
 use super::any::{is_target, widen};
-use super::expr::{fits, if_some, literal_type, local, operator, path, typed};
+use super::expr::{fits, if_some, literal_type, local, operator, path, takes_unit, typed};
 use super::generic::{Rank, mismatched};
 use super::interface::Operation;
 use super::reports::{Held, Reported};
 use super::{
     Checked, Checker, Expectation, Lowered, Origin, Poisoned, as_optional, beyond_one_layer,
-    block_expr, is_kept, known_type, optional_of, payload, type_of, wrap,
+    block_expr, is_kept, known_type, optional_of, payload, type_of,
 };
 use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
@@ -36,6 +36,8 @@ impl Checker<'_> {
         };
         let before = self.diagnostics.mark();
         let checked = self.value(operand, expected);
+        // No `-` takes a `unit`, and the operand may have no expected type.
+        let checked = self.refuse_unit(operand, checked);
         if let Some(ty) = type_of(&checked).filter(|ty| ty.has_param()) {
             return Err(Poisoned::untyped(self.param_lacks(operand.span, ty, "-")));
         }
@@ -358,6 +360,12 @@ impl Checker<'_> {
                 Expectation::None
             };
             let checked = self.value(operands[k], hint);
+            // No number operator takes a `unit`, and the first operand has no expected type.
+            let checked = if arithmetic {
+                self.refuse_unit(operands[k], checked)
+            } else {
+                checked
+            };
             let ty = type_of(&checked).map(|ty| match payload(ty) {
                 Type::CHAR if !arithmetic => Type::CHAR,
                 Type::STRING if operator != Operator::Arithmetic => Type::STRING,
@@ -368,6 +376,9 @@ impl Checker<'_> {
             // its default `i64` again. The operands that wait for context get it as a hint.
             kept_first = is_kept(&checked);
             let ty = ty.or_else(|| kept_first.then_some(Type::I64));
+            if !arithmetic && type_of(&checked) == Some(Type::UNIT) {
+                return self.units_compared(operands, &ranks, k, checked);
+            }
             first = Some((k, checked));
             ty
         } else {
@@ -680,6 +691,58 @@ impl Checker<'_> {
         (checked, ty, mismatched)
     }
 
+    /// The operands of a comparison whose leader, at `k` and checked as `leader`, is a `unit`, with
+    /// `ranks`, their `sibling_rank`s. An operand that waits for context, such as `None` or `[]`,
+    /// is checked against `unit`. The others are checked with no expected type. Beside an operand
+    /// of a type that takes no `unit`, each `unit` operand has no value to compare: E0043.
+    /// Otherwise each operand of another type, such as `unit?`, is reported against `unit`.
+    fn units_compared(
+        &mut self,
+        operands: &[&ast::Expr],
+        ranks: &[Rank],
+        k: usize,
+        leader: Checked,
+    ) -> (Vec<Checked>, Option<Type>, bool) {
+        let unit = Expectation::Required(Type::UNIT, Origin::None);
+        let (mut leader, mut mismatched) = (Some(leader), false);
+        let mut checked = Vec::with_capacity(operands.len());
+        for (i, e) in operands.iter().enumerate() {
+            checked.push(match leader.take_if(|_| i == k) {
+                Some(leader) => leader,
+                None if ranks[i] == Rank::Waits => {
+                    let (operand, m) = self.operand(e, unit);
+                    mismatched |= m;
+                    operand
+                }
+                None => self.value(e, Expectation::None),
+            });
+        }
+        let other =
+            (checked.iter().filter_map(type_of)).find(|&ty| !takes_unit(ty) && ty != Type::NEVER);
+        if other.is_some() {
+            for (e, c) in operands.iter().zip(&mut checked) {
+                if type_of(c) == Some(Type::UNIT) {
+                    let cause = self.no_value_cause(e, c.as_ref().ok(), (Type::UNIT, other), false);
+                    *c = Err(Poisoned::untyped(self.no_value(e.span, cause)));
+                }
+            }
+            return (checked, None, false);
+        }
+        let mut held = Vec::with_capacity(checked.len());
+        for (e, c) in operands.iter().zip(checked) {
+            let misfit = type_of(&c).is_some_and(|ty| ty != Type::UNIT && ty != Type::NEVER);
+            let c = if misfit {
+                let (operand, m) = self.against(e, c, unit);
+                mismatched |= m;
+                operand
+            } else {
+                c
+            };
+            held.push(c);
+        }
+        (held, Some(Type::UNIT), mismatched)
+    }
+
     /// The operand `e`, checked as `checked`, reported against `ty`, the type of a later operand,
     /// and dropped to `Error`. Gives the proof of that report, or of the one that failed `e`.
     fn reject_leader(&mut self, e: &ast::Expr, checked: &mut Checked, ty: Type) -> Reported {
@@ -757,9 +820,12 @@ impl Checker<'_> {
     }
 
     /// "expected `takes`, found `got`" at `at`: the types an operator takes, `got` not among them.
+    /// A comparison also takes `unit`, which `units_compared` checks apart from the others.
     pub(super) fn takes_mismatch(&self, at: Span, takes: &[Type], got: Type) -> Diagnostic {
+        let unit = (takes == Operator::Compare.takes()).then_some(Type::UNIT);
+        let listed = takes.iter().copied().chain(unit);
         DiagnosticKind::Mismatch {
-            want: Expected::Types(takes.iter().map(|&ty| self.type_name(ty)).collect()),
+            want: Expected::Types(listed.map(|ty| self.type_name(ty)).collect()),
             got: self.type_name(got),
             at,
             origin: None,
@@ -796,6 +862,18 @@ impl Checker<'_> {
             origin: Origin::None,
         });
         let other = self.value(second, want);
+        // A `unit` beside a value of another type has no value to compare.
+        if let (Some(a), Some(b)) = (type_of(&checked), type_of(&other))
+            && let Some((side, value, beside)) = [(first, &checked, a, b), (second, &other, b, a)]
+                .into_iter()
+                .find(|&(_, _, ty, beside)| ty == Type::UNIT && !takes_unit(beside))
+                .map(|(side, value, _, beside)| (side, value, beside))
+        {
+            let value = value.as_ref().ok();
+            let cause = self.no_value_cause(side, value, (Type::UNIT, Some(beside)), false);
+            let reported = self.no_value(side.span, cause);
+            return Err(Poisoned::untyped(reported));
+        }
         // A side converts through one `?` only: `x == 5` on an `i64??` holds `5` to `i64??`.
         if let (Some(a), Some(b)) = (type_of(&checked), type_of(&other))
             && let Some((side, want, got)) = [(second, a, b), (first, b, a)]
@@ -1067,9 +1145,9 @@ impl Checker<'_> {
         let (l, r) = match (type_of(&l), type_of(&r)) {
             (Some(lt), Some(rt)) if lt != rt => {
                 if fits(lt, rt) {
-                    (l, r.map(|e| wrap(e, lt)))
+                    (l, r.and_then(|e| self.lift(e, lt)))
                 } else if fits(rt, lt) {
-                    (l.map(|e| wrap(e, rt)), r)
+                    (l.and_then(|e| self.lift(e, rt)), r)
                 } else if self.converts_to_any(rt, lt) {
                     // A class beside an `any` converts to it first.
                     #[cfg(test)]
@@ -1104,15 +1182,12 @@ impl Checker<'_> {
     }
 
     /// The right side of `??`, checked against `expected`: a value, or one that never finishes,
-    /// but not `unit`. A value that kept its E0050 (see `Poisoned::kept`) is the fault, so the
-    /// right side still has the type of the left side's value.
+    /// but not a `unit` where `expected` is another type. A value that kept its E0050 (see
+    /// `Poisoned::kept`) is the fault, so the right side still has the type of the left side's
+    /// value.
     fn fallback(&mut self, rhs: &ast::Expr, expected: Expectation) -> Checked {
         let checked = self.expr(rhs, expected);
-        if type_of(&checked) == Some(Type::UNIT) {
-            let cause = self.no_value_cause(rhs, checked.as_ref().ok(), Type::UNIT, false);
-            let reported = self.no_value(rhs.span, cause);
-            return Err(Poisoned::untyped(reported));
-        }
+        let checked = self.refuse_unwanted(rhs, checked, expected, false);
         if let Err(failed) = &checked
             && failed.kept
         {
@@ -1236,7 +1311,9 @@ impl Checker<'_> {
             Some(Type::NEVER) => (other, payload),
             Some(ty) if ty == payload || ty == optional_of(payload) => (other, ty),
             // `x ?? 5` on an `i64??`: the payload of an optional `P` is wrapped to `P`.
-            Some(ty) if optional_of(ty) == payload => (other.map(|e| wrap(e, payload)), payload),
+            Some(ty) if optional_of(ty) == payload => {
+                (other.and_then(|e| self.lift(e, payload)), payload)
+            }
             Some(ty) => {
                 // An object and an `any` type that it converts to join to the `any` type.
                 let Some(joined) = self.any_join(payload, ty) else {

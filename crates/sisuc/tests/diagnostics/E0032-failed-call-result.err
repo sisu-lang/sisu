@@ -249,7 +249,7 @@ help: join the values into one string
 160 +     let _s: string = print("{1} {2}")
     |
 
-error[E0043]: `print` returns no value
+error[E0043]: `print` returns `unit`
    --> E0032-failed-call-result.sisu:160:22
     |
 160 |     let _s: string = print(1, 2)
@@ -339,7 +339,7 @@ error[E0053]: `[i64].push` takes 1 argument, found 2
 182 |     let _s: string = xs.push(1, 2)
     |                      ^^^^^^^^^^^^^
 
-error[E0043]: `push` returns no value
+error[E0043]: `push` returns `unit`
    --> E0032-failed-call-result.sisu:182:22
     |
 182 |     let _s: string = xs.push(1, 2)
@@ -590,7 +590,7 @@ error[E0030]: cannot find type `Nope`
 250 |     let _s: string = B(v: 1).g<Nope>()
     |                                ^^^^
     |
-    = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums, structs and arrays such as `[i64]`
+    = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
 help: a class with a similar name exists: `Node`
     |
 250 -     let _s: string = B(v: 1).g<Nope>()
@@ -612,14 +612,14 @@ error[E0137]: `g` takes 1 type argument, but 2 were given
 error[E0053]: `B<i64>.g` takes 1 argument, found 0
    --> E0032-failed-call-result.sisu:256:22
     |
-256 |     let _s: string = B(v: 1).g<unit>()
-    |                      ^^^^^^^^^^^^^^^^^
+256 |     let _s: string = B(v: 1).g<never>()
+    |                      ^^^^^^^^^^^^^^^^^^
 
-error[E0138]: `unit` cannot be a type argument
+error[E0138]: `never` cannot be a type argument
    --> E0032-failed-call-result.sisu:256:32
     |
-256 |     let _s: string = B(v: 1).g<unit>()
-    |                                ^^^^
+256 |     let _s: string = B(v: 1).g<never>()
+    |                                ^^^^^
 
 error[E0053]: `h2` takes 1 argument, found 2
    --> E0032-failed-call-result.sisu:259:22
@@ -633,7 +633,7 @@ error[E0030]: cannot find type `Nope`
 259 |     let _s: string = h2<Nope>(1, 2)
     |                         ^^^^
     |
-    = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums, structs and arrays such as `[i64]`
+    = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
 help: a class with a similar name exists: `Node`
     |
 259 -     let _s: string = h2<Nope>(1, 2)
@@ -722,7 +722,7 @@ error[E0032]: expected `Flag`, found `i64`
 274 |     let _s: string = e.eq(1)
     |                           ^
 
-error[E0043]: `print` returns no value
+error[E0043]: `print` returns `unit`
    --> E0032-failed-call-result.sisu:277:22
     |
 277 |     let _s: string = print(n: 1)
@@ -770,17 +770,17 @@ error[E0055]: this call takes no labels on its arguments
     |
     = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
 
-error[E0043]: `print` returns no value
+error[E0043]: `print` returns `unit`
    --> E0032-failed-call-result.sisu:286:22
     |
-286 |     let _s: string = print(u())
-    |                      ^^^^^^^^^^
+286 |     let _s: string = print(nope)
+    |                      ^^^^^^^^^^^
 
-error[E0059]: the argument of `print` has no value
+error[E0033]: cannot find binding `nope`
    --> E0032-failed-call-result.sisu:286:28
     |
-286 |     let _s: string = print(u())
-    |                            ^^^
+286 |     let _s: string = print(nope)
+    |                            ^^^^
 
 error[E0056]: missing field `v`
    --> E0032-failed-call-result.sisu:289:22
@@ -978,7 +978,7 @@ error[E0030]: cannot find type `Nope`
 331 |     let _s: string = B<Nope>()
     |                        ^^^^
     |
-    = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, classes, enums, structs and arrays such as `[i64]`
+    = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
 help: a class with a similar name exists: `Node`
     |
 331 -     let _s: string = B<Nope>()

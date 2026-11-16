@@ -432,6 +432,7 @@ fn main() {
 
 - The result is an optional of the type of the field or the method's result.
 - When that type is already an optional, the result is that optional, not an optional of an optional. So a chain such as `a?.b?.c` gives one optional.
+- A method that returns `unit` gives a `unit?` through `?.`, such as `o?.log()`.
 - A line that starts with `?.` continues the line above it ([Lexical structure](lexical.md#line-continuation)).
 
 **Assignment through `?.`**
@@ -446,7 +447,6 @@ An assignment or a compound assignment can go through `?.`, as a `push` can ([AD
 **Errors**
 
 - `a?.b.c` is an error when `b` is not optional, because `a?.b` is an optional. Write `a?.b?.c`. [E0062](../diagnostics/E0062.md)
-- A method that returns no value has no value through `?.` too. [E0043](../diagnostics/E0043.md)
 - `?.` on a value that is not optional is an error. Use `.`. [E0049](../diagnostics/E0049.md)
 
 ```sisu

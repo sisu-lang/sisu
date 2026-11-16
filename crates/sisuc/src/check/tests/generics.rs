@@ -99,7 +99,7 @@ fn type_arguments_that_do_not_fit_a_type_should_be_reported() {
         ("fn f(s: Stack) {}", arguments((1, 9))),
         ("fn f(s: Stack<i64, i64>) {}", arguments((1, 14))),
         ("fn f(p: Point<i64>) {}", arguments((1, 14))),
-        ("fn f(s: Stack<unit>) {}", argument.clone()),
+        ("fn f(s: Stack<unit>) {}", vec![]),
         ("fn f(s: Stack<never>) {}", argument),
         ("fn f(s: Stack<Zz>) {}", vec![(Code::UnknownType, (1, 15))]),
         ("fn f(w: Wrap) {}\nenum Wrap<T> { W(T) }", arguments((1, 9))),
@@ -2870,10 +2870,8 @@ fn generic_arguments_that_do_not_check_should_report_as_other_arguments() {
             "fn g() {\n    let x = id(Wrap.W([]))\n}".into(),
             vec![(Code::CannotInfer, (2, 13))],
         ),
-        (
-            "fn g() {\n    let x = id({ let y = 1 })\n}".into(),
-            vec![(Code::TypeArgument, (2, 16))],
-        ),
+        // A block with no tail is a `unit`, which binds `T`.
+        ("fn g() {\n    let x = id({ let y = 1 })\n}".into(), vec![]),
         (
             "fn bad<T>(x: T, y: Nope) {}\nfn g() {\n    bad(1, 2)\n}".into(),
             vec![(Code::UnknownType, (1, 20))],
@@ -3344,15 +3342,12 @@ fn generic_array_literals_should_report_each_mistake_once() {
             vec![(Code::Mismatch, (3, 8))],
         ),
         ("g1(ys)", vec![(Code::Mismatch, (2, 8))]),
-        // An element with no value, `unit` or `never`, is reported where it is, binds nothing,
-        // and leaves a `None` beside it silent.
+        // A `unit` element binds `T` as any other element does. Beside an element of another
+        // type, it is reported where it is.
         ("g1([print(1), 2])", vec![(Code::NoValue, (2, 9))]),
         ("g1([2, print(1)])", vec![(Code::NoValue, (2, 12))]),
-        (
-            "g1([print(1), print(2)])",
-            vec![(Code::NoValue, (2, 9)), (Code::NoValue, (2, 19))],
-        ),
-        ("g1([print(1), None])", vec![(Code::NoValue, (2, 9))]),
+        ("g1([print(1), print(2)])", vec![]),
+        ("g1([print(1), None])", vec![]),
         ("g4([print(1)])", vec![(Code::NoValue, (2, 9))]),
         (
             "g1([if x > 0 { return 0 } else { return 1 }, 1])",
@@ -3525,27 +3520,27 @@ fn no_value_main(decls: &str, lets: &str, call: &str) -> (String, usize) {
 }
 
 /// A call with no value is E0043, as a call with its type written is. It is not a mismatch of
-/// `unit`, and a safe call has no `unit?`.
+/// `unit`. A safe call of such a method is a `unit?`, a value, so it is a mismatch.
 #[test]
 fn call_with_no_value_should_report_no_value() {
     with_prelude();
     let maker = "class Maker {\n    n: i64\n    fn make<E>(self, x: E?) {}\n}\n";
     let (fun, m) = ("fn mk<E>(x: E?) {}\n", "let m: Maker? = None\n    ");
-    for (decls, lets, call) in [
-        (fun, "", "f(mk(Some(1)))"),
-        (fun, "", "f(mk<i64>(None))"),
-        (maker, m, "f(m?.make(Some(1)))"),
-        (maker, m, "f(m?.make<i64>(None))"),
+    for (decls, lets, call, code) in [
+        (fun, "", "f(mk(Some(1)))", Code::NoValue),
+        (fun, "", "f(mk<i64>(None))", Code::NoValue),
+        (maker, m, "f(m?.make(Some(1)))", Code::Mismatch),
+        (maker, m, "f(m?.make<i64>(None))", Code::Mismatch),
     ] {
         let (src, line) = no_value_main(decls, lets, call);
-        codes_row(call, &src, &[(Code::NoValue, (line, 7))]);
+        codes_row(call, &src, &[(code, (line, 7))]);
     }
 }
 
 /// A call whose arguments do not give its type is checked alone, with no context. It reports the
 /// `E` that it cannot infer first (`mk(None)`), as `let v = mk(None)` does. The results of `mk`
 /// and of `m?.make` name no parameter, so they are typed (the call row of S14). So `f` reports
-/// that it has no value.
+/// that `mk(None)` has no value, and that `m?.make(None)`, a `unit?`, is not a `[T]`.
 #[test]
 fn a_call_whose_arguments_do_not_give_its_type_should_report_its_parameter() {
     with_prelude();
@@ -3561,7 +3556,7 @@ fn a_call_whose_arguments_do_not_give_its_type_should_report_its_parameter() {
     codes_row(
         "f(m?.make(None))",
         &src,
-        &[(Code::NoValue, (line, 7)), (Code::CannotInfer, (line, 10))],
+        &[(Code::Mismatch, (line, 7)), (Code::CannotInfer, (line, 10))],
     );
 }
 

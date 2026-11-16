@@ -1,0 +1,14 @@
+// GIVEN `set(mut u)`, where `u` is a `unit` and the parameter is a `T?`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument, with the note that a `unit` cannot hold `None`
+// AND the note says "a `unit`", not "an `unit`"
+fn g() {}
+
+fn set<T>(mut a: T?) {
+    a = None
+}
+
+fn main() {
+    let mut u = g()
+    set(mut u)
+}

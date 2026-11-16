@@ -1,10 +1,11 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
 use super::any::{AnyJoin, is_target, widen};
-use super::expr::{fits, literal_type, no_member, path, typed};
+use super::expr::{fits, literal_type, no_member, path, takes_unit, typed};
 use super::generic::{Rank, mark, mismatch_poison};
 use super::place::{Change, first_safe, is_struct};
 use super::reports::Reported;
+use super::stmt::optional_unit;
 use super::{
     Checked, Checker, Declared, Expectation, Origin, Poisoned, as_optional, known_type, payload,
     type_of,
@@ -123,7 +124,7 @@ impl Checker<'_> {
         let mut own: Vec<Option<Type>> = vec![None; elements.len()];
         let sources: Vec<_> = elements.iter().map(|e| self.value_branch(e)).collect();
         let siblings = (Expectation::None, Some((element, Origin::None)));
-        let (blocks, joined) = self.join(&sources, siblings, |c, i, expected| {
+        let (blocks, joined) = self.join(&sources, siblings, false, |c, i, expected| {
             let checked = c.value(&elements[i], expected);
             own[i] = checked.as_ref().ok().map(|e| {
                 if let tir::ExprKind::Wrap(inner) = &e.kind
@@ -225,12 +226,11 @@ impl Checker<'_> {
                 slots[i] = Some(self.value(e, Expectation::Required(want, Origin::None)));
             }
         }
-        let mut failed = slots.iter().flatten().find_map(|c| known_type(c).err());
+        let typed = typed_slots(&slots);
+        let mut failed = (slots.iter().flatten().find_map(|c| known_type(c).err()))
+            .or_else(|| self.refuse_unit_elements(elements, &mut slots, &typed, &optional));
         let mut joined: Option<Type> = None;
         if failed.is_none() {
-            let typed: Vec<(usize, Type)> = (slots.iter().enumerate())
-                .filter_map(|(i, slot)| Some((i, slot.as_ref().and_then(type_of)?)))
-                .collect();
             match self.join_objects(&mut slots, &typed) {
                 ObjectJoin::Joined(ty) => joined = Some(ty),
                 ObjectJoin::Leaves((at, giver), want, got) => {
@@ -294,6 +294,8 @@ impl Checker<'_> {
             .into_iter()
             .map(|slot| {
                 match slot.expect("the three waves should check every element, one rank each") {
+                    // A `unit` lifts to `unit?` only when it has a value (`lift`).
+                    Ok(e) if e.ty == Type::UNIT && optional_unit(element) => self.lift(e, element),
                     Ok(e) if e.ty != element => {
                         self.record_shown_any(e.ty, element);
                         Ok(widen(e, element))
@@ -303,6 +305,43 @@ impl Checker<'_> {
             })
             .collect();
         self.array(span, element, checked, mismatched)
+    }
+
+    /// E0043 at each `unit` element beside an element of another type, which has no value
+    /// there, with the proof of the first. The `unit` element must give the type of the first
+    /// such other element. That type is made optional when an element that is not `unit` makes
+    /// the literal optional: one of an optional type, or one that `optional` marks (see
+    /// `Ranked::optional`), such as `None` or `Some(2)`. `typed` holds each element that has a
+    /// type, with it.
+    fn refuse_unit_elements(
+        &mut self,
+        elements: &[ast::Expr],
+        slots: &mut [Option<Checked>],
+        typed: &[(usize, Type)],
+        optional: &[bool],
+    ) -> Option<Reported> {
+        let other = typed
+            .iter()
+            .map(|&(_, ty)| ty)
+            .find(|&ty| !takes_unit(ty) && ty != Type::NEVER)?;
+        let lifts = slots.iter().zip(optional).any(|(slot, &marked)| {
+            let ty = slot.as_ref().and_then(type_of);
+            ty != Some(Type::UNIT)
+                && (marked || ty.is_some_and(|ty| matches!(ty.kind(), TypeKind::Optional(_))))
+        });
+        let other = if lifts { as_optional(other) } else { other };
+        let mut failed = None;
+        for &(i, ty) in typed {
+            if ty == Type::UNIT {
+                let e = &elements[i];
+                let value = slots[i].as_ref().and_then(|slot| slot.as_ref().ok());
+                let cause = self.no_value_cause(e, value, (Type::UNIT, Some(other)), false);
+                let reported = self.no_value(e.span, cause);
+                slots[i] = Some(Err(Poisoned::untyped(reported)));
+                failed.get_or_insert(reported);
+            }
+        }
+        failed
     }
 
     /// How the `typed` elements join when a `Some` of an object is in the way: such an element
@@ -844,4 +883,11 @@ pub(super) fn innermost(mut ty: Type) -> Type {
         ty = inner;
     }
     ty
+}
+
+/// Each slot of `slots` whose element has a type, with its index and that type.
+fn typed_slots(slots: &[Option<Checked>]) -> Vec<(usize, Type)> {
+    (slots.iter().enumerate())
+        .filter_map(|(i, slot)| Some((i, slot.as_ref().and_then(type_of)?)))
+        .collect()
 }

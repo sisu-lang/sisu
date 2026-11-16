@@ -112,7 +112,7 @@ fn value_rows() -> Vec<Row> {
         ),
         row(
             "R2",
-            "let x = if c { print(1) }",
+            "let x: i64 = if c { print(1) }",
             text("if c { print(1) }", 0),
             Cause::NoElse,
         ),
@@ -149,7 +149,7 @@ fn value_rows() -> Vec<Row> {
         ),
         row_with(
             "R9",
-            "fn f(c: bool) { return if c { print(1) } }\n",
+            "fn f(c: bool) -> i64 { return if c { print(1) } }\n",
             "",
             (text("if c { print(1) }", 0), Cause::NoElse),
         ),
@@ -161,9 +161,9 @@ fn value_rows() -> Vec<Row> {
         ),
         row_with(
             "R33",
-            "fn f(c: bool) { return if c { return } }\n",
+            "fn f(c: bool) -> i64 { return if c { return 1 } }\n",
             "",
-            (text("if c { return }", 0), Cause::NoElse),
+            (text("if c { return 1 }", 0), Cause::NoElse),
         ),
         // The join does not know the `return`: it keeps the help of the `if`.
         row_with(
@@ -174,11 +174,11 @@ fn value_rows() -> Vec<Row> {
         ),
         row_with(
             "R10",
-            "fn f(o: i64?) { return if let Some(v) = o { print(v) } }\n",
+            "fn f(o: i64?) -> i64 { return if let Some(v) = o { print(v) } }\n",
             "",
             (text("if let Some(v) = o { print(v) }", 0), Cause::NoElse),
         ),
-        row("R11", "let x = greet()", text("greet()", 1), GREET),
+        row("R11", "let x: i64 = greet()", text("greet()", 1), GREET),
         row("R12", "g(greet())", text("greet()", 1), GREET),
         row("R13", "let a = greet() + 1", text("greet()", 1), GREET),
         row(
@@ -195,29 +195,34 @@ fn value_rows() -> Vec<Row> {
         ),
         row_with(
             "R16",
-            "fn f() { return greet() }\n",
+            "fn f() -> i64? { return greet() }\n",
             "",
             (text("greet()", 1), GREET),
         ),
         row(
             "R17",
-            "let x = S(n: 1).hi()",
+            "let x: i64 = S(n: 1).hi()",
             text("S(n: 1).hi()", 0),
             call(Some(text("hi", 0))),
         ),
         row(
             "R18",
-            "let x = E.A.hi()",
+            "let x: i64 = E.A.hi()",
             text("E.A.hi()", 0),
             call(Some(text("hi", 1))),
         ),
         row(
             "R19",
-            "let x = gg(1)",
+            "let x: i64 = gg(1)",
             text("gg(1)", 0),
             call(Some(text("gg", 0))),
         ),
-        row("R20", "let x = print(1)", text("print(1)", 1), call(None)),
+        row(
+            "R20",
+            "let x: i64 = print(1)",
+            text("print(1)", 1),
+            call(None),
+        ),
         row(
             "R21",
             "let x = match c { true => 1; false => greet() }",
@@ -227,25 +232,25 @@ fn value_rows() -> Vec<Row> {
         row("R22", "let x = o ?? greet()", text("greet()", 1), GREET),
         row(
             "R23",
-            "let a = loop { break greet() }",
+            "let a: i64 = loop { break greet() }",
             text("greet()", 1),
             GREET,
         ),
         row_with(
             "R24",
-            "fn f<T: U>(t: T) { let x = t.m() }\n",
+            "fn f<T: U>(t: T) { let x: i64 = t.m() }\n",
             "",
             (text("t.m()", 0), call(None)),
         ),
         row(
             "R25",
-            "let x = { greet() }",
+            "let x: i64 = { greet() }",
             text("{ greet() }", 0),
             Cause::Plain,
         ),
         row(
             "R26",
-            "let x = if c { greet() } else { greet() }",
+            "let x: i64 = if c { greet() } else { greet() }",
             text("if c { greet() } else { greet() }", 0),
             Cause::Plain,
         ),
@@ -258,53 +263,47 @@ fn value_rows() -> Vec<Row> {
         row_with(
             "R28",
             m,
-            "let mut n = 1\nlet x = bump(mut n)",
+            "let mut n = 1\nlet x: i64 = bump(mut n)",
             (text("bump(mut n)", 0), call(Some(text("bump", 0)))),
         ),
         row_with(
             "R29",
             g,
-            "let mut n = 1\nlet y = Q(n: 1).bump(mut n)",
+            "let mut n = 1\nlet y: i64 = Q(n: 1).bump(mut n)",
             (text("Q(n: 1).bump(mut n)", 0), call(Some(text("bump", 0)))),
         ),
         row(
             "R30",
-            "let d = false\nlet x = if c { print(1) } else if d { print(2) }",
+            "let d = false\nlet x: i64 = if c { print(1) } else if d { print(2) }",
             text("if c { print(1) } else if d { print(2) }", 0),
             Cause::NoElse,
         ),
         row_with(
             "R31",
-            "fn f(c: bool, d: bool) { return if c { print(1) } else if d { print(2) } }\n",
+            "fn f(c: bool, d: bool) -> i64 { return if c { print(1) } else if d { print(2) } }\n",
             "",
             (
                 text("if c { print(1) } else if d { print(2) }", 0),
                 Cause::NoElse,
             ),
         ),
-        row(
-            "R36",
-            "let s: S? = None\nlet x = s?.hi()",
-            text("s?.hi()", 0),
-            call(None),
-        ),
         // An `else` block with two statements is no `else if`.
         row(
             "R38",
-            "let x = if c { greet() } else { greet(); greet() }",
+            "let x: i64 = if c { greet() } else { greet(); greet() }",
             text("if c { greet() } else { greet(); greet() }", 0),
             Cause::Plain,
         ),
         // A braced `else` that holds one `if` is no `else if`: the outer `if` has an `else`.
         row(
             "R39",
-            "let x = if c { greet() } else { if c { greet() } }",
+            "let x: i64 = if c { greet() } else { if c { greet() } }",
             text("if c { greet() } else { if c { greet() } }", 0),
             Cause::Plain,
         ),
         row(
             "R40",
-            "let x = if c { greet() } else { if let Some(v) = o { print(v) } }",
+            "let x: i64 = if c { greet() } else { if let Some(v) = o { print(v) } }",
             text(
                 "if c { greet() } else { if let Some(v) = o { print(v) } }",
                 0,
@@ -313,7 +312,7 @@ fn value_rows() -> Vec<Row> {
         ),
         row_with(
             "R41",
-            "fn f(c: bool) { return if c { print(1) } else { if c { print(2) } } }\n",
+            "fn f(c: bool) -> i64 { return if c { print(1) } else { if c { print(2) } } }\n",
             "",
             (
                 text("if c { print(1) } else { if c { print(2) } }", 0),
@@ -340,10 +339,17 @@ fn value_rows() -> Vec<Row> {
             "opt([if c { 5 }])",
             (text("if c { 5 }", 0), Cause::NoElse),
         ),
+        // A written `-> unit`: the secondary label points at it.
+        row_with(
+            "R45",
+            "fn gu() -> unit {}\n",
+            "let x: i64 = gu()",
+            (text("gu()", 1), call(Some(text("unit", 0)))),
+        ),
         row_with(
             "R37",
             "struct W: U { fn m(self) {} }\n",
-            "let u: any U = W()\nlet x = u.m()",
+            "let u: any U = W()\nlet x: i64 = u.m()",
             (text("u.m()", 0), call(None)),
         ),
     ]
@@ -542,12 +548,12 @@ fn a_value_with_no_value_should_say_why() {
 /// declaration.
 #[test]
 fn a_failed_call_with_no_value_should_point_at_no_declaration() {
-    let src = format!("{DECLS}fn main() {{\n    let x = greet(1)\n}}\n");
+    let src = format!("{DECLS}fn main() {{\n    let x: i64 = greet(1)\n}}\n");
     let (_, ds) = checked(&src);
     let found: Vec<_> = ds.iter().map(|d| (d.code(), at(&src, d.span()))).collect();
     assert_eq!(
         found,
-        [(Code::ArgumentCount, (12, 13)), (Code::NoValue, (12, 13))]
+        [(Code::ArgumentCount, (12, 18)), (Code::NoValue, (12, 18))]
     );
     let d = &ds[1];
     assert_eq!(d.secondary().len(), 0);

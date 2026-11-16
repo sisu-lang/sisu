@@ -1,8 +1,8 @@
-error[E0043]: `print` returns no value
- --> E0043-prelude-call.sisu:6:13
+error[E0043]: `print` returns `unit`
+ --> E0043-prelude-call.sisu:6:18
   |
-6 |     let x = print(1)
-  |             ^^^^^^^^
+6 |     let x: i64 = print(1)
+  |                  ^^^^^^^^
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0043

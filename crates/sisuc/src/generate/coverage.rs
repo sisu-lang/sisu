@@ -194,6 +194,7 @@ const REACH: &[&str] = &[
     "reach: a parameter other than `depth` is read",
     "reach: `main` calls a function at a depth of 1 or more",
     "reach: a function calls itself",
+    "reach: a `unit?` function ends in a `unit` value",
     "reach: a loop runs its body",
     "reach: a string literal holds an escape",
     "reach: an `if` statement jumps in every branch",
@@ -1437,6 +1438,27 @@ impl Walk {
         }
         if let Some(ret) = &f.ret {
             self.type_expr(ret);
+            // As the checker reads it: the tail of the body, which is not a jump.
+            let tail = match f.body.stmts.last().map(|s| &s.kind) {
+                Some(ast::StmtKind::Expr(e)) if !e.is_jump() => Some(&e.kind),
+                _ => None,
+            };
+            if ret.optional == 1
+                && matches!(&ret.kind, ast::TypeKind::Name(name) if name.as_str() == "unit")
+                && matches!(
+                    tail,
+                    Some(
+                        ast::ExprKind::Block(_)
+                            | ast::ExprKind::Match { .. }
+                            | ast::ExprKind::If {
+                                else_block: Some(_),
+                                ..
+                            }
+                    )
+                )
+            {
+                self.mark("reach: a `unit?` function ends in a `unit` value");
+            }
         }
         self.ast_block(&f.body);
     }
@@ -3036,6 +3058,7 @@ impl Walk {
             tir::ExprKind::Char(_) => self.mark("tir::ExprKind::Char"),
             tir::ExprKind::Str(_) => self.mark("tir::ExprKind::Str"),
             tir::ExprKind::None => self.mark("tir::ExprKind::None"),
+            tir::ExprKind::Unit => self.mark("tir::ExprKind::Unit"),
             tir::ExprKind::Local(_) => self.mark("tir::ExprKind::Local"),
             tir::ExprKind::Call { func, types, args } => {
                 self.mark("tir::ExprKind::Call");
@@ -7549,6 +7572,95 @@ fn generated_programs_should_reach_each_gap_rule() {
     );
 }
 
+/// The forms in which `program` holds a `unit` loop of a printed `unit` (`Gen::unit_loop`). The
+/// loop follows the bound `u` as a statement, binds `u` again, or stands for an operand. A
+/// printed `unit` whose tail follows the bound `u` directly has no loop.
+fn unit_loop_forms(program: &str) -> FxHashSet<&'static str> {
+    let mut forms = FxHashSet::default();
+    let tails = [
+        "[u, u] }",
+        "[u, u] == [u] }",
+        "[u] != [u] }",
+        "Some(u) == Some(u) }",
+        "u < u }",
+        "u >= u }",
+    ];
+    for (start, _) in program.match_indices("{ let u = ") {
+        let value = &program[start + "{ let u = ".len()..];
+        // The `; ` after the bound value, outside the brackets of that value.
+        let mut depth = 0_i32;
+        let end = value.char_indices().find_map(|(i, c)| {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                ';' if depth == 0 => return Some(i),
+                _ => {}
+            }
+            None
+        });
+        if let Some(rest) = end.and_then(|end| value[end..].strip_prefix("; "))
+            && tails.iter().any(|tail| rest.starts_with(tail))
+        {
+            forms.insert("no loop");
+        }
+    }
+    // Only a `unit` loop names its counter `v<n>` and sets it to 1: a `mut` copy names it `w<n>`.
+    for (start, _) in program.match_indices("({ let mut v") {
+        let counter = &program[start + "({ let mut v".len()..];
+        if !counter
+            .trim_start_matches(|c: char| c.is_ascii_digit())
+            .starts_with(" = 1; ")
+        {
+            continue;
+        }
+        let mut depth = 0;
+        let end = (program[start..].char_indices())
+            .find_map(|(i, c)| {
+                match c {
+                    '(' => depth += 1,
+                    ')' if depth == 1 => return Some(start + i + 1),
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                None
+            })
+            .expect("each `unit` loop should close its `(`");
+        let (before, after) = (&program[..start], &program[end..]);
+        let form = if before.ends_with("let u = ") {
+            "binds `u` again"
+        } else if before.ends_with("; ") && after.starts_with("; ") {
+            "a statement"
+        } else if before.ends_with('[') || before.ends_with("Some(") || after.starts_with(" < u") {
+            "an operand"
+        } else {
+            continue;
+        };
+        forms.insert(form);
+    }
+    forms
+}
+
+/// GIVEN the programs of the seeds `0..FUZZ_SEEDS`, which the nightly reads and no others
+/// WHEN the test reads the `unit` loops of their printed `unit` values, in order
+/// THEN a loop is a statement in one, binds `u` again in one, and is an operand in one. One
+///   printed `unit` has no loop.
+#[test]
+fn generated_programs_should_reach_each_form_of_a_unit_loop() {
+    let all = ["a statement", "binds `u` again", "an operand", "no loop"];
+    let mut seen = FxHashSet::default();
+    for n in 0..FUZZ_SEEDS {
+        seen.extend(unit_loop_forms(&generate(&seed(n)).program));
+        if seen.len() == all.len() {
+            break;
+        }
+    }
+    let missing: Vec<_> = all.iter().filter(|form| !seen.contains(*form)).collect();
+    assert!(
+        missing.is_empty(),
+        "no program of the seeds 0..{FUZZ_SEEDS} holds a `unit` loop as: {missing:?}"
+    );
+}
+
 /// GIVEN the programs of the seeds `0..FUZZ_SEEDS`, which the nightly reads and no others
 /// WHEN the build reads them in order
 /// THEN each point of `LOWERING_POINTS` is marked, and the walk stops once all are
@@ -9147,6 +9259,7 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Char(_)
             | tir::ExprKind::Str(_)
             | tir::ExprKind::None
+            | tir::ExprKind::Unit
             | tir::ExprKind::ReadLine
             | tir::ExprKind::Break { value: None, .. }
             | tir::ExprKind::Continue { .. } => {}
@@ -9285,7 +9398,8 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::Bool(_)
             | tir::ExprKind::Char(_)
             | tir::ExprKind::Str(_)
-            | tir::ExprKind::None => true,
+            | tir::ExprKind::None
+            | tir::ExprKind::Unit => true,
             tir::ExprKind::Local(local) => reads || !self.locals[local.0].mutable,
             tir::ExprKind::Field { base, .. } | tir::ExprKind::StructField { base, .. } => {
                 reads && self.pure(base, reads)

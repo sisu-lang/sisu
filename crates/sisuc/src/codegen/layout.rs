@@ -283,7 +283,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         slot
     }
 
-    /// The LLVM type of a value of `ty`; `None` for `unit` and `never`, which have no value.
+    /// The LLVM type of a value of `ty`; `None` for `never`, which has no value. A `unit` value
+    /// is the empty struct `{}`, which has no bytes.
     pub(super) fn llvm_type(&self, ty: Type) -> Option<BasicTypeEnum<'ctx>> {
         match ty.kind() {
             TypeKind::I64 => Some(self.context.i64_type().into()),
@@ -291,7 +292,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             TypeKind::F64 => Some(self.context.f64_type().into()),
             TypeKind::Bool => Some(self.context.bool_type().into()),
             TypeKind::Char => Some(self.context.i32_type().into()),
-            TypeKind::Unit | TypeKind::Never => None,
+            TypeKind::Unit => Some(self.context.struct_type(&[], false).into()),
+            TypeKind::Never => None,
             // An object is a pointer to its block.
             TypeKind::Class(..) => Some(self.context.ptr_type(AddressSpace::default()).into()),
             // A struct holds its fields inline.

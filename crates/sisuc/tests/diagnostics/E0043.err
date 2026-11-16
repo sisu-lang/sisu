@@ -1,8 +1,8 @@
-error[E0043]: `greet` returns no value
- --> E0043.sisu:6:13
+error[E0043]: `greet` returns `unit`
+ --> E0043.sisu:6:18
   |
-6 |     let x = greet()
-  |             ^^^^^^^
+6 |     let x: i64 = greet()
+  |                  ^^^^^^^
   |
  ::: E0043.sisu:1:4
   |

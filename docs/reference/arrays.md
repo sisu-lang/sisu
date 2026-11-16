@@ -176,7 +176,7 @@ An array has these methods:
 | `xs.first()` | The element type, optional | The first element, or `None` when `xs` is empty |
 | `xs.last()` | The element type, optional | The last element, or `None` when `xs` is empty |
 | `xs.get(i)` | The element type, optional | The element at `i`, or `None` when `i` is outside the array |
-| `xs.push(x)` | none | Adds `x` after the last element, and writes `xs` |
+| `xs.push(x)` | `unit` | Adds `x` after the last element, and writes `xs` |
 
 ```sisu
 fn main() {
@@ -233,7 +233,7 @@ fn main() {
 - `push` writes the array, as `xs[i] = x` does. It needs a place that can change: a `let mut` variable, a `mut` parameter, a `mut` field, or an element of one.
 - A `let` binding, a plain parameter and a field without `mut` are errors. [E0001](../diagnostics/E0001.md)
 - A value that is not stored, such as `f().push(1)`, is an error. [E0021](../diagnostics/E0021.md)
-- `push` has no value.
+- `push` gives a `unit` value.
 - The argument has the element type, so `push(1)` on an `[i64?]` adds `Some(1)`. [E0032](../diagnostics/E0032.md)
 - `push` takes exactly one argument. [E0053](../diagnostics/E0053.md)
 - A `push` onto an array that another variable holds does not change that variable. Arrays are values ([Arrays are values](#arrays-are-values)).

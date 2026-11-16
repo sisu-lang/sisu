@@ -898,6 +898,8 @@ impl<'ctx> Codegen<'ctx, '_> {
                 return self.equal_at(ty, self.value_slot(lhs), self.value_slot(rhs));
             }
             TypeKind::Optional(payload) => payload,
+            // All `unit` values are equal.
+            TypeKind::Unit => return self.context.bool_type().const_all_ones(),
             _ => return self.scalar_equal(lhs, rhs),
         };
         let value = |optional| self.optional_value(ty, optional, "part");
@@ -931,7 +933,7 @@ impl<'ctx> Codegen<'ctx, '_> {
                 .into_int_value();
         }
         // `fa == fb && (!fa || va == vb)` on flags `f` and values `v`, with no branch.
-        let values = self.scalar_equal(value(lhs), value(rhs));
+        let values = self.equal(payload, value(lhs), value(rhs));
         let none = self.builder.build_not(fa, "none").expect(POSITIONED);
         let values = self
             .builder

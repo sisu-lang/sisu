@@ -62,6 +62,14 @@ before milestone 9.
   value, and else does not run its right side
   ([ADR 0037](adr/0037-assignment-through-optional-chaining.md))
 - the prelude enum `Result<T, E>`, with the bare names `Ok` and `Err`
+- `unit` is a value type (milestone 12, stage 1). A call of a function with
+  no return type gives a `unit` value. So do a block with no tail and a
+  `loop` that ends at a bare `break`. `let u = print("a")` binds one, and
+  `[unit]`, `unit?`, a `unit` field and `Result<unit, E>` work. A `unit`
+  value prints as `()`, and all `unit` values are equal. It fits where no
+  type is expected, such as in `print(g())`. Where a type is expected, it
+  fits only `unit`, `unit?` or a type parameter of the called function
+  (`E0043`)
 - enums, declared with `enum` and a list of variants, each with no payload,
   labeled fields (`Rect(w: i64, h: i64)`) or unlabeled ones (`Num(i64)`);
   `Expr.Num(2)` builds a value, an enum has methods and compares with `==`,
@@ -91,12 +99,12 @@ before milestone 9.
   written out (`first<i64>([])`, `Stack<string>(top: None)`); a generic body
   is checked once, at its definition, and compiled once for each list of type
   arguments the program reaches. A type parameter takes bounds that name
-  interfaces (`T: Shape & Named`), and a value of one calls the methods of
-  its bounds, and the operators that `Eq` and `Ord` give it, but a `==` or
-  `<` on a `T` with no such bound is an error (`E0139`); `unit` and `never`
-  are not type arguments (`E0138`); a use that would need copies without end
-  is an error (`E0140`), and so is a program whose generic items make more
-  than 100,000 instantiations, in `sisu build` (`E0163`)
+  interfaces (`T: Shape & Named`). A value of one calls the methods of its
+  bounds, and the operators that `Eq` and `Ord` give it. A `==` or `<` on a
+  `T` with no such bound is an error (`E0139`). `never` is not a type
+  argument (`E0138`). A use that would need copies without end is an error
+  (`E0140`). So is a program whose generic items make more than 100,000
+  instantiations, in `sisu build` (`E0163`)
 - interfaces: `interface Shape { fn area(self) -> f64 }` lists method
   signatures with no body, associated types (`type Item`), type parameters
   and inherited interfaces (`interface Solid: Named`), and `Self` is the
@@ -337,6 +345,8 @@ These came out of the milestone 2 design and are now part of its spec:
   ([ADR 0016](adr/0016-word-functions-trust-the-utf-8-invariant.md); added
   after milestone 5, for the `wc` benchmark).
 
+- `site/programs/pending/total.sisu` compiles from milestone 12, stage 4.
+
 ### Decided in milestone 6
 
 - Floats follow IEEE 754: `f64` arithmetic, methods and comparisons never
@@ -435,7 +445,7 @@ These came out of the milestone 2 design and are now part of its spec:
 - `dbg(x)` writes `file:line:column: source = value` to standard error and
   returns `x`. It shows a class one level deep, lays the value out as `{x:#}`
   does, and does not warn.
-- Every type but `unit` and `never` prints, through a generated `Display`. A
+- Every type but `never` prints, through a generated `Display`. A
   value prints as the code that built it reads: a class prints its name, a
   variant prints without its enum, and a `string` or a `char` is quoted inside
   an array or a payload. The `Some` rule: a `T?` that holds `x` prints the
@@ -491,7 +501,7 @@ how to avoid it. Each milestone keeps the table current.
 | `[v; n]` | `n` is negative, or the array would be too large to allocate (`[0; 9223372036854775807]`) | check `n` first, and keep it to a size the program can use |
 | `xs.sum()` on `[i64]` | the sum overflows | gap |
 | `panic(msg)`, `todo` | always | they are the deliberate panics |
-| `print`, `eprint`, `read_line` | the write or read fails | none until `Result` (milestone 12) |
+| `print`, `eprint`, `read_line` | the write or read fails | none for these; file functions return results (milestone 12) |
 | Conversions | never | they return an optional |
 | `f64` arithmetic, methods, comparisons | never | IEEE 754 ([ADR 0017](adr/0017-floats-follow-ieee-754.md)) |
 | `x.clamp`, `x.min`, `x.max` | never | |
@@ -706,7 +716,7 @@ The compiler is fuzzed in two stages:
 | 9 | Closures and lazy iterator methods (`map`, `filter`, `count`, `sum`), plus a `filter_some`-style method on `[T?]` | Closures first: a function that takes an `(i64) -> bool` runs with a closure that captures a local. Then `words.filter(w => w.len() > 3).count()` runs |
 | 10 | Records, named arguments, default parameters, and `p as name` to bind a whole sub-pattern | A `Point` record prints and compares with no hand-written methods |
 | 11 | Modules, `pub` visibility, and a standard library written in Sisu (`Map`), including `os.env(name)`, `os.exit(code)`, and an `io` module with `read_lines()`, read-everything and `read_bytes()` | Modules first: a program of two files, each with a class of the same name, builds and runs. Then a word-frequency tool reads like a Python script |
-| 12 | Error handling: `Result<T, E>` and a `?` operator | File I/O code has no nested error checks |
+| 12 | Error handling: `T \| E` (`Result<T, E>`) and a `?` operator, in eight plan stages; the settled decisions are in [ADR 0051](adr/0051-a-failure-is-written-t-or-e.md) | File I/O code has no nested error checks |
 
 Every milestone's "Done when" also includes generator rules for its features ([ADR 0033](adr/0033-every-language-feature-has-a-generator-rule.md)).
 
@@ -820,8 +830,6 @@ The first candidates:
   `weak` back links, is the worst case for reference counting. A
   breadth-first search over a graph held as `[[i64]]` measures uniqueness
   and bounds checks on nested arrays.
-- 12: `?` on a path that runs often: a calculator whose every parse and
-  evaluation step returns a `Result`.
 
 A program that also gets ports for the tables in
 [Benchmarks](benchmarks.md) runs at three input sizes, so a cost that grows
@@ -1660,6 +1668,9 @@ accepted.
 
 ## Open decisions
 
+- **Before file handles.** Milestone 12 adds file functions but no file handle.
+  User drop code and recovering from a panic are still due before a file
+  handle exists.
 - **Same-scope shadowing.** Resolved in milestone 4: allowed. `let n = n.trim()`
   in the same scope declares a new binding, and the old one stays visible to
   its own right-hand side.
