@@ -143,7 +143,7 @@ Rules for ruling:
 
 1. Check a finding before you rule. Run its repro or read the source it cites. When the claim does not hold, reject it and say what you saw. Save each repro program you run as `RUN/probes/<round>/<reviewer>-<n>.sisu`.
    A fix that a reviewer suggests, or that you write yourself, is a claim too. Check its text, such as the wording of a comment, against the code before it goes into a brief or a commit.
-2. Severity follows "Reviewing" in `CODING_STANDARDS.md`. A blocking finding is fixed or deferred with the user's agreement. Accept a nit only in round 1, because its fix is code that the next round must review. A nit that names a surviving mutant and the test that kills it is the exception (`solve-issues`, Scope).
+2. Severity follows "Reviewing" in `CODING_STANDARDS.md`. A blocking finding is fixed, or deferred with the user's agreement, except after the fix round of a diff (step 5). Accept a nit only in round 1, because its fix is code that the next round must review. A nit that names a surviving mutant and the test that kills it is the exception (`solve-issues`, Scope).
 3. A ruling must not break a rule in `CODING_STANDARDS.md`.
 4. When two reviewers disagree, rule on the evidence and record the disagreement.
 5. Ask the user instead of ruling when the fix would change the spec's intent, syntax, a diagnostic code, a public interface or the scope, or when you would reject a blocking finding.
@@ -175,20 +175,31 @@ the round's target (for a diff, the fix range) and `--round <round>`. It writes
 `RUN/brief-<round>.md` and takes `RUN/rulings-<round - 1>.md` and each earlier report from `RUN`.
 Its "Re-review" section asks for a verdict on each accepted finding, the
 neighbours of each fix, and regressions against the base of the whole
-work. Send it to the Claude seat; its report goes to `RUN/opus-<round>.md`. Allow at most two
-fix rounds. After the review of the second fix round, do the redo below when
-it applies. Otherwise ask the user about
+work. Send it to the Claude seat; its report goes to `RUN/opus-<round>.md`.
+
+A diff gets one fix round. After the review of that round, a blocking
+finding can still be open. Then file it as a GitHub issue with its repro
+(`docs/agents/issue-tracker.md`), and go on without a question to the
+user. One class of finding is the exception: a crash, wrong behavior at
+run time, or an invalid program that `sisu` accepts or a valid one that
+it rejects. For such a finding, do the redo below when it applies, or ask
+the user.
+
+A spec or a plan gets at most two fix rounds. After the review of the
+second fix round, ask the user about
 each blocking finding that is still open: a third round, or a deferral.
 With the question, say whether the open findings have one cause in the
 approach. When they do, name the other approach.
-A blocking finding in a diff can still be open after the review of the
-second fix round. It can have a small fix, such as a pattern in a hook:
+A blocking finding in a diff can still be open after the review of its
+fix round. It can have a small fix, such as a pattern in a hook:
 fewer than 10 lines, and no change to `sisu` output. It needs no question and
 no reviewer: make the fix, read its diff yourself, and run its tests. A spec
 or a plan gets no such fix. Defer the nits.
 
-Two fix rounds in a row can each add a blocking regression, or the second
-fix of one finding can fail. Then stop patching and do a redo. Give it to a fresh `opus-high` executor.
+For a diff, the fix round can add a finding of that class, or fail to fix
+one. For a spec or a plan,
+two fix rounds in a row can each add a blocking regression. Then stop
+patching and do a redo. Give it to a fresh `opus-high` executor.
 It first commits failing tests for
 each open finding and its neighbours, then fixes the code until they pass.
 The Claude seat reviews the redo as one more round. When that review finds a blocking
