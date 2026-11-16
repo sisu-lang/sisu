@@ -285,10 +285,15 @@ ID>`. Then it has these parts, in this order:
    Fix: <the smallest change that fixes it>
    ```
 
-   A finding is blocking when it means wrong behavior, a crash, a leak,
-   unsound IR, or a wrong diagnostic code or span. It is also blocking when
-   it means a cascade that the diff adds. It is also blocking when it means
-   diagnostic wording that is wrong, misleading, vague or full of jargon. It
+   A finding is blocking when it means wrong behavior, a crash, a leak or
+   unsound IR. It is also blocking when `sisu` accepts an invalid program
+   or rejects a valid one. It is also blocking when a diagnostic code or
+   text differs from the spec's. On a shape that people commonly write,
+   more findings are blocking: a wrong diagnostic code or span, a cascade
+   that the diff adds, and wrong, misleading, vague or jargon-heavy
+   wording. On a rare shape, one that you build to find an edge, these are
+   nits. `CODING_STANDARDS.md` says why ("A wrong diagnostic on a rare
+   shape is an issue"). Say why a shape is common when you block for it. It
    is also blocking when it means semantics the target leaves undefined, or
    a task no reviewer can check. It is also blocking when it means a broken
    rule of `CODING_STANDARDS.md` that it does not itself call a nit. A
