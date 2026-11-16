@@ -1984,6 +1984,64 @@ fn break_name_is_a_label_only_near_one() {
     );
 }
 
+/// A `break` with a value in a `while` is not checked. It fails only the loops that a `break` in
+/// the value may give a value. In the first program the value holds no `break`, so the type
+/// error after the `loop` shows. In the second program it names `outer`, so `outer` has no type
+/// and nothing more shows. In the third program an unlabeled `break` fails the innermost loop.
+#[test]
+fn a_skipped_break_value_should_fail_only_the_loops_its_breaks_can_give_a_value() {
+    let program = |line: &str| {
+        format!("fn main() {{\n    let c = [1].len() == 1\n    {line}\n    print(a + true)\n}}")
+    };
+    codes(
+        &program("let a = loop { while c { break 2 }; break 1 }"),
+        &[
+            (Code::BreakValueNotLoop, (3, 36)),
+            (Code::Mismatch, (4, 15)),
+        ],
+    );
+    codes(
+        &program(
+            "let a = outer: loop { while c { break (if c { break outer 3 } else { 2 }) }; break 1 }",
+        ),
+        &[(Code::BreakValueNotLoop, (3, 43))],
+    );
+    // An unlabeled `break` in the value gives the innermost loop its value, so that loop fails.
+    codes(
+        "fn main() {\n    let c = [1].len() == 1\n    w: while c {\n        let a = loop { break w (if c { break 2 } else { 3 }) }\n        print(a + 1)\n    }\n}",
+        &[(Code::BreakValueNotLoop, (4, 32))],
+    );
+}
+
+/// The walk over skipped `break` values takes at most one step for each token of the program.
+/// `chain(n)` nests `n` skipped values, each in the `if` that `while` needs. So a value that is
+/// walked again at each depth makes the count quadratic. The parser stops at 256 levels of
+/// nesting, which 30 links stay under: a link adds 3.
+#[test]
+fn skipped_break_value_token_walk_should_stay_linear() {
+    let chain = |n: usize| {
+        let value = (0..n).fold("1".to_string(), |inner, _| {
+            format!("if c {{ while c {{ break ({inner}) }}; 1 }} else {{ 2 }}")
+        });
+        format!("fn main() {{\n    let c = [1].len() == 1\n    while c {{ break ({value}) }}\n}}")
+    };
+    crate::on_compiler_stack(|| {
+        let steps = |n: usize| {
+            SKIP_TOKEN_STEPS.set(0);
+            let source = chain(n);
+            let tokens = crate::lexer::lex(&source)
+                .expect("the chain lexes")
+                .tokens
+                .len();
+            drop(checked(&source));
+            let steps = SKIP_TOKEN_STEPS.get();
+            assert!(steps <= tokens, "depth {n}: {steps} steps, {tokens} tokens");
+            steps
+        };
+        assert_near_linear(steps(10), steps(20), steps(30));
+    });
+}
+
 /// The sources that the fixes of the first diagnostic with `code` give. Each keeps the syntax.
 fn fixed_sources(src: &str, code: Code) -> Vec<String> {
     let ds = diags(src);

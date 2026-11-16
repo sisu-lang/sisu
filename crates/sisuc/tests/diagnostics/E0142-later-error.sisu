@@ -1,0 +1,37 @@
+fn row_q1() {
+    let outer = 3
+    let a = loop { outer: loop { break outer 5 }; break 1 }
+    print(a + true)
+}
+
+fn row_q1b() {
+    let c = [1].len() == 1
+    let outer = 3
+    let a = loop { outer: loop { break outer (if c { break 2 } else { 5 }) }; break 1 }
+    print(a + true)
+}
+
+fn row_r11() {
+    let c = [1].len() == 1
+    let outer = 3
+    let a = m: loop { outer: loop { break outer (if c { break m 2 } else { 5 }) }; break 1 }
+    print(a + true)
+}
+
+fn row_r12() {
+    let c = [1].len() == 1
+    let outer = 3
+    let a = m: loop { outer: loop { break outer (if c { continue m } else { 5 }) }; break 1 }
+    print(a + true)
+}
+
+fn row_g17_clash() {
+    let c = [1].len() == 1
+    let outer = 3
+    outer: loop {
+        let a = loop { break outer (if c { break 2 } else { 5 }) }
+        print(a + 1)
+    }
+}
+
+fn main() {}
