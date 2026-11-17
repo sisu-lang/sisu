@@ -279,7 +279,7 @@ impl Checker<'_> {
             |c: &Self, ty: Type| matches!(c.table.resolve(ty).kind(), TypeKind::Optional(_));
         // Each member's top, then its nested members: the candidate, the candidate with `?`
         // added, and whether the member's own type is optional.
-        let mut found: Vec<(Type, Type, bool)> = Vec::new();
+        let mut found: Vec<(Type, Option<Type>, bool)> = Vec::new();
         for &i in taking {
             let member = &mut members[i];
             let mut leaves = Vec::new();
@@ -298,11 +298,17 @@ impl Checker<'_> {
                         hole.and_then(|hole| part_at(place, hole, ty))
                     }
                 };
-                if let (Some(around), Some(lifted)) = (part(leaf.around), part(leaf.lifted)) {
-                    // A top is optional by its part at `hole`, a nested member by its own type.
-                    let own = if k == 0 { around } else { leaf.ty };
-                    found.push((around, lifted, optional(self, own)));
-                }
+                let Some(around) = part(leaf.around) else {
+                    continue;
+                };
+                // A top is optional by its part at `hole`, a nested member by its own type. The
+                // `?` of a top goes on its part, as `?` added at `[T]` has no part at `T`.
+                let (own, lifted) = if k == 0 {
+                    (around, Some(Type::optional(around)))
+                } else {
+                    (leaf.ty, part(leaf.lifted))
+                };
+                found.push((around, lifted, optional(self, own)));
             }
         }
         let optionals = found.iter().filter(|&&(.., own)| own).count();
@@ -315,7 +321,7 @@ impl Checker<'_> {
         };
         for &(around, lifted, own) in &found {
             add(self, around);
-            if optionals > usize::from(own) {
+            if let Some(lifted) = lifted.filter(|_| optionals > usize::from(own)) {
                 add(self, lifted);
             }
         }
