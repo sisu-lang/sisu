@@ -1973,6 +1973,9 @@ impl Checker<'_> {
             let mut with_var = with.clone();
             with_var[t] = var;
             let mut members = Vec::new();
+            // The members that have a value, each with its place filled with `var`, its type and
+            // its span, for the bounds of `T` (see `broken_member`).
+            let mut valued = Vec::new();
             // The members whose part at `T` is still open decide nothing of it. Each takes the
             // type that the others decide, or that the context gives.
             let mut open = Vec::new();
@@ -1991,6 +1994,12 @@ impl Checker<'_> {
                 {
                     open.push((filled, ty, argument));
                     continue;
+                }
+                if value.is_ok()
+                    && let Some(ty) = type_of(value)
+                    && ty != Type::NEVER
+                {
+                    valued.push((filled, ty, argument));
                 }
                 let place = param.subst(&with);
                 let place = if place.has_assoc() {
@@ -2019,6 +2028,16 @@ impl Checker<'_> {
                 && let Some(ty) = type_of(member.value)
             {
                 lone.push((t, member.label, ty, sig.params[*i]));
+            }
+            // The closed call checks a bound of `T` before its join (Q22): E0154 at a member that
+            // breaks it poisons the call, and the join adds no conflict.
+            if failed.is_none()
+                && let Some(reported) = self.broken_member(sig, (t, var), &with, &valued)
+            {
+                self.table.poison(var);
+                failed = Some(reported);
+                quiet.push(t);
+                continue;
             }
             let mut members: Vec<JoinMember<'_>> = members.into_iter().map(|(_, m)| m).collect();
             if let Some(first) = members.first().map(|member| member.label) {
@@ -2319,6 +2338,44 @@ impl Checker<'_> {
         let origin = inferred_origin(call, param).unwrap_or_else(|| call.declarer.origin(i));
         let checked = mark(self.operand(e, Expectation::Required(want, origin)));
         self.refuse_valueless(read_jump(checked))
+    }
+
+    /// The report of the first member in `valued` whose part at the type parameter `t` is closed
+    /// and breaks a bound of `t`. The bound's arguments are closed too. Each entry of `valued` is
+    /// a member's place filled with `var`, its type and its span. A closed call checks it before
+    /// its join (Q22), so that E0154, and no conflict, is the report, as `main` gives.
+    fn broken_member(
+        &mut self,
+        sig: &GenericSig<'_>,
+        (t, var): (usize, Type),
+        with: &[Type],
+        valued: &[(Type, Type, Span)],
+    ) -> Option<Reported> {
+        let bounds = sig.bounds.get(t - sig.owner.len())?;
+        if bounds.list.is_empty() {
+            return None;
+        }
+        let mut with = with.to_vec();
+        for &(filled, ty, at) in valued {
+            let snapshot = self.table.snapshot();
+            let fits = self.unify(filled, ty);
+            let part = self.table.resolve(var);
+            self.table.rollback(snapshot);
+            // The open form (C1c) gives a member whose part at `T` is open to the candidate.
+            if !fits || part.holds_infer() {
+                continue;
+            }
+            with[t] = part;
+            for &bound in &bounds.list {
+                if self.subst_args(bound.args, &with).holds_infer() {
+                    continue;
+                }
+                if let Err(reported) = self.check_bound_of(at, part, bound, &with, None, None) {
+                    return Some(reported);
+                }
+            }
+        }
+        None
     }
 
     /// Checks each bound of a decided parameter of `call` whose type is closed, and gives the
