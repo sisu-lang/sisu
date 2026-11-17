@@ -181,6 +181,7 @@ fn none<T>() -> T? { None }\n\
 fn look<T: Seen>(a: T, b: T) -> i64 { a.seen() }\n\
 fn index_of<T: Eq>(xs: [T], x: T) -> i64 { 0 }\n\
 fn index_last<T: Eq>(x: T, xs: [T]) -> i64 { 0 }\n\
+fn keep<T: Seen>(x: T) -> [T] { [x] }\n\
 struct Boxed<T> {\n\
     v: T\n\
 }\n\
@@ -611,6 +612,10 @@ fn bound_breaking_member_of_a_closed_call_should_give_only_its_bound_error() {
         ("let x = look(a, Eye(v: 2))", &[(Code::NotConform, (1, 14))]),
         ("let x = big(Eye(v: 1), 2)", &[(Code::NotConform, (1, 13))]),
         (
+            "let x = big(Boxed(v: 1), 2)",
+            &[(Code::NotConform, (1, 13))],
+        ),
+        (
             "let x = a == big(Eye(v: 1), a)",
             &[(Code::NotConform, (1, 18))],
         ),
@@ -619,6 +624,56 @@ fn bound_breaking_member_of_a_closed_call_should_give_only_its_bound_error() {
             &[(Code::NotConform, (1, 20))],
         ),
     ]);
+}
+
+#[test]
+fn open_call_in_a_call_join_should_take_the_candidate() {
+    // GIVEN `pick` of a `Two<u8?, u8?>` and `dup(1)`, in each order
+    // WHEN each is checked
+    // THEN each is valid: `dup` takes `T = u8?` from the candidate, and `1` wraps inside it
+    type_rows(&[
+        (
+            "let tt: Two<u8?, u8?> = Two(a: None, b: None)\nlet x = pick(tt, dup(1))",
+            "Two<u8?, u8?>",
+        ),
+        (
+            "let tt: Two<u8?, u8?> = Two(a: None, b: None)\nlet x = pick(dup(1), tt)",
+            "Two<u8?, u8?>",
+        ),
+    ]);
+}
+
+#[test]
+fn open_call_whose_candidate_breaks_its_bound_should_stay_closed() {
+    // GIVEN `pick` of a `[Eye?]` and `keep(Eye(v: 1))`, in each order: at `[Eye?]`, `keep` would
+    //       take `T = Eye?`, which breaks `T: Seen`
+    // WHEN each is checked
+    // THEN each reports one E0032 at `pick`
+    body_rows(&[
+        (
+            "let ys: [Eye?] = [None]\nlet x = pick(ys, keep(Eye(v: 1)))",
+            &[(Code::Mismatch, (2, 9))],
+        ),
+        (
+            "let ys: [Eye?] = [None]\nlet x = pick(keep(Eye(v: 1)), ys)",
+            &[(Code::Mismatch, (2, 9))],
+        ),
+    ]);
+}
+
+#[test]
+fn poisoned_member_should_poison_its_type_parameter() {
+    // GIVEN `f(nope, [none_of()], 1)` with `fn f<T>(a: T, d: [T?], e: T?)`: `nope` names no
+    //       binding
+    // WHEN it is checked
+    // THEN it reports only E0033 at `nope`: `T` is poisoned, and `[none_of()]` adds no E0050
+    let src = "fn none_of<X>() -> X? { None }\nfn f<T>(a: T, d: [T?], e: T?) {}\nfn main() {\n    \
+               f(nope, [none_of()], 1)\n}\n";
+    error_rows(&[(
+        "call",
+        src.to_owned(),
+        vec![(Code::BindingNotFound, (4, 7))],
+    )]);
 }
 
 #[test]
