@@ -120,6 +120,8 @@ enum Property {
     Bound,
     /// One injected mistake gives its errors and no other.
     SingleMistake,
+    /// The program has no error with the members of each join in the other order.
+    JoinOrder,
 }
 
 impl fmt::Display for Property {
@@ -131,6 +133,7 @@ impl fmt::Display for Property {
             Property::Answer => "the answer check",
             Property::Bound => "the bound check",
             Property::SingleMistake => "the single-mistake check",
+            Property::JoinOrder => "the join-order check",
         })
     }
 }
@@ -621,6 +624,28 @@ fn append_lines(seen: &Path, lines: &[String]) {
     appended.unwrap_or_else(|e| panic!("the fuzzer should append to {}: {e}", seen.display()));
 }
 
+/// The join-order check for `g`: its program, which checks clean, has no error with the members
+/// of each join swapped (`generate::swap_joins`). The swap changes what the program does, so the
+/// check only checks it.
+#[cfg_attr(not(test), expect(dead_code, reason = "stage 1 calls it from judge"))]
+fn judge_join_order(g: &Generated) -> Result<(), Failure> {
+    let Some(swapped) = generate::swap_joins(&g.program) else {
+        return Ok(());
+    };
+    let (_, diagnostics) = front_end::front_end(&swapped);
+    let errors: Vec<Diagnostic> = (diagnostics.into_iter())
+        .filter(|d| d.severity() == Severity::Error)
+        .collect();
+    if errors.is_empty() {
+        return Ok(());
+    }
+    let rendered = render("swapped", &swapped, &errors);
+    Err(Failure::new(
+        Property::JoinOrder,
+        format!("the checker rejects the program with each join swapped\n{rendered}"),
+    ))
+}
+
 /// The pairs of `fuzz/known_cascades.txt`, parsed once.
 fn known_cascades() -> &'static [(Kind, String)] {
     static PAIRS: LazyLock<Vec<(Kind, String)>> =
@@ -1043,9 +1068,9 @@ mod tests {
     use super::dbg_location;
     use super::{
         Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Property, Run, build, builds, checked,
-        control_of, is_marked, judge, judge_bounds, judge_builds, judge_edit, judge_known,
-        judge_marked, judge_mistakes, judge_pair, judge_source, known_cascades, parse_cascades,
-        program, program_in, run,
+        control_of, is_marked, judge, judge_bounds, judge_builds, judge_edit, judge_join_order,
+        judge_known, judge_marked, judge_mistakes, judge_pair, judge_source, known_cascades,
+        parse_cascades, program, program_in, run,
     };
     use crate::Allocator;
     use crate::diagnostic::Severity;
@@ -2132,6 +2157,61 @@ mod tests {
         assert!(
             failures.is_empty(),
             "{} seeds fail the single-mistake check",
+            failures.len()
+        );
+    }
+
+    /// GIVEN a program with a join and an unknown name, an error in each order
+    /// WHEN the join-order check reads it
+    /// THEN it fails with the join-order property, and the detail shows the swapped text
+    #[test]
+    fn judge_join_order_should_fail_with_the_join_order_property_when_the_swap_has_an_error() {
+        let g = with_mistakes(
+            "fn main() {\n    print(if nope { 1 } else { 2 })\n}\n",
+            Vec::new(),
+        );
+        let failure = judge_join_order(&g).expect_err("an unknown name should fail the check");
+        assert_eq!(failure.property, Property::JoinOrder);
+        assert!(failure.detail.contains("swapped.sisu"));
+        assert!(failure.detail.contains("if nope { 2 } else { 1 }"));
+    }
+
+    /// GIVEN a program with a join and an unused binding, a warning in each order
+    /// WHEN the join-order check reads it
+    /// THEN it passes
+    #[test]
+    fn judge_join_order_should_ignore_warnings() {
+        let program = "fn main() {\n    let unused = 3\n    let c = [1].len() == 1\n    let x = if c { 1 } else { 2 }\n    print(x)\n}\n";
+        let g = with_mistakes(program, Vec::new());
+        assert!(judge_join_order(&g).is_ok());
+    }
+
+    /// The join-order check over the fuzz seeds `0..FUZZ_SEEDS`. It prints the first error of
+    /// each seed that fails, and how many seeds have a join.
+    #[test]
+    #[ignore = "runs only on demand, over the seeds 0..FUZZ_SEEDS of the fuzz run"]
+    fn join_order_check_should_hold_for_the_fuzz_seeds() {
+        let (mut joined, mut failures) = (0, Vec::new());
+        for n in 0..FUZZ_SEEDS {
+            let g = generate(&seed(n));
+            joined += usize::from(crate::generate::swap_joins(&g.program).is_some());
+            if let Err(f) = crate::on_compiler_stack(|| judge_join_order(&g)) {
+                let error = (f.detail.lines()).find(|line| line.starts_with("error"));
+                let at = (f.detail.lines()).find(|line| line.trim_start().starts_with("-->"));
+                failures.push(format!(
+                    "seed {n}: {} {}",
+                    error.unwrap_or(""),
+                    at.unwrap_or("")
+                ));
+            }
+        }
+        println!("programs with a join: {joined} of {FUZZ_SEEDS}");
+        for failure in &failures {
+            println!("{failure}");
+        }
+        assert!(
+            failures.is_empty(),
+            "{} seeds fail the join-order check",
             failures.len()
         );
     }
