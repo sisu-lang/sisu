@@ -19,6 +19,17 @@ use crate::source::Span;
 use crate::tir::{self, ExprKind, Type, TypeArgs, TypeKind};
 use crate::types::InferId;
 
+#[cfg(test)]
+thread_local! {
+    /// The obligations that a bind has looked at.
+    static OBLIGATION_VISITS: Cell<usize> = const { Cell::new(0) };
+    /// The steps to keep each root of a type once: one for each root met, and one for each root
+    /// already kept that a hand-made search compares it with.
+    static ROOT_STEPS: Cell<usize> = const { Cell::new(0) };
+    /// The types that `rebuild_in` has rebuilt: the ones that its memo did not hold.
+    static REBUILDS: Cell<usize> = const { Cell::new(0) };
+}
+
 /// What a variable stands for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
@@ -346,10 +357,14 @@ impl Table {
             match ty.kind() {
                 TypeKind::Infer(id) => {
                     let root = self.find(id.0);
-                    match self.slots[root as usize].root.bound {
-                        Some(bound) => stack.push(bound),
-                        None if !roots.contains(&root) => roots.push(root),
-                        None => {}
+                    if let Some(bound) = self.slots[root as usize].root.bound {
+                        stack.push(bound);
+                    } else {
+                        #[cfg(test)]
+                        ROOT_STEPS.set(ROOT_STEPS.get() + roots.len() + 1);
+                        if !roots.contains(&root) {
+                            roots.push(root);
+                        }
                     }
                 }
                 TypeKind::Array(inner) | TypeKind::Optional(inner) => stack.push(inner),
@@ -390,6 +405,8 @@ impl Table {
         if let Some(&done) = memo.get(&ty) {
             return done;
         }
+        #[cfg(test)]
+        REBUILDS.set(REBUILDS.get() + 1);
         let done = ensure_stack(|| match ty.kind() {
             TypeKind::Infer(id) => {
                 let root = self.find(id.0);
@@ -577,6 +594,8 @@ impl Table {
             if self.obligations[at].done {
                 continue;
             }
+            #[cfg(test)]
+            OBLIGATION_VISITS.set(OBLIGATION_VISITS.get() + 1);
             let resolved = self.resolve(self.obligations[at].ty);
             if !resolved.holds_infer() {
                 self.obligations[at].done = true;
@@ -1062,5 +1081,189 @@ mod tests {
         assert_eq!(table.default_open(Type::array(any)), Type::array(any));
         // It binds nothing: the literal can still settle to `u8`.
         assert!(unified(&mut table, int, Type::U8).is_some());
+    }
+
+    /// A type of `Struct 0` that holds each of `args`.
+    fn holding(args: &[Type]) -> Type {
+        Type::intern(TypeKind::Struct(tir::StructId(0), TypeArgs::intern(args)))
+    }
+
+    #[test]
+    fn write_back_should_report_each_independent_any_set_of_a_type() {
+        let mut table = Table::default();
+        let (a, b) = (table.fresh(Kind::Any, at(3)), table.fresh(Kind::Any, at(8)));
+        let mut expr = tir::Expr::new(ExprKind::Unit, holding(&[a, b]), at(0));
+        let written = expr.write_back_all(&mut table);
+        assert_eq!(
+            written.unsettled,
+            [Unsettled { origin: at(3) }, Unsettled { origin: at(8) }]
+        );
+    }
+
+    /// The obligation visits that settling `n` independent obligations costs.
+    fn obligation_visits(n: usize) -> usize {
+        let mut table = Table::default();
+        let vars: Vec<Type> = (0..n).map(|i| table.fresh(Kind::Any, at(i))).collect();
+        for (i, &var) in vars.iter().enumerate() {
+            table.obligation(Type::array(var), ObligationId(i));
+        }
+        OBLIGATION_VISITS.set(0);
+        for &var in &vars {
+            let ready = table.unify(var, Type::I64).expect("A should unify");
+            assert_eq!(ready.len(), 1, "a bind readies its own obligation only");
+        }
+        OBLIGATION_VISITS.get()
+    }
+
+    #[test]
+    fn bind_should_visit_only_its_own_obligations() {
+        // Each bind looks at its own obligation: the work stays linear in the obligations.
+        assert!(obligation_visits(100) <= 200);
+        assert!(obligation_visits(200) <= 400);
+    }
+
+    #[test]
+    fn open_roots_should_keep_each_root_in_linear_steps() {
+        let mut table = Table::default();
+        let vars: Vec<Type> = (0..400).map(|i| table.fresh(Kind::Any, at(i))).collect();
+        ROOT_STEPS.set(0);
+        table.poison(holding(&vars));
+        assert!(ROOT_STEPS.get() <= 4 * vars.len(), "{}", ROOT_STEPS.get());
+    }
+
+    /// The types that writing back `n` nested inferred types rebuilds: `A_0` is `i64` and each
+    /// `A_i` is `[A_(i-1)]`, and each of them is the type of a node.
+    fn rebuilds(n: usize) -> usize {
+        let mut table = Table::default();
+        let vars: Vec<Type> = (0..n).map(|i| table.fresh(Kind::Any, at(i))).collect();
+        assert!(table.unify(vars[0], Type::I64).is_some());
+        for pair in vars.windows(2) {
+            assert!(table.unify(pair[1], Type::array(pair[0])).is_some());
+        }
+        let nodes = vars
+            .iter()
+            .map(|&var| tir::Expr::new(ExprKind::Unit, var, at(0)))
+            .collect();
+        let mut expr = tir::Expr::new(ExprKind::ArrayLit(nodes), Type::UNIT, at(0));
+        REBUILDS.set(0);
+        let written = expr.write_back_all(&mut table);
+        assert!(!written.open);
+        REBUILDS.get()
+    }
+
+    #[test]
+    fn write_back_should_rebuild_each_type_once_for_a_function() {
+        assert!(rebuilds(100) <= 400, "{}", rebuilds(100));
+        assert!(rebuilds(200) <= 800, "{}", rebuilds(200));
+    }
+
+    #[test]
+    fn rollback_should_restore_a_union() {
+        let mut table = Table::default();
+        let (a, b) = (table.fresh(Kind::Any, at(0)), table.fresh(Kind::Any, at(1)));
+        let snapshot = table.snapshot();
+        assert!(unified(&mut table, a, b).is_some());
+        assert!(unified(&mut table, a, Type::I64).is_some());
+        table.rollback(snapshot);
+        assert!(unified(&mut table, a, Type::STRING).is_some());
+        assert!(unified(&mut table, b, Type::I64).is_some());
+        assert_eq!(table.resolve(a), Type::STRING);
+        assert_eq!(table.resolve(b), Type::I64);
+    }
+
+    #[test]
+    fn rollback_should_undo_a_union_under_a_longer_path() {
+        // A walk inside the snapshot must not halve a path through the union that is undone.
+        let mut table = Table::default();
+        let [one, two, three, four, five] = [0, 1, 2, 3, 4].map(|i| table.fresh(Kind::Any, at(i)));
+        assert!(unified(&mut table, one, two).is_some());
+        assert!(unified(&mut table, three, four).is_some());
+        assert!(unified(&mut table, four, five).is_some());
+        let snapshot = table.snapshot();
+        assert!(unified(&mut table, two, three).is_some());
+        assert_eq!(table.resolve(two), table.resolve(five));
+        table.rollback(snapshot);
+        assert!(unified(&mut table, three, Type::I64).is_some());
+        assert!(
+            table.resolve(two).holds_infer(),
+            "`two` is not in the set of `three` any more"
+        );
+        assert_eq!(table.resolve(two), table.resolve(one));
+        assert_eq!(table.resolve(five), Type::I64);
+    }
+
+    #[test]
+    fn failed_unify_should_leave_no_partial_bind() {
+        let mut table = Table::default();
+        let a = table.fresh(Kind::Any, at(0));
+        let class =
+            |args: &[Type]| Type::intern(TypeKind::Class(tir::ClassId(0), TypeArgs::intern(args)));
+        // `A` binds to `i64` before the second pair, `i64` and `string`, fails.
+        assert!(
+            unified(
+                &mut table,
+                class(&[Type::I64, a]),
+                class(&[Type::STRING, Type::I64])
+            )
+            .is_none()
+        );
+        assert_eq!(table.resolve(a), a);
+    }
+
+    #[test]
+    fn rollback_should_undo_a_poison() {
+        let mut table = Table::default();
+        let int = table.fresh(Kind::Int, at(0));
+        table.literal(int, literal(at(0), 300));
+        let snapshot = table.snapshot();
+        table.poison(int);
+        table.rollback(snapshot);
+        assert_eq!(
+            unified(&mut table, int, Type::U8).map(|ready| ready.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn union_should_keep_the_poison_of_either_set() {
+        let mut table = Table::default();
+        let (a, b) = (table.fresh(Kind::Int, at(0)), table.fresh(Kind::Int, at(1)));
+        table.literal(a, literal(at(0), 300));
+        table.literal(b, literal(at(1), 300));
+        table.poison(a);
+        assert!(unified(&mut table, b, a).is_some());
+        assert_eq!(unified(&mut table, a, Type::U8), Some(Vec::new()));
+    }
+
+    #[test]
+    fn rollback_should_make_a_done_obligation_wait_again() {
+        let mut table = Table::default();
+        let a = table.fresh(Kind::Any, at(0));
+        table.obligation(Type::array(a), ObligationId(1));
+        let snapshot = table.snapshot();
+        assert_eq!(unified(&mut table, a, Type::I64), Some(Vec::new()));
+        table.rollback(snapshot);
+        let ready = unified(&mut table, a, Type::I64).expect("A should unify");
+        assert_eq!(ready.len(), 1);
+    }
+
+    #[test]
+    fn rollback_should_remove_a_check_made_in_the_snapshot() {
+        let mut table = Table::default();
+        let (int, any) = (table.fresh(Kind::Int, at(0)), table.fresh(Kind::Any, at(1)));
+        let snapshot = table.snapshot();
+        table.literal(int, literal(at(0), 300));
+        table.obligation(Type::array(any), ObligationId(1));
+        table.rollback(snapshot);
+        assert_eq!(unified(&mut table, int, Type::U8), Some(Vec::new()));
+        assert_eq!(unified(&mut table, any, Type::I64), Some(Vec::new()));
+    }
+
+    #[test]
+    fn type_that_holds_a_variable_should_count_as_maybe_counted() {
+        // The checker asks before `write_back`: no answer here may panic.
+        let mut table = Table::default();
+        let var = table.fresh(Kind::Int, at(0));
+        assert!(var.is_counted(&[], &[]));
     }
 }

@@ -302,8 +302,7 @@ impl Checker<'_> {
         } else {
             reason(ReasonKind::Assoc(0))
         };
-        // The ids of the variables in a key start at 0 in each function's table, so a key that
-        // holds one is computed each time.
+        // No key holds a variable today; the guard keeps it so when an `any` argument can.
         if !args.holds_infer() {
             self.any_entries.insert((interface, args), answer);
         }

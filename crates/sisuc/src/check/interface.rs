@@ -2261,7 +2261,7 @@ impl Checker<'_> {
     /// over growing types takes time in proportion to them, with a large constant. What it does not
     /// follow reaches `mono`, which reports a loop or a chain that is too long (E0030) for a type
     /// that an instance meets. Upgrade when a program needs `check` to find those too.
-    fn probe_associated(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) {
+    pub(super) fn probe_associated(&mut self, ty: Type, interface: InterfaceId, args: TypeArgs) {
         self.probe_budget = PROBE_BUDGET;
         self.probe_further(ty, interface, args);
     }

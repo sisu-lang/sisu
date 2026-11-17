@@ -48,7 +48,6 @@ fn cache_should_not_keep_an_inference_variable_across_functions() {
                 let closure = c.any_interfaces(ty);
                 // THEN the key that holds the variable is not kept, so the next lookup is computed
                 assert!(!c.any_closures.contains_key(&ty));
-                assert!(!c.any_entries.keys().any(|(_, args)| args.holds_infer()));
                 Nothing(closure.to_vec())
             })
             .0;
@@ -58,4 +57,55 @@ fn cache_should_not_keep_an_inference_variable_across_functions() {
     checker.any_interfaces(any_of(Type::I64));
     assert!(checker.any_closures.contains_key(&any_of(Type::I64)));
     assert!(closures.iter().all(|closure| !closure.is_empty()));
+}
+
+#[test]
+fn cache_should_not_keep_a_conformance_leaf_or_probe_of_a_type_that_holds_a_variable() {
+    // GIVEN a generic class and an interface with an associated type
+    // The first interface stands for each language interface, which `conforms` answers at once.
+    let src = "interface Pad {\n    fn pad(self) -> bool\n}\ninterface Source {\n    type Item\n    fn next(self) -> Item\n}\nclass Box<T> {\n    item: T\n}\n";
+    let program = parse_ok(src);
+    let mut checker = Checker::new(&program, src, "");
+    let items: Vec<&ast::Item> = program.items.iter().collect();
+    checker.collect_names(&items, items.len(), &program.broken);
+    checker.interface_signatures(&items);
+    let Some(Declared::Known(source)) = checker.names.interface(Symbol::intern("Source")) else {
+        panic!("Source should be an interface");
+    };
+    let Some(Declared::Known(boxed)) = checker.names.class(Symbol::intern("Box")) else {
+        panic!("Box should be a class");
+    };
+    // The marks that the pass before the bodies makes: `Box` does not grow.
+    checker.growing_classes = vec![false];
+    checker.with_table(|c| {
+        let var = c.table.fresh(Kind::Any, Span::new(0, 1));
+        let held = Type::intern(TypeKind::Class(boxed, TypeArgs::intern(&[var])));
+        // WHEN the checker asks about `Box<A>`: a conformance, its failing part and its probe
+        c.conforms(held, source, TypeArgs::NONE);
+        c.failing_leaf(held, source, TypeArgs::NONE);
+        c.probe_associated(held, source, TypeArgs::NONE);
+        let closed = Type::intern(TypeKind::Class(boxed, TypeArgs::intern(&[Type::I64])));
+        c.conforms(closed, source, TypeArgs::NONE);
+        c.failing_leaf(closed, source, TypeArgs::NONE);
+        // The key with no variable is kept, as before.
+        assert!(c.conformed.contains_key(&(closed, source, TypeArgs::NONE)));
+        // THEN no check-wide cache keeps a key that holds the variable
+        assert!(
+            !c.conformed
+                .keys()
+                .any(|(ty, _, args)| ty.holds_infer() || args.holds_infer())
+        );
+        assert!(
+            !c.leaves
+                .keys()
+                .any(|(ty, _, args)| ty.holds_infer() || args.holds_infer())
+        );
+        assert!(
+            !c.probed_types
+                .iter()
+                .any(|(ty, _, args)| ty.holds_infer() || args.holds_infer())
+        );
+        assert!(!c.probed_assoc.iter().any(|ty| ty.holds_infer()));
+        Nothing(())
+    });
 }
