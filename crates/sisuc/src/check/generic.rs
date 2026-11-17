@@ -2041,6 +2041,18 @@ impl Checker<'_> {
                                 _ => ty,
                             })
                             .collect();
+                        // A `unit` that fits for no type is no value (E0043), as for a callee
+                        // that is not generic.
+                        if ty == Type::UNIT {
+                            let cause = self.no_value_cause(
+                                &args[i].value,
+                                value.as_ref().ok(),
+                                (ty, None),
+                                false,
+                            );
+                            failed.get_or_insert_with(|| self.no_value(argument, cause));
+                            continue;
+                        }
                         let got = self.table.default_open(self.table.resolve(ty));
                         let origin = call.declarer.origin(i);
                         let d = self.mismatch(argument, None, param.subst(&named), got, origin);
@@ -2280,18 +2292,20 @@ impl Checker<'_> {
             met = self.meet_context(&call, sig, &decided, (expected, false));
         }
         let mut failed = failed.or(call.failed).or(call.rejected);
-        if broken {
-            failed.get_or_insert_with(|| self.proof(span)); // proof: declaration
-        }
+        // A broken parameter fails the call, but another one that nothing decides is still E0050.
         if failed.is_none() {
             match self.close_call(&mut call, sig, (&decided, &lone), (expected, met)) {
                 Ok(()) => {}
-                Err(poisoned) if poisoned.mismatch => {
+                // A mismatch, or a misfit that the code using the value reports.
+                Err(poisoned) if poisoned.mismatch || poisoned.found.is_some() => {
                     self.mut_final(&mut call, sig, args, None);
                     return Err(poisoned);
                 }
                 Err(poisoned) => failed = Some(poisoned.reported()),
             }
+        }
+        if broken {
+            failed.get_or_insert_with(|| self.proof(span)); // proof: declaration
         }
         // A parameter whose join or member reported has no bound left to check.
         let bounded: Vec<(usize, Type)> = (decided.iter().copied())
@@ -2377,7 +2391,13 @@ impl Checker<'_> {
             return Expectation::Member;
         };
         let want = self.table.resolve(want);
-        let Some(part) = part_at(self.table.resolve(ret.subst(with)), name, want) else {
+        // A result that is not optional meets the payload of an optional `want`, and the call's
+        // value is wrapped (see `meet_context`).
+        let shown = self.table.resolve(ret.subst(with));
+        let Some(part) = part_at(shown, name, want).or_else(|| match want.kind() {
+            TypeKind::Optional(inner) => part_at(shown, name, inner),
+            _ => None,
+        }) else {
             return Expectation::Member;
         };
         let closed = self.join_type(members, Some(name), None);
@@ -2801,11 +2821,15 @@ impl Checker<'_> {
         if want.holds_hole() || decided.is_empty() {
             return None;
         }
+        let optional = matches!(want.kind(), TypeKind::Optional(_));
+        // The value of a safe call is optional: a context that is not cannot meet it.
+        if self.body.safe_call == Some(call.at) && !optional {
+            return Some(false);
+        }
         let with: Vec<Type> = (call.bindings.found.iter())
             .map(|&ty| self.table.resolve(listed(ty)))
             .collect();
         let ret = ret.subst(&with);
-        let optional = matches!(want.kind(), TypeKind::Optional(_));
         Some(if whole {
             self.unify(ret, want) || optional && self.unify(ret, payload(want))
         } else {
@@ -2861,12 +2885,27 @@ impl Checker<'_> {
             call.bindings.found[t] = Some(ty);
             if ty.holds_infer() {
                 self.table.poison(ty);
-                let reported = if expected == Expectation::Poisoned {
-                    self.proof(call.at) // proof: quiet reader
-                } else {
-                    self.cannot_infer(sig, t)
-                };
-                return Err(Poisoned::untyped(reported));
+                // A parameter's or the result type that is not found may be what would decide it.
+                if sig.params.contains(&None) || sig.ret.is_none() {
+                    let reported = self.proof(call.at); // proof: declaration
+                    return Err(Poisoned::untyped(reported));
+                }
+                if expected == Expectation::Poisoned {
+                    let reported = self.proof(call.at); // proof: quiet reader
+                    return Err(Poisoned::untyped(reported));
+                }
+                // A misfit needs a known context, and a parameter that the result names and that
+                // no member gave a part of: else the open part is the fault, as `None` for `B` is.
+                if met == Some(false)
+                    && matches!(ty.kind(), TypeKind::Infer(_))
+                    && sig.ret.is_some_and(|ret| names_outside_assoc(ret, t))
+                    && let Expectation::Required(want, _) | Expectation::Hint { want, .. } =
+                        expected
+                    && self.known_context(call, want)
+                {
+                    return Err(self.misfit(call, sig, t));
+                }
+                return Err(Poisoned::untyped(self.cannot_infer(sig, t)));
             }
         }
         Ok(())
@@ -3107,6 +3146,44 @@ impl Checker<'_> {
             let fresh = std::mem::take(&mut call.bindings.fresh);
             self.check_early(call, &fresh, at);
             call.bindings.fresh = fresh;
+        }
+    }
+
+    /// Whether `want`, the context of `call`, is known enough to report a result that cannot meet
+    /// it. It holds no open variable, or `call` is a safe call. No context that is not optional
+    /// meets the optional value of a safe call, whatever its open parts become.
+    fn known_context(&self, call: &Inference<'_>, want: Type) -> bool {
+        let want = self.table.resolve(want);
+        !want.holds_infer()
+            || self.body.safe_call == Some(call.at)
+                && !matches!(want.kind(), TypeKind::Optional(_) | TypeKind::Infer(_))
+    }
+
+    /// The failed `call`, whose result could not meet its known context and left its parameter
+    /// `param` open. The code that uses the value reports the mismatch with the result type, as
+    /// for a callee that is not generic; the call's E0050 waits in `Body::misfits` until that
+    /// report cancels it (see `Misfit`). An open parameter shows as a hole.
+    fn misfit(&mut self, call: &Inference<'_>, sig: &GenericSig<'_>, param: usize) -> Poisoned {
+        let with: Vec<Type> = (call.bindings.found.iter())
+            .map(|&ty| {
+                let ty = self.table.resolve(listed(ty));
+                if ty.holds_infer() { *HOLE } else { ty }
+            })
+            .collect();
+        let ret = sig.ret.map_or(*HOLE, |ret| ret.subst(&with));
+        // The result of a safe call is optional (see `Checker::member`).
+        let ty = if self.body.safe_call == Some(call.at) {
+            super::as_optional(ret)
+        } else {
+            ret
+        };
+        let entry = self.body.misfits.len();
+        let d = Self::cannot_infer_kind(sig, param).into();
+        self.body.misfits.push(Some(d));
+        let reported = self.proof(call.at); // proof: held misfit
+        Poisoned {
+            found: Some(super::Misfit { ty, entry }),
+            ..Poisoned::untyped(reported)
         }
     }
 

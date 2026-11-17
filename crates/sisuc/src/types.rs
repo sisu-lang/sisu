@@ -492,6 +492,11 @@ fn write_steps<'n>(
                 steps.extend([Step::Assoc(interface, k), Step::Type(base)]);
                 continue;
             }
+            // A variable that is still open is a hole, as an unbound parameter is.
+            TypeKind::Infer(_) => {
+                out.push('_');
+                continue;
+            }
             _ => {
                 fmt::Write::write_fmt(out, format_args!("{ty}"))
                     .expect("writing to a `String` should not fail");
