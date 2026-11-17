@@ -337,7 +337,7 @@ class Brief(Repo):
         copy = self.run_dir / "CODING_STANDARDS.md"
         self.assertEqual(copy.read_text(), "main rules\n")
         self.assertIn(f"- `{copy}`: `CODING_STANDARDS.md` as `origin/main` has", text)
-        self.assertIn("The diff changes `CODING_STANDARDS.md`.", text)
+        self.assertIn("The diff changes `CODING_STANDARDS.md`. Judge the diff by the copy", text)
 
     def test_a_brief_without_origin_main_should_name_the_checkouts_rules(self) -> None:
         text = self.brief("HEAD~2..HEAD")
