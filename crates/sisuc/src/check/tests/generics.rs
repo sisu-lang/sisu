@@ -8866,3 +8866,68 @@ fn comparisons_that_the_ordering_rule_leaves_should_report_the_code_and_place_th
     ];
     error_rows(&rows);
 }
+
+/// GIVEN a generic call whose result cannot meet a known type, with no argument to decide `X`
+/// WHEN the call is checked under a written type, as an argument and in a comparison
+/// THEN the code that uses the value reports the mismatch, as for a callee that is not generic,
+/// and the call reports no E0050.
+#[test]
+fn an_open_call_against_a_known_type_should_report_the_mismatch_not_its_parameter() {
+    let src = "struct Box<A, B> {\n    a: A\n    b: B\n}\n\
+               fn mk2<X>() -> Box<X, bool> { panic(\"no\") }\n\
+               fn fi(_x: i64) -> i64 { 0 }\n\
+               fn main() {\n    let x: i64 = mk2()\n    print(fi(mk2()))\n    \
+               print(1 == mk2())\n    print(x)\n}";
+    codes(
+        src,
+        &[
+            (Code::Mismatch, (8, 18)),
+            (Code::Mismatch, (9, 14)),
+            (Code::CannotCompare, (10, 11)),
+        ],
+    );
+}
+
+/// GIVEN a safe call whose optional value meets a context
+/// WHEN the context is optional, its payload gives `E`; when it is not, nothing meets it
+/// THEN the argument that breaks the payload is the mismatch. A context that is not optional is a
+/// mismatch at the call, not an E0050 of the method.
+#[test]
+fn a_safe_call_against_a_known_context_should_report_the_mismatch() {
+    let src = "enum Two<A, B> {\n    P(A, B)\n}\n\
+               struct D {\n    fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") }\n    \
+               fn make<E>(self) -> Two<E, string> { panic(\"e\") }\n}\n\
+               fn h<U, V>(a: U, b: Two<U, V>?) {}\n\
+               fn f<T>(r: Two<T, string>) {}\n\
+               fn main() {\n    let d: D? = D()\n    h(true, d?.m2(\"s\"))\n    f(d?.make())\n}";
+    codes(
+        src,
+        &[(Code::Mismatch, (12, 19)), (Code::Mismatch, (13, 7))],
+    );
+}
+
+/// GIVEN a generic call whose parameter or result type is not found, or whose other type
+/// parameter is a built-in name
+/// WHEN nothing decides a type parameter of the call
+/// THEN the unknown type alone is reported, and the parameter that is not reported is still E0050.
+#[test]
+fn a_true_error_of_a_signature_should_decide_the_cannot_infer_of_a_call() {
+    codes(
+        "fn f<T>(x: Nope<T>) -> T { panic(\"x\") }\nfn main() {\n    let y = f(1)\n}",
+        &[(Code::UnknownType, (1, 12))],
+    );
+    codes(
+        "fn f<i64, T>() -> [T] { [] }\nfn main() {\n    print(f().len())\n}",
+        &[(Code::BuiltInName, (1, 6)), (Code::CannotInfer, (3, 11))],
+    );
+}
+
+/// GIVEN a generic call that returns `unit`
+/// WHEN it is the argument of a generic parameter that is not a bare type parameter
+/// THEN it is no value (E0043), as for a callee that is not generic.
+#[test]
+fn a_unit_argument_of_a_generic_place_should_report_no_value() {
+    with_prelude();
+    let src = "fn mk<E>(x: E?) {}\nfn f<T>(r: [T]) {}\nfn main() {\n    f(mk(Some(1)))\n}";
+    codes(src, &[(Code::NoValue, (4, 7))]);
+}
