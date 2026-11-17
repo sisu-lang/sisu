@@ -598,6 +598,30 @@ fn poisoned_member_should_report_nothing_more() {
 }
 
 #[test]
+fn bound_breaking_member_of_a_closed_call_should_give_only_its_bound_error() {
+    // GIVEN closed generic calls whose argument of a closed type breaks the bound of its type
+    // parameter. Another argument at that parameter stands beside it. The call stands alone,
+    // beside `==` and in an `if`
+    // WHEN each is checked
+    // THEN each gives only E0154 at that argument: the call's join adds no conflict, and the
+    // poisoned call adds nothing to the join around it
+    body_rows(&[
+        ("let x = big(Eye(v: 1), a)", &[(Code::NotConform, (1, 13))]),
+        ("let x = big(a, Eye(v: 1))", &[(Code::NotConform, (1, 16))]),
+        ("let x = look(a, Eye(v: 2))", &[(Code::NotConform, (1, 14))]),
+        ("let x = big(Eye(v: 1), 2)", &[(Code::NotConform, (1, 13))]),
+        (
+            "let x = a == big(Eye(v: 1), a)",
+            &[(Code::NotConform, (1, 18))],
+        ),
+        (
+            "let x = if c { big(Eye(v: 1), a) } else { a }",
+            &[(Code::NotConform, (1, 20))],
+        ),
+    ]);
+}
+
+#[test]
 fn bare_break_in_a_member_loop_should_keep_its_report() {
     // GIVEN loops with a bare `break` beside a `break` with a value, each a member of a join
     // WHEN each is checked
