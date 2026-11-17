@@ -151,8 +151,9 @@ impl Checker<'_> {
         if matches!(expected, Expectation::Member) {
             let ty = self.int_variable(LiteralCheck {
                 span: at,
+                literal,
                 value: value.unsigned_abs(),
-                negative: value < 0,
+                negated: (value < 0).then_some(at),
             });
             return Ok(tir::Expr::new(tir::ExprKind::Int(value), ty, at));
         }

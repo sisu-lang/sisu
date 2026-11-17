@@ -55,13 +55,17 @@ enum Open {
 }
 
 /// The value and sign of an integer literal in an `Int` variable, which E0040, E0042 and E0104
-/// check when the variable gets its type. `value` is the magnitude: a literal is negative only
-/// as `-9223372036854775808`.
+/// check when the variable gets its type. They report as `integer` and `negated` do for a known
+/// type. `value` is the magnitude: a literal is negative only as `-9223372036854775808`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct LiteralCheck {
+    /// The literal, with its parentheses: E0040 and E0104 go here.
     pub(super) span: Span,
+    /// The token, whose text the message names.
+    pub(super) literal: Span,
     pub(super) value: u64,
-    pub(super) negative: bool,
+    /// The `-` and its operand when the literal is negated: E0042 goes here.
+    pub(super) negated: Option<Span>,
 }
 
 /// A place in the list of obligations that `generic.rs` and `conform.rs` own. The table holds it
@@ -213,14 +217,15 @@ impl Table {
     }
 
     /// Keeps the obligation `id`, which needs `ty` to hold no open variable: it is ready when the
-    /// last one gets its type. `ty` holds an open variable now.
+    /// last one gets its type, or now when `ty` holds none.
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "the first caller comes in Task 5")
     )]
     pub(super) fn obligation(&mut self, ty: Type, id: ObligationId) {
         let Some(&at) = self.open_roots(ty).first() else {
-            debug_assert!(false, "an obligation should wait for an open variable");
+            let ty = self.resolve(ty);
+            self.ready.push(Waiting::Obligation { id, ty });
             return;
         };
         self.slots[at as usize].waiting.push(self.obligations.len());
@@ -684,6 +689,8 @@ impl Table {
             }
             #[cfg(test)]
             OBLIGATION_VISITS.set(OBLIGATION_VISITS.get() + 1);
+            // shortcut: each wake resolves the whole type, O(k²) over the k variables of one
+            // obligation; keep a cursor into its open roots if a type with many shows in a profile.
             let resolved = self.resolve(self.obligations[obligation].ty);
             if let Some(&next) = self.open_roots(resolved).first() {
                 self.obligations[obligation].at = next;
@@ -870,18 +877,16 @@ impl Checker<'_> {
         };
         let LiteralCheck {
             span,
+            literal,
             value,
-            negative,
+            negated,
         } = check;
         if ty == Type::U8 {
-            if negative {
-                self.error(DiagnosticKind::NegatedU8 {
-                    at: span,
-                    convert: None,
-                });
+            if let Some(at) = negated {
+                self.error(DiagnosticKind::NegatedU8 { at, convert: None });
             } else if value > u64::from(u8::MAX) {
                 self.error(DiagnosticKind::IntegerDoesNotFit {
-                    text: self.source.text(span).to_string(),
+                    text: self.source.text(literal).to_string(),
                     at: span,
                 });
             }
@@ -894,10 +899,11 @@ impl Checker<'_> {
                 reason = "the round trip is the check that the `f64` is exact"
             )]
             let (x, exact) = (value as f64, (value as f64) as u128 == u128::from(value));
+            // E0104 and its fix stand at the operand of a `-`, so `nearest` has no sign.
             if !exact {
                 self.error(DiagnosticKind::NotExactlyF64 {
-                    text: self.source.text(span).to_string(),
-                    nearest: format!("{:?}", if negative { -x } else { x }),
+                    text: self.source.text(literal).to_string(),
+                    nearest: format!("{x:?}"),
                     at: span,
                 });
             }
@@ -965,8 +971,9 @@ mod tests {
     fn literal(span: Span, value: u64) -> LiteralCheck {
         LiteralCheck {
             span,
+            literal: span,
             value,
-            negative: false,
+            negated: None,
         }
     }
 
@@ -1161,8 +1168,9 @@ mod tests {
                 var,
                 LiteralCheck {
                     span,
+                    literal: span,
                     value: 1 << 63,
-                    negative: true,
+                    negated: Some(span),
                 },
             );
             assert!(c.unify(var, Type::U8));
@@ -1224,6 +1232,35 @@ mod tests {
             (Code::NotExactlyF64, nth(src, "9007199254740993", 0))
         );
         assert_eq!(member, literal_reports(src, Type::F64, false));
+    }
+
+    #[test]
+    fn member_literal_in_parentheses_should_name_its_token() {
+        // The parentheses stand outside the token: E0040 covers them, and its text does not.
+        let src = "fn main() {\n    let x: u8 = (300)\n}\n";
+        let program = parse_ok(src);
+        let Some(ast::Item::Function(main)) = program.items.first() else {
+            panic!("the program should start with `main`");
+        };
+        let ast::StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("`main` should start with a `let`");
+        };
+        with_checker(src, |c| {
+            let Ok(value) = c.expr(init, Expectation::Member) else {
+                panic!("the member should check");
+            };
+            let ready = c
+                .table
+                .unify(value.ty, Type::U8)
+                .expect("the literal should take `u8`");
+            let [Waiting::Literal { check, .. }] = ready[..] else {
+                panic!("the literal's check should be ready");
+            };
+            assert_eq!(c.source.text(check.literal), "300");
+        });
+        let member = literal_reports(src, Type::U8, true);
+        assert_eq!(member.len(), 1, "E0040 should be reported once");
+        assert_eq!(member, literal_reports(src, Type::U8, false));
     }
 
     #[test]

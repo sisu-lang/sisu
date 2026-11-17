@@ -31,11 +31,12 @@ impl Checker<'_> {
         // A member's `-` of a literal is a literal of an `Int` variable, as `integer` makes. Any
         // other operand is not a value position, so it is not a member.
         let expected = match (expected, &operand.kind) {
-            (Expectation::Member, &ExprKind::Int { value, .. }) => {
+            (Expectation::Member, &ExprKind::Int { value, literal }) => {
                 let ty = self.int_variable(LiteralCheck {
-                    span,
+                    span: operand.span,
+                    literal,
                     value: value.unsigned_abs(),
-                    negative: true,
+                    negated: Some(span),
                 });
                 let literal = tir::Expr::new(tir::ExprKind::Int(value), ty, operand.span);
                 return Ok((ty, (Ok(literal), false)));

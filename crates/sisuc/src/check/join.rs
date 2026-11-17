@@ -133,17 +133,6 @@ pub(super) struct Heading {
     pub(super) returns: Option<Type>,
 }
 
-impl From<Span> for Heading {
-    /// A head that is the whole expression, and a call that returns its type parameter.
-    fn from(head: Span) -> Heading {
-        Heading {
-            head,
-            whole: head,
-            returns: None,
-        }
-    }
-}
-
 /// What a join reports about: its form, where it stands, and how its members take part.
 #[derive(Clone, Copy)]
 struct Site {
@@ -209,7 +198,7 @@ impl Checker<'_> {
     pub(super) fn join_form(
         &mut self,
         form: JoinForm,
-        heading: impl Into<Heading>,
+        heading: Heading,
         members: &mut [JoinMember<'_>],
         expected: Expectation,
         binding: Option<Span>,
@@ -224,7 +213,7 @@ impl Checker<'_> {
         };
         let site = Site {
             form,
-            heading: heading.into(),
+            heading,
             hole,
             fixed,
         };
@@ -1001,8 +990,9 @@ mod tests {
         let ty = c.table.fresh(Kind::Int, at(n));
         let check = LiteralCheck {
             span: at(n),
+            literal: at(n),
             value,
-            negative: false,
+            negated: None,
         };
         c.table.literal(ty, check);
         let value = i64::try_from(value).expect("the test literal should fit i64");
