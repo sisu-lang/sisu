@@ -2034,15 +2034,6 @@ impl Checker<'_> {
                     self.table.rollback(snapshot);
                     if !fits {
                         misfits.push(i);
-                        // The report names each open parameter by its name.
-                        let named: Vec<Type> = (with.iter().zip(0_u32..))
-                            .map(|(&ty, k)| match ty.kind() {
-                                TypeKind::Infer(_) => {
-                                    Type::intern(TypeKind::Param(sig.declared[k as usize], k))
-                                }
-                                _ => ty,
-                            })
-                            .collect();
                         // A `unit` that fits for no type is no value (E0043), as for a callee
                         // that is not generic.
                         if ty == Type::UNIT {
@@ -2057,7 +2048,10 @@ impl Checker<'_> {
                         }
                         let got = self.table.default_open(self.table.resolve(ty));
                         let origin = call.declarer.origin(i);
-                        let d = self.mismatch(argument, None, param.subst(&named), got, origin);
+                        // The report shows each open parameter as `_`, as on `main`.
+                        let want = self.table.resolve(param.subst(&with_var));
+                        let want = self.table.default_open(want);
+                        let d = self.mismatch(argument, None, want, got, origin);
                         failed.get_or_insert_with(|| self.diagnostics.error(d));
                         continue;
                     }
