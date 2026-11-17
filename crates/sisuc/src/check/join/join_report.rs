@@ -2,15 +2,15 @@
 //! head. It has a label for each group of members by type, and the fix that fits.
 //!
 //! A join under a required type reports what that type does not take. When the members agree and
-//! only the required type differs, it is one E0032 at the whole join. Else each member that does
-//! not convert gets a directed E0032.
+//! only the required type differs, it is one E0032 at the whole join. Else each value position that
+//! does not convert gets a directed E0032, or an E0043 when it is a `unit`.
 //!
-//! A `unit` member that no type takes is E0043. A `break` with no value, in a loop that gives one,
-//! is E0043 `BareBreak`.
+//! A `break` with no value, in a loop that gives one, is E0043 `BareBreak`.
 
 use super::{
-    Checker, Conflict, ExprKind, JoinForm, JoinMember, Joined, Place, Reported, Site, Span, Symbol,
-    Type, TypeArgs, TypeKind, ensure_stack, member_type, part_at, target, tir, value_positions,
+    Checker, Conflict, ExprKind, FxHashMap, JoinForm, JoinMember, Joined, Leaf, Place, Reported,
+    Site, Span, Symbol, Type, TypeArgs, TypeKind, ensure_stack, fill, member_type, nested_leaves,
+    part_at, target, tir, value_positions,
 };
 use crate::check::expectation::{Origin, own_name};
 use crate::check::expr::{callee, takes_unit, valueless};
@@ -65,6 +65,29 @@ fn widening(want: Type, got: Type) -> Option<(&'static str, Option<&'static str>
     number_conversion(want, got)
 }
 
+/// Whether the integer literal `value` fits `ty`, as E0040 judges it.
+fn fits(ty: Type, value: i64) -> bool {
+    match ty {
+        Type::U8 => u8::try_from(value).is_ok(),
+        Type::F64 => value.unsigned_abs() <= 1_u64 << f64::MANTISSA_DIGITS,
+        Type::I64 => true,
+        other => other.holds_infer(),
+    }
+}
+
+/// `text` with the name of each open variable (`infer#3`) as `_`.
+fn without_variables(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("infer#") {
+        out.push_str(&rest[..at]);
+        out.push('_');
+        rest = rest[at + "infer#".len()..].trim_start_matches(|c: char| c.is_ascii_digit());
+    }
+    out.push_str(rest);
+    out
+}
+
 impl Checker<'_> {
     /// Reports the join `site` that has no candidate and no required type: E0043 at each `unit`
     /// leaf when `unit` is one group beside another; else one E0032.
@@ -83,7 +106,7 @@ impl Checker<'_> {
             for member in members.iter_mut() {
                 self.member_units(member, None, &mut units);
             }
-            return self.no_values(units, site.head);
+            return self.no_values(units, site.heading.head);
         }
         let kind = self.conflict_kind(site, binding, conflict);
         self.error(kind)
@@ -96,48 +119,30 @@ impl Checker<'_> {
         (required, origin): (Type, Origin),
         members: &mut [JoinMember<'_>],
     ) -> Reported {
-        let taking: Vec<usize> = (0..members.len())
-            .filter(|&i| member_type(members[i].value).is_some_and(|ty| ty != Type::NEVER))
-            .collect();
-        let mut failing = Vec::new();
-        for &i in &taking {
-            if self.fails(site, i, &mut members[i], required) {
-                failing.push(i);
+        let head = site.heading.head;
+        let mut taking = 0;
+        let mut fails = vec![false; members.len()];
+        for (i, failed) in fails.iter_mut().enumerate() {
+            if member_type(members[i].value).is_some_and(|ty| ty != Type::NEVER) {
+                taking += 1;
+                *failed = self.fails(site, i, &mut members[i], required);
             }
         }
+        let first_failing = fails.iter().position(|&failed| failed);
         // A loop with a bare `break` gives `unit`: the first value that is not `unit` is the label.
         if let Origin::BareBreak { at } = origin {
-            let valued = failing.first().map_or(site.head, |&i| members[i].label);
+            let valued = first_failing.map_or(head, |i| members[i].label);
             return self.error(DiagnosticKind::BareBreak { at, valued });
         }
-        if !takes_unit(required) {
-            let want = Some(self.table.default_open(required));
-            let (mut units, mut all) = (Vec::new(), true);
-            for &i in &taking {
-                let found = self.member_units(&mut members[i], want, &mut units);
-                all &= matches!(found, Units::Only | Units::Skipped);
-            }
-            if !units.is_empty() {
-                // The branches that each give `unit` are one mistake at the whole `if` or `match`.
-                if all && matches!(site.form, JoinForm::If | JoinForm::Match) {
-                    units = vec![(site.head, NoValueCause::Plain)];
-                }
-                return self.no_values(units, site.head);
-            }
-        }
-        // The members agree with each other: only the required type differs.
-        if taking.len() >= 2
-            && let Ok(Joined::Typed(got)) = self.join_members(members, site.hole, site.fixed, None)
-            && self.table.resolve(got) != required
-        {
-            let (mut want, mut got) = (required, self.table.default_open(got));
-            if matches!(site.form, JoinForm::Array) {
-                (want, got) = (Type::array(want), Type::array(got));
-            }
-            return self.directed(site.head, (want, got), origin, None, false);
+        // A call names the first argument that converts as the one that gives the parameter a type.
+        let origin = self
+            .inferred_origin(site, members, &fails)
+            .unwrap_or(origin);
+        if let Some(reported) = self.agreed(site, (required, origin), members, taking) {
+            return reported;
         }
         let mut last = None;
-        for &i in &failing {
+        for (i, _) in fails.iter().enumerate().filter(|&(_, &failed)| failed) {
             let member = &mut members[i];
             let target = target(member.at, site.hole, required);
             let top = Top {
@@ -149,23 +154,94 @@ impl Checker<'_> {
                 required,
             };
             let label = member.label;
-            last = match &mut *member.value {
-                Ok(e) => self.report_leaves(e, target, origin, Some(top)),
-                Err(poisoned) => {
-                    let got = self.table.default_open(poisoned.ty.unwrap_or(required));
-                    Some(self.directed(label, (required, got), origin, None, false))
+            let own = member_type(member.value).map_or(required, |ty| self.table.default_open(ty));
+            let reported = match &mut *member.value {
+                Ok(e) => self.report_leaves(e, target, origin, Some(top), false),
+                Err(_) => None,
+            };
+            let reported = reported.unwrap_or_else(|| {
+                if own == Type::UNIT && !takes_unit(required) {
+                    self.no_value(label, NoValueCause::Plain)
+                } else {
+                    self.directed(label, (required, own), origin, None, false)
                 }
-            }
-            .or(last);
+            });
+            last = Some(reported);
         }
-        let first = failing.first().and_then(|&i| member_type(members[i].value));
-        last.unwrap_or_else(|| match first {
-            Some(got) => {
-                let got = self.table.default_open(got);
-                self.directed(site.head, (required, got), origin, None, false)
+        last.unwrap_or_else(|| self.proof(head))
+    }
+
+    /// The report of members that agree with each other, and differ from the required type only.
+    /// `taking` is how many members take part: one member is reported at itself.
+    fn agreed(
+        &mut self,
+        site: Site,
+        (required, origin): (Type, Origin),
+        members: &mut [JoinMember<'_>],
+        taking: usize,
+    ) -> Option<Reported> {
+        if taking < 2 {
+            return None;
+        }
+        let Ok(Joined::Typed(got)) = self.join_members(members, site.hole, site.fixed, None) else {
+            return None;
+        };
+        let got = self.table.resolve(got);
+        if got == required {
+            return None;
+        }
+        if got == Type::UNIT {
+            // The branches that each give `unit` are one mistake at the whole `if` or `match`. The
+            // other forms report each `unit` value.
+            let whole =
+                matches!(site.form, JoinForm::If | JoinForm::Match) && !takes_unit(required);
+            return whole.then(|| self.no_value(site.heading.whole, NoValueCause::Plain));
+        }
+        let kind = self.agreed_kind(site, (required, got), origin);
+        Some(self.error(kind))
+    }
+
+    /// The E0032 of members that have the type `got`, where `required` is the type of each. An
+    /// array is reported as one: its members are its elements. It is at the whole expression.
+    pub(super) fn agreed_kind(
+        &self,
+        site: Site,
+        (required, got): (Type, Type),
+        origin: Origin,
+    ) -> DiagnosticKind {
+        let got = self.table.default_open(got);
+        let (want, got) = match site.form {
+            JoinForm::Array => (Type::array(required), Type::array(got)),
+            _ => (required, got),
+        };
+        self.directed_kind(site.heading.whole, (want, got), origin, None, false)
+    }
+
+    /// For a call, the origin "this argument gives `T` the type `ty`" of the first member that
+    /// converts. `None` when no member converts, or the join is no call.
+    fn inferred_origin(
+        &self,
+        site: Site,
+        members: &[JoinMember<'_>],
+        fails: &[bool],
+    ) -> Option<Origin> {
+        let param = site.hole?;
+        let (i, ty) = members.iter().enumerate().find_map(|(i, member)| {
+            let ty = member_type(&*member.value).filter(|&ty| ty != Type::NEVER)?;
+            (!fails[i]).then_some((i, ty))
+        })?;
+        let (at, ty) = match members[i].at {
+            Place::Part { place, argument } => {
+                let own = self.table.resolve(ty);
+                (
+                    argument,
+                    part_at(self.table.resolve(place), param, own).unwrap_or(own),
+                )
             }
-            None => self.proof(site.head),
-        })
+            Place::Whole => (members[i].label, ty),
+        };
+        let ty = self.table.default_open(ty);
+        Some(Origin::Inferred { at, param, ty })
     }
 
     /// Whether `member` does not convert to `ty` as the join `site` takes it. It binds nothing.
@@ -177,8 +253,9 @@ impl Checker<'_> {
         wraps.is_none()
     }
 
-    /// Whether the value position `e` does not convert to `target`. It binds nothing.
-    fn fails_at(&mut self, e: &mut tir::Expr, target: Type) -> bool {
+    /// Whether the value `e`, which has no value position, does not convert to `target`. It binds
+    /// nothing.
+    fn leaf_fails(&mut self, e: &mut tir::Expr, target: Type) -> bool {
         let snapshot = self.table.snapshot();
         let wraps = self.converts_at(e, target);
         self.table.rollback(snapshot);
@@ -186,76 +263,157 @@ impl Checker<'_> {
     }
 
     /// Reports each leaf of `e` that does not convert to `target`: the leaf, against the part of
-    /// `target` at its position. `top` is set when `e` is the member itself.
+    /// `target` at its position. One walk visits each value position once. `top` is set when `e` is
+    /// the member itself. `in_join` is set below an `if` or a `match`. The first one of a chain
+    /// that has one type for each leaf is one value: it is reported at itself.
     fn report_leaves(
         &mut self,
         e: &mut tir::Expr,
         target: Type,
         origin: Origin,
         top: Option<Top>,
+        in_join: bool,
     ) -> Option<Reported> {
         if e.ty == Type::NEVER {
             return None;
         }
         ensure_stack(|| {
-            if let Some((part, _)) = self.enter(e, target) {
-                let mut last = None;
-                value_positions(e, &mut |child| {
-                    if self.fails_at(child, part) {
-                        last = self.report_leaves(child, part, origin, None).or(last);
-                    }
-                });
-                return last;
-            }
-            let convertible = !matches!(top, Some(Top { fixed: true, .. }))
-                && !matches!(top, Some(Top { part: Some(_), .. }))
-                && !matches!(
-                    e.kind,
-                    ExprKind::If { .. } | ExprKind::IfSome { .. } | ExprKind::Match { .. }
-                );
-            let (want, got) = match top {
-                Some(Top {
-                    part: Some((place, hole)),
-                    required,
-                    ..
-                }) => {
-                    let got = part_at(self.table.resolve(place), hole, self.table.resolve(e.ty));
-                    (required, got.unwrap_or(e.ty))
+            let Some((part, _)) = self.enter(e, target) else {
+                if !self.leaf_fails(e, target) {
+                    return None;
                 }
-                _ => (target, e.ty),
+                return Some(self.report_value(e, e.ty, target, origin, top));
             };
-            let (want, got) = (self.table.default_open(want), self.table.default_open(got));
-            let fix = (convertible.then(|| number_conversion(want, got)).flatten()).map(
-                |(to, through)| Conversion {
+            let node = matches!(
+                e.kind,
+                ExprKind::If { .. } | ExprKind::IfSome { .. } | ExprKind::Match { .. }
+            );
+            if node
+                && !in_join
+                && let Some(got) = self.agreed_leaves(e)
+            {
+                return Some(self.report_value(e, got, target, origin, top));
+            }
+            let mut last = None;
+            value_positions(e, &mut |child| {
+                last = self
+                    .report_leaves(child, part, origin, None, in_join || node)
+                    .or(last);
+            });
+            last
+        })
+    }
+
+    /// The type of each leaf of `e`, when it is one type.
+    fn agreed_leaves(&self, e: &mut tir::Expr) -> Option<Type> {
+        let mut leaves: Vec<Leaf> = Vec::new();
+        nested_leaves(e, &mut leaves);
+        let first = leaves.first()?.around;
+        let key = self.table.key(first);
+        (leaves.iter().all(|leaf| self.table.key(leaf.around) == key))
+            .then(|| self.table.resolve(first))
+    }
+
+    /// Reports the value `e`, of type `got`, against `target`: E0043 for a `unit` where none is
+    /// wanted, else E0032 with the conversion that fits.
+    fn report_value(
+        &mut self,
+        e: &tir::Expr,
+        got: Type,
+        target: Type,
+        origin: Origin,
+        top: Option<Top>,
+    ) -> Reported {
+        let convertible = !matches!(top, Some(Top { fixed: true, .. }))
+            && !matches!(top, Some(Top { part: Some(_), .. }))
+            && !matches!(
+                e.kind,
+                ExprKind::If { .. } | ExprKind::IfSome { .. } | ExprKind::Match { .. }
+            );
+        let (want, got) = match top {
+            Some(Top {
+                part: Some((place, hole)),
+                required,
+                ..
+            }) => {
+                let part = part_at(self.table.resolve(place), hole, self.table.resolve(got));
+                (required, part.unwrap_or(got))
+            }
+            _ => (target, got),
+        };
+        let (want, got) = (self.table.default_open(want), self.table.default_open(got));
+        if got == Type::UNIT && !takes_unit(want) {
+            let cause = self.unit_cause(e, Some(want));
+            return self.no_value(e.span, cause);
+        }
+        let fix =
+            (convertible.then(|| number_conversion(want, got)).flatten()).map(|(to, through)| {
+                Conversion {
                     to,
                     through,
                     operand: e.span,
-                },
-            );
-            let conversion = matches!(got.kind(), TypeKind::Optional(p) if p == want)
-                && matches!(e.kind, ExprKind::Convert(_));
-            Some(self.directed(e.span, (want, got), origin, fix, conversion))
-        })
+                }
+            });
+        let conversion = matches!(got.kind(), TypeKind::Optional(p) if p == want)
+            && matches!(e.kind, ExprKind::Convert(_));
+        self.directed(e.span, (want, got), origin, fix, conversion)
     }
 
     /// "expected `want`, found `got`" at `at`, as a mismatch with a written type reports it.
     fn directed(
         &mut self,
         at: Span,
-        (want, got): (Type, Type),
+        types: (Type, Type),
         origin: Origin,
         fix: Option<Conversion>,
         conversion: bool,
     ) -> Reported {
-        self.error(DiagnosticKind::Mismatch {
-            want: Expected::Types(vec![self.want_name(at, want)]),
-            got: self.type_name(got),
+        let kind = self.directed_kind(at, types, origin, fix, conversion);
+        self.error(kind)
+    }
+
+    /// The `Mismatch` of `directed`.
+    fn directed_kind(
+        &self,
+        at: Span,
+        (want, got): (Type, Type),
+        origin: Origin,
+        fix: Option<Conversion>,
+        conversion: bool,
+    ) -> DiagnosticKind {
+        let want_text = if want.holds_infer() {
+            self.open_name(want)
+        } else {
+            self.want_name(at, want)
+        };
+        DiagnosticKind::Mismatch {
+            want: Expected::Types(vec![want_text]),
+            got: self.open_name(got),
             at,
             origin: self.origin_fact(origin),
             fix: fix.map(MismatchFix::Convert),
             conversion,
             layers: beyond_one_layer(want, got),
-        })
+        }
+    }
+
+    /// `ty` as a diagnostic names it. A part that no type reached is written as the value that
+    /// leaves it open: `None` for the payload of an optional, `[]` for the element of an array.
+    fn open_name(&self, ty: Type) -> String {
+        if !ty.holds_infer() {
+            return self.type_name(ty);
+        }
+        match ty.kind() {
+            TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Infer(_)) => {
+                "None".to_string()
+            }
+            TypeKind::Array(element) if matches!(element.kind(), TypeKind::Infer(_)) => {
+                "[]".to_string()
+            }
+            TypeKind::Optional(payload) => format!("{}?", self.open_name(payload)),
+            TypeKind::Array(element) => format!("[{}]", self.open_name(element)),
+            _ => without_variables(&self.type_name(ty)),
+        }
     }
 
     /// The `unit` leaves of `member`, pushed to `out`, and what its leaves are.
@@ -330,9 +488,14 @@ impl Checker<'_> {
         }
     }
 
-    /// Why the `unit` value `e` has no value, as `no_value_cause` says it for a value in the
-    /// source.
+    /// Why the `unit` value `e` has no value. `no_value_cause` (`expr.rs`) states the same rule on
+    /// the source tree, which a join does not hold: a change to one is a change to the other.
+    /// A call that the `tir` does not name keeps `Plain`.
     fn unit_cause(&self, e: &tir::Expr, want: Option<Type>) -> NoValueCause {
+        let called = |name: &str| NoValueCause::Call {
+            name: name.to_string(),
+            declared: None,
+        };
         match &e.kind {
             ExprKind::If {
                 else_block: None, ..
@@ -354,7 +517,29 @@ impl Checker<'_> {
                     }
                 }
             }
+            // `units` and `report_leaves` go into the operand of a `dbg` first: only a `dbg` that
+            // is a member itself gets here.
             ExprKind::Dbg { operand, .. } => self.unit_cause(operand, want),
+            ExprKind::Print { stream, .. } => called(match stream {
+                tir::Stream::Stdout => "print",
+                tir::Stream::Stderr => "eprint",
+            }),
+            ExprKind::InterfaceCall {
+                interface, method, ..
+            }
+            | ExprKind::DynCall {
+                interface, method, ..
+            } => called(
+                self.interfaces[interface.0].requirements[*method as usize]
+                    .name
+                    .name
+                    .as_str(),
+            ),
+            ExprKind::Block(block)
+                if matches!(block.stmts.last(), Some(tir::Stmt::Push { .. })) =>
+            {
+                called("push")
+            }
             ExprKind::Call { .. } | ExprKind::MutCall { .. } | ExprKind::Block(_) => {
                 let Some(func) = callee(e) else {
                     return NoValueCause::Plain;
@@ -383,25 +568,40 @@ impl Checker<'_> {
         last.unwrap_or_else(|| self.proof(head))
     }
 
+    /// Whether the type of `other` holds each literal of `group`, which has an open integer type.
+    /// It binds nothing.
+    fn holds_literals(&mut self, other: Type, group: &super::Group) -> bool {
+        let snapshot = self.table.snapshot();
+        let holds = self.unify(group.ty, other)
+            && (group.literals.iter()).all(|&(ty, value)| fits(self.table.resolve(ty), value));
+        self.table.rollback(snapshot);
+        holds
+    }
+
     /// The E0032 of a join that has no candidate: its groups in the order of the source, the
-    /// parts of its arguments, the declared interfaces that fit each member, and the fix.
+    /// parts of its arguments, the declared interfaces that fit each member, and the fix. It is
+    /// `pub(super)` so that a test reads its fields, which the diagnostic text hides.
     pub(super) fn conflict_kind(
         &mut self,
         site: Site,
         binding: Option<Span>,
         conflict: &Conflict,
     ) -> DiagnosticKind {
-        // A literal that is still open takes the type of a group that holds a number.
-        let held =
-            (conflict.groups.iter()).any(|g| matches!(g.ty, Type::U8 | Type::I64 | Type::F64));
+        // A literal that is still open is in no group when the type of another group holds it.
         let mut shown: Vec<Shown> = Vec::new();
+        let mut index: FxHashMap<Type, usize> = FxHashMap::default();
         for group in &conflict.groups {
-            let open = matches!(group.ty.kind(), TypeKind::Infer(_));
-            if held && open && self.table.default_open(group.ty) != group.ty {
+            let open = self.table.default_open(group.ty) != group.ty;
+            if open
+                && (conflict.groups.iter())
+                    .any(|other| other.ty != group.ty && self.holds_literals(other.ty, group))
+            {
                 continue;
             }
+            #[cfg(test)]
+            super::GROUP_STEPS.set(super::GROUP_STEPS.get() + 1);
             let ty = self.table.default_open(group.ty);
-            let at = if let Some(at) = shown.iter().position(|one| one.ty == ty) {
+            let at = if let Some(&at) = index.get(&ty) {
                 at
             } else {
                 shown.push(Shown {
@@ -409,6 +609,7 @@ impl Checker<'_> {
                     leaves: Vec::new(),
                     whole: Vec::new(),
                 });
+                index.insert(ty, shown.len() - 1);
                 shown.len() - 1
             };
             shown[at].leaves.extend(&group.leaves);
@@ -448,35 +649,48 @@ impl Checker<'_> {
             None
         };
         let fix = conversion.or_else(|| match (interfaces.as_slice(), binding) {
-            ([name], Some(binding)) => {
-                let ty = format!("any {name}");
-                Some(JoinFix::Declare {
-                    name: binding,
-                    ty: match site.form {
-                        JoinForm::Array => format!("[{ty}]"),
-                        _ => ty,
-                    },
-                })
+            ([(interface, name)], Some(binding)) => {
+                let any = Type::intern(TypeKind::Any(*interface, TypeArgs::NONE));
+                let ty = match (site.form, site.heading.returns, site.hole) {
+                    (JoinForm::Array, ..) => format!("[any {name}]"),
+                    (JoinForm::Call { .. }, Some(returns), Some(hole)) => {
+                        self.type_name(fill(returns, hole, any))
+                    }
+                    _ => format!("any {name}"),
+                };
+                Some(JoinFix::Declare { name: binding, ty })
             }
             _ => None,
         });
+        // A call labels the first argument as the one that gives its type parameter that type.
+        if site.hole.is_some()
+            && parts.is_empty()
+            && let Some(one) = shown.first_mut()
+            && !one.leaves.is_empty()
+        {
+            parts.push((one.leaves.remove(0), one.ty));
+            if one.leaves.is_empty() {
+                shown.remove(0);
+            }
+        }
         DiagnosticKind::JoinMismatch {
             form: self.form_name(site),
-            head: site.head,
+            head: site.heading.head,
             groups: (shown.into_iter())
-                .map(|one| (self.type_name(one.ty), one.leaves))
+                .map(|one| (self.open_name(one.ty), one.leaves))
                 .collect(),
             parts: (parts.into_iter())
-                .map(|(at, ty)| (at, self.type_name(ty)))
+                .map(|(at, ty)| (at, self.open_name(ty)))
                 .collect(),
-            interfaces,
+            interfaces: interfaces.into_iter().map(|(_, name)| name).collect(),
             fix,
         }
     }
 
-    /// The names of the interfaces that the program declares, which each of `types` conforms to.
-    /// A language interface does not count, and neither does an interface with type parameters.
-    fn fitting_interfaces(&mut self, types: &[Type]) -> Vec<String> {
+    /// The interfaces that the program declares, which each of `types` conforms to and that can
+    /// be written after `any`. A language interface does not count, and neither does an interface
+    /// with type parameters.
+    fn fitting_interfaces(&mut self, types: &[Type]) -> Vec<(InterfaceId, String)> {
         if types.iter().any(|ty| ty.holds_infer()) {
             return Vec::new();
         }
@@ -486,12 +700,13 @@ impl Checker<'_> {
             if info.name.span.in_prelude() || info.type_params.len() != 1 {
                 continue;
             }
-            let name = info.name.name.to_string();
+            let (id, name) = (InterfaceId(i), info.name.name.to_string());
             if types
                 .iter()
-                .all(|&ty| self.conforms(ty, InterfaceId(i), TypeArgs::NONE))
+                .all(|&ty| self.conforms(ty, id, TypeArgs::NONE))
+                && self.why_not_any(id).is_none()
             {
-                found.push(name);
+                found.push((id, name));
             }
         }
         found
@@ -499,19 +714,16 @@ impl Checker<'_> {
 
     /// The form of the join `site`, as its headline names it.
     fn form_name(&self, site: Site) -> JoinFormName {
+        let head = site.heading.head;
         match site.form {
             JoinForm::If => JoinFormName::If,
             JoinForm::Match => JoinFormName::Match,
             JoinForm::Array => JoinFormName::Array,
             JoinForm::Loop => JoinFormName::Loop,
             JoinForm::Coalesce => JoinFormName::Coalesce,
-            JoinForm::Operator(_) => {
-                JoinFormName::Operator(self.source.text(site.head).to_string())
-            }
+            JoinForm::Operator(_) => JoinFormName::Operator(self.source.text(head).to_string()),
             JoinForm::Compare => JoinFormName::Compare,
-            JoinForm::Compound { .. } => {
-                JoinFormName::Compound(self.source.text(site.head).to_string())
-            }
+            JoinForm::Compound { .. } => JoinFormName::Compound(self.source.text(head).to_string()),
             JoinForm::Call { param } => JoinFormName::Call(param.to_string()),
         }
     }
@@ -525,9 +737,10 @@ mod tests {
     use crate::check::infer::Kind;
     use crate::check::operator::Operator;
     use crate::check::tests::joins::with_params;
-    use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, NoValueCause};
+    use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Expected, JoinFix, NoValueCause};
     use crate::mir::tests::assert_near_linear;
     use crate::tir::FuncId;
+    use std::fmt::Write;
 
     /// `Seen`, with the structs `Eye` and `Lid`, which conform to it.
     const EYE_LID: &str = "interface Seen {\n    fn seen(self) -> i64\n}\nstruct Eye: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\nstruct Lid: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\n";
@@ -536,7 +749,7 @@ mod tests {
     const EYE_LID_HEARD: &str = "interface Seen {\n    fn seen(self) -> i64\n}\ninterface Heard {\n    fn heard(self) -> i64\n}\nstruct Eye: Seen, Heard {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n    fn heard(self) -> i64 { self.v }\n}\nstruct Lid: Seen, Heard {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n    fn heard(self) -> i64 { self.v }\n}\n";
 
     /// `Say`, which `Eye` conforms to, and which gives `unit`.
-    const EYE_LID_SAY: &str = "interface Say {\n    fn say(self)\n}\nstruct Eye: Say {\n    v: i64\n    fn say(self) {}\n}\n";
+    const EYE_LID_SAY: &str = "fn u() {}\ninterface Say {\n    fn say(self)\n}\nstruct Eye: Say {\n    v: i64\n    fn say(self) {}\n}\n";
 
     /// The functions `u` and `g`, which give `unit`.
     const UNITS: &str = "fn u() {}\nfn g() {}\n";
@@ -1038,7 +1251,7 @@ mod tests {
         };
         Site {
             form,
-            head: head(),
+            heading: head().into(),
             hole,
             fixed: None,
         }
@@ -1093,9 +1306,13 @@ mod tests {
             vec![Ok(array(vec![literal], element, 2)), Ok(string(3))]
         });
         assert_eq!(groups, vec![group("[i64]", 1), group("string", 3)]);
-        // GIVEN `None` and `"s"`, THEN the group shows `None`, as a program writes the value
-        let groups = shown_groups(|c, _| vec![Ok(none(c, 1)), Ok(string(2))]);
-        assert_eq!(groups, vec![group("None", 1), group("string", 2)]);
+        // GIVEN `None`, `a: u8` and `"s"`, THEN the group shows `None`, as a program writes it
+        let groups =
+            shown_groups(|c, types| vec![Ok(none(c, 1)), Ok(local(types[0], 2)), Ok(string(3))]);
+        assert_eq!(
+            groups,
+            vec![group("None", 1), group("u8", 2), group("string", 3)]
+        );
         // GIVEN `[]` and `"s"`, THEN the group shows `[]`
         let groups = shown_groups(|c, _| {
             let open = c.table.fresh(Kind::Any, at(1));
@@ -1401,11 +1618,150 @@ mod tests {
             tir::Expr::new(kind, Type::UNIT, at(1))
         });
         assert!(matches!(method, NoValueCause::Call { ref name, declared: None } if name == "say"));
+        // `xs.push(1)` is a block that ends in a `Push`
+        let push = cause(&|_, _| {
+            let value = tir::Expr::new(ExprKind::Int(1), Type::I64, at(2));
+            let place = tir::Place::Local(tir::LocalId(0));
+            let stmt = tir::Stmt::Push {
+                place,
+                value,
+                span: at(1),
+            };
+            let block = tir::Block {
+                stmts: vec![stmt],
+                value: None,
+                ty: Type::UNIT,
+            };
+            tir::Expr::new(ExprKind::Block(block), Type::UNIT, at(1))
+        });
+        assert!(named(push, "push"));
         // `if c { print(0) }` has no `else`
         let no_else = cause(&|_, _| if_without_else(1));
         assert!(matches!(
             no_else,
             NoValueCause::NoElse { if_let: false, .. } | NoValueCause::UnitIf { if_let: false, .. }
         ));
+    }
+
+    #[test]
+    fn declare_fix_should_write_the_return_type_of_a_call() {
+        // GIVEN `let x = wrap(Eye(v: 1), Lid(v: 2))` with `fn wrap<T>(a: T, b: T) -> [T]`
+        let kind = with_params(EYE_LID, "x: Eye, y: Lid", |c, types| {
+            let mut values = vec![Ok(eye(types[0], 1)), Ok(eye(types[1], 2))];
+            let mut members = whole(&mut values);
+            let site = Site {
+                heading: Heading {
+                    head: head(),
+                    whole: head(),
+                    returns: Some(Type::array(Type::intern(TypeKind::Param(
+                        Symbol::intern("T"),
+                        0,
+                    )))),
+                },
+                ..site(call())
+            };
+            let Err(conflict) = c.join_members(&mut members, site.hole, None, None) else {
+                panic!("the members should have no candidate");
+            };
+            c.conflict_kind(site, Some(Span::new(4, 5)), &conflict)
+        });
+        // THEN the fix writes the return type with `any Seen` for `T`
+        let DiagnosticKind::JoinMismatch { fix, .. } = kind else {
+            panic!("a conflict should give a `JoinMismatch`");
+        };
+        let Some(JoinFix::Declare { ty, .. }) = fix else {
+            panic!("the fix should write a type after the name");
+        };
+        assert_eq!(ty, "[any Seen]");
+    }
+
+    #[test]
+    fn agreeing_members_should_report_the_types_of_the_join() {
+        let kind = |form: JoinForm| {
+            with_params("", "", |c, _| {
+                let site = site(form);
+                let origin = Origin::None;
+                c.agreed_kind(site, (Type::STRING, Type::U8), origin)
+            })
+        };
+        let wanted = |kind: DiagnosticKind| match kind {
+            DiagnosticKind::Mismatch {
+                want: Expected::Types(want),
+                got,
+                ..
+            } => (want, got),
+            _ => panic!("the members that agree should give a `Mismatch`"),
+        };
+        // GIVEN the members `a` and `b` of type `u8`, which join under `string`
+        // THEN the report names `string` and `u8`, and for an array `[string]` and `[u8]`
+        assert_eq!(
+            wanted(kind(JoinForm::If)),
+            (vec!["string".to_owned()], "u8".to_owned())
+        );
+        assert_eq!(
+            wanted(kind(JoinForm::Array)),
+            (vec!["[string]".to_owned()], "[u8]".to_owned())
+        );
+    }
+
+    #[test]
+    fn agreeing_members_should_be_reported_at_the_whole_expression() {
+        let heading = Heading {
+            head: Span::new(10, 12),
+            whole: Span::new(20, 30),
+            returns: None,
+        };
+        let run = |form: JoinForm, build: fn(&mut Checker<'_>, &[Type]) -> Vec<Checked>| {
+            with_params(UNITS, "a: u8", |c, types| {
+                let mut values = build(c, types);
+                let mut members = whole(&mut values);
+                let expected = required(Type::STRING);
+                let _ = c.join_form(form, heading, &mut members, expected, None);
+                found(c)
+            })
+        };
+        // GIVEN `a` and `a` of type `u8` under `string`, THEN E0032 at the whole `[a, a]`
+        let both = |_: &mut Checker<'_>, types: &[Type]| {
+            vec![Ok(local(types[0], 1)), Ok(local(types[0], 2))]
+        };
+        assert_eq!(
+            run(JoinForm::Array, both),
+            vec![(Code::Mismatch, Span::new(20, 30))]
+        );
+        // GIVEN the branches `u()` and `u()` under `string`, THEN E0043 at the whole `if`
+        let units = |c: &mut Checker<'_>, _: &[Type]| {
+            vec![Ok(unit_call(c, "u", 1)), Ok(unit_call(c, "u", 2))]
+        };
+        assert_eq!(
+            run(JoinForm::If, units),
+            vec![(Code::NoValue, Span::new(20, 30))]
+        );
+    }
+
+    /// The probes that `conflict_kind` makes in the join of `n` members of `n` distinct types.
+    fn grouped(n: usize) -> usize {
+        let mut src = String::new();
+        for i in 0..n {
+            writeln!(src, "struct S{i} {{\n    v: i64\n}}").expect("a string takes text");
+        }
+        let params: Vec<String> = (0..n).map(|i| format!("a{i}: S{i}")).collect();
+        with_params(&src, &params.join(", "), |c, types| {
+            let mut values: Vec<Checked> = (0..n).map(|i| Ok(local(types[i], i))).collect();
+            let mut members = whole(&mut values);
+            let Err(conflict) = c.join_members(&mut members, None, None, None) else {
+                panic!("the members should have no candidate");
+            };
+            GROUP_STEPS.set(0);
+            let _kind = c.conflict_kind(site(JoinForm::If), None, &conflict);
+            GROUP_STEPS.get()
+        })
+    }
+
+    #[test]
+    fn groups_should_cost_one_step_for_each_type() {
+        // GIVEN joins of 50, 100 and 150 members of as many types, WHEN the groups are made
+        let steps = [grouped(50), grouped(100), grouped(150)];
+        // THEN each group costs one step
+        assert_eq!(steps, [50, 100, 150]);
     }
 }

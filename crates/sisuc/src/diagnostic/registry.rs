@@ -5170,7 +5170,8 @@ impl From<DiagnosticKind> for Diagnostic {
                 for (at, text) in labels {
                     d = d.with_secondary(at, text);
                 }
-                if !interfaces.is_empty() {
+                // At a `let` the fix says it: the help is for any other place.
+                if !interfaces.is_empty() && !matches!(fix, Some(JoinFix::Declare { .. })) {
                     let each: Vec<String> =
                         interfaces.iter().map(|name| format!("any {name}")).collect();
                     d = d.with_help(match each.as_slice() {

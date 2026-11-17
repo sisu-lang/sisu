@@ -28,6 +28,8 @@ thread_local! {
     pub(super) static VALUE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `nested_leaves` has put a position around a leaf, on this thread.
     pub(super) static LEAF_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many groups `conflict_kind` has looked up, on this thread.
+    pub(super) static GROUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many distinct types `fill` has filled, on this thread.
     pub(super) static FILLED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -113,14 +115,42 @@ struct Group {
     /// The leaves that are a whole value, which a conversion can wrap: not the assigned side of a
     /// compound assignment, and not an `if` or a `match`.
     whole: Vec<Span>,
+    /// The type and the value of each leaf that is an integer literal.
+    literals: Vec<(Type, i64)>,
+}
+
+/// Where a join stands in the source.
+#[derive(Clone, Copy)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+pub(super) struct Heading {
+    /// The primary label of a conflict: the `if`, the `[` of an array, the call's name.
+    pub(super) head: Span,
+    /// The whole expression, which a report of the type of the join as a whole points at.
+    pub(super) whole: Span,
+    /// For a call, its return type with the type parameter of the join in it, when that is not the
+    /// bare parameter: the type that a fix writes after a `let` is that type with the interface.
+    pub(super) returns: Option<Type>,
+}
+
+impl From<Span> for Heading {
+    /// A head that is the whole expression, and a call that returns its type parameter.
+    fn from(head: Span) -> Heading {
+        Heading {
+            head,
+            whole: head,
+            returns: None,
+        }
+    }
 }
 
 /// What a join reports about: its form, where it stands, and how its members take part.
 #[derive(Clone, Copy)]
 struct Site {
     form: JoinForm,
-    /// The span of the form: the `if`, the `[` of an array, the call's name.
-    head: Span,
+    heading: Heading,
     /// The `T` of a call's `Place::Part` members.
     hole: Option<Symbol>,
     /// The member that converts by unification only.
@@ -139,6 +169,8 @@ struct Leaf {
     ty: Type,
     around: Type,
     lifted: Type,
+    /// The value of an integer literal that the leaf is.
+    literal: Option<i64>,
 }
 
 impl Leaf {
@@ -148,6 +180,19 @@ impl Leaf {
             ty,
             around: ty,
             lifted: Type::optional(ty),
+            literal: None,
+        }
+    }
+
+    /// The leaf that the value `e` is.
+    fn of(e: &tir::Expr) -> Leaf {
+        let literal = match e.kind {
+            ExprKind::Int(value) => Some(value),
+            _ => None,
+        };
+        Leaf {
+            literal,
+            ..Leaf::new(e.span, e.ty)
         }
     }
 }
@@ -158,7 +203,7 @@ impl Leaf {
 )]
 impl Checker<'_> {
     /// The one entry of a join: the type of the members, each settled to it. Under a required type
-    /// that is the only candidate. `head` is the span of the form, and `binding` the name of a
+    /// that is the only candidate. `heading` is where the form stands, and `binding` the name of a
     /// `let` without a type, which the fix of a conflict writes after. A conflict, or a required
     /// type that a member does not take, is reported here: a conflict is untyped poison (typed by
     /// a required type). When an untyped poisoned member is left out, a typed join is poison of its
@@ -166,7 +211,7 @@ impl Checker<'_> {
     pub(super) fn join_form(
         &mut self,
         form: JoinForm,
-        head: Span,
+        heading: impl Into<Heading>,
         members: &mut [JoinMember<'_>],
         expected: Expectation,
         binding: Option<Span>,
@@ -181,7 +226,7 @@ impl Checker<'_> {
         };
         let site = Site {
             form,
-            head,
+            heading: heading.into(),
             hole,
             fixed,
         };
@@ -305,7 +350,7 @@ impl Checker<'_> {
             let mut leaves = Vec::new();
             match &mut *member.value {
                 Ok(e) => {
-                    leaves.push(Leaf::new(e.span, e.ty));
+                    leaves.push(Leaf::of(e));
                     nested_leaves(e, &mut leaves);
                 }
                 Err(poisoned) => leaves.extend(poisoned.ty.map(|ty| Leaf::new(member.label, ty))),
@@ -568,7 +613,7 @@ impl Checker<'_> {
                 Ok(e) if e.ty != Type::NEVER => {
                     top = !nested_leaves(e, &mut leaves);
                     if top {
-                        leaves.push(Leaf::new(e.span, e.ty));
+                        leaves.push(Leaf::of(e));
                         whole = fixed != Some(i)
                             && !matches!(
                                 e.kind,
@@ -590,9 +635,16 @@ impl Checker<'_> {
                     (Place::Part { place, .. }, Some(hole)) => {
                         part_at(self.table.resolve(place), hole, ty).unwrap_or(ty)
                     }
+                    // The left side of `??` is at its payload.
+                    (Place::Part { .. }, None) => match ty.kind() {
+                        TypeKind::Optional(payload) => payload,
+                        _ => ty,
+                    },
                     _ => ty,
                 };
-                if let (Place::Part { argument, .. }, true) = (member.at, top) {
+                // Only a call labels an argument that gives its type parameter a type.
+                if let (Place::Part { argument, .. }, true, true) = (member.at, top, hole.is_some())
+                {
                     parts.push((argument, ty));
                     continue;
                 }
@@ -601,12 +653,18 @@ impl Checker<'_> {
                         ty,
                         leaves: Vec::new(),
                         whole: Vec::new(),
+                        literals: Vec::new(),
                     });
                     groups.len() - 1
                 });
                 groups[at].leaves.push(leaf.at);
-                if whole {
+                if whole && matches!(member.at, Place::Whole) {
                     groups[at].whole.push(leaf.at);
+                }
+                if let Some(value) = leaf.literal {
+                    groups[at]
+                        .literals
+                        .push((self.table.resolve(leaf.ty), value));
                 }
             }
         }
@@ -647,7 +705,7 @@ fn target(at: Place, hole: Option<Symbol>, ty: Type) -> Type {
 )]
 fn collect_leaves(e: &mut tir::Expr, out: &mut Vec<Leaf>) {
     if e.ty != Type::NEVER && !nested_leaves(e, out) {
-        out.push(Leaf::new(e.span, e.ty));
+        out.push(Leaf::of(e));
     }
 }
 
