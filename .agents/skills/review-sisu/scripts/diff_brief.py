@@ -31,9 +31,11 @@ the main checkout's gitignored docs/superpowers/ is not in a worktree.
            says the run measured uncommitted changes or saw HEAD change. Unlike a mutation log,
            coverage of an earlier commit is refused: it is cheap to run again at the head
   --memory-safety-log  the output of `make memory-safety` for the diff; Focus names it with its
-           result. It is checked as --coverage is. CI runs the memory tests only after the
-           merge. So when a diff changes crates/ and has no log, Focus says that they did not
-           run. That line only reports; it stops nothing.
+           result. Fails as --coverage does, but a log of an earlier commit of the range is
+           accepted. With --round above 1, so is a log of the range's base or before it. Focus
+           then lists the commits after it. CI runs the memory tests only after the
+           merge. So when the commits that no log covers change MEMORY_PATHS, Focus says that
+           the tests did not run on them. That line only reports; it stops nothing.
 For a diff, Focus also lists each line the diff removes from the tests with no identical line
 added back, and each test file it deletes, and each sisu build in OUT's bin/<sha>/ that
 build_sisu.sh wrote.
@@ -193,8 +195,20 @@ def last_line(path: Path, target: str) -> re.Match[str] | None:
     return re.search(pattern, lines[-1]) if lines else None
 
 
-def head_mismatch(path: Path, repo: Path | str, head: str, target: str) -> str | None:
-    """Return why the last line of `make <target>` in `path` does not describe `head`, or None."""
+def head_mismatch(  # noqa: PLR0913  two keyword options of one check: which earlier commits it accepts
+    path: Path,
+    repo: Path | str,
+    head: str,
+    target: str,
+    *,
+    base: str | None = None,
+    earlier: bool = False,
+) -> str | None:
+    """Return why the last line of `make <target>` in `path` does not describe `head`, or None.
+
+    With `base`, a commit of `base`..`head` is accepted too. With `earlier` as well, so is a
+    commit that `base` reaches: an earlier round's run.
+    """
     found = last_line(path, target)
     if not found:
         return f'no {target} line ending "(HEAD <sha>)" in {path}'
@@ -204,7 +218,13 @@ def head_mismatch(path: Path, repo: Path | str, head: str, target: str) -> str |
             f"{path} measured uncommitted changes on {measured[:8]}, or HEAD changed during the "
             f"run; run make {target} again at the head on a clean tree"
         )
-    if measured != want:
+    accepted = (
+        base is not None
+        and commit(repo, measured) != ""
+        and is_ancestor(repo, measured, head)
+        and (earlier or not is_ancestor(repo, measured, base))
+    )
+    if measured != want and not accepted:
         return (
             f"{path} measured {measured[:8]}, not the head {want[:8] or 'unknown'}; "
             f"run make {target} again at the head"
@@ -212,9 +232,23 @@ def head_mismatch(path: Path, repo: Path | str, head: str, target: str) -> str |
     return None
 
 
-def changes(repo: Path | str, base: str, head: str, path: str) -> bool:
-    """Tell whether `base`..`head` changes a file at or under `path`."""
-    return run_git(repo, "diff", "--quiet", base, head, "--", path, answers=(0, 1)).returncode == 1
+def changes(repo: Path | str, base: str, head: str, *paths: str) -> bool:
+    """Tell whether `base`..`head` changes a file that one of the pathspecs `paths` matches."""
+    return (
+        run_git(repo, "diff", "--quiet", base, head, "--", *paths, answers=(0, 1)).returncode == 1
+    )
+
+
+# The paths whose change needs `make memory-safety`, as AGENTS.md says: codegen, drops (MIR), the
+# runtimes and the harness, with the run cases that the memory tests run.
+MEMORY_PATHS = (
+    "crates/runtime*",
+    "crates/sisuc/src/codegen",
+    "crates/sisuc/src/mir",
+    "crates/sisuc/tests/cases.rs",
+    "crates/sisuc/tests/support",
+    "crates/sisuc/tests/run",
+)
 
 
 def main_standards(repo: Path) -> bytes | None:
@@ -376,18 +410,29 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915  one linear pass: a branch f
             if why := head_mismatch(coverage, repo, shas[1], "coverage"):
                 sys.exit(f"diff_brief: {why}")
             focus_lines.append(f"Coverage result: {coverage}")
+        ran = shas[0]
         if a.memory_safety_log:
             log = Path(a.memory_safety_log).resolve()
-            if why := head_mismatch(log, repo, shas[1], "memory-safety"):
+            if why := head_mismatch(
+                log, repo, shas[1], "memory-safety", base=shas[0], earlier=a.round > 1
+            ):
                 sys.exit(f"diff_brief: {why}")
+            found = last_line(log, "memory-safety")
             # pyrefly: ignore[unsupported-operation]  `head_mismatch` has found the last line
-            result = last_line(log, "memory-safety")["word"]
-            focus_lines.append(f"Memory-safety log: {log}: {result}")
-        elif changes(repo, shas[0], shas[1], "crates/"):
+            word, ran = found["word"], found["sha"]
+            note = ""
+            if ran != shas[1]:
+                later = git(repo, "rev-list", "--reverse", f"{ran}..{shas[1]}").split()
+                note = (
+                    f", measured at {ran[:8]}. Commits after it: {' '.join(c[:8] for c in later)}"
+                )
+            focus_lines.append(f"Memory-safety log: {log}: {word}{note}")
+        if changes(repo, ran, shas[1], *MEMORY_PATHS):
+            after = " on the commits after the log" if a.memory_safety_log else ""
             focus_lines.append(
-                "Memory tests: not run. CI runs `make memory-safety` only after the merge. Name "
-                "the riskiest changed path that only ASan, Valgrind or `--rc-checks` would catch, "
-                "or say that there is none."
+                f"Memory tests: not run{after}. CI runs `make memory-safety` only after the merge. "
+                "Name the riskiest changed path that only ASan, Valgrind or `--rc-checks` would "
+                "catch, or say that there is none."
             )
         if rules is None:
             focus_lines.append(

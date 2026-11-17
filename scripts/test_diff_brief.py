@@ -287,13 +287,48 @@ class Brief(Repo):
         text = self.brief("HEAD~2..HEAD", "--memory-safety-log", str(log))
         self.assertIn(f"Memory-safety log: {log}: FAIL\n", text)
 
-    def test_a_memory_safety_log_on_an_earlier_commit_should_fail_before_writing(self) -> None:
+    def test_a_memory_safety_log_of_the_base_should_fail_before_writing_in_round_one(
+        self,
+    ) -> None:
         log = Path(self.repo) / "memory.txt"
-        log.write_text(f"memory-safety: PASS (HEAD {self.mid})\n")
+        log.write_text(f"memory-safety: PASS (HEAD {self.base})\n")
         with self.assertRaises(SystemExit) as stop:
             self.brief("HEAD~2..HEAD", "--memory-safety-log", str(log))
         self.assertIn("run make memory-safety again", str(stop.exception))
         self.assertEqual(list(self.run_dir.iterdir()), [])
+
+    def test_a_memory_safety_log_of_an_earlier_commit_should_list_the_commits_after_it(
+        self,
+    ) -> None:
+        log = Path(self.repo) / "memory.txt"
+        log.write_text(f"memory-safety: PASS (HEAD {self.mid})\n")
+        text = self.brief("HEAD~2..HEAD", "--memory-safety-log", str(log))
+        self.assertIn(
+            f"{log.resolve()}: PASS, measured at {self.mid[:8]}. Commits after it: {self.head[:8]}",
+            text,
+        )
+        self.assertNotIn("Memory tests: not run", text)
+
+    def test_a_later_round_should_take_the_memory_safety_log_of_an_earlier_round(self) -> None:
+        log, prior = Path(self.repo) / "memory.txt", Path(self.repo) / "opus.md"
+        log.write_text(f"memory-safety: PASS (HEAD {self.base})\n")
+        prior.write_text("Verdict: changes needed\n")
+        text = self.brief(
+            "HEAD~1..HEAD",
+            "--memory-safety-log",
+            str(log),
+            *("--round", "2", "--prior", str(prior), "--rulings", str(prior)),
+        )
+        self.assertIn(f"{log.resolve()}: PASS, measured at {self.base[:8]}.", text)
+
+    def test_commits_after_the_log_that_change_codegen_should_say_the_tests_did_not_run(
+        self,
+    ) -> None:
+        log = Path(self.repo) / "memory.txt"
+        log.write_text(f"memory-safety: PASS (HEAD {self.head})\n")
+        self.commit_file("crates/sisuc/src/codegen/a.rs", "fn a() {}\n")
+        text = self.brief("HEAD~3..HEAD", "--memory-safety-log", str(log))
+        self.assertIn("Memory tests: not run on the commits after the log.", text)
 
     def test_a_memory_safety_log_should_need_its_own_line_when_it_holds_a_coverage_line(
         self,
@@ -307,13 +342,21 @@ class Brief(Repo):
     def test_a_diff_of_crates_without_a_memory_safety_log_should_say_the_tests_did_not_run(
         self,
     ) -> None:
-        self.commit_file("crates/a.rs", "fn a() {}\n")
+        self.commit_file("crates/sisuc/src/codegen/a.rs", "fn a() {}\n")
         self.assertIn("Memory tests: not run.", self.brief("HEAD~3..HEAD"))
+
+    def test_a_diff_of_the_runtime_should_say_the_memory_tests_did_not_run(self) -> None:
+        self.commit_file("crates/runtime-system/src/lib.rs", "fn a() {}\n")
+        self.assertIn("Memory tests: not run.", self.brief("HEAD~3..HEAD"))
+
+    def test_a_diff_of_the_checker_should_get_no_memory_test_line(self) -> None:
+        self.commit_file("crates/sisuc/src/check/a.rs", "fn a() {}\n")
+        self.assertNotIn("Memory tests", self.brief("HEAD~3..HEAD"))
 
     def test_a_diff_of_crates_with_a_memory_safety_log_should_not_say_the_tests_did_not_run(
         self,
     ) -> None:
-        self.commit_file("crates/a.rs", "fn a() {}\n")
+        self.commit_file("crates/sisuc/src/codegen/a.rs", "fn a() {}\n")
         head = subprocess.run(
             [*self.git, "rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=ENV
         ).stdout.strip()
@@ -321,7 +364,7 @@ class Brief(Repo):
         log.write_text(f"memory-safety: PASS (HEAD {head})\n")
         text = self.brief("HEAD~3..HEAD", "--memory-safety-log", str(log))
         self.assertIn(f"Memory-safety log: {log.resolve()}: PASS", text)
-        self.assertNotIn("Memory tests: not run.", text)
+        self.assertNotIn("Memory tests", text)
 
     def test_a_diff_outside_crates_should_get_no_memory_test_line(self) -> None:
         self.commit_file("docs/a.md", "a\n")
