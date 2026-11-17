@@ -680,10 +680,33 @@ fn literal_alone_should_be_i64_at_its_let() {
     // GIVEN a join of two literals, and a `let` with a `u8` type that reads it
     // WHEN it is checked
     // THEN the join is `i64`, and the `let` reports E0032 at `x`
+    type_rows(&[("let x = if c { 1 } else { 2 }", "i64")]);
     body_rows(&[(
         "let x = if c { 1 } else { 2 }\nlet y: u8 = x",
         &[(Code::Mismatch, (2, 13))],
     )]);
+}
+
+#[test]
+fn open_value_in_a_failed_context_should_fail_quietly() {
+    // GIVEN a `None` of type `Any?`, whose `Any` is open, in a context that failed
+    // WHEN `close` closes it
+    // THEN it fails with no type and no report, so no open variable leaves the checker
+    let src = "fn main() {\n    None\n}\n";
+    let span = Span::new(16, 20);
+    with_checker(src, |c| {
+        let ty = Type::optional(c.table.fresh(Kind::Any, span));
+        let value = tir::Expr::new(tir::ExprKind::None, ty, span);
+        let e = ast::Expr {
+            kind: ast::ExprKind::NoneLit,
+            span,
+        };
+        let (closed, mismatched) = c.close(&e, Ok(value), Expectation::Poisoned);
+        assert!(!mismatched);
+        assert!(matches!(closed, Err(Poisoned { ty: None, .. })));
+        assert!(c.diagnostics.is_empty(), "the failed context has reported");
+        assert_eq!(c.table.unsettled(ty), [], "the `Any` set is poisoned");
+    });
 }
 
 #[test]

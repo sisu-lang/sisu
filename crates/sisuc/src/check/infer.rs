@@ -30,6 +30,8 @@ thread_local! {
     static WALKED: Cell<usize> = const { Cell::new(0) };
     /// The types that `rebuild_in` has rebuilt: the ones that its memo did not hold.
     static REBUILDS: Cell<usize> = const { Cell::new(0) };
+    /// The snapshots that were taken.
+    static SNAPSHOTS: Cell<usize> = const { Cell::new(0) };
 }
 
 /// What a variable stands for.
@@ -271,6 +273,8 @@ impl Table {
 
     /// A mark to `rollback` to, or to `keep`. Each snapshot ends with one of the two.
     pub(super) fn snapshot(&self) -> Snapshot {
+        #[cfg(test)]
+        SNAPSHOTS.set(SNAPSHOTS.get() + 1);
         self.open.set(self.open.get() + 1);
         Snapshot {
             log: self.log.len(),
@@ -1068,16 +1072,29 @@ mod tests {
         let mut table = Table::default();
         let later = table.fresh(Kind::Any, at(10));
         let earlier = table.fresh(Kind::Any, at(5));
+        let other = table.fresh(Kind::Any, at(20));
         let int = table.fresh(Kind::Int, at(1));
         assert!(table.unify(later, earlier).is_some());
-        let ty = Type::array(Type::optional(later));
-        // The set is named at its first origin; an `Int` is not named.
-        assert_eq!(table.unsettled(ty), [Unsettled { origin: at(5) }]);
-        assert_eq!(table.unsettled(int), []);
-        // The set was poisoned: it is named once, and `write_back` reports it no more.
+        let ty = holding(&[Type::optional(later), other, int]);
+        // Each set is named at its first origin, in source order; an `Int` is not named.
+        assert_eq!(
+            table.unsettled(ty),
+            [Unsettled { origin: at(5) }, Unsettled { origin: at(20) }]
+        );
+        // Both sets were poisoned: each is named once, and `write_back` reports none.
         assert_eq!(table.unsettled(earlier), []);
+        assert_eq!(table.unsettled(other), []);
         let mut written = ty;
         assert_eq!(write_back(&mut table, &mut written), []);
+    }
+
+    #[test]
+    fn unify_of_two_closed_types_should_take_no_snapshot() {
+        let mut table = Table::default();
+        SNAPSHOTS.set(0);
+        assert_eq!(table.unify(Type::I64, Type::I64), Some(Vec::new()));
+        assert_eq!(table.unify(Type::optional(Type::I64), Type::U8), None);
+        assert_eq!(SNAPSHOTS.get(), 0);
     }
 
     #[test]
