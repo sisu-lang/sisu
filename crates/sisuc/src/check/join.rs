@@ -7,6 +7,8 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+mod join_report;
+
 use super::any::Conversion;
 use super::operator::Operator;
 use super::reports::Reported;
@@ -56,19 +58,12 @@ pub(super) enum Place {
     /// An argument at a parameter of type `place`, which names the call's `T` inside it (`[T]`,
     /// `T?`, `Box<T>`). The member is the part of the argument at `T`, and `argument` is the
     /// argument's span.
-    Part {
-        place: Type,
-        #[cfg_attr(test, expect(dead_code, reason = "the report of Task 3 reads it"))]
-        argument: Span,
-    },
+    Part { place: Type, argument: Span },
 }
 
 /// The form of a join, which its report names.
 #[derive(Clone, Copy)]
-#[expect(
-    dead_code,
-    reason = "the forms come in Task 5, and the report of Task 3 reads them"
-)]
+#[expect(dead_code, reason = "the forms come in Task 5")]
 pub(super) enum JoinForm {
     If,
     Match,
@@ -103,17 +98,33 @@ enum Joined {
 }
 
 /// The members of a join that has no candidate, in groups by type.
-#[expect(dead_code, reason = "the report of Task 3 reads it")]
 struct Conflict {
     groups: Vec<Group>,
+    /// Each member that is a made part of its argument, at the argument's span, with its part's
+    /// type. A call labels it as the argument that gives its type parameter that type.
+    parts: Vec<(Span, Type)>,
 }
 
 /// The leaves of the members of a conflict that have one type, by their spans: a member of a
 /// nested join is named at its own depth.
-#[expect(dead_code, reason = "the report of Task 3 reads it")]
 struct Group {
     ty: Type,
     leaves: Vec<Span>,
+    /// The leaves that are a whole value, which a conversion can wrap: not the assigned side of a
+    /// compound assignment, and not an `if` or a `match`.
+    whole: Vec<Span>,
+}
+
+/// What a join reports about: its form, where it stands, and how its members take part.
+#[derive(Clone, Copy)]
+struct Site {
+    form: JoinForm,
+    /// The span of the form: the `if`, the `[` of an array, the call's name.
+    head: Span,
+    /// The `T` of a call's `Place::Part` members.
+    hole: Option<Symbol>,
+    /// The member that converts by unification only.
+    fixed: Option<usize>,
 }
 
 /// A value at the end of the value positions of a member, with its span and its type. `around` is
@@ -148,16 +159,17 @@ impl Leaf {
 impl Checker<'_> {
     /// The one entry of a join: the type of the members, each settled to it. Under a required type
     /// that is the only candidate. `head` is the span of the form, and `binding` the name of a
-    /// `let` without a type, which the fix of Task 3 reads. A conflict is untyped poison (typed by
-    /// a required type); its report comes in Task 3, so it gives only a promise of one now. When
-    /// an untyped poisoned member is left out, a typed join is poison of its type (ADR 0049).
+    /// `let` without a type, which the fix of a conflict writes after. A conflict, or a required
+    /// type that a member does not take, is reported here: a conflict is untyped poison (typed by
+    /// a required type). When an untyped poisoned member is left out, a typed join is poison of its
+    /// type (ADR 0049).
     pub(super) fn join_form(
         &mut self,
         form: JoinForm,
         head: Span,
         members: &mut [JoinMember<'_>],
         expected: Expectation,
-        _binding: Option<Span>,
+        binding: Option<Span>,
     ) -> Result<Type, Poisoned> {
         let hole = match form {
             JoinForm::Call { param } => Some(param),
@@ -167,8 +179,14 @@ impl Checker<'_> {
             JoinForm::Compound { assigned, .. } => Some(assigned),
             _ => None,
         };
+        let site = Site {
+            form,
+            head,
+            hole,
+            fixed,
+        };
         let required = match expected {
-            Expectation::Required(ty, _) => Some(ty),
+            Expectation::Required(ty, origin) => Some((ty, origin)),
             Expectation::None | Expectation::Poisoned | Expectation::Hint { .. } => None,
         };
         // The first member that is left out: untyped poison.
@@ -176,7 +194,7 @@ impl Checker<'_> {
             Err(poisoned) if poisoned.ty.is_none() => Some(poisoned.reported()),
             _ => None,
         });
-        match self.join_members(members, hole, fixed, required) {
+        match self.join_members(members, hole, fixed, required.map(|(ty, _)| ty)) {
             Ok(Joined::Typed(ty)) => {
                 for (i, member) in members.iter_mut().enumerate() {
                     let target = target(member.at, hole, ty);
@@ -193,12 +211,14 @@ impl Checker<'_> {
                 let reported = left_out.expect("an untyped join should have an untyped member");
                 Err(Poisoned::untyped(reported))
             }
-            Err(_conflict) => {
-                let reported = self.proof(head);
-                Err(match required {
-                    Some(ty) => Poisoned::typed(ty, reported),
-                    None => Poisoned::untyped(reported),
-                })
+            Err(conflict) => {
+                if let Some((ty, origin)) = required {
+                    let reported = self.report_required(site, (ty, origin), members);
+                    Err(Poisoned::typed(ty, reported))
+                } else {
+                    let reported = self.report_conflict(site, binding, members, &conflict);
+                    Err(Poisoned::untyped(reported))
+                }
             }
         }
     }
@@ -261,7 +281,7 @@ impl Checker<'_> {
         }
         match best {
             Some((_, ty)) => Ok(Joined::Typed(ty)),
-            None => Err(self.conflict(members, &taking)),
+            None => Err(self.conflict(members, &taking, hole, fixed)),
         }
     }
 
@@ -526,32 +546,71 @@ impl Checker<'_> {
         }
     }
 
-    /// The groups of the leaves of the taking members, by type.
-    fn conflict(&self, members: &mut [JoinMember<'_>], taking: &[usize]) -> Conflict {
+    /// The groups of the leaves of the taking members, by type. A leaf has the type that it has
+    /// inside the positions around it (`[i64]` for the literal `1` in `[1]`). A member that is a
+    /// made part of its argument is no leaf: it is in `parts`, with the type of its part.
+    fn conflict(
+        &self,
+        members: &mut [JoinMember<'_>],
+        taking: &[usize],
+        hole: Option<Symbol>,
+        fixed: Option<usize>,
+    ) -> Conflict {
         let mut groups: Vec<Group> = Vec::new();
+        let mut parts = Vec::new();
         let mut index: FxHashMap<Type, usize> = FxHashMap::default();
         for &i in taking {
             let member = &mut members[i];
             let mut leaves = Vec::new();
+            // Whether the one leaf is the member's own value, and a conversion can wrap it.
+            let (mut top, mut whole) = (false, false);
             match &mut *member.value {
-                Ok(e) => collect_leaves(e, &mut leaves),
+                Ok(e) if e.ty != Type::NEVER => {
+                    top = !nested_leaves(e, &mut leaves);
+                    if top {
+                        leaves.push(Leaf::new(e.span, e.ty));
+                        whole = fixed != Some(i)
+                            && !matches!(
+                                e.kind,
+                                ExprKind::If { .. }
+                                    | ExprKind::IfSome { .. }
+                                    | ExprKind::Match { .. }
+                            );
+                    }
+                }
+                Ok(_) => {}
                 Err(poisoned) => {
+                    top = true;
                     leaves.extend(poisoned.ty.map(|ty| Leaf::new(member.label, ty)));
                 }
             }
             for leaf in leaves {
-                let ty = self.table.resolve(leaf.ty);
+                let ty = self.table.resolve(leaf.around);
+                let ty = match (member.at, hole) {
+                    (Place::Part { place, .. }, Some(hole)) => {
+                        part_at(self.table.resolve(place), hole, ty).unwrap_or(ty)
+                    }
+                    _ => ty,
+                };
+                if let (Place::Part { argument, .. }, true) = (member.at, top) {
+                    parts.push((argument, ty));
+                    continue;
+                }
                 let at = *index.entry(ty).or_insert_with(|| {
                     groups.push(Group {
                         ty,
                         leaves: Vec::new(),
+                        whole: Vec::new(),
                     });
                     groups.len() - 1
                 });
                 groups[at].leaves.push(leaf.at);
+                if whole {
+                    groups[at].whole.push(leaf.at);
+                }
             }
         }
-        Conflict { groups }
+        Conflict { groups, parts }
     }
 }
 
@@ -851,10 +910,6 @@ fn part_in(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
         _ => None,
     })
 }
-
-#[cfg(test)]
-#[path = "join_report.rs"]
-mod join_report;
 
 #[cfg(test)]
 mod tests {

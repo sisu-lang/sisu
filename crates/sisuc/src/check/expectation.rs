@@ -47,6 +47,13 @@ pub(super) enum Origin {
     Branch { at: Span, ty: Type },
     /// The argument at `at`, which bound the type parameter `param` of a call to `ty`.
     Inferred { at: Span, param: Symbol, ty: Type },
+    /// The first bare `break` of a loop, at `at`, which gives the loop the value `unit`. A report
+    /// of a `break` that has a value points at it.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the first caller comes in Task 5")
+    )]
+    BareBreak { at: Span },
 }
 
 impl Origin {
@@ -214,7 +221,7 @@ impl Checker<'_> {
             shown.map_or_else(|| self.type_name(ty), ToString::to_string)
         };
         match origin {
-            Origin::None => None,
+            Origin::None | Origin::BareBreak { .. } => None,
             Origin::Break { at, ty, outer } => Some(MismatchOrigin::Break {
                 at,
                 ty: self.type_name(ty),

@@ -2931,18 +2931,6 @@ impl Checker<'_> {
         got: Type,
         origin: Origin,
     ) -> Diagnostic {
-        let optional = matches!(want.kind(), TypeKind::Optional(_));
-        // `u8` and `char` convert into each other through `i64`, and into `f64` through it.
-        let (to, through) = match (payload(want), got) {
-            (Type::I64, Type::U8 | Type::CHAR) => (Some("i64"), None),
-            (Type::F64, Type::I64) => (Some("f64"), None),
-            (Type::F64, Type::U8 | Type::CHAR) => (Some("f64"), Some("i64")),
-            (Type::U8, Type::I64) if optional => (Some("u8"), None),
-            (Type::CHAR, Type::I64) if optional => (Some("char"), None),
-            (Type::U8, Type::CHAR) if optional => (Some("u8"), Some("i64")),
-            (Type::CHAR, Type::U8) if optional => (Some("char"), Some("i64")),
-            _ => (None, None),
-        };
         let conversion = matches!(got.kind(), TypeKind::Optional(p) if p == want)
             && source.is_some_and(|e| self.can_fail(e));
         DiagnosticKind::Mismatch {
@@ -2950,7 +2938,7 @@ impl Checker<'_> {
             got: self.type_name(got),
             at: span,
             origin: self.origin_fact(origin),
-            fix: to
+            fix: number_conversion(want, got)
                 .zip(source.filter(|e| {
                     !matches!(
                         e.kind,
@@ -2959,7 +2947,7 @@ impl Checker<'_> {
                             | ast::ExprKind::Match { .. }
                     )
                 }))
-                .map(|(to, e)| {
+                .map(|((to, through), e)| {
                     MismatchFix::Convert(Conversion {
                         to,
                         through,
@@ -3007,6 +2995,23 @@ fn is_language_interface(name: &str) -> bool {
 /// redeclaration.
 fn redeclares(first: &FxHashMap<Symbol, (Span, Definition)>, name: &ast::Ident) -> bool {
     first.contains_key(&name.name) && !name.span.in_prelude()
+}
+
+/// The conversion that turns a `got` into `want`: the type to convert to, and the type to go
+/// through. `u8` and `char` convert into each other through `i64`, and into `f64` through it.
+/// A conversion to `u8` or `char` gives an optional, so it is offered only where one is expected.
+fn number_conversion(want: Type, got: Type) -> Option<(&'static str, Option<&'static str>)> {
+    let optional = matches!(want.kind(), TypeKind::Optional(_));
+    match (payload(want), got) {
+        (Type::I64, Type::U8 | Type::CHAR) => Some(("i64", None)),
+        (Type::F64, Type::I64) => Some(("f64", None)),
+        (Type::F64, Type::U8 | Type::CHAR) => Some(("f64", Some("i64"))),
+        (Type::U8, Type::I64) if optional => Some(("u8", None)),
+        (Type::CHAR, Type::I64) if optional => Some(("char", None)),
+        (Type::U8, Type::CHAR) if optional => Some(("u8", Some("i64"))),
+        (Type::CHAR, Type::U8) if optional => Some(("char", Some("i64"))),
+        _ => None,
+    }
 }
 
 /// `T` for a `T?`, else `ty`.
