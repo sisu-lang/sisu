@@ -270,7 +270,7 @@ struct Frame {
 ///
 /// This is the fourth recorded exception to "A pass is linear in the program" (user,
 /// 2026-10-27; ruling F9). A query costs one step for each class or enum type that it forms (see
-/// `CODING_STANDARDS.md`, Performance). The types that a query forms from a concrete type are the
+/// `Checker::conforms`). The types that a query forms from a concrete type are the
 /// types that `mono` instantiates when the program uses them.
 #[derive(Debug, Default)]
 pub(crate) struct Open {
