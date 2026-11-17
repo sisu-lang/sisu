@@ -837,6 +837,14 @@ generator knows the errors that the edit must give. The single-mistake check
 of the fuzzer makes sure that the checker gives these errors and no *cascade*
 that `fuzz/known_cascades.txt` does not list.
 
+**Join**:
+A place where two or more members give one value, so the checker finds one type
+for all of them. The branches of an `if` or a `match`, the elements of an array
+literal and the `break` values of one loop are joins. The join-order check of
+the program fuzzer swaps the two blocks of each `if` that has an `else` block,
+but not of an `if let`. It also swaps the first and last elements of each array
+literal. The checker must still accept the program.
+
 **Expected type**:
 The type that the context asks of an expression. It is *required*: a mismatch is
 an error. Or it is *hinted*: it guides the inference of a literal, a call, `None` or
