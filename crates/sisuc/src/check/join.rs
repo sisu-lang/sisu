@@ -724,6 +724,7 @@ fn part_in(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::check::expectation::Origin;
     use crate::check::infer::{Kind, LiteralCheck};
     use crate::check::tests::joins::with_params;
     use crate::diagnostic::Code;
@@ -824,20 +825,35 @@ mod tests {
         form: JoinForm,
         values: &mut [Checked],
     ) -> Result<Type, Poisoned> {
-        let mut members: Vec<JoinMember<'_>> = (values.iter_mut())
+        join_under(c, form, values, Expectation::None)
+    }
+
+    /// `join_all` under the expectation `expected`.
+    fn join_under(
+        c: &mut Checker<'_>,
+        form: JoinForm,
+        values: &mut [Checked],
+        expected: Expectation,
+    ) -> Result<Type, Poisoned> {
+        let mut members = whole(values);
+        c.join_form(form, at(0), &mut members, expected, None)
+    }
+
+    /// Each of `values` as a whole member.
+    fn whole(values: &mut [Checked]) -> Vec<JoinMember<'_>> {
+        (values.iter_mut())
             .map(|value| JoinMember {
                 value,
                 at: Place::Whole,
                 label: at(0),
             })
-            .collect();
-        c.join_form(form, at(0), &mut members, Expectation::None, None)
+            .collect()
     }
 
-    /// `e` with each type in it as its key, so that two runs compare.
+    /// `e` with each type in it as its key, so that two runs compare. `each_type_mut` walks the
+    /// whole tree.
     fn keyed(c: &Checker<'_>, e: &mut tir::Expr) {
         e.each_type_mut(&mut |ty| *ty = c.table.key(*ty));
-        e.each_child_mut(&mut |child| keyed(c, child));
     }
 
     /// The text of a member after its join, with each type as its key.
@@ -1191,5 +1207,93 @@ mod tests {
         });
         // THEN `Seen` is used
         assert!(!spans.contains(&seen));
+    }
+
+    #[test]
+    fn required_type_should_decide_a_join_with_untyped_poison() {
+        with_params("", "", |c, _| {
+            // GIVEN untyped poison (`nope`) and the literal `300`, under the required type `u8`
+            let poisoned = Poisoned::untyped(c.proof(at(1)));
+            let mut values = vec![Err(poisoned), Ok(int(c, 300, 2))];
+            // WHEN they join
+            let required = Expectation::Required(Type::U8, Origin::None);
+            let joined = join_under(c, JoinForm::If, &mut values, required);
+            // THEN the literal meets `u8`: E0040 at `300`, and the join is poison of type `u8`
+            let Err(poisoned) = joined else {
+                panic!("the join should be poisoned");
+            };
+            assert_eq!(poisoned.ty, Some(Type::U8));
+            let found: Vec<(Code, Span)> = (c.diagnostics.iter())
+                .map(|d| (d.code(), d.span()))
+                .collect();
+            assert_eq!(found, vec![(Code::IntegerDoesNotFit, at(2))]);
+        });
+    }
+
+    #[test]
+    fn join_should_add_the_optional_candidate_of_a_nested_member() {
+        // GIVEN the members `Some(Eye(v: 1))` and `if d { s } else { Eye(v: 1) }`, with
+        // `s: any Seen`
+        // WHEN they join, in each order
+        let ty = each_order(SEEN, "s: any Seen, e: Eye", |c, types| {
+            let open = c.table.fresh(Kind::Any, at(3));
+            let nested = if_else(local(types[0], 3), eye(types[1], 4), open, 5);
+            vec![Ok(some(eye(types[1], 1))), Ok(nested)]
+        });
+        // THEN the join is `(any Seen)?`: the nested member `s` gives `?`-added candidate
+        let seen = with_params(SEEN, "s: any Seen", |_, types| types[0]);
+        assert_eq!(ty, Some(Type::optional(seen)));
+    }
+
+    #[test]
+    fn apply_should_report_e0043_for_a_nested_if_with_no_else() {
+        with_params("", "", |c, _| {
+            // GIVEN the members `if c { None } else { if d { print(0) } }` and `o: unit?`
+            let optional = Type::optional(Type::UNIT);
+            let open = c.table.fresh(Kind::Any, at(3));
+            let outer = if_else(none(c, 1), if_without_else(2), open, 3);
+            let mut values = vec![Ok(outer), Ok(local(optional, 4))];
+            // WHEN they join to `unit?`, which wraps the inner `if`
+            let ty = join_all(c, JoinForm::If, &mut values);
+            // THEN one E0043 at the inner `if`, and the outer member is poison of type `unit?`
+            assert_eq!(ty.ok(), Some(optional));
+            let found: Vec<(Code, Span)> = (c.diagnostics.iter())
+                .map(|d| (d.code(), d.span()))
+                .collect();
+            assert_eq!(found, vec![(Code::NoValue, at(2))]);
+            let Err(poisoned) = &values[0] else {
+                panic!("the outer `if` should be poisoned");
+            };
+            assert_eq!(poisoned.ty, Some(optional));
+        });
+    }
+
+    /// `Some(1)`, `a: u8` and `None`.
+    fn some_a_none(c: &mut Checker<'_>, types: &[Type]) -> Vec<Checked> {
+        vec![
+            Ok(some(int(c, 1, 1))),
+            Ok(local(types[0], 2)),
+            Ok(none(c, 3)),
+        ]
+    }
+
+    #[test]
+    fn candidate_tests_should_leave_the_table_as_it_was() {
+        // GIVEN the members `Some(1)`, `a: u8` and `None`
+        // WHEN they join, in each order
+        let ty = each_order("", "a: u8", some_a_none);
+        // THEN the join is `u8?`
+        assert_eq!(ty, Some(Type::optional(Type::U8)));
+        with_params("", "a: u8", |c, types| {
+            let mut values = some_a_none(c, types);
+            let before: Vec<String> = values.iter().map(|value| shown(c, value)).collect();
+            // WHEN only the candidates are tested
+            let mut members = whole(&mut values);
+            let joined = c.join_members(&mut members, None, None, None);
+            assert!(matches!(joined, Ok(Joined::Typed(_))));
+            // THEN each type in the members is as it was: no test left a binding
+            let after: Vec<String> = values.iter().map(|value| shown(c, value)).collect();
+            assert_eq!(before, after);
+        });
     }
 }
