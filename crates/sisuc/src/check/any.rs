@@ -25,6 +25,15 @@ thread_local! {
     pub(super) static ANY_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// One step that makes a value of one type a value of another (see `Checker::conversion`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Conversion {
+    /// `T` to `T?`.
+    Wrap,
+    /// A value to this `any` type.
+    ToAny(Type),
+}
+
 /// What `any_join_all` found.
 pub(super) enum AnyJoin {
     /// No member is an `any` type: the caller joins as before.
@@ -396,16 +405,17 @@ impl Checker<'_> {
             let reported = self.error(self.not_conform(at, got, target, origin));
             return Ok((Err(Poisoned::untyped(reported)), true));
         }
-        // A conversion makes a table, which only `mono` reaches.
-        self.instantiates = true;
-        self.record(Used::Interface(interface), at);
-        self.record_both(got);
+        let steps: &[Conversion] = if layers == 1 {
+            &[Conversion::ToAny(target), Conversion::Wrap]
+        } else {
+            &[Conversion::ToAny(target)]
+        };
         let converted = match checked {
-            Ok(e) => {
-                let e = to_any(e, target);
-                Ok(if layers == 1 { wrap(e, want) } else { e })
+            Ok(e) => self.apply(e, steps),
+            Err(poisoned) => {
+                self.converted_to_any(at, got, target);
+                Err(Poisoned::typed(want, poisoned.reported()))
             }
-            Err(poisoned) => Err(Poisoned::typed(want, poisoned.reported())),
         };
         Ok((converted, false))
     }
@@ -458,14 +468,80 @@ impl Checker<'_> {
 
     /// `e`, converted to `want`, an `any` type or its optional, that `converts_to_any` has
     /// accepted for the type of `e`.
-    pub(super) fn make_any(&mut self, e: tir::Expr, want: Type) -> tir::Expr {
-        self.instantiates = true;
-        // Every conversion records its root. Only a class reaches this one today.
-        self.record_shown_any(e.ty, want);
+    pub(super) fn make_any(&mut self, e: tir::Expr, want: Type) -> Checked {
         match want.kind() {
-            TypeKind::Optional(payload) => wrap(to_any(e, payload), want),
-            _ => to_any(e, want),
+            TypeKind::Optional(payload) => {
+                self.apply(e, &[Conversion::ToAny(payload), Conversion::Wrap])
+            }
+            _ => self.apply(e, &[Conversion::ToAny(want)]),
         }
+    }
+
+    /// The steps that make a value of type `from` a value of type `to` at its top, or `None`.
+    /// It unifies before it wraps: a value whose type unifies with `to` takes no step. Else an
+    /// optional `to` wraps a value whose type unifies with its payload. An `any` type takes a
+    /// value whose type conforms to its interface. A value of an `Int` or `Any` variable does not
+    /// convert to an `any` type: it unifies. It binds what it unifies, so a caller that only
+    /// tests asks under a snapshot.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the first caller comes in Task 5")
+    )]
+    pub(super) fn conversion(&mut self, from: Type, to: Type) -> Option<Vec<Conversion>> {
+        if self.unify(from, to) {
+            return Some(Vec::new());
+        }
+        let (from, to) = (self.table.resolve(from), self.table.resolve(to));
+        let (target, wrapped) = match to.kind() {
+            TypeKind::Optional(payload) => {
+                if self.unify(from, payload) {
+                    return Some(vec![Conversion::Wrap]);
+                }
+                (payload, true)
+            }
+            _ => (to, false),
+        };
+        let TypeKind::Any(interface, args) = target.kind() else {
+            return None;
+        };
+        let open = matches!(from.kind(), TypeKind::Infer(_));
+        if open || !can_convert(from) || !self.conforms(from, interface, args) {
+            return None;
+        }
+        Some(if wrapped {
+            vec![Conversion::ToAny(target), Conversion::Wrap]
+        } else {
+            vec![Conversion::ToAny(target)]
+        })
+    }
+
+    /// `e` after each of `steps`, in order. A `Wrap` of a value with no value to lift is E0043,
+    /// as `lift` reports it. A `ToAny` does the records of a conversion to an `any` type.
+    pub(super) fn apply(&mut self, mut e: tir::Expr, steps: &[Conversion]) -> Checked {
+        for &step in steps {
+            e = match step {
+                Conversion::Wrap => {
+                    let want = Type::optional(e.ty);
+                    self.lift(e, want)?
+                }
+                Conversion::ToAny(target) => {
+                    self.converted_to_any(e.span, e.ty, target);
+                    to_any(e, target)
+                }
+            };
+        }
+        Ok(e)
+    }
+
+    /// The records of a value of type `got` at `at` that converts to `target`, an `any` type: the
+    /// interface is used, and the value can be shown.
+    fn converted_to_any(&mut self, at: Span, got: Type, target: Type) {
+        // A conversion makes a table, which only `mono` reaches.
+        self.instantiates = true;
+        if let TypeKind::Any(interface, _) = target.kind() {
+            self.record(Used::Interface(interface), at);
+        }
+        self.record_shown_any(got, target);
     }
 
     /// Whether a value of type `got` converts to `want`, which `any_conversion` answers by doing

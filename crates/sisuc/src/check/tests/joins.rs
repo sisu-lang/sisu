@@ -23,6 +23,37 @@ pub(in crate::check) fn with_checker<R>(src: &str, f: impl FnOnce(&mut Checker<'
     checker.with_table(|c| Nothing(f(c))).0
 }
 
+/// Runs `f` inside `with_table`, in the body of `main` of `src` with `fn probe(<params>)` and
+/// `fn main()` added, on the types of the parameters of `probe`. The prelude is declared too.
+pub(in crate::check) fn with_params<R>(
+    src: &str,
+    params: &str,
+    f: impl FnOnce(&mut Checker<'_>, &[Type]) -> R,
+) -> R {
+    let src = format!("{src}fn probe({params}) {{}}\nfn main() {{}}\n");
+    let program = parse_ok(&src);
+    let prelude = prelude_program("");
+    let mut checker = Checker::new(&program, &src, &prelude.text);
+    let items: Vec<&ast::Item> = program.items.iter().chain(&prelude.program.items).collect();
+    checker.declare_items(&items, program.items.len(), &program.broken);
+    let at = |name: &str| {
+        (checker.signatures.iter())
+            .position(|signature| signature.name == name)
+            .expect("the program should declare the function")
+    };
+    let (probe, main) = (at("probe"), at("main"));
+    let types: Vec<Type> = (checker.signatures[probe].params.iter())
+        .map(|ty| ty.expect("each parameter of `probe` should name a type"))
+        .collect();
+    let body = Body {
+        owner: Some(Owner::Func(tir::FuncId(main))),
+        ..Body::default()
+    };
+    checker
+        .with_table(|c| Nothing(c.with_body(body, |c| f(c, &types)).0))
+        .0
+}
+
 #[test]
 fn cache_should_not_keep_an_inference_variable_across_functions() {
     // GIVEN two functions whose first open `Any` variable has the same id and a different type

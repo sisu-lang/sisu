@@ -1152,11 +1152,11 @@ impl Checker<'_> {
                     // A class beside an `any` converts to it first.
                     #[cfg(test)]
                     super::reached("make_any on the right");
-                    (l, r.map(|e| self.make_any(e, lt)))
+                    (l, r.and_then(|e| self.make_any(e, lt)))
                 } else if self.converts_to_any(lt, rt) {
                     #[cfg(test)]
                     super::reached("make_any on the left");
-                    (l.map(|e| self.make_any(e, rt)), r)
+                    (l.and_then(|e| self.make_any(e, rt)), r)
                 } else {
                     let kind = DiagnosticKind::CannotCompare {
                         left: self.type_name(lt),

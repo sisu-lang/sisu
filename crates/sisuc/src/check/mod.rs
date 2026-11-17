@@ -19,6 +19,7 @@ mod extend;
 mod generic;
 mod infer;
 mod interface;
+mod join;
 mod member;
 mod mut_args;
 mod names;

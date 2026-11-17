@@ -40,6 +40,17 @@ pub(super) enum Kind {
     Any,
 }
 
+/// What `rebuild` makes of an open variable.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Open {
+    /// The variable of its root.
+    Keep,
+    /// `i64` for an `Int`; the root for an `Any`.
+    Default,
+    /// One stand-in for each kind (see `Table::key`).
+    Key,
+}
+
 /// The value and sign of an integer literal in an `Int` variable, which E0040, E0042 and E0104
 /// check when the variable gets its type. `value` is the magnitude: a literal is negative only
 /// as `-9223372036854775808`.
@@ -230,7 +241,7 @@ impl Table {
     /// `ty` with each variable that has a type replaced by it. An open variable stays, as the
     /// variable of its root, so two types that name unified variables are the same type.
     pub(super) fn resolve(&self, ty: Type) -> Type {
-        self.rebuild(ty, false)
+        self.rebuild(ty, Open::Keep)
     }
 
     /// `resolve`, with each open `Int` variable as `i64`: the type as a diagnostic shows it. An
@@ -240,7 +251,18 @@ impl Table {
         expect(dead_code, reason = "the first caller comes in Task 4")
     )]
     pub(super) fn default_open(&self, ty: Type) -> Type {
-        self.rebuild(ty, true)
+        self.rebuild(ty, Open::Default)
+    }
+
+    /// `resolve`, with each open variable as one stand-in for its kind: two types that differ only
+    /// in their open variables of one kind give one key. A join tests one candidate per key. A
+    /// key is no type to use: its stand-ins name no variable of the table.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the first caller comes in Task 5")
+    )]
+    pub(super) fn key(&self, ty: Type) -> Type {
+        self.rebuild(ty, Open::Key)
     }
 
     /// Makes `a` and `b` one type, or changes nothing and gives `None`. An `Int` variable unifies
@@ -446,15 +468,15 @@ impl Table {
         roots
     }
 
-    fn rebuild(&self, ty: Type, defaults: bool) -> Type {
+    fn rebuild(&self, ty: Type, open: Open) -> Type {
         if !ty.holds_infer() {
             return ty;
         }
-        self.rebuild_in(ty, defaults, &mut FxHashMap::default())
+        self.rebuild_in(ty, open, &mut FxHashMap::default())
     }
 
     /// `rebuild`, with the types it has met, so that each distinct type is rebuilt once.
-    fn rebuild_in(&self, ty: Type, defaults: bool, memo: &mut FxHashMap<Type, Type>) -> Type {
+    fn rebuild_in(&self, ty: Type, open: Open, memo: &mut FxHashMap<Type, Type>) -> Type {
         if !ty.holds_infer() {
             return ty;
         }
@@ -468,30 +490,35 @@ impl Table {
                 let root = self.find(id.0);
                 let known = self.slots[root as usize].root;
                 match known.bound {
-                    Some(bound) => self.rebuild_in(bound, defaults, memo),
-                    None if defaults && known.kind == Kind::Int => Type::I64,
-                    None => Type::intern(TypeKind::Infer(InferId(root))),
+                    Some(bound) => self.rebuild_in(bound, open, memo),
+                    None => match (open, known.kind) {
+                        (Open::Default, Kind::Int) => Type::I64,
+                        (Open::Key, Kind::Int) => Type::intern(TypeKind::Infer(InferId(u32::MAX))),
+                        (Open::Key, Kind::Any) => {
+                            Type::intern(TypeKind::Infer(InferId(u32::MAX - 1)))
+                        }
+                        _ => Type::intern(TypeKind::Infer(InferId(root))),
+                    },
                 }
             }
-            TypeKind::Array(inner) => Type::array(self.rebuild_in(inner, defaults, memo)),
-            TypeKind::Optional(inner) => Type::optional(self.rebuild_in(inner, defaults, memo)),
+            TypeKind::Array(inner) => Type::array(self.rebuild_in(inner, open, memo)),
+            TypeKind::Optional(inner) => Type::optional(self.rebuild_in(inner, open, memo)),
             TypeKind::Class(id, args) => {
-                Type::intern(TypeKind::Class(id, self.rebuild_args(args, defaults, memo)))
+                Type::intern(TypeKind::Class(id, self.rebuild_args(args, open, memo)))
             }
-            TypeKind::Struct(id, args) => Type::intern(TypeKind::Struct(
-                id,
-                self.rebuild_args(args, defaults, memo),
-            )),
+            TypeKind::Struct(id, args) => {
+                Type::intern(TypeKind::Struct(id, self.rebuild_args(args, open, memo)))
+            }
             TypeKind::Enum(id, args) => {
-                Type::intern(TypeKind::Enum(id, self.rebuild_args(args, defaults, memo)))
+                Type::intern(TypeKind::Enum(id, self.rebuild_args(args, open, memo)))
             }
             TypeKind::Any(id, args) => {
-                Type::intern(TypeKind::Any(id, self.rebuild_args(args, defaults, memo)))
+                Type::intern(TypeKind::Any(id, self.rebuild_args(args, open, memo)))
             }
             TypeKind::Assoc(base, interface, args, k) => Type::intern(TypeKind::Assoc(
-                self.rebuild_in(base, defaults, memo),
+                self.rebuild_in(base, open, memo),
                 interface,
-                self.rebuild_args(args, defaults, memo),
+                self.rebuild_args(args, open, memo),
                 k,
             )),
             TypeKind::I64
@@ -511,14 +538,14 @@ impl Table {
     fn rebuild_args(
         &self,
         args: TypeArgs,
-        defaults: bool,
+        open: Open,
         memo: &mut FxHashMap<Type, Type>,
     ) -> TypeArgs {
         if !args.holds_infer() {
             return args;
         }
         let list: Vec<Type> = (args.get().iter())
-            .map(|&arg| self.rebuild_in(arg, defaults, memo))
+            .map(|&arg| self.rebuild_in(arg, open, memo))
             .collect();
         TypeArgs::intern(&list)
     }
@@ -754,7 +781,7 @@ impl Written {
         if !ty.holds_infer() {
             return;
         }
-        *ty = table.rebuild_in(*ty, false, &mut self.memo);
+        *ty = table.rebuild_in(*ty, Open::Keep, &mut self.memo);
         self.open |= ty.holds_infer();
     }
 

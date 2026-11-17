@@ -1,0 +1,1195 @@
+//! The join: the one type that the members of a form convert to. The forms are an `if`, a
+//! `match`, an array literal, and a loop's `break` values. They are also the sides of `??` and
+//! of an operator, and the arguments at one type parameter of a call. `join_form` is the one
+//! entry. It picks the candidate that each member converts to, with the fewest wraps, and then
+//! settles each member to it: it writes each `Wrap` and `ToAny` at the value positions of the
+//! member, through `conversion` and `apply`.
+
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use super::any::Conversion;
+use super::operator::Operator;
+use super::reports::Reported;
+use super::{Checked, Checker, Expectation, Poisoned};
+use crate::conformance::ensure_stack;
+use crate::source::Span;
+use crate::symbol::Symbol;
+use crate::tir::{self, ExprKind, Type, TypeArgs, TypeKind};
+
+#[cfg(test)]
+thread_local! {
+    /// How many candidates `join` has tested, on this thread.
+    pub(super) static CANDIDATES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many value positions `settle` has settled, on this thread.
+    pub(super) static SETTLED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many nodes `value_positions` has visited, on this thread.
+    pub(super) static VALUE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// A member of a join: a checked value, where it stands, and the span of the label of an E0043
+/// `BareBreak` (the `break` of a loop's member, else the value). A poisoned member takes part with
+/// its type, or is left out when it has none.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+pub(super) struct JoinMember<'a> {
+    pub(super) value: &'a mut Checked,
+    pub(super) at: Place,
+    pub(super) label: Span,
+}
+
+/// Where a member stands in its join.
+#[derive(Clone, Copy)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+pub(super) enum Place {
+    /// The member is its own value: a branch's value, an element, a `break` value, an operand,
+    /// or an argument at a bare `T`.
+    Whole,
+    /// An argument at a parameter of type `place`, which names the call's `T` inside it (`[T]`,
+    /// `T?`, `Box<T>`). The member is the part of the argument at `T`, and `argument` is the
+    /// argument's span.
+    Part {
+        place: Type,
+        #[cfg_attr(test, expect(dead_code, reason = "the report of Task 3 reads it"))]
+        argument: Span,
+    },
+}
+
+/// The form of a join, which its report names.
+#[derive(Clone, Copy)]
+#[expect(
+    dead_code,
+    reason = "the forms come in Task 5, and the report of Task 3 reads them"
+)]
+pub(super) enum JoinForm {
+    If,
+    Match,
+    Array,
+    Loop,
+    Coalesce,
+    Operator(Operator),
+    Compare,
+    /// `+=`: the member at `assigned` is the place it writes to, which does not convert.
+    Compound {
+        op: Operator,
+        assigned: usize,
+    },
+    /// The arguments at the places of the type parameter `param` of a call.
+    Call {
+        param: Symbol,
+    },
+}
+
+/// What `join` found when no conflict stopped it.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+enum Joined {
+    /// Each member converts to this type.
+    Typed(Type),
+    /// An untyped poisoned member is left out, and no member that is left states a type.
+    Untyped,
+    /// Each member is `never`.
+    Never,
+}
+
+/// The members of a join that has no candidate, in groups by type.
+#[expect(dead_code, reason = "the report of Task 3 reads it")]
+struct Conflict {
+    groups: Vec<Group>,
+}
+
+/// The leaves of the members of a conflict that have one type, by their spans: a member of a
+/// nested join is named at its own depth.
+#[expect(dead_code, reason = "the report of Task 3 reads it")]
+struct Group {
+    ty: Type,
+    leaves: Vec<Span>,
+}
+
+/// A value at the end of the value positions of a member: its span, its type, and its type inside
+/// the positions around it (`[t]` for an element, `t?` for a `Some` payload).
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+struct Leaf {
+    at: Span,
+    ty: Type,
+    around: Type,
+}
+
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+impl Checker<'_> {
+    /// The one entry of a join: the type of the members, each settled to it. Under a required type
+    /// that is the only candidate. `head` is the span of the form, and `binding` the name of a
+    /// `let` without a type, which the fix of Task 3 reads. A conflict is untyped poison (typed by
+    /// a required type); its report comes in Task 3, so it gives only a promise of one now.
+    pub(super) fn join_form(
+        &mut self,
+        form: JoinForm,
+        head: Span,
+        members: &mut [JoinMember<'_>],
+        expected: Expectation,
+        _binding: Option<Span>,
+    ) -> Result<Type, Poisoned> {
+        let hole = match form {
+            JoinForm::Call { param } => Some(param),
+            _ => None,
+        };
+        let fixed = match form {
+            JoinForm::Compound { assigned, .. } => Some(assigned),
+            _ => None,
+        };
+        let required = match expected {
+            Expectation::Required(ty, _) => Some(ty),
+            Expectation::None | Expectation::Poisoned | Expectation::Hint { .. } => None,
+        };
+        match self.join_members(members, hole, fixed, required) {
+            Ok(Joined::Typed(ty)) => {
+                for (i, member) in members.iter_mut().enumerate() {
+                    let target = target(member.at, hole, ty);
+                    self.settle_member(member.value, target, fixed == Some(i));
+                }
+                Ok(self.table.resolve(ty))
+            }
+            Ok(Joined::Never) => Ok(Type::NEVER),
+            Ok(Joined::Untyped) => {
+                let reported = (members.iter())
+                    .find_map(|member| match &*member.value {
+                        Err(poisoned) if poisoned.ty.is_none() => Some(poisoned.reported()),
+                        _ => None,
+                    })
+                    .expect("an untyped join should have an untyped member");
+                Err(Poisoned::untyped(reported))
+            }
+            Err(_conflict) => {
+                let reported = self.proof(head);
+                Err(match required {
+                    Some(ty) => Poisoned::typed(ty, reported),
+                    None => Poisoned::untyped(reported),
+                })
+            }
+        }
+    }
+
+    /// The candidate that each member takes with the fewest wraps. Each test runs under a
+    /// snapshot, which it rolls back: the join binds nothing. `hole` is the `T` of a call's
+    /// `Place::Part` members, and the member at `fixed` converts by unification only.
+    fn join_members(
+        &mut self,
+        members: &mut [JoinMember<'_>],
+        hole: Option<Symbol>,
+        fixed: Option<usize>,
+        required: Option<Type>,
+    ) -> Result<Joined, Conflict> {
+        let mut taking = Vec::new();
+        let mut left_out = false;
+        for (i, member) in members.iter().enumerate() {
+            match member_type(member.value) {
+                Some(Type::NEVER) => {}
+                Some(_) => taking.push(i),
+                None => left_out = true,
+            }
+        }
+        if taking.is_empty() {
+            return Ok(if left_out {
+                Joined::Untyped
+            } else {
+                Joined::Never
+            });
+        }
+        // Without its poisoned member, a join is typed only by a member that states its type.
+        let stated = |c: &Self, i: usize| {
+            member_type(members[i].value).is_some_and(|ty| !c.table.resolve(ty).holds_infer())
+        };
+        if left_out && !taking.iter().any(|&i| stated(self, i)) {
+            return Ok(Joined::Untyped);
+        }
+        let candidates = match required {
+            Some(ty) => vec![ty],
+            None => self.candidates(members, &taking, hole),
+        };
+        let mut best: Option<(usize, Type)> = None;
+        for candidate in candidates {
+            #[cfg(test)]
+            CANDIDATES.set(CANDIDATES.get() + 1);
+            let snapshot = self.table.snapshot();
+            let mut wraps = Some(0);
+            for &i in &taking {
+                let target = target(members[i].at, hole, candidate);
+                let Some(more) = self.converts(members[i].value, target, fixed == Some(i)) else {
+                    wraps = None;
+                    break;
+                };
+                wraps = wraps.map(|n| n + more);
+            }
+            self.table.rollback(snapshot);
+            if let Some(wraps) = wraps
+                && best.is_none_or(|(least, _)| wraps < least)
+            {
+                best = Some((wraps, candidate));
+            }
+        }
+        match best {
+            Some((_, ty)) => Ok(Joined::Typed(ty)),
+            None => Err(self.conflict(members, &taking)),
+        }
+    }
+
+    /// The candidates of a join, one per key (`Table::key`): the type of each member and of each
+    /// leaf inside the positions around it. When a member is optional, the type of each other
+    /// member with `?` added is a candidate too (rule A). For a `Place::Part` member, each is
+    /// its part at `hole`.
+    fn candidates(
+        &self,
+        members: &mut [JoinMember<'_>],
+        taking: &[usize],
+        hole: Option<Symbol>,
+    ) -> Vec<Type> {
+        // Each member's top type, then the types of its leaves.
+        let mut found: Vec<(usize, Type)> = Vec::new();
+        let mut tops: FxHashMap<usize, Type> = FxHashMap::default();
+        for &i in taking {
+            let member = &mut members[i];
+            let mut types = Vec::new();
+            match &mut *member.value {
+                Ok(e) => {
+                    types.push(e.ty);
+                    let mut leaves = Vec::new();
+                    collect_leaves(e, &mut leaves);
+                    types.extend(leaves.iter().map(|leaf| leaf.around));
+                }
+                Err(poisoned) => types.extend(poisoned.ty),
+            }
+            for ty in types {
+                let part = match member.at {
+                    Place::Whole => Some(ty),
+                    Place::Part { place, .. } => {
+                        let (place, ty) = (self.table.resolve(place), self.table.resolve(ty));
+                        hole.and_then(|hole| part_at(place, hole, ty))
+                    }
+                };
+                if let Some(part) = part {
+                    tops.entry(i).or_insert(part);
+                    found.push((i, part));
+                }
+            }
+        }
+        let optional =
+            |c: &Self, ty: Type| matches!(c.table.resolve(ty).kind(), TypeKind::Optional(_));
+        let optional_members = tops.values().filter(|&&ty| optional(self, ty)).count();
+        let mut keys = FxHashSet::default();
+        let mut candidates = Vec::new();
+        let mut add = |c: &Self, ty: Type| {
+            if keys.insert(c.table.key(ty)) {
+                candidates.push(ty);
+            }
+        };
+        for &(i, ty) in &found {
+            add(self, ty);
+            let top = tops.get(&i).copied() == Some(ty);
+            let own = usize::from(optional(self, ty));
+            if top && optional_members > own {
+                add(self, Type::optional(ty));
+            }
+        }
+        candidates
+    }
+
+    /// The wraps that `value` takes to convert to `target`, or `None`. It binds what it unifies:
+    /// `join` calls it under a snapshot. The member at a `fixed` place only unifies.
+    fn converts(&mut self, value: &mut Checked, target: Type, fixed: bool) -> Option<usize> {
+        match value {
+            Ok(e) if fixed => self.unify(e.ty, target).then_some(0),
+            Ok(e) => self.converts_at(e, target),
+            Err(poisoned) => {
+                let ty = poisoned.ty?;
+                if fixed {
+                    self.unify(ty, target).then_some(0)
+                } else {
+                    self.conversion(ty, target).map(|steps| steps.len())
+                }
+            }
+        }
+    }
+
+    /// `converts` for the value position `e`: a made value converts at its top, and a value that
+    /// has value positions converts at each of them. It unifies what `settle_at` unifies, in the
+    /// same order, so that `settle_at` takes the steps that this counts.
+    fn converts_at(&mut self, e: &mut tir::Expr, target: Type) -> Option<usize> {
+        if e.ty == Type::NEVER {
+            return Some(0);
+        }
+        ensure_stack(|| match self.enter(e, target) {
+            Some((part, wrapped)) => {
+                let mut wraps = Some(usize::from(wrapped));
+                value_positions(e, &mut |child| {
+                    wraps = wraps.and_then(|n| Some(n + self.converts_at(child, part)?));
+                });
+                if wraps.is_some() {
+                    let own = if wrapped { Type::array(part) } else { target };
+                    self.unify(e.ty, own);
+                }
+                wraps
+            }
+            None => self.conversion(e.ty, target).map(|steps| steps.len()),
+        })
+    }
+
+    /// Changes `value` to `target`, which `join` chose. A member with no value to lift becomes a
+    /// value poisoned by its E0043, of the type `target`.
+    fn settle_member(&mut self, value: &mut Checked, target: Type, fixed: bool) {
+        match value {
+            Ok(e) if fixed => {
+                self.unify(e.ty, target);
+            }
+            Ok(e) => {
+                if let Err(reported) = self.settle_at(e, target) {
+                    *value = Err(Poisoned::typed(self.table.resolve(target), reported));
+                }
+            }
+            Err(poisoned) => {
+                if let Some(ty) = poisoned.ty
+                    && ty != Type::NEVER
+                {
+                    if fixed {
+                        self.unify(ty, target);
+                    } else {
+                        self.conversion(ty, target);
+                    }
+                    poisoned.ty = Some(target);
+                }
+            }
+        }
+    }
+
+    /// Settles the value position `e` to `target`: it adds each `Wrap` and `ToAny` at the position
+    /// where it applies, and gives each value position on the way its type. `Err` holds the proof
+    /// of an E0043.
+    fn settle_at(&mut self, e: &mut tir::Expr, target: Type) -> Result<(), Reported> {
+        #[cfg(test)]
+        SETTLED.set(SETTLED.get() + 1);
+        if e.ty == Type::NEVER {
+            return Ok(());
+        }
+        ensure_stack(|| match self.enter(e, target) {
+            Some((part, wrapped)) => {
+                let mut failed = Ok(());
+                value_positions(e, &mut |child| {
+                    let settled = self.settle_at(child, part);
+                    failed = failed.and(settled);
+                });
+                let own = if wrapped { Type::array(part) } else { target };
+                if !self.unify(e.ty, own) {
+                    e.ty = own;
+                }
+                failed?;
+                if wrapped {
+                    self.convert_in_place(e, &[Conversion::Wrap])?;
+                }
+                Ok(())
+            }
+            None => match self.conversion(e.ty, target) {
+                Some(steps) => self.convert_in_place(e, &steps),
+                // `converts_at` took this value under the same bindings, so no value gets here.
+                None => Err(self.proof(e.span)),
+            },
+        })
+    }
+
+    /// Applies `steps` to `e` in place.
+    fn convert_in_place(
+        &mut self,
+        e: &mut tir::Expr,
+        steps: &[Conversion],
+    ) -> Result<(), Reported> {
+        if steps.is_empty() {
+            return Ok(());
+        }
+        let placeholder = tir::Expr::new(ExprKind::Unit, Type::UNIT, e.span);
+        let taken = std::mem::replace(e, placeholder);
+        *e = self
+            .apply(taken, steps)
+            .map_err(|poisoned| poisoned.reported())?;
+        Ok(())
+    }
+
+    /// The part of `target` at the value positions of `e`, and whether `e` itself then wraps, or
+    /// `None` when `e` converts at its top: a made value, or an array or a `Some` whose `target`
+    /// has another shape.
+    fn enter(&self, e: &tir::Expr, target: Type) -> Option<(Type, bool)> {
+        let target = self.table.resolve(target);
+        match &e.kind {
+            ExprKind::If {
+                else_block: Some(_),
+                ..
+            }
+            | ExprKind::IfSome {
+                else_block: Some(_),
+                ..
+            }
+            | ExprKind::Block(_)
+            | ExprKind::Loop(_)
+            | ExprKind::Dbg { .. } => Some((target, false)),
+            ExprKind::Match { arms, .. } if !arms.iter().any(|arm| arm.made) => {
+                Some((target, false))
+            }
+            ExprKind::ArrayLit(_) | ExprKind::ArrayFill { .. } => match target.kind() {
+                TypeKind::Array(element) => Some((element, false)),
+                TypeKind::Optional(payload) => match payload.kind() {
+                    TypeKind::Array(element) => Some((element, true)),
+                    _ => None,
+                },
+                _ => None,
+            },
+            ExprKind::Wrap(_) => match target.kind() {
+                TypeKind::Optional(payload) => Some((payload, false)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The groups of the leaves of the taking members, by type.
+    fn conflict(&self, members: &mut [JoinMember<'_>], taking: &[usize]) -> Conflict {
+        let mut groups: Vec<Group> = Vec::new();
+        let mut index: FxHashMap<Type, usize> = FxHashMap::default();
+        for &i in taking {
+            let member = &mut members[i];
+            let mut leaves = Vec::new();
+            match &mut *member.value {
+                Ok(e) => collect_leaves(e, &mut leaves),
+                Err(poisoned) => leaves.extend(poisoned.ty.map(|ty| Leaf {
+                    at: member.label,
+                    ty,
+                    around: ty,
+                })),
+            }
+            for leaf in leaves {
+                let ty = self.table.resolve(leaf.ty);
+                let at = *index.entry(ty).or_insert_with(|| {
+                    groups.push(Group {
+                        ty,
+                        leaves: Vec::new(),
+                    });
+                    groups.len() - 1
+                });
+                groups[at].leaves.push(leaf.at);
+            }
+        }
+        Conflict { groups }
+    }
+}
+
+/// The type of a member that takes part: its value's, or its poison's when that is typed.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+fn member_type(value: &Checked) -> Option<Type> {
+    match value {
+        Ok(e) => Some(e.ty),
+        Err(poisoned) => poisoned.ty,
+    }
+}
+
+/// The type that a member at `at` converts to when the join is `ty`: `ty` itself, or the type of
+/// its parameter with `hole` replaced by `ty`.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+fn target(at: Place, hole: Option<Symbol>, ty: Type) -> Type {
+    match (at, hole) {
+        (Place::Part { place, .. }, Some(hole)) => fill(place, hole, ty),
+        (Place::Part { place, .. }, None) => place,
+        (Place::Whole, _) => ty,
+    }
+}
+
+/// Each leaf at the value positions of `e`, which is `e` itself when it has none.
+// shortcut: `around` is rebuilt at each depth, so a leaf costs its depth; pass the layers down
+// when a scaling shape shows it.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+fn collect_leaves(e: &mut tir::Expr, out: &mut Vec<Leaf>) {
+    if e.ty == Type::NEVER {
+        return;
+    }
+    let start = out.len();
+    let mut inner = false;
+    ensure_stack(|| {
+        value_positions(e, &mut |child| {
+            inner = true;
+            collect_leaves(child, out);
+        });
+    });
+    if !inner {
+        out.push(Leaf {
+            at: e.span,
+            ty: e.ty,
+            around: e.ty,
+        });
+        return;
+    }
+    let around: fn(Type) -> Type = match e.kind {
+        ExprKind::ArrayLit(_) | ExprKind::ArrayFill { .. } => Type::array,
+        ExprKind::Wrap(_) => Type::optional,
+        _ => |ty| ty,
+    };
+    for leaf in &mut out[start..] {
+        leaf.around = around(leaf.around);
+    }
+}
+
+/// Calls `f` on each value position directly in `e`. These are each branch's value of an `if` or
+/// an `if let` with an `else` and of a `match`, and a block's value. They are also each element
+/// of an array literal, the fill value of `[v; n]`, the payload of a `Some` and the operand of
+/// `dbg`. In a loop, they are each `break` value that ends that loop. A block with no value gives
+/// `f` a `unit` at the span of `e`, which the block keeps only when `f` changes it. A `match`
+/// with the made arm of an `if let` without an `else` has no value, so it has no value position.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+fn value_positions(e: &mut tir::Expr, f: &mut impl FnMut(&mut tir::Expr)) {
+    #[cfg(test)]
+    VALUE_STEPS.set(VALUE_STEPS.get() + 1);
+    let span = e.span;
+    match &mut e.kind {
+        ExprKind::If {
+            then_block,
+            else_block: Some(else_block),
+            ..
+        }
+        | ExprKind::IfSome {
+            then_block,
+            else_block: Some(else_block),
+            ..
+        } => {
+            block_positions(then_block, span, f);
+            block_positions(else_block, span, f);
+        }
+        ExprKind::Match { arms, .. } if !arms.iter().any(|arm| arm.made) => {
+            for arm in arms {
+                block_positions(&mut arm.body, span, f);
+            }
+        }
+        ExprKind::Block(block) => block_positions(block, span, f),
+        ExprKind::ArrayLit(elements) => {
+            for element in elements {
+                f(element);
+            }
+        }
+        ExprKind::ArrayFill { value, .. }
+        | ExprKind::Wrap(value)
+        | ExprKind::Dbg { operand: value, .. } => f(value),
+        ExprKind::Loop(body) => body.each_expr_mut(&mut |child| breaks(child, 0, f)),
+        _ => {}
+    }
+}
+
+/// `value_positions` for the value of `block`, in an expression at `span`. A `never` block has no
+/// value. The block takes the type that `f` gives its value.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+fn block_positions(block: &mut tir::Block, span: Span, f: &mut impl FnMut(&mut tir::Expr)) {
+    if block.ty == Type::NEVER {
+        return;
+    }
+    if let Some(value) = &mut block.value {
+        f(value);
+        block.ty = value.ty;
+    } else {
+        let mut unit = tir::Expr::new(ExprKind::Unit, Type::UNIT, span);
+        f(&mut unit);
+        if !matches!(unit.kind, ExprKind::Unit) {
+            block.ty = unit.ty;
+            block.value = Some(Box::new(unit));
+        }
+    }
+}
+
+/// Calls `f` on each `break` value in `e` that ends the loop `depth` loops out from `e`, as
+/// `wrap_breaks` counts the depth.
+// shortcut: a nested loop is entered when it holds any jump; the loop's `crossed` flag of Task 5
+// enters it only when a `break` in it ends an outer loop, which keeps the walk linear.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+fn breaks(e: &mut tir::Expr, depth: usize, f: &mut impl FnMut(&mut tir::Expr)) {
+    #[cfg(test)]
+    VALUE_STEPS.set(VALUE_STEPS.get() + 1);
+    let nested = matches!(e.kind, ExprKind::Loop(_));
+    if nested && !e.exits() {
+        return;
+    }
+    let inner = depth + usize::from(nested);
+    ensure_stack(|| e.each_child_mut(&mut |child| breaks(child, inner, f)));
+    if let ExprKind::Break {
+        depth: target,
+        value: Some(value),
+    } = &mut e.kind
+        && *target == depth
+    {
+        f(value);
+    }
+}
+
+/// `place` with each `hole` replaced by `with`.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+fn fill(place: Type, hole: Symbol, with: Type) -> Type {
+    if !place.has_param() {
+        return place;
+    }
+    let args = |args: TypeArgs| {
+        let filled: Vec<Type> = (args.get().iter())
+            .map(|&arg| fill(arg, hole, with))
+            .collect();
+        TypeArgs::intern(&filled)
+    };
+    ensure_stack(|| match place.kind() {
+        TypeKind::Param(name, _) if name == hole => with,
+        TypeKind::Array(inner) => Type::array(fill(inner, hole, with)),
+        TypeKind::Optional(inner) => Type::optional(fill(inner, hole, with)),
+        TypeKind::Class(id, list) => Type::intern(TypeKind::Class(id, args(list))),
+        TypeKind::Struct(id, list) => Type::intern(TypeKind::Struct(id, args(list))),
+        TypeKind::Enum(id, list) => Type::intern(TypeKind::Enum(id, args(list))),
+        TypeKind::Any(id, list) => Type::intern(TypeKind::Any(id, args(list))),
+        TypeKind::Assoc(base, interface, list, k) => Type::intern(TypeKind::Assoc(
+            fill(base, hole, with),
+            interface,
+            args(list),
+            k,
+        )),
+        _ => place,
+    })
+}
+
+/// The part of `ty`, an argument's type, at `hole` in its parameter's type `place`. An argument
+/// that is not optional against a `place` of `T?` converts at its top, so its part is its own
+/// type. `None` when `ty` does not have the shape of `place`.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+fn part_at(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
+    match (place.kind(), ty.kind()) {
+        (TypeKind::Optional(inner), kind) if !matches!(kind, TypeKind::Optional(_)) => {
+            part_in(inner, hole, ty)
+        }
+        _ => part_in(place, hole, ty),
+    }
+}
+
+/// `part_at` below the top.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+fn part_in(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
+    let args = |ours: TypeArgs, theirs: TypeArgs| {
+        (ours.get().iter().zip(theirs.get()))
+            .find_map(|(&ours, &theirs)| part_in(ours, hole, theirs))
+    };
+    ensure_stack(|| match (place.kind(), ty.kind()) {
+        (TypeKind::Param(name, _), _) if name == hole => Some(ty),
+        (TypeKind::Array(ours), TypeKind::Array(theirs))
+        | (TypeKind::Optional(ours), TypeKind::Optional(theirs)) => part_in(ours, hole, theirs),
+        (TypeKind::Class(a, ours), TypeKind::Class(b, theirs)) if a == b => args(ours, theirs),
+        (TypeKind::Struct(a, ours), TypeKind::Struct(b, theirs)) if a == b => args(ours, theirs),
+        (TypeKind::Enum(a, ours), TypeKind::Enum(b, theirs)) if a == b => args(ours, theirs),
+        (TypeKind::Any(a, ours), TypeKind::Any(b, theirs)) if a == b => args(ours, theirs),
+        _ => None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::check::infer::{Kind, LiteralCheck};
+    use crate::check::tests::joins::with_params;
+    use crate::diagnostic::Code;
+    use crate::mir::tests::assert_near_linear;
+    use crate::tir::{Block, LocalId, StructId};
+
+    /// An interface, and a struct that conforms to it.
+    const SEEN: &str = "interface Seen {\n    fn seen(self) -> i64\n}\nstruct Eye: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\n";
+
+    fn at(n: usize) -> Span {
+        Span::new(n, n + 1)
+    }
+
+    /// The integer literal `value`, whose type is open.
+    fn int(c: &mut Checker<'_>, value: u64, n: usize) -> tir::Expr {
+        let ty = c.table.fresh(Kind::Int, at(n));
+        let check = LiteralCheck {
+            span: at(n),
+            value,
+            negative: false,
+        };
+        c.table.literal(ty, check);
+        let value = i64::try_from(value).expect("the test literal should fit i64");
+        tir::Expr::new(ExprKind::Int(value), ty, at(n))
+    }
+
+    /// `None`, whose payload is open.
+    fn none(c: &mut Checker<'_>, n: usize) -> tir::Expr {
+        let payload = c.table.fresh(Kind::Any, at(n));
+        tir::Expr::new(ExprKind::None, Type::optional(payload), at(n))
+    }
+
+    fn local(ty: Type, n: usize) -> tir::Expr {
+        tir::Expr::new(ExprKind::Local(LocalId(n)), ty, at(n))
+    }
+
+    fn some(payload: tir::Expr) -> tir::Expr {
+        let (ty, span) = (Type::optional(payload.ty), payload.span);
+        tir::Expr::new(ExprKind::Wrap(Box::new(payload)), ty, span)
+    }
+
+    fn array(elements: Vec<tir::Expr>, element: Type, n: usize) -> tir::Expr {
+        tir::Expr::new(ExprKind::ArrayLit(elements), Type::array(element), at(n))
+    }
+
+    fn block(value: tir::Expr) -> Block {
+        let ty = value.ty;
+        Block {
+            stmts: Vec::new(),
+            value: Some(Box::new(value)),
+            ty,
+        }
+    }
+
+    /// `if true { then } else { other }`, of the type `ty`.
+    fn if_else(then: tir::Expr, other: tir::Expr, ty: Type, n: usize) -> tir::Expr {
+        let kind = ExprKind::If {
+            cond: Box::new(tir::Expr::new(ExprKind::Bool(true), Type::BOOL, at(n))),
+            then_block: block(then),
+            else_block: Some(block(other)),
+        };
+        tir::Expr::new(kind, ty, at(n))
+    }
+
+    /// `if true { print(0) }`, which has no `else`.
+    fn if_without_else(n: usize) -> tir::Expr {
+        let operand = tir::Expr::new(ExprKind::Int(0), Type::I64, at(n));
+        let print = ExprKind::Print {
+            stream: tir::Stream::Stdout,
+            operand: Box::new(operand),
+        };
+        let then_block = Block {
+            stmts: vec![tir::Stmt::Expr(tir::Expr::new(print, Type::UNIT, at(n)))],
+            value: None,
+            ty: Type::UNIT,
+        };
+        let kind = ExprKind::If {
+            cond: Box::new(tir::Expr::new(ExprKind::Bool(true), Type::BOOL, at(n))),
+            then_block,
+            else_block: None,
+        };
+        tir::Expr::new(kind, Type::UNIT, at(n))
+    }
+
+    /// `Eye(v: 1)`, of the struct type `eye`.
+    fn eye(eye: Type, n: usize) -> tir::Expr {
+        let TypeKind::Struct(id, _) = eye.kind() else {
+            panic!("the type should be the struct `Eye`");
+        };
+        let id: StructId = id;
+        let v = tir::Expr::new(ExprKind::Int(1), Type::I64, at(n));
+        tir::Expr::new(ExprKind::Struct { id, args: vec![v] }, eye, at(n))
+    }
+
+    /// The join of `values`, each a whole member, with no expected type.
+    fn join_all(
+        c: &mut Checker<'_>,
+        form: JoinForm,
+        values: &mut [Checked],
+    ) -> Result<Type, Poisoned> {
+        let mut members: Vec<JoinMember<'_>> = (values.iter_mut())
+            .map(|value| JoinMember {
+                value,
+                at: Place::Whole,
+                label: at(0),
+            })
+            .collect();
+        c.join_form(form, at(0), &mut members, Expectation::None, None)
+    }
+
+    /// `e` with each type in it as its key, so that two runs compare.
+    fn keyed(c: &Checker<'_>, e: &mut tir::Expr) {
+        e.each_type_mut(&mut |ty| *ty = c.table.key(*ty));
+        e.each_child_mut(&mut |child| keyed(c, child));
+    }
+
+    /// The text of a member after its join, with each type as its key.
+    fn shown(c: &Checker<'_>, value: &Checked) -> String {
+        match value {
+            Ok(e) => {
+                let mut e = e.clone();
+                keyed(c, &mut e);
+                format!("{e:?}")
+            }
+            Err(poisoned) => format!("poisoned {:?}", poisoned.ty.map(|ty| c.table.key(ty))),
+        }
+    }
+
+    /// Each order of `0..n`.
+    fn orders(n: usize) -> Vec<Vec<usize>> {
+        if n == 0 {
+            return vec![Vec::new()];
+        }
+        let mut all = Vec::new();
+        for shorter in orders(n - 1) {
+            for i in 0..n {
+                let mut order = shorter.clone();
+                order.insert(i, n - 1);
+                all.push(order);
+            }
+        }
+        all
+    }
+
+    /// Joins the members that `build` makes, in each order, and asserts that each order gives the
+    /// same type and the same members. Gives the type as its key, or `None` for poison.
+    fn each_order(
+        src: &str,
+        params: &str,
+        build: fn(&mut Checker<'_>, &[Type]) -> Vec<Checked>,
+    ) -> Option<Type> {
+        let count = with_params(src, params, |c, types| build(c, types).len());
+        let mut first: Option<(Option<Type>, Vec<String>)> = None;
+        for order in orders(count) {
+            let run = with_params(src, params, |c, types| {
+                let mut made: Vec<Option<Checked>> =
+                    build(c, types).into_iter().map(Some).collect();
+                let mut values: Vec<Checked> = (order.iter())
+                    .map(|&i| made[i].take().expect("each index should come once"))
+                    .collect();
+                let ty = join_all(c, JoinForm::If, &mut values).ok();
+                let mut shown_in_order = vec![String::new(); count];
+                for (value, &i) in values.iter().zip(&order) {
+                    shown_in_order[i] = shown(c, value);
+                }
+                (ty.map(|ty| c.table.key(ty)), shown_in_order)
+            });
+            match &first {
+                Some(first) => assert!(
+                    *first == run,
+                    "the order {order:?} should give the same join"
+                ),
+                None => first = Some(run),
+            }
+        }
+        first.and_then(|(ty, _)| ty)
+    }
+
+    #[test]
+    fn join_should_take_the_type_that_each_member_converts_to() {
+        // GIVEN the members `1` and `a: u8`
+        // WHEN they join, in each order
+        let ty = each_order("", "a: u8", |c, types| {
+            vec![Ok(int(c, 1, 1)), Ok(local(types[0], 2))]
+        });
+        // THEN the join is `u8`
+        assert_eq!(ty, Some(Type::U8));
+    }
+
+    #[test]
+    fn join_should_unify_before_it_wraps() {
+        // GIVEN the members `None` and `o: i64??`
+        // WHEN they join, in each order
+        let ty = each_order("", "", |c, _| {
+            let twice = Type::optional(Type::optional(Type::I64));
+            vec![Ok(none(c, 1)), Ok(local(twice, 2))]
+        });
+        // THEN the join is `i64??`: `None` takes the type by unification, with no wrap
+        assert_eq!(ty, Some(Type::optional(Type::optional(Type::I64))));
+        with_params("", "", |c, _| {
+            let twice = Type::optional(Type::optional(Type::I64));
+            let mut values = vec![Ok(none(c, 1)), Ok(local(twice, 2))];
+            assert!(join_all(c, JoinForm::If, &mut values).is_ok());
+            let Ok(first) = &values[0] else {
+                panic!("`None` should stay a value");
+            };
+            assert!(matches!(first.kind, ExprKind::None));
+            assert_eq!(c.table.resolve(first.ty), twice);
+        });
+    }
+
+    #[test]
+    fn join_should_add_the_optional_candidate() {
+        // GIVEN the members `s: any Seen` and `Some(Eye(v: 1))`
+        // WHEN they join, in each order
+        let ty = each_order(SEEN, "s: any Seen, e: Eye", |_, types| {
+            vec![Ok(local(types[0], 1)), Ok(some(eye(types[1], 2)))]
+        });
+        // THEN the join is `(any Seen)?`, which no member has: rule A adds it
+        let seen = with_params(SEEN, "s: any Seen", |_, types| types[0]);
+        assert_eq!(ty, Some(Type::optional(seen)));
+    }
+
+    #[test]
+    fn join_should_convert_a_made_value_only_at_its_top() {
+        // GIVEN the members `xs: [i64]` and `[m]`, where `m: i64?`
+        with_params("", "", |c, _| {
+            let optional = Type::optional(Type::I64);
+            let mut values = vec![
+                Ok(local(Type::array(Type::I64), 1)),
+                Ok(array(vec![local(optional, 2)], optional, 3)),
+            ];
+            // WHEN they join
+            let joined = join_all(c, JoinForm::Array, &mut values);
+            // THEN no candidate takes both: `xs` is made, so its elements do not wrap
+            let Err(poisoned) = joined else {
+                panic!("the join should be a conflict");
+            };
+            assert_eq!(poisoned.ty, None);
+        });
+    }
+
+    #[test]
+    fn join_should_leave_out_never_and_untyped_poison() {
+        with_params("", "a: u8", |c, types| {
+            // GIVEN a `never` member and `a: u8`
+            let mut values = vec![Ok(local(Type::NEVER, 1)), Ok(local(types[0], 2))];
+            // WHEN they join, THEN the join is `u8`
+            assert_eq!(join_all(c, JoinForm::If, &mut values).ok(), Some(Type::U8));
+            // GIVEN only `never` members, THEN the join is `never`
+            let mut values = vec![Ok(local(Type::NEVER, 1)), Ok(local(Type::NEVER, 2))];
+            assert_eq!(
+                join_all(c, JoinForm::If, &mut values).ok(),
+                Some(Type::NEVER)
+            );
+            // GIVEN an untyped poisoned member and `a: u8`, THEN the join is `u8`
+            let poisoned = Poisoned::untyped(c.proof(at(3)));
+            let mut values = vec![Err(poisoned), Ok(local(types[0], 2))];
+            assert_eq!(join_all(c, JoinForm::If, &mut values).ok(), Some(Type::U8));
+            // GIVEN an untyped poisoned member and `1`, which states no type
+            let poisoned = Poisoned::untyped(c.proof(at(3)));
+            let mut values = vec![Err(poisoned), Ok(int(c, 1, 4))];
+            // THEN the join is untyped poison, and the literal stays open
+            let Err(poisoned) = join_all(c, JoinForm::If, &mut values) else {
+                panic!("the join should be poisoned");
+            };
+            assert_eq!(poisoned.ty, None);
+            let Ok(literal) = &values[1] else {
+                panic!("the literal should stay a value");
+            };
+            assert!(c.table.resolve(literal.ty).holds_infer());
+        });
+    }
+
+    #[test]
+    fn join_should_take_the_part_of_an_argument() {
+        with_params("", "a: u8", |c, types| {
+            // GIVEN the arguments `[1]` at a parameter `[T]` and `a: u8` at a parameter `T`
+            let hole = Symbol::intern("T");
+            let place = Type::array(Type::intern(TypeKind::Param(hole, 0)));
+            let literal = int(c, 1, 1);
+            let element = literal.ty;
+            let mut first = Ok(array(vec![literal], element, 2));
+            let mut second = Ok(local(types[0], 3));
+            let mut members = [
+                JoinMember {
+                    value: &mut first,
+                    at: Place::Part {
+                        place,
+                        argument: at(2),
+                    },
+                    label: at(2),
+                },
+                JoinMember {
+                    value: &mut second,
+                    at: Place::Whole,
+                    label: at(3),
+                },
+            ];
+            // WHEN they join at `T`
+            let form = JoinForm::Call { param: hole };
+            let ty = c.join_form(form, at(0), &mut members, Expectation::None, None);
+            // THEN `T` is `u8`, and the element of the array is `u8`
+            assert_eq!(ty.ok(), Some(Type::U8));
+            assert_eq!(c.table.resolve(element), Type::U8);
+        });
+    }
+
+    #[test]
+    fn rejected_candidate_should_leave_no_binding() {
+        with_params("", "s: string", |c, types| {
+            // GIVEN the members `None`, `s: string` and `t: i64?`, which no candidate takes: a
+            // candidate binds the payload of `None` before a later member rejects it
+            let mut values = vec![
+                Ok(none(c, 1)),
+                Ok(local(types[0], 2)),
+                Ok(local(Type::optional(Type::I64), 3)),
+            ];
+            // WHEN they join
+            let joined = join_all(c, JoinForm::If, &mut values);
+            // THEN the join is a conflict, and the payload of `None` is still open
+            assert!(joined.is_err());
+            let Ok(first) = &values[0] else {
+                panic!("`None` should stay a value");
+            };
+            assert!(c.table.resolve(first.ty).holds_infer());
+        });
+    }
+
+    #[test]
+    fn join_should_test_one_candidate_per_distinct_type() {
+        with_params("", "a: u8", |c, types| {
+            // GIVEN 1000 members `a: u8` and one `None`
+            let mut values: Vec<Checked> = (0..1000).map(|n| Ok(local(types[0], n))).collect();
+            values.push(Ok(none(c, 1000)));
+            CANDIDATES.set(0);
+            SETTLED.set(0);
+            // WHEN they join
+            let ty = join_all(c, JoinForm::Array, &mut values);
+            // THEN the join is `u8?`, it tests `u8`, `u8?` and the type of `None` once each, and
+            // it settles each member once
+            assert_eq!(ty.ok(), Some(Type::optional(Type::U8)));
+            assert!(
+                CANDIDATES.get() <= 3,
+                "the join tested {} candidates",
+                CANDIDATES.get()
+            );
+            assert_eq!(SETTLED.get(), 1001);
+        });
+    }
+
+    /// The steps of the join of `[if true { a } else { b }, ...]`, `n` times, with `ys: [i64?]`,
+    /// and how many value positions it settled.
+    fn ifs_in_an_array(n: usize) -> (usize, usize) {
+        with_params("", "", |c, _| {
+            let ifs: Vec<tir::Expr> = (0..n)
+                .map(|i| if_else(local(Type::I64, i), local(Type::I64, i), Type::I64, i))
+                .collect();
+            let optional = Type::optional(Type::I64);
+            let mut values = vec![
+                Ok(array(ifs, Type::I64, n)),
+                Ok(local(Type::array(optional), n + 1)),
+            ];
+            VALUE_STEPS.set(0);
+            SETTLED.set(0);
+            let ty = join_all(c, JoinForm::Array, &mut values);
+            assert_eq!(ty.ok(), Some(Type::array(optional)));
+            (VALUE_STEPS.get(), SETTLED.get())
+        })
+    }
+
+    #[test]
+    fn settle_should_visit_each_value_position_once() {
+        // GIVEN an array of `n` ifs whose branches are `i64`, and `ys: [i64?]`
+        // WHEN they join to `[i64?]`
+        let runs = [
+            ifs_in_an_array(100),
+            ifs_in_an_array(200),
+            ifs_in_an_array(300),
+        ];
+        // THEN the settle takes the array, each `if`, each branch and `ys` once
+        for (run, n) in runs.iter().zip([100, 200, 300]) {
+            assert_eq!(run.1, 3 * n + 2);
+        }
+        // AND the walk of the value positions is linear
+        assert_near_linear(runs[0].0, runs[1].0, runs[2].0);
+    }
+
+    #[test]
+    fn settle_should_wrap_at_the_value_position() {
+        with_params("", "", |c, _| {
+            // GIVEN the members `[m]`, where `m: i64?`, and `[1]`
+            let optional = Type::optional(Type::I64);
+            let literal = int(c, 1, 3);
+            let element = literal.ty;
+            let mut values = vec![
+                Ok(array(vec![local(optional, 1)], optional, 2)),
+                Ok(array(vec![literal], element, 4)),
+            ];
+            // WHEN they join
+            let ty = join_all(c, JoinForm::Array, &mut values);
+            // THEN the join is `[i64?]`, and the `1` in the array is wrapped where it stands
+            assert_eq!(ty.ok(), Some(Type::array(optional)));
+            let Ok(second) = &values[1] else {
+                panic!("the array should stay a value");
+            };
+            assert_eq!(c.table.resolve(second.ty), Type::array(optional));
+            let ExprKind::ArrayLit(elements) = &second.kind else {
+                panic!("the member should stay an array literal");
+            };
+            let ExprKind::Wrap(inner) = &elements[0].kind else {
+                panic!("the element should be wrapped");
+            };
+            assert_eq!(c.table.resolve(elements[0].ty), optional);
+            assert!(matches!(inner.kind, ExprKind::Int(1)));
+            assert_eq!(c.table.resolve(inner.ty), Type::I64);
+        });
+    }
+
+    #[test]
+    fn apply_should_report_e0043_for_an_if_with_no_else() {
+        with_params("", "", |c, _| {
+            // GIVEN the members `if true { print(0) }`, with no `else`, and `o: unit?`
+            let optional = Type::optional(Type::UNIT);
+            let mut values = vec![Ok(if_without_else(1)), Ok(local(optional, 2))];
+            // WHEN they join to `unit?`, which wraps the `if`
+            let ty = join_all(c, JoinForm::If, &mut values);
+            // THEN the `if` has no value to wrap: E0043 at the `if`, and the member is poison of
+            // the join's type
+            assert_eq!(ty.ok(), Some(optional));
+            let found: Vec<(Code, Span)> = (c.diagnostics.iter())
+                .map(|d| (d.code(), d.span()))
+                .collect();
+            assert_eq!(found, vec![(Code::NoValue, at(1))]);
+            let Err(poisoned) = &values[0] else {
+                panic!("the `if` should be poisoned");
+            };
+            assert_eq!(poisoned.ty, Some(optional));
+        });
+    }
+
+    /// The spans of the diagnostics of the unused names of `SEEN`, after `f` runs in `main`.
+    fn unused_after(f: fn(&mut Checker<'_>, &[Type])) -> Vec<Span> {
+        with_params(SEEN, "s: any Seen, e: Eye", |c, types| {
+            f(c, types);
+            c.unused()
+                .iter()
+                .map(crate::diagnostic::Diagnostic::span)
+                .collect()
+        })
+    }
+
+    #[test]
+    fn apply_should_record_the_used_interface() {
+        let seen = SEEN.find("Seen").expect("SEEN should name `Seen`");
+        let seen = Span::new(seen, seen + "Seen".len());
+        // GIVEN `main`, which uses no name, THEN `Seen` is unused
+        assert!(unused_after(|_, _| {}).contains(&seen));
+        // GIVEN `main`, with the join of `s: any Seen` and `Eye(v: 1)`, which converts `Eye`
+        // WHEN the unused names are found
+        let spans = unused_after(|c, types| {
+            let mut values = vec![Ok(local(types[0], 1)), Ok(eye(types[1], 2))];
+            let ty = join_all(c, JoinForm::If, &mut values);
+            assert_eq!(ty.ok(), Some(types[0]));
+        });
+        // THEN `Seen` is used
+        assert!(!spans.contains(&seen));
+    }
+}
