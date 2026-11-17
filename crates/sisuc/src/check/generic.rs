@@ -2613,15 +2613,30 @@ impl Checker<'_> {
             return None;
         }
         let mut with = with.to_vec();
+        let mut parts = Vec::new();
         for &(filled, ty, at) in valued {
             let snapshot = self.table.snapshot();
-            let fits = self.unify(filled, ty);
-            let part = self.table.resolve(var);
+            if self.unify(filled, ty) {
+                parts.push((self.table.resolve(var), at));
+            }
             self.table.rollback(snapshot);
+        }
+        for &(part, at) in &parts {
             // A part that is an open variable takes its type from the join, which checks the bound.
             // A part that holds one inside, as `Boxed<Int>`, breaks the bound when it does with
-            // each `Int` as `i64`, as on `main`.
-            if !fits || matches!(self.table.resolve(part).kind(), TypeKind::Infer(_)) {
+            // each `Int` as `i64`, as on `main`. A closed part of another member that meets it
+            // decides it first.
+            if matches!(part.kind(), TypeKind::Infer(_)) {
+                continue;
+            }
+            if part.holds_infer()
+                && (parts.iter()).any(|&(other, _)| {
+                    let snapshot = self.table.snapshot();
+                    let meets = !other.holds_infer() && self.unify(part, other);
+                    self.table.rollback(snapshot);
+                    meets
+                })
+            {
                 continue;
             }
             let part = self.table.default_open(part);
