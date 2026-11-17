@@ -3967,7 +3967,7 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h2<U, V>(a: U, b: Two<U, V>, c: Two<U, V>) {}\n",
             "h2(true, Two.P(true, 1), Two.P(true, \"x\"))",
-            &[(Mismatch, X)],
+            &[(Mismatch, "h2(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
