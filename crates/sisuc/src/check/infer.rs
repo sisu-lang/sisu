@@ -491,7 +491,7 @@ impl Table {
     }
 
     /// The roots of the open variables in `ty`, each once, in the order that the walk meets them.
-    fn open_roots(&self, ty: Type) -> Vec<u32> {
+    pub(super) fn open_roots(&self, ty: Type) -> Vec<u32> {
         self.open_roots_in(ty, &mut FxHashSet::default())
     }
 

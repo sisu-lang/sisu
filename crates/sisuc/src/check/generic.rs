@@ -1976,6 +1976,8 @@ impl Checker<'_> {
         // The parameters whose join reported for its members that never finish, or holds one that
         // was reported.
         let mut quiet = Vec::new();
+        // Whether a member broke a bound before its join (`broken_member`).
+        let mut bound_broke = false;
         // The parameters that are open for an outer join, each with its name and the arguments of
         // its members (see `OpenEntry`).
         let mut openable = Vec::new();
@@ -2121,6 +2123,7 @@ impl Checker<'_> {
                 self.table.poison(var);
                 failed = Some(reported);
                 quiet.push(t);
+                bound_broke = true;
                 continue;
             }
             let of: Vec<usize> = members.iter().map(|&(i, _)| i).collect();
@@ -2254,9 +2257,13 @@ impl Checker<'_> {
             let param =
                 sig.params[i].expect("an argument with no parameter type should be checked");
             // A poisoned member poisoned the parameter, or a poisoned context the call: the
-            // argument reports its own mistakes only.
+            // argument reports its own mistakes only. A part at a parameter that no failure
+            // reached still meets that parameter, as on `main`.
             if expected == Expectation::Poisoned
-                || quiet.iter().any(|&t| names_outside_assoc(param, t))
+                || (decided.iter())
+                    .filter(|&&(t, _)| names_outside_assoc(param, t))
+                    .all(|(t, _)| quiet.contains(t))
+                    && quiet.iter().any(|&t| names_outside_assoc(param, t))
             {
                 call.slots[i] = Some(mark(self.operand(&arg.value, Expectation::Poisoned)));
                 continue;
@@ -2303,6 +2310,8 @@ impl Checker<'_> {
                 }
                 Err(poisoned) => failed = Some(poisoned.reported()),
             }
+        } else if bound_broke && !broken && expected != Expectation::Poisoned {
+            self.report_left_open(&mut call, sig, &decided, &quiet);
         }
         if broken {
             failed.get_or_insert_with(|| self.proof(span)); // proof: declaration
@@ -2733,23 +2742,38 @@ impl Checker<'_> {
         let mut parts = Vec::new();
         for &(filled, ty, at) in valued {
             let snapshot = self.table.snapshot();
-            if self.unify(filled, ty) {
-                parts.push((self.table.resolve(var), at));
-            }
+            let part = self.unify(filled, ty).then(|| {
+                let part = self.table.resolve(var);
+                // A bare literal resolves to `var`, which is an `Any` again after the rollback.
+                let literal = matches!(part.kind(), TypeKind::Infer(_))
+                    && self.table.default_open(part) != part;
+                (part, literal)
+            });
             self.table.rollback(snapshot);
+            if let Some((part, literal)) = part {
+                let part = if literal {
+                    self.table.fresh(Kind::Int, at)
+                } else {
+                    part
+                };
+                parts.push((part, at));
+            }
         }
         for &(part, at) in &parts {
-            // A part that is an open variable takes its type from the join, which checks the bound.
-            // A part that holds one inside, as `Boxed<Int>`, breaks the bound when it does with
-            // each `Int` as `i64`, as on `main`. A closed part of another member that meets it
-            // decides it first.
-            if matches!(part.kind(), TypeKind::Infer(_)) {
+            // A part that is an open `Any` variable takes its type from the join, which checks the
+            // bound. A part that holds an `Int` inside, as `Boxed<Int>`, breaks the bound when it
+            // does with each `Int` as `i64`, as on `main`. A closed part of another member that
+            // meets it decides it first. A bare `Int`, as `5`, is `i64` only when no other part is
+            // closed. A closed part decides the join, and the join reports a literal that it does
+            // not take. No number type conforms to an interface that `i64` does not.
+            let bare = matches!(part.kind(), TypeKind::Infer(_));
+            if bare && self.table.default_open(part) == part {
                 continue;
             }
             if part.holds_infer()
                 && (parts.iter()).any(|&(other, _)| {
                     let snapshot = self.table.snapshot();
-                    let meets = !other.holds_infer() && self.unify(part, other);
+                    let meets = !other.holds_infer() && (bare || self.unify(part, other));
                     self.table.rollback(snapshot);
                     meets
                 })
@@ -2758,6 +2782,8 @@ impl Checker<'_> {
             }
             let part = self.table.default_open(part);
             with[t] = part;
+            // Each bound that the part breaks is a report, as on `main`.
+            let mut broken = None;
             for &bound in &bounds.list {
                 let args = self.subst_args(bound.args, &with);
                 if args.holds_infer() || part.holds_infer() {
@@ -2766,8 +2792,11 @@ impl Checker<'_> {
                 if !self.conforms(part, bound.interface, args)
                     && let Err(reported) = self.check_bound_of(at, part, bound, &with, None, None)
                 {
-                    return Some(reported);
+                    broken.get_or_insert(reported);
                 }
+            }
+            if broken.is_some() {
+                return broken;
             }
         }
         None
@@ -2961,6 +2990,38 @@ impl Checker<'_> {
             }
         }
         Ok(())
+    }
+
+    /// After the call `call` failed: E0050 for the first parameter that no failure reached and that
+    /// a waiting call in one of its members leaves open. The outer call settles no type now, so
+    /// the waiting call gets none, as on `main`. A `None` or `[]` member waits for nothing.
+    fn report_left_open(
+        &mut self,
+        call: &mut Inference<'_>,
+        sig: &GenericSig<'_>,
+        decided: &[(usize, Type)],
+        quiet: &[usize],
+    ) {
+        if sig.params.contains(&None) || sig.ret.is_none() {
+            return;
+        }
+        for &(t, var) in decided.iter().filter(|(t, _)| !quiet.contains(t)) {
+            let ty = self.table.resolve(var);
+            if !ty.holds_infer() || self.table.reported_open(ty) {
+                continue;
+            }
+            let waits = (call.slots.iter_mut().zip(sig.params))
+                .filter(|(_, param)| param.is_some_and(|param| names_outside_assoc(param, t)))
+                .filter_map(|(slot, _)| slot.as_mut()?.as_mut().ok())
+                .any(|e| super::join::waiting_call(&self.table, e, ty));
+            if waits {
+                self.cannot_infer(sig, t);
+                for &(_, var) in decided {
+                    self.table.poison(var);
+                }
+                return;
+            }
+        }
     }
 
     /// The E0032 of S26b: the result type `sig.ret` is a decided parameter or its optional, which

@@ -10,6 +10,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 mod join_report;
 
 use super::any::Conversion;
+use super::infer::Table;
 use super::operator::Operator;
 use super::reports::Reported;
 use super::{Checked, Checker, Expectation, Poisoned};
@@ -731,6 +732,22 @@ fn nested_leaves(e: &mut tir::Expr, out: &mut Vec<Leaf>) -> bool {
         leaf.lifted = around(leaf.lifted);
     }
     inner
+}
+
+/// Whether `e`, or a value at a value position inside it, is a call whose type holds an open
+/// variable of `ty`: a generic call that waits for the context of the call around it.
+pub(super) fn waiting_call(table: &Table, e: &mut tir::Expr, ty: Type) -> bool {
+    fn waits(table: &Table, e: &mut tir::Expr, roots: &[u32]) -> bool {
+        if matches!(e.kind, ExprKind::Call { .. })
+            && (table.open_roots(e.ty).iter()).any(|root| roots.contains(root))
+        {
+            return true;
+        }
+        let mut found = false;
+        value_positions(e, &mut |inner| found = found || waits(table, inner, roots));
+        found
+    }
+    waits(table, e, &table.open_roots(ty))
 }
 
 /// Calls `f` on each value position directly in `e`. These are each branch's value of an `if` or
