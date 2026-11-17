@@ -122,6 +122,10 @@ const EXCLUDED: &[(&str, &str)] = &[
         "types::Head::Assoc",
         "the key by which `types::write_type` asks for a name, which is no type",
     ),
+    (
+        "types::TypeKind::Infer",
+        "an inference variable never leaves the checker: `write_back` replaces it",
+    ),
 ];
 
 /// The receivers of the built-in methods `check/number.rs` does not list, by their typed
@@ -2751,6 +2755,9 @@ impl Walk {
             TypeKind::Optional(inner) => ("types::TypeKind::Optional", Some(inner)),
             TypeKind::Assoc(base, ..) => ("types::TypeKind::Assoc", Some(base)),
             TypeKind::Any(..) => ("types::TypeKind::Any", None),
+            TypeKind::Infer(_) => {
+                unreachable!("the checker's write_back should leave no inference variable")
+            }
         };
         self.mark(key);
         if let Some(inner) = inner {
@@ -2931,6 +2938,9 @@ impl Walk {
             | TypeKind::String
             | TypeKind::Unit
             | TypeKind::Never => false,
+            TypeKind::Infer(_) => {
+                unreachable!("the checker's write_back should leave no inference variable")
+            }
         }
     }
 
@@ -2970,6 +2980,9 @@ impl Walk {
             | TypeKind::String
             | TypeKind::Unit
             | TypeKind::Never => false,
+            TypeKind::Infer(_) => {
+                unreachable!("the checker's write_back should leave no inference variable")
+            }
         }
     }
 
@@ -3032,6 +3045,9 @@ impl Walk {
                 | TypeKind::Param(..)
                 | TypeKind::Assoc(..)
                 | TypeKind::Any(..) => {}
+                TypeKind::Infer(_) => {
+                    unreachable!("the checker's write_back should leave no inference variable")
+                }
             }
         }
         if written && left && matches!(e.ty.kind(), TypeKind::I64 | TypeKind::U8) {
@@ -3649,6 +3665,9 @@ fn kind_name(ty: Type) -> &'static str {
         TypeKind::Optional(_) => "Optional",
         TypeKind::Assoc(..) => "Assoc",
         TypeKind::Any(..) => "Any",
+        TypeKind::Infer(_) => {
+            unreachable!("the checker's write_back should leave no inference variable")
+        }
     }
 }
 

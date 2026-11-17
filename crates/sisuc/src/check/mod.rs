@@ -17,6 +17,7 @@ mod expectation;
 mod expr;
 mod extend;
 mod generic;
+mod infer;
 mod interface;
 mod member;
 mod mut_args;
@@ -61,6 +62,7 @@ use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable, reserved_name};
 use expectation::{Expectation, Origin};
 use extend::Extension;
+use infer::WriteBack;
 use interface::{Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
 use names::{ConstantId, ItemId, NameMaps, Position, Resolved};
 use prelude::PRELUDE;
@@ -899,6 +901,8 @@ struct Checker<'src> {
     parse_errors: Vec<Span>,
     /// The body being checked.
     body: Body,
+    /// The inference variables of the top-level function being checked (see `with_table`).
+    table: infer::Table,
     /// While `signature` resolves the parameter and return types: the interface of each `any`
     /// type they write, with the span as written. `record` keeps a use here when the body has
     /// no owner, because a signature is resolved outside a body. No other body is resolved while
@@ -1546,6 +1550,7 @@ impl<'src> Checker<'src> {
             diagnostics: Diagnostics::default(),
             parse_errors: Vec::new(),
             body: Body::default(),
+            table: infer::Table::default(),
             signature_anys: None,
             extend_head: None,
             uses: Vec::new(),
@@ -1571,6 +1576,44 @@ impl<'src> Checker<'src> {
             self.diagnostics.error(d);
         }
         (result, body)
+    }
+
+    /// Checks with a fresh inference table, then puts the type of each variable in `result`
+    /// (`infer::write_back`). It reports each `Any` variable that no type reached (E0050), and
+    /// restores the table before it. A top-level function, a method and the value of a constant
+    /// call it. No other code takes the table, and each of them has its own variables.
+    fn with_table<R: WriteBack>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let outer = std::mem::take(&mut self.table);
+        let errors = self.diagnostics.errors();
+        let mut result = f(self);
+        let mut table = std::mem::replace(&mut self.table, outer);
+        if !table.is_empty() {
+            let written = result.write_back_all(&mut table);
+            for unsettled in written.unsettled {
+                self.report_unsettled(unsettled);
+            }
+            debug_assert!(
+                !written.open || self.diagnostics.errors() > errors,
+                "no inference variable should be left in a function that reported no error"
+            );
+        }
+        result
+    }
+
+    /// Makes `a` and `b` one type, if the table lets it, and reports each check that was waiting
+    /// for a type that this gave. The only place that reads the checks of `Table::unify`.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the first caller comes in Task 4")
+    )]
+    fn unify(&mut self, a: Type, b: Type) -> bool {
+        let Some(ready) = self.table.unify(a, b) else {
+            return false;
+        };
+        for waiting in ready {
+            self.report_waiting(waiting);
+        }
+        true
     }
 
     /// The type that `checked`, a failed generic call, found for its result and could not meet
@@ -2544,11 +2587,21 @@ impl Checker<'_> {
     /// is `Error` or its body failed; an `Error` parameter still yields one, and `check` drops
     /// it for the error behind it.
     /// A method, of the class or enum `owner`, gets `self` as its first local.
+    fn function(
+        &mut self,
+        f: &ast::Function,
+        id: tir::FuncId,
+        owner: Option<Type>,
+    ) -> Option<tir::Function> {
+        self.with_table(|c| c.function_in_table(f, id, owner))
+    }
+
+    /// `function`, with the inference table of the function in place.
     #[expect(
         clippy::too_many_lines,
         reason = "one pass over a function: its signature, locals, body and result"
     )]
-    fn function(
+    fn function_in_table(
         &mut self,
         f: &ast::Function,
         id: tir::FuncId,

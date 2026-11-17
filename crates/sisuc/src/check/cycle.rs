@@ -620,6 +620,7 @@ impl Graph {
             | TypeKind::String
             | TypeKind::Unit
             | TypeKind::Never
+            | TypeKind::Infer(_)
             | TypeKind::Param(..) => (None, &[][..], 1),
         };
         (inner.into_iter().chain(args.iter().copied()))

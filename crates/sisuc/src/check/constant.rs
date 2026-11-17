@@ -239,20 +239,22 @@ impl Checker<'_> {
                 in_constant: Some(site),
                 ..Body::default()
             },
-            |this| match c.ty.as_ref().zip(declared) {
-                Some((written, ty)) => {
-                    // The message and the label name an alias as the constant writes it.
-                    if let Some(text) = &shown {
-                        this.show(c.value.span, ty, text);
-                        this.show(written.span, ty, text);
+            |this| {
+                this.with_table(|this| match c.ty.as_ref().zip(declared) {
+                    Some((written, ty)) => {
+                        // The message and the label name an alias as the constant writes it.
+                        if let Some(text) = &shown {
+                            this.show(c.value.span, ty, text);
+                            this.show(written.span, ty, text);
+                        }
+                        let origin = Origin::Declared {
+                            at: written.span,
+                            ty,
+                        };
+                        this.expect(&c.value, Expectation::Required(ty, origin))
                     }
-                    let origin = Origin::Declared {
-                        at: written.span,
-                        ty,
-                    };
-                    this.expect(&c.value, Expectation::Required(ty, origin))
-                }
-                None => this.value(&c.value, Expectation::None),
+                    None => this.value(&c.value, Expectation::None),
+                })
             },
         );
         let ty = declared.or_else(|| type_of(&checked));

@@ -24,6 +24,7 @@ mod floats;
 mod for_loops;
 mod generics;
 pub(crate) mod interfaces;
+pub(super) mod joins;
 mod let_else;
 mod loop_condition;
 mod mut_args;

@@ -38,7 +38,7 @@ pub(crate) enum TypeKind {
     /// `[T]`.
     Array(Type),
     /// Holds `I64`, `U8`, `F64`, `Bool`, `Char`, `String`, `Class`, `Struct`, `Enum`, `Param`,
-    /// `Assoc`, `Any` or `Array`.
+    /// `Assoc`, `Any`, `Array` or `Infer`.
     Optional(Type),
     /// An associated type of a base: `S.Item`. It is the type at the index of the associated type
     /// among the interface's, through the interface with its arguments (without `Self`). The base
@@ -48,7 +48,15 @@ pub(crate) enum TypeKind {
     /// `any I`: a value of any type that conforms to the interface `I`, with the arguments of a
     /// generic interface (`TypeArgs::NONE` when it takes none, and without `Self`).
     Any(InterfaceId, TypeArgs),
+    /// An inference variable of the table of the function being checked (`check::infer`). It never
+    /// leaves the checker: `write_back` puts its type in its place.
+    Infer(InferId),
 }
+
+/// An inference variable's place in the table of one top-level function. Ids start at 0 for each
+/// table, so a type that holds one means something only in the table that made it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct InferId(pub(crate) u32);
 
 /// The index of the hole, the type parameter that stands for a part a context has not fixed yet
 /// (see `check::generic`). No declaration has a parameter at this index.
@@ -77,6 +85,8 @@ struct Names {
     assoc: bool,
     /// An `any` type.
     any: bool,
+    /// An inference variable.
+    infer: bool,
     /// An optional, other than under an associated type.
     optional: bool,
     /// How many levels of types nest in it: 0 for a type with no part. A list holds the most of
@@ -92,6 +102,7 @@ impl Names {
             rejected: self.rejected || other.rejected,
             assoc: self.assoc || other.assoc,
             any: self.any || other.any,
+            infer: self.infer || other.infer,
             optional: self.optional || other.optional,
             depth: self.depth.max(other.depth),
         }
@@ -116,6 +127,10 @@ impl TypeKind {
         #[cfg(test)]
         NAMED.set(NAMED.get() + 1);
         match self {
+            TypeKind::Infer(_) => Names {
+                infer: true,
+                ..Names::default()
+            },
             TypeKind::Param(_, i) => Names {
                 param: true,
                 open: i == HOLE_INDEX,
@@ -219,6 +234,11 @@ impl TypeArgs {
     /// Whether an element holds an associated type, anywhere inside it.
     pub(crate) fn has_assoc(self) -> bool {
         self.names().assoc
+    }
+
+    /// Whether an element holds an inference variable, anywhere inside it.
+    pub(crate) fn holds_infer(self) -> bool {
+        self.names().infer
     }
 
     /// The list with `Type::subst` applied to each element. A list without a parameter comes
@@ -610,6 +630,12 @@ impl Type {
         self.names().assoc
     }
 
+    /// Whether the type holds an inference variable, anywhere inside it. A cache that outlives a
+    /// function's table must not keep a key for which this is true: ids start at 0 in each table.
+    pub(crate) fn holds_infer(self) -> bool {
+        self.names().infer
+    }
+
     /// Whether the type is an optional, or holds one, other than under an associated type.
     pub(crate) fn holds_optional(self) -> bool {
         self.names().optional
@@ -656,6 +682,7 @@ impl Type {
                 | TypeKind::String
                 | TypeKind::Unit
                 | TypeKind::Never
+                | TypeKind::Infer(_)
                 | TypeKind::Param(..) => {}
             }
         }
@@ -775,7 +802,8 @@ impl Type {
             | TypeKind::Char
             | TypeKind::String
             | TypeKind::Unit
-            | TypeKind::Never => {
+            | TypeKind::Never
+            | TypeKind::Infer(_) => {
                 unreachable!("only a kind with a child can name a parameter")
             }
         };

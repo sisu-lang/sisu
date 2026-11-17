@@ -302,7 +302,11 @@ impl Checker<'_> {
         } else {
             reason(ReasonKind::Assoc(0))
         };
-        self.any_entries.insert((interface, args), answer);
+        // The ids of the variables in a key start at 0 in each function's table, so a key that
+        // holds one is computed each time.
+        if !args.holds_infer() {
+            self.any_entries.insert((interface, args), answer);
+        }
         answer
     }
 
@@ -341,7 +345,9 @@ impl Checker<'_> {
             interfaces: closure,
             unknown,
         };
-        self.any_closures.insert(any_ty, closure.clone());
+        if !any_ty.holds_infer() {
+            self.any_closures.insert(any_ty, closure.clone());
+        }
         closure
     }
 

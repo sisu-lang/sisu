@@ -987,6 +987,9 @@ impl Type {
             | TypeKind::Never
             | TypeKind::Param(..)
             | TypeKind::Assoc(..) => false,
+            TypeKind::Infer(_) => {
+                unreachable!("the checker's write_back should leave no inference variable")
+            }
         }
     }
 
@@ -1446,6 +1449,128 @@ impl Place {
     }
 }
 
+/// `args` with `f` applied to each type in it. The list is interned again only when `f` changed
+/// one.
+fn each_args_type_mut(args: &mut TypeArgs, f: &mut impl FnMut(&mut Type)) {
+    if *args == TypeArgs::NONE {
+        return;
+    }
+    let mut list = args.get().to_vec();
+    for ty in &mut list {
+        f(ty);
+    }
+    if list != args.get() {
+        *args = TypeArgs::intern(&list);
+    }
+}
+
+impl Expr {
+    /// Calls `f` on each type in this expression and in everything inside it: the type of each
+    /// node, the type of each block it holds, and the type arguments of each call.
+    /// `check::infer::write_back` uses this walk to put the type of each inference variable in
+    /// its place. The match is exhaustive, so a new kind of node cannot miss the walk.
+    pub(crate) fn each_type_mut(&mut self, f: &mut impl FnMut(&mut Type)) {
+        f(&mut self.ty);
+        match &mut self.kind {
+            ExprKind::Call { types, .. } => each_args_type_mut(types, f),
+            ExprKind::InterfaceCall { iargs, types, .. } => {
+                each_args_type_mut(iargs, f);
+                each_args_type_mut(types, f);
+            }
+            ExprKind::DynCall { iargs, .. } => each_args_type_mut(iargs, f),
+            ExprKind::If {
+                then_block,
+                else_block,
+                ..
+            }
+            | ExprKind::IfSome {
+                then_block,
+                else_block,
+                ..
+            } => {
+                then_block.each_block_type_mut(f);
+                if let Some(block) = else_block {
+                    block.each_block_type_mut(f);
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    arm.body.each_block_type_mut(f);
+                }
+            }
+            ExprKind::Loop(block) | ExprKind::Block(block) => block.each_block_type_mut(f),
+            ExprKind::MutCall { back, .. } => back.each_block_type_mut(f),
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Char(_)
+            | ExprKind::Str(_)
+            | ExprKind::None
+            | ExprKind::Unit
+            | ExprKind::Local(_)
+            | ExprKind::New { .. }
+            | ExprKind::Variant { .. }
+            | ExprKind::Field { .. }
+            | ExprKind::Struct { .. }
+            | ExprKind::StructField { .. }
+            | ExprKind::Wrap(_)
+            | ExprKind::ToAny(_)
+            | ExprKind::Convert(_)
+            | ExprKind::Print { .. }
+            | ExprKind::Dbg { .. }
+            | ExprKind::Panic(_)
+            | ExprKind::ReadLine
+            | ExprKind::ArrayLit(_)
+            | ExprKind::ArrayFill { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::Slice { .. }
+            | ExprKind::Len(_)
+            | ExprKind::Chars(_)
+            | ExprKind::Bytes(_)
+            | ExprKind::Words(_)
+            | ExprKind::FromChars(_)
+            | ExprKind::Math { .. }
+            | ExprKind::Unary { .. }
+            | ExprKind::Binary { .. }
+            | ExprKind::Interpolate { .. }
+            | ExprKind::Concat { .. }
+            | ExprKind::Compare { .. }
+            | ExprKind::Equal { .. }
+            | ExprKind::Is { .. }
+            | ExprKind::Break { .. }
+            | ExprKind::Continue { .. }
+            | ExprKind::Return(_) => {}
+        }
+        self.each_child_mut(&mut |child| child.each_type_mut(f));
+    }
+}
+
+impl Block {
+    /// Calls `f` on the type of this block, and on that of each `else` block of a `let ... else`
+    /// directly in it. The expressions in the block are the walk of `Expr::each_type_mut`.
+    fn each_block_type_mut(&mut self, f: &mut impl FnMut(&mut Type)) {
+        f(&mut self.ty);
+        for stmt in &mut self.stmts {
+            if let Stmt::LetElse { else_block, .. } = stmt {
+                else_block.each_block_type_mut(f);
+            }
+        }
+    }
+}
+
+impl Function {
+    /// Calls `f` on each local's type, on the type of the body block, and on each type inside the
+    /// body (`Expr::each_type_mut`). The declared return type is not walked: no inference variable
+    /// stands in a signature.
+    pub(crate) fn each_type_mut(&mut self, f: &mut impl FnMut(&mut Type)) {
+        for local in &mut self.locals {
+            f(&mut local.ty);
+        }
+        self.body.each_block_type_mut(f);
+        self.body.each_expr_mut(&mut |expr| expr.each_type_mut(f));
+    }
+}
+
 impl Block {
     fn exits(&self) -> bool {
         self.stmts.iter().any(Stmt::exits) || self.value.as_ref().is_some_and(|v| v.exits())
@@ -1655,6 +1780,7 @@ impl fmt::Display for Type {
             TypeKind::Never => "never",
             // A class's name lives in the program: `Program::type_name` prints it.
             TypeKind::Param(name, _) => return write!(f, "{name}"),
+            TypeKind::Infer(id) => return write!(f, "infer#{}", id.0),
             TypeKind::Assoc(base, _, _, k) => return write!(f, "{base}.assoc#{k}"),
             TypeKind::Class(id, _) => return write!(f, "class#{}", id.0),
             TypeKind::Struct(id, _) => return write!(f, "struct#{}", id.0),

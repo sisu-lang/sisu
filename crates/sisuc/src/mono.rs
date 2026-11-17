@@ -683,6 +683,9 @@ impl Mono {
             TypeKind::Param(..) => {
                 panic!("`subst` should replace every type parameter before `mono` maps a type")
             }
+            TypeKind::Infer(_) => {
+                unreachable!("the checker's write_back should leave no inference variable")
+            }
             TypeKind::I64
             | TypeKind::U8
             | TypeKind::F64
@@ -1682,6 +1685,9 @@ fn assert_concrete(program: &Program) {
 /// Whether `ty` names no type parameter and holds no type arguments, at any depth.
 fn concrete(ty: Type) -> bool {
     match ty.kind() {
+        TypeKind::Infer(_) => {
+            unreachable!("the checker's write_back should leave no inference variable")
+        }
         TypeKind::Param(..) | TypeKind::Assoc(..) => false,
         TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Struct(_, args) => {
             args == TypeArgs::NONE

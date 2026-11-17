@@ -86,6 +86,7 @@ fn meets_in(ty: Type, want: Type, seen: &mut WalkMemo<(Type, Type), bool>) -> bo
             | TypeKind::String
             | TypeKind::Unit
             | TypeKind::Never
+            | TypeKind::Infer(_)
             | TypeKind::Array(_)
             | TypeKind::Optional(_)
             | TypeKind::Class(..)
@@ -190,6 +191,7 @@ fn mark_params(ty: Type, named: &mut [bool], seen: &mut WalkMemo<Type, ()>) {
         | TypeKind::String
         | TypeKind::Unit
         | TypeKind::Never
+        | TypeKind::Infer(_)
         | TypeKind::Param(..) => unreachable!("only a kind with a child can name a parameter"),
     }
     seen.put(ty, ());
@@ -484,6 +486,7 @@ fn unbound_params(outer: &Bindings, ty: Type, on: &mut FxHashSet<usize>, seen: &
         | TypeKind::String
         | TypeKind::Unit
         | TypeKind::Never
+        | TypeKind::Infer(_)
         | TypeKind::Param(..) => unreachable!("only a kind with a child can name a parameter"),
     }
     seen.unbound.put(ty, ());
@@ -522,6 +525,7 @@ fn names_unbound(unbound: &[bool], built: Type, seen: &mut WalkMemo<Type, bool>)
         | TypeKind::String
         | TypeKind::Unit
         | TypeKind::Never
+        | TypeKind::Infer(_)
         | TypeKind::Param(..) => false,
     };
     seen.put(built, names);
@@ -614,6 +618,7 @@ fn needed_walk(
             | TypeKind::String
             | TypeKind::Unit
             | TypeKind::Never
+            | TypeKind::Infer(_)
             | TypeKind::Array(_)
             | TypeKind::Optional(_)
             | TypeKind::Class(..)
@@ -954,6 +959,7 @@ fn holds_param(ty: Type, param: Type, seen: &mut WalkMemo<Type, ()>) -> bool {
         | TypeKind::String
         | TypeKind::Unit
         | TypeKind::Never
+        | TypeKind::Infer(_)
         | TypeKind::Optional(_)
         | TypeKind::Param(..)
         | TypeKind::Assoc(..) => false,
@@ -1250,6 +1256,7 @@ impl Bindings {
                     | TypeKind::String
                     | TypeKind::Unit
                     | TypeKind::Never
+                    | TypeKind::Infer(_)
                     | TypeKind::Param(..)
                     | TypeKind::Assoc(..) => {}
                 }
@@ -1277,6 +1284,7 @@ impl Bindings {
                 | TypeKind::String
                 | TypeKind::Unit
                 | TypeKind::Never
+                | TypeKind::Infer(_)
                 | TypeKind::Array(_)
                 | TypeKind::Optional(_)
                 | TypeKind::Class(..)
@@ -1341,6 +1349,7 @@ impl Bindings {
                 | TypeKind::String
                 | TypeKind::Unit
                 | TypeKind::Never
+                | TypeKind::Infer(_)
                 | TypeKind::Array(_)
                 | TypeKind::Optional(_)
                 | TypeKind::Class(..)

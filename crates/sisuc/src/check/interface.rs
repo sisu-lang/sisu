@@ -1609,6 +1609,10 @@ impl Checker<'_> {
             done.extend(self.open.settle());
         }
         for ((ty, interface, args), answer) in done {
+            // A key that holds an inference variable means something in one table only.
+            if ty.holds_infer() || args.holds_infer() {
+                continue;
+            }
             let kept = if ty.has_param() {
                 &mut self.body.conformed
             } else {
@@ -1777,7 +1781,9 @@ impl Checker<'_> {
             return kept.unwrap_or(ty);
         }
         let found = self.leaf(ty, interface, args, &mut LeafWalk::new());
-        self.leaves_of(ty).entry(key).or_insert(found);
+        if !ty.holds_infer() && !args.holds_infer() {
+            self.leaves_of(ty).entry(key).or_insert(found);
+        }
         found.unwrap_or(ty)
     }
 
@@ -1846,7 +1852,9 @@ impl Checker<'_> {
     fn close_part(&mut self, walk: &mut LeafWalk, from: usize, answer: Option<Type>) {
         for key in walk.stack.drain(from..) {
             walk.index.remove(&key);
-            self.leaves_of(key.0).entry(key).or_insert(answer);
+            if !key.0.holds_infer() && !key.2.holds_infer() {
+                self.leaves_of(key.0).entry(key).or_insert(answer);
+            }
         }
     }
 
@@ -2075,7 +2083,10 @@ impl Checker<'_> {
                     // when it ends with no cut against a type lower on the stack.
                     let low = walk.low;
                     walk.low = outer.min(low);
-                    if found.is_some_and(|part| !is_parameter(part)) {
+                    if found.is_some_and(|part| !is_parameter(part))
+                        && !ty.holds_infer()
+                        && !args.holds_infer()
+                    {
                         self.leaves_of(ty).insert(key, found);
                     }
                     if low == place {
@@ -2260,7 +2271,9 @@ impl Checker<'_> {
         if !matches!(
             ty.kind(),
             TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..)
-        ) || !self.probed_types.insert((ty, interface, args))
+        ) || (!ty.holds_infer()
+            && !args.holds_infer()
+            && !self.probed_types.insert((ty, interface, args)))
         {
             return;
         }
@@ -2281,7 +2294,7 @@ impl Checker<'_> {
                 args,
                 declaration.k,
             ));
-            if !self.probed_assoc.insert(assoc) {
+            if !assoc.holds_infer() && !self.probed_assoc.insert(assoc) {
                 continue;
             }
             // A type with a parameter is no instance: `mono` never meets it.
