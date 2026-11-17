@@ -4549,16 +4549,15 @@ fn an_argument_with_labels_out_of_order_should_report_only_the_order() {
 /// The rows of `a_failed_bound_should_not_hide_the_part_that_is_wrong`.
 const BOUND_ROWS: &[PartialRow<'static>] = {
     use Code::{Mismatch, NotConform};
-    const S: &str = "\"s\"";
     &[(
         "fn h<T: I, U, V>(_a: Two<T, T.Item>, _b: U, _c: Two<U, V>) {}\n",
         "h(Two.P(5, 7), true, Two.P(\"s\", 1))",
-        &[(NotConform, "Two.P(5"), (Mismatch, S)],
+        &[(Mismatch, "h("), (NotConform, "Two.P(5")],
     )]
 };
 
-/// A failed bound is reported, and a later argument for a parameter bound in part still reports the
-/// part that is wrong.
+/// A failed bound is reported, and the conflict of the arguments for a later parameter is still
+/// reported, at the call.
 #[test]
 fn a_failed_bound_should_not_hide_the_part_that_is_wrong() {
     check_partial_rows(BOUND_ROWS);

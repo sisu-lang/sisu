@@ -4448,4 +4448,34 @@ mod tests {
         ));
         assert_eq!(bindings.known(with_arg), Some(string_item));
     }
+
+    #[test]
+    fn rollback_should_undo_the_open_calls_that_its_snapshot_added_or_dropped() {
+        // GIVEN an open call at `kept`, and a snapshot that drops it and adds one at `added`
+        let entry = || OpenEntry {
+            ret: Type::I64,
+            types: Vec::new(),
+            params: Vec::new(),
+            bounds: Vec::new(),
+            members: Vec::new(),
+        };
+        let call = |at| {
+            let kind = tir::ExprKind::Struct {
+                id: tir::StructId(0),
+                args: Vec::new(),
+            };
+            tir::Expr::new(kind, Type::I64, at)
+        };
+        let (kept, added) = (Span::new(0, 1), Span::new(2, 3));
+        let mut table = super::super::infer::Table::default();
+        table.add_open(kept, entry());
+        let snapshot = table.snapshot();
+        table.forget_open(kept);
+        table.add_open(added, entry());
+        // WHEN the snapshot rolls back
+        table.rollback(snapshot);
+        // THEN the call at `kept` is open again, and the call at `added` is not
+        assert!(table.open_call(&call(kept)).is_some());
+        assert!(table.open_call(&call(added)).is_none());
+    }
 }
