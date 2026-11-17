@@ -1002,6 +1002,36 @@ fn call_under_a_required_type_should_report_once_when_the_arguments_agree() {
 }
 
 #[test]
+fn call_with_an_unknown_and_a_never_argument_should_report_only_the_unknown_name() {
+    // GIVEN `pick(nope, panic("x"))`: `nope` names no binding, and `panic("x")` is `never`
+    // WHEN it is checked
+    // THEN it reports only E0033 at `nope`, and no E0138 for `never`
+    body_rows(&[(
+        "let x = pick(nope, panic(\"x\"))",
+        &[(Code::BindingNotFound, (1, 14))],
+    )]);
+}
+
+#[test]
+fn shared_none_under_a_failed_parameter_type_should_report_only_the_type() {
+    // GIVEN two `None`s of one `if` at a parameter, and at a field, whose type names no type
+    // WHEN each is checked
+    // THEN each reports only E0030 at the type
+    let call = "fn f(x: Nope) {}\nfn main() {\n    let c = [1].len() == 1\n    \
+                f(if c { None } else { None })\n}\n";
+    let build = "struct P { v: Nope }\nfn main() {\n    let c = [1].len() == 1\n    \
+                 let p = P(v: if c { None } else { None })\n}\n";
+    error_rows(&[
+        ("call", call.to_owned(), vec![(Code::UnknownType, (1, 9))]),
+        (
+            "build",
+            build.to_owned(),
+            vec![(Code::UnknownType, (1, 15))],
+        ),
+    ]);
+}
+
+#[test]
 fn if_and_match_should_join_in_each_order() {
     // GIVEN `if` and `match` joins whose members need a call, a wrap or a nested join, in each
     //       order

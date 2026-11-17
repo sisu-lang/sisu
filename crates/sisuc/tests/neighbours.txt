@@ -705,3 +705,5 @@ let _a: u8 = id($)
 let _a: [u8] = [$]
 let _a: u8 = pick($, g())
 let _a: u8 = loop { break $ }
+# A loop with a bare `break` beside a value, as the arguments for one `T` of a generic call.
+let _a = pick(loop { if c { break }; break $ }, $)
