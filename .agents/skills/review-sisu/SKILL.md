@@ -93,7 +93,7 @@ and the skill paths in the brief.
 - **Outside seat:** the command for its CLI in [launchers.md](launchers.md). Its report stem is the model's short name, such as `sol` or `fable`. When it fails, hits a usage limit or leaves no report, show the user the error it prints and ask how to go on. Do not put another model in its place without asking.
 
 After the last reviewer ends and you saved each report, run `python3 <skill base>/scripts/review_round.py verify <repository root> RUN --round <round> --report <stem>`,
-with one `--report` for each reviewer, such as `--report sol --report opus`. Run it before a fix commit.
+with one `--report` for each reviewer, such as `--report sol --report opus`. With `--round`, give the plain stem, such as `opus`, not `opus-2`: the script adds the round. Run it before a fix commit.
 It fails when a report is missing or has no `Model:` first line, or when the checkout differs from the record of `prepare`. A
 missing report means that the reviewer failed or that you did not save its reply. Check that the `Model:` line names the model you launched. A difference
 means that a reviewer wrote in the repository, so the round is a failed run: show the user the difference and
