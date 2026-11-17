@@ -943,8 +943,11 @@ impl Checker<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast;
+    use crate::check::expectation::{Expectation, Origin};
     use crate::check::tests::joins::with_checker;
-    use crate::diagnostic::{Code, Diagnostic};
+    use crate::diagnostic::{Code, Diagnostic, Fix};
+    use crate::parser::parse_ok;
 
     fn at(n: usize) -> Span {
         Span::new(n, n + 1)
@@ -1181,6 +1184,61 @@ mod tests {
                 c.diagnostics.iter().map(|d| (d.code(), d.span())).collect();
             assert_eq!(reported, [(Code::NotExactlyF64, span)]);
         });
+    }
+
+    /// The diagnostics of the value of the first `let` of `main` in `src`, by code, span and fix:
+    /// checked as a join member that `ty` then settles when `member`, else under the type `ty`.
+    fn literal_reports(src: &str, ty: Type, member: bool) -> Vec<(Code, Span, Vec<Fix>)> {
+        let program = parse_ok(src);
+        let Some(ast::Item::Function(main)) = program.items.first() else {
+            panic!("the program should start with `main`");
+        };
+        let ast::StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("`main` should start with a `let`");
+        };
+        with_checker(src, |c| {
+            if member {
+                let Ok(value) = c.expr(init, Expectation::Member) else {
+                    panic!("the member should check");
+                };
+                assert!(c.unify(value.ty, ty));
+            } else {
+                drop(c.expr(init, Expectation::Required(ty, Origin::None)));
+            }
+            (c.diagnostics.iter())
+                .map(|d| (d.code(), d.span(), d.fixes().to_vec()))
+                .collect()
+        })
+    }
+
+    #[test]
+    fn negated_member_literal_should_report_e0104_at_its_operand() {
+        // The `-` stands outside the token, and the fix writes the operand only.
+        let src = "fn main() {\n    let x: f64 = -9007199254740993\n}\n";
+        let member = literal_reports(src, Type::F64, true);
+        let [(code, span, _)] = &member[..] else {
+            panic!("one diagnostic should be reported, not {}", member.len());
+        };
+        assert_eq!(
+            (*code, *span),
+            (Code::NotExactlyF64, nth(src, "9007199254740993", 0))
+        );
+        assert_eq!(member, literal_reports(src, Type::F64, false));
+    }
+
+    #[test]
+    fn obligation_on_a_type_with_no_open_variable_should_be_ready_at_once() {
+        let mut table = Table::default();
+        let a = table.fresh(Kind::Any, at(0));
+        assert!(table.unify(a, Type::I64).is_some());
+        let snapshot = table.snapshot();
+        // `[A]` holds no open variable: `A` has its type.
+        table.obligation(Type::array(a), ObligationId(1));
+        let ready = Waiting::Obligation {
+            id: ObligationId(1),
+            ty: Type::array(Type::I64),
+        };
+        assert_eq!(table.keep(snapshot), [ready]);
     }
 
     #[test]

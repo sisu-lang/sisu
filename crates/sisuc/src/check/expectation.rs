@@ -95,7 +95,10 @@ pub(super) enum Expectation {
     },
     /// The value is a member of a join, or at a value position inside one: its inference
     /// variables stay open. The join closes them when it applies its own expectation.
-    #[expect(dead_code, reason = "the first caller comes in Task 5")]
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the first caller comes in Task 5")
+    )]
     Member,
 }
 

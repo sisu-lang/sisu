@@ -733,6 +733,44 @@ fn poisoned_open_value_in_a_failed_context_should_fail_quietly() {
 }
 
 #[test]
+fn open_set_shared_with_a_failed_context_should_close_quietly_under_no_type() {
+    // GIVEN two `None`s that share one open `Any`, and the error of a context that failed
+    // WHEN the first is closed under `Poisoned`, the second under no type, and the function's
+    // table is written back
+    // THEN the first fails with no type, and the second keeps its poisoned `Any` with no E0050
+    // AND the write-back finds the error that covers the open variable
+    let src = "fn main() {\n    None\n    None\n}\n";
+    let (first, second) = (Span::new(16, 20), Span::new(25, 29));
+    let program = parse_ok(src);
+    let mut checker = Checker::new(&program, src, "");
+    let closed = checker.with_table(|c| {
+        let any = c.table.fresh(Kind::Any, first);
+        let none = |span| {
+            let e = ast::Expr {
+                kind: ast::ExprKind::NoneLit,
+                span,
+            };
+            (
+                e,
+                tir::Expr::new(tir::ExprKind::None, Type::optional(any), span),
+            )
+        };
+        c.diagnostics.error(DiagnosticKind::NegatedU8 {
+            at: first,
+            convert: None,
+        });
+        let (e, value) = none(first);
+        let (closed, _) = c.close(&e, Ok(value), Expectation::Poisoned);
+        assert!(matches!(closed, Err(Poisoned { ty: None, .. })));
+        let (e, value) = none(second);
+        c.close(&e, Ok(value), Expectation::None).0
+    });
+    assert!(closed.is_ok());
+    let codes: Vec<Code> = checker.diagnostics.iter().map(Diagnostic::code).collect();
+    assert_eq!(codes, [Code::NegatedU8]);
+}
+
+#[test]
 fn join_after_a_conflict_should_be_untyped() {
     // GIVEN a join of a `u8` and an `i64`, and a `let` with a `u8` type that reads it
     // WHEN it is checked

@@ -736,7 +736,9 @@ impl Checker<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{array, at, eye, if_else, if_without_else, int, local, none, orders};
+    use super::super::tests::{
+        array, at, eye, heading, if_else, if_without_else, int, local, none, orders,
+    };
     use super::super::*;
     use crate::check::expectation::Origin;
     use crate::check::infer::Kind;
@@ -788,7 +790,7 @@ mod tests {
         binding: Option<Span>,
     ) -> Result<Type, Poisoned> {
         let mut members = whole(values);
-        c.join_form(form, head(), &mut members, expected, binding)
+        c.join_form(form, heading(head()), &mut members, expected, binding)
     }
 
     fn required(ty: Type) -> Expectation {
@@ -906,7 +908,7 @@ mod tests {
             ];
             // WHEN they join at `T`
             let form = JoinForm::Call { param: hole };
-            let joined = c.join_form(form, head(), &mut members, Expectation::None, None);
+            let joined = c.join_form(form, heading(head()), &mut members, Expectation::None, None);
             // THEN one E0032 at the head, with one label at `names` and one at `n`
             assert!(joined.is_err());
             assert_eq!(found(c), vec![(Code::Mismatch, head())]);
@@ -983,8 +985,13 @@ mod tests {
                 let form = JoinForm::Compound { op, assigned: 0 };
                 let mut members = whole(&mut values);
                 // WHEN they join
-                let joined =
-                    c.join_form(form, Span::new(2, 4), &mut members, Expectation::None, None);
+                let joined = c.join_form(
+                    form,
+                    heading(Span::new(2, 4)),
+                    &mut members,
+                    Expectation::None,
+                    None,
+                );
                 assert!(joined.is_err());
                 let [d] = diagnostics(c).try_into().unwrap_or_else(|all: Vec<_>| {
                     panic!("one diagnostic should be reported, not {}", all.len())
@@ -1205,7 +1212,13 @@ mod tests {
             let mut members = break_members(&mut values, labels);
             let origin = Origin::BareBreak { at: at(9) };
             let expected = Expectation::Required(Type::UNIT, origin);
-            let _ = c.join_form(JoinForm::Loop, head(), &mut members, expected, None);
+            let _ = c.join_form(
+                JoinForm::Loop,
+                heading(head()),
+                &mut members,
+                expected,
+                None,
+            );
             let all = diagnostics(c);
             let spans = all.first().map_or_else(Vec::new, |d| {
                 d.secondary().iter().map(|&(span, _)| span).collect()
@@ -1255,7 +1268,7 @@ mod tests {
         };
         Site {
             form,
-            heading: head().into(),
+            heading: heading(head()),
             hole,
             fixed: None,
         }

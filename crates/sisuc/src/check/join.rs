@@ -987,6 +987,15 @@ mod tests {
         Span::new(n, n + 1)
     }
 
+    /// The heading of a join whose head is the whole expression, and which is no call.
+    pub(super) fn heading(head: Span) -> Heading {
+        Heading {
+            head,
+            whole: head,
+            returns: None,
+        }
+    }
+
     /// The integer literal `value`, whose type is open.
     pub(super) fn int(c: &mut Checker<'_>, value: u64, n: usize) -> tir::Expr {
         let ty = c.table.fresh(Kind::Int, at(n));
@@ -1085,7 +1094,7 @@ mod tests {
         expected: Expectation,
     ) -> Result<Type, Poisoned> {
         let mut members = whole(values);
-        c.join_form(form, at(0), &mut members, expected, None)
+        c.join_form(form, heading(at(0)), &mut members, expected, None)
     }
 
     /// Each of `values` as a whole member.
@@ -1294,7 +1303,7 @@ mod tests {
                 },
             ];
             let form = JoinForm::Call { param: hole };
-            let ty = c.join_form(form, at(0), &mut members, Expectation::None, None);
+            let ty = c.join_form(form, heading(at(0)), &mut members, Expectation::None, None);
             ty.ok().map(|ty| c.table.resolve(ty))
         })
     }
@@ -1343,7 +1352,7 @@ mod tests {
             ];
             // WHEN they join at `T`
             let form = JoinForm::Call { param: hole };
-            let ty = c.join_form(form, at(0), &mut members, Expectation::None, None);
+            let ty = c.join_form(form, heading(at(0)), &mut members, Expectation::None, None);
             // THEN `T` is `u8`, and the element of the array is `u8`
             assert_eq!(ty.ok(), Some(Type::U8));
             assert_eq!(c.table.resolve(element), Type::U8);
