@@ -1,0 +1,7 @@
+fn main() {
+    let c = [1].len() == 1
+    let a: u8 = 3
+    let b: i64 = 4
+    let x = loop { if c { break a }; break b }
+    print(x)
+}

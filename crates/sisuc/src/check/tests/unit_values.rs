@@ -641,8 +641,8 @@ fn a_comparison_of_a_unit_should_hold_the_other_operands_to_unit() {
 }
 
 /// A bare `break` beside a `break` whose value is a `unit` gives the loop a `unit`, so the loop is
-/// a `unit`. Beside a `unit?` value, the loop is a `unit?`. A bare `break` beside a value of
-/// another type stays E0043.
+/// a `unit`. A bare `break` beside a value of another type, a `unit?` too, gives E0043 at the bare
+/// `break`.
 #[test]
 fn a_bare_break_beside_a_unit_break_should_give_the_loop_a_unit() {
     with_prelude();
@@ -663,12 +663,6 @@ fn a_bare_break_beside_a_unit_break_should_give_the_loop_a_unit() {
         )),
         Type::UNIT
     );
-    assert_eq!(
-        loop_type(&in_f(
-            "fn f(c: bool, o: U?) -> unit? { loop { if c { break o?.log() }; break } }"
-        )),
-        Type::optional(Type::UNIT)
-    );
     for (row, used) in [
         (
             "unit value first",
@@ -678,12 +672,7 @@ fn a_bare_break_beside_a_unit_break_should_give_the_loop_a_unit() {
             "bare break first",
             "let x = loop { if c { break }; break g() }",
         ),
-        (
-            "unit? value",
-            "let x = loop { if c { break o?.log() }; break }",
-        ),
         ("statement", "loop { if c { break g() }; break }"),
-        ("unit? statement", "loop { if c { break o?.log() }; break }"),
         (
             "labelled outer loop",
             "outer: loop { loop { if c { break outer g() }; break outer } }",
@@ -711,6 +700,16 @@ fn a_bare_break_beside_a_unit_break_should_give_the_loop_a_unit() {
             "let x = loop { if c { break Some(1) }; break }".into(),
             vec![(Code::NoValue, "break }", false)],
         ),
+        (
+            "unit? value",
+            "let x = loop { if c { break o?.log() }; break }".into(),
+            vec![(Code::NoValue, "break }", false)],
+        ),
+        (
+            "unit? statement",
+            "loop { if c { break o?.log() }; break }".into(),
+            vec![(Code::NoValue, "break }", false)],
+        ),
     ];
     rows_in(&rows, with_safe_call, 12);
 }
@@ -723,8 +722,8 @@ fn with_two_conditions(used: &str) -> String {
 }
 
 /// A bare `break` beside a `break` whose value is a `unit` adds no report to an error. The error
-/// can be in the body, in the value or in the context of the loop. A bare `break` beside an `i64`
-/// value stays E0043, also when the body has an error.
+/// can be in the body, in the value or in the context of the loop. A bare `break` beside a value
+/// that is not a `unit` gives E0043 at the bare `break`, also when the body has an error.
 #[test]
 fn a_bare_break_beside_a_unit_break_should_add_no_report_to_an_error() {
     let rows: Vec<UseRow<'_>> = vec![
@@ -764,12 +763,12 @@ fn a_bare_break_beside_a_unit_break_should_add_no_report_to_an_error() {
         (
             "unit? value after a unit value",
             "loop { if c { break g() }; if d { break o?.log() }; break }".into(),
-            vec![(Code::Mismatch, "o?.log()", false)],
+            vec![(Code::NoValue, "break }", false)],
         ),
         (
             "i64 value after a unit value",
             "loop { if c { break g() }; if d { break 1 }; break }".into(),
-            vec![(Code::Mismatch, "1 }", false)],
+            vec![(Code::NoValue, "break }", false)],
         ),
         (
             "failed coalesce",
@@ -796,17 +795,6 @@ fn a_bare_break_beside_a_unit_break_should_add_no_report_to_an_error() {
         ),
     ];
     rows_in(&rows, with_two_conditions, 11);
-}
-
-/// A bare `break` beside a `break` whose value is a `unit?` gives the loop a wrapped `unit`, a
-/// `Some`. This test passes before and after the fix of its commit: it pins the value.
-#[test]
-fn a_bare_break_beside_an_optional_unit_break_should_hold_a_wrapped_unit() {
-    with_prelude();
-    contains(
-        &with_safe_call("let x = loop { if c { break o?.log() }; break }"),
-        &["(break (wrap ()))"],
-    );
 }
 
 /// A `main` that has `used` on line 20, after generic declarations that take a `unit` for `T`

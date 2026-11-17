@@ -2,8 +2,7 @@
 // GIVEN an enum `U` whose method `log` prints `log`, and a function `run`. `run` discards
 //   `o?.log()` beside an empty branch, and in a `match` arm beside an empty block or a `None` arm.
 //   It also discards it in a `while` or `for` body, and as the `break` value of a `loop`.
-//   A loop also has a bare `break` beside a `break` of `g()` or of `o?.log()`, also through a
-//   label.
+//   A loop also has a bare `break` beside a `break` of `g()`.
 // WHEN `main` calls `run` with `o` as `None`, as `Some(U.A)`, and as `Some(U.B)` with `c` false
 // THEN `log` runs once for each form whose branch runs when `o` holds a value, and never when
 //   `o` is `None`. `g` prints `g` each time that its `break` runs.
@@ -47,14 +46,11 @@ fn run(o: U?, u: U, c: bool, n: i64) {
     outer: loop { loop { break outer o?.log() } }             // log
     print("bare")
     loop { if c { break g() }; break }                        // g when c is true
-    loop { if c { break o?.log() }; break }                   // log when c is true
     for _i in 0..2 { loop { if c { break g() }; break } }     // g twice when c is true
-    outer: loop { loop { if c { break outer o?.log() }; break outer } }        // log when c is true
-    outer: loop { loop { if c { break outer o?.log() }; break }; break outer } // log when c is true
 }
 
 fn main() {
     run(None, U.A, true, 1)        // if, match, loops, bare, 3 g
-    run(Some(U.A), U.A, true, 1)   // if, 2 logs, match, 4 logs, loops, 6 logs, bare, g, log, 2 g, 2 logs
+    run(Some(U.A), U.A, true, 1)   // if, 2 logs, match, 4 logs, loops, 6 logs, bare, 3 g
     run(Some(U.B), U.B, false, 2)  // if, 1 log, match, loops, 2 logs, bare
 }

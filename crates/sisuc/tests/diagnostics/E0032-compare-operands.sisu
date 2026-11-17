@@ -1,0 +1,5 @@
+fn main() {
+    let a: u8 = 3
+    let b: i64 = 4
+    print(a == b)
+}

@@ -1,0 +1,6 @@
+fn main() {
+    let a: u8 = 3
+    let b: u8 = 4
+    let x: [string] = [a, b]
+    print(x.len())
+}

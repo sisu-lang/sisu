@@ -1,0 +1,14 @@
+// GIVEN an `if` of an `i64??` and a nested `if` of `None` and an `i64?`, in each order
+// WHEN the nested `if` gives its `None`
+// THEN the `None` is the outer `None` in each order
+fn main() {
+    let o: i64? = None
+    let o2: i64?? = Some(Some(2))
+    let d = [1].len() == 1
+    let c = [1].len() == 2
+    let x = if c { o2 } else { if d { None } else { o } }
+    print(x == None) // true
+    let k = [1].len() == 1
+    let y = if k { if d { None } else { o } } else { o2 }
+    print(y == None) // true
+}

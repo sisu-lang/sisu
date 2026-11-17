@@ -1,0 +1,6 @@
+fn main() {
+    let o: u8? = None
+    let b: i64 = 300
+    let s = o ?? b
+    print(s)
+}

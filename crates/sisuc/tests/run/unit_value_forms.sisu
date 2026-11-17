@@ -1,6 +1,6 @@
 // GIVEN an enum `U` whose method `log` prints `log`, a function `g` of no result, and `c` true
-// WHEN the program binds, passes, prints, compares and breaks with a `unit` or a `unit?` value,
-//   with `o` as `None` and as `Some(U.A)`
+// WHEN the program binds, passes, prints and compares a `unit` or a `unit?` value, with `o` as
+//   `None` and as `Some(U.A)`. It also breaks with a `unit` value
 // THEN `log` runs only when `o` holds a value. A `unit?` prints `None` or `()`, and a
 //   `unit` prints `()`. Two `unit` values are equal, and neither is less than the other
 // AND `dbg` writes each value to stderr
@@ -18,7 +18,6 @@ fn id<T>(x: T) -> T { x }
 fn f() -> unit? { None }
 
 fn rows(o: U?) {
-    let c = true
     print(o?.log())                                   // None | log, ()
     let u = { o?.log() }                              // | log
     print(u)                                          // None | ()
@@ -26,8 +25,6 @@ fn rows(o: U?) {
     print(id(o?.log()))                               // None | log, ()
     print(o?.log() ?? g())                            // () | log, ()
     dbg(o?.log())                                     // | log
-    let x = loop { if c { break o?.log() }; break }   // | log
-    print(x)                                          // None | ()
 }
 
 fn main() {

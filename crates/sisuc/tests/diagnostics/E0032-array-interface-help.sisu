@@ -1,0 +1,17 @@
+interface Seen {
+    fn seen(self) -> i64
+}
+
+struct Eye: Seen {
+    v: i64
+    fn seen(self) -> i64 { self.v }
+}
+
+struct Lid: Seen {
+    v: i64
+    fn seen(self) -> i64 { self.v }
+}
+
+fn main() {
+    print([Eye(v: 1), Lid(v: 2)].len())
+}

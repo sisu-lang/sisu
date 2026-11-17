@@ -176,6 +176,14 @@ struct Two<A, B> {\n\
     b: B\n\
 }\n\
 fn dup<T>(x: T) -> Two<T, T> { Two(a: x, b: x) }\n\
+fn ff<T, U>(x: Two<T, U>, y: T, z: U) -> T { y }\n\
+fn none<T>() -> T? { None }\n\
+fn look<T: Seen>(a: T, b: T) -> i64 { a.seen() }\n\
+fn index_of<T: Eq>(xs: [T], x: T) -> i64 { 0 }\n\
+fn index_last<T: Eq>(x: T, xs: [T]) -> i64 { 0 }\n\
+struct Boxed<T> {\n\
+    v: T\n\
+}\n\
 enum Tree<T> {\n\
     Leaf\n\
     Node(v: T)\n\
@@ -317,10 +325,6 @@ fn join_should_keep_the_result_that_main_gives() {
         ("let x: [u8] = [3, 1 + 2]", "[u8]"),
         ("let x: u8 = loop { if c { break 1 + 2 }; break 3 }", "u8"),
         ("let x: u8 = loop { if c { break 3 }; break 1 + 2 }", "u8"),
-        (
-            "let x = loop { if c { break }; break if d { None } else { Some(print(\"a\")) } }",
-            "unit?",
-        ),
         (
             "let x = loop { let y: u8 = if c { if d { break 300 } else { 2 } } else { 3 }; print(y); break 1 }",
             "i64",
@@ -467,9 +471,11 @@ fn generic_call_with_no_taker_should_stay_an_error() {
 fn one_wrap_through_a_call_should_hold() {
     // GIVEN values that take at most one wrap through a generic call
     // WHEN each is checked
-    // THEN the one with two wraps reports E0032, and the others are valid
+    // THEN each one with two wraps reports E0032, and the others are valid
     body_rows(&[
         ("let q: i64?? = 1", &[(Code::Mismatch, (1, 16))]),
+        ("let v: i64?? = h(1, Some(2))", &[(Code::Mismatch, (1, 16))]),
+        ("let s: u8?? = id(1)", &[(Code::Mismatch, (1, 15))]),
         ("let v: i64?? = Some(h(1, Some(2)))", &[]),
         ("let v: i64?? = h(1, Some(Some(2)))", &[]),
     ]);
@@ -570,10 +576,7 @@ fn poisoned_member_should_report_nothing_more() {
         ),
         (
             "let x = loop { prnt(\"a\"); if c { break }; break None }",
-            &[
-                (Code::FunctionNotFound, (1, 16)),
-                (Code::CannotInfer, (1, 49)),
-            ],
+            &[(Code::FunctionNotFound, (1, 16)), (Code::NoValue, (1, 34))],
         ),
         (
             "let x = [loop { prnt(\"a\"); break a }, 1]\nlet y: [u8] = x",
@@ -821,4 +824,463 @@ fn join_in_a_constant_should_use_its_own_table() {
     ] {
         assert!(printed.contains(part), "{part} in {printed}");
     }
+}
+
+/// Each error of `body` in its `program`: its code, its primary position and its secondary
+/// positions, in order. The positions are of the `program`.
+fn reports_of(body: &str) -> Vec<Found> {
+    let src = program(body);
+    let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+    (ds.iter())
+        .filter(|d| d.code().severity() == Severity::Error)
+        .map(|d| {
+            let secondary = d.secondary().iter().map(|(s, _)| at(&src, *s)).collect();
+            (d.code(), at(&src, d.span()), secondary)
+        })
+        .collect()
+}
+
+/// A row of `one_conflict_rows`: a body, the primary position of its E0032 and the position of
+/// each label, all in the body.
+type ConflictRow<'a> = (&'a str, (usize, usize), &'a [(usize, usize)]);
+
+/// Each body gives one E0032 at its primary position, with a secondary position at each of
+/// `labels`, in any order. Asserts once at the end.
+fn one_conflict_rows(rows: &[ConflictRow<'_>]) {
+    let red: Vec<String> = (rows.iter())
+        .filter_map(|&(body, primary, labels)| {
+            let mut found = reports_of(body);
+            for (_, _, secondary) in &mut found {
+                secondary.sort_unstable();
+            }
+            let mut labels: Vec<_> = labels.iter().copied().map(in_program).collect();
+            labels.sort_unstable();
+            let wanted = vec![(Code::Mismatch, in_program(primary), labels)];
+            (found != wanted).then(|| format!("row `{body}`: found {found:?}, wanted {wanted:?}"))
+        })
+        .collect();
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+/// The fixes of the one diagnostic of `body`, with the positions given in the body.
+fn fixes_of(body: &str) -> Vec<Vec<(usize, usize, String, String)>> {
+    let src = program(body);
+    let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+    let ds: Vec<_> = (ds.iter())
+        .filter(|d| d.code().severity() == Severity::Error)
+        .collect();
+    assert_eq!(ds.len(), 1, "row `{body}`: {ds:?}");
+    let base = in_program((0, 0));
+    fixes(&src, ds[0])
+        .into_iter()
+        .map(|(_, edits)| {
+            (edits.into_iter())
+                .map(|(line, col, old, new)| (line - base.0, col - base.1, old.to_owned(), new))
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn generic_call_should_join_the_arguments_of_each_type_parameter() {
+    // GIVEN generic calls whose arguments for one `T` have different types, in each order
+    // WHEN each is checked
+    // THEN each is valid with the type that one of the arguments gives
+    type_rows(&[
+        ("let x = look(Eye(v: 1), e)", "i64"),
+        ("let x = look(e, Eye(v: 1))", "i64"),
+        ("let x: u8? = pick(a, None)", "u8?"),
+        ("let x: u8? = pick(None, a)", "u8?"),
+        ("let x = pick(a, None)", "u8?"),
+        ("let x = pick(None, a)", "u8?"),
+        ("let x = f([Some(1)], a)", "u8?"),
+        ("let x = f([a], Some(1))", "u8?"),
+        ("let x = pick(loop { break 1 }, a)", "u8"),
+    ]);
+}
+
+#[test]
+fn inner_call_at_a_place_of_two_parameters_should_stay_closed() {
+    // GIVEN `ff(dup(1), m, 2)`, whose `dup(1)` is at `Two<T, U>`, in each order of `m` and `2`
+    // WHEN each is checked
+    // THEN each reports one E0032 at the call: `dup(1)` gives `T` the type `i64`
+    body_rows(&[
+        ("let x = ff(dup(1), m, 2)", &[(Code::Mismatch, (1, 9))]),
+        ("let x = ff(dup(1), 2, m)", &[(Code::Mismatch, (1, 9))]),
+    ]);
+}
+
+#[test]
+fn part_of_an_argument_should_get_the_argument_label() {
+    // GIVEN `index_of(names, nn)`, whose `names: [string]` is at `[T]` and `nn: i64` at `T`, in
+    //       each order of the parameters
+    // WHEN each is checked
+    // THEN each reports one E0032 at the call, with a label at `names` and at `nn`
+    one_conflict_rows(&[
+        (
+            "let names: [string] = [\"a\"]\nlet nn: i64 = 3\nprint(index_of(names, nn))",
+            (3, 7),
+            &[(3, 16), (3, 23)],
+        ),
+        (
+            "let names: [string] = [\"a\"]\nlet nn: i64 = 3\nprint(index_last(nn, names))",
+            (3, 7),
+            &[(3, 18), (3, 22)],
+        ),
+    ]);
+}
+
+#[test]
+fn call_with_a_failed_join_should_report_once() {
+    // GIVEN `pick(a, "s")` as a branch of an `if`, beside a literal, in each order
+    // WHEN each is checked
+    // THEN each reports one E0032 at `pick`, with a label at `a` and at `"s"`, and the `if` has
+    //      no report
+    one_conflict_rows(&[
+        (
+            "let x = if c { pick(a, \"s\") } else { 1 }",
+            (1, 16),
+            &[(1, 21), (1, 24)],
+        ),
+        (
+            "let x = if c { 1 } else { pick(a, \"s\") }",
+            (1, 27),
+            &[(1, 32), (1, 35)],
+        ),
+    ]);
+}
+
+#[test]
+fn call_under_a_required_type_should_report_once_when_the_arguments_agree() {
+    // GIVEN `pick(a, b)` with `a, b: u8`, under a required `string`
+    // WHEN it is checked
+    // THEN it reports one E0032 at the whole call
+    body_rows(&[("let x: string = pick(a, b)", &[(Code::Mismatch, (1, 17))])]);
+}
+
+#[test]
+fn if_and_match_should_join_in_each_order() {
+    // GIVEN `if` and `match` joins whose members need a call, a wrap or a nested join, in each
+    //       order
+    // WHEN each is checked
+    // THEN each is valid with the same type in each order
+    type_rows(&[
+        ("let x = if c { [a] } else { [id(1)] }", "[u8]"),
+        ("let x = if c { [id(1)] } else { [a] }", "[u8]"),
+        ("let x = if c { m } else { Some(id(1)) }", "u8?"),
+        ("let x = if c { Some(id(1)) } else { m }", "u8?"),
+        ("let x = if c { a } else { id(1) + 0 }", "u8"),
+        ("let x = if c { id(1) + 0 } else { a }", "u8"),
+        ("let x = if c { Some(0) } else { first(xs) }", "u8?"),
+        ("let x = if c { first(xs) } else { Some(0) }", "u8?"),
+        (
+            "let x = if c { Tree.Node(v: 1) } else { Tree.Node(v: a) }",
+            "Tree<u8>",
+        ),
+        (
+            "let x = if c { Tree.Node(v: a) } else { Tree.Node(v: 1) }",
+            "Tree<u8>",
+        ),
+        ("let x = if c { [m] } else { id([1]) }", "[u8?]"),
+        ("let x = if c { id([1]) } else { [m] }", "[u8?]"),
+        (
+            "let x = if c { e } else { pick(Eye(v: 1), Lid(v: 2)) }",
+            "any Seen",
+        ),
+        (
+            "let x = if c { pick(Eye(v: 1), Lid(v: 2)) } else { e }",
+            "any Seen",
+        ),
+        (
+            "let x = if c { Boxed(v: 1) } else { Boxed(v: a) }",
+            "Boxed<u8>",
+        ),
+        (
+            "let x = if c { Boxed(v: a) } else { Boxed(v: 1) }",
+            "Boxed<u8>",
+        ),
+        (
+            "let x = if c { Ok(1) } else { Err(\"s\") }",
+            "Result<i64, string>",
+        ),
+        (
+            "let x = if c { Err(\"s\") } else { Ok(1) }",
+            "Result<i64, string>",
+        ),
+        ("let x = if c { [None] } else { [last(xs)] }", "[u8?]"),
+        ("let x = if c { [last(xs)] } else { [None] }", "[u8?]"),
+        (
+            "let tt: Two<u8?, u8?> = Two(a: None, b: None)\nlet x = if c { dup(1) } else { tt }",
+            "Two<u8?, u8?>",
+        ),
+        (
+            "let tt: Two<u8?, u8?> = Two(a: None, b: None)\nlet x = if c { tt } else { dup(1) }",
+            "Two<u8?, u8?>",
+        ),
+        (
+            "let ys: [u8?] = [Some(1)]\nlet x = if c { [1; 3] } else { ys }",
+            "[u8?]",
+        ),
+        (
+            "let ys: [u8?] = [Some(1)]\nlet x = if c { ys } else { [1; 3] }",
+            "[u8?]",
+        ),
+        (
+            "let x = match c { true => e; false => if d { Eye(v: 1) } else { Lid(v: 2) } }",
+            "any Seen",
+        ),
+        (
+            "let x = match c { true => if d { Eye(v: 1) } else { Lid(v: 2) }; false => e }",
+            "any Seen",
+        ),
+        (
+            "let x = if c { Some(e) } else { Some(if d { Eye(v: 1) } else { Lid(v: 2) }) }",
+            "(any Seen)?",
+        ),
+        (
+            "let x = if c { Some(if d { Eye(v: 1) } else { Lid(v: 2) }) } else { Some(e) }",
+            "(any Seen)?",
+        ),
+    ]);
+}
+
+#[test]
+fn conflict_should_name_each_member() {
+    // GIVEN `if` joins with no candidate, in each order
+    // WHEN each is checked
+    // THEN each reports one E0032 at the `if`, with a label at each member
+    one_conflict_rows(&[
+        (
+            "let x = if c { Eye(v: 1) } else { Lid(v: 2) }",
+            (1, 9),
+            &[(1, 16), (1, 35)],
+        ),
+        (
+            "let x = if c { Lid(v: 2) } else { Eye(v: 1) }",
+            (1, 9),
+            &[(1, 16), (1, 35)],
+        ),
+        (
+            "let bi: i64 = 4\nlet x = if c { a } else { bi }",
+            (2, 9),
+            &[(2, 16), (2, 27)],
+        ),
+        (
+            "let bi: i64 = 4\nlet x = if c { bi } else { a }",
+            (2, 9),
+            &[(2, 16), (2, 28)],
+        ),
+        (
+            "let x = if c { 1 } else { \"s\" }",
+            (1, 9),
+            &[(1, 16), (1, 27)],
+        ),
+        (
+            "let x = if c { \"s\" } else { 1 }",
+            (1, 9),
+            &[(1, 16), (1, 29)],
+        ),
+    ]);
+    // AND the conflict of a `u8` and an `i64` converts the `u8`
+    assert_eq!(
+        fixes_of("let bi: i64 = 4\nlet x = if c { a } else { bi }"),
+        vec![vec![(2, 16, "a".to_owned(), "i64(a)".to_owned())]]
+    );
+}
+
+#[test]
+fn one_interface_should_give_the_fix() {
+    // GIVEN `let x = if c { Eye(v: 1) } else { Lid(v: 2) }`, whose members both fit `Seen`
+    // WHEN it is checked
+    // THEN the one fix writes `: any Seen` after `x`
+    assert_eq!(
+        fixes_of("let x = if c { Eye(v: 1) } else { Lid(v: 2) }"),
+        vec![vec![(1, 6, String::new(), ": any Seen".to_owned())]]
+    );
+}
+
+#[test]
+fn no_let_should_give_the_interface_help() {
+    // GIVEN `[Eye(v: 1), Lid(v: 2)]` with no `let`
+    // WHEN it is checked
+    // THEN it reports one E0032 with a help and no fix
+    let src = program("print([Eye(v: 1), Lid(v: 2)].len())");
+    let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+    let found: Vec<_> = (ds.iter())
+        .filter(|d| d.code().severity() == Severity::Error)
+        .map(|d| (d.code(), d.help().is_some(), d.fixes().len()))
+        .collect();
+    assert_eq!(found, vec![(Code::Mismatch, true, 0)]);
+}
+
+#[test]
+fn array_elements_should_join_in_each_order() {
+    // GIVEN arrays whose elements need a wrap, a conversion or a nested join, in each order
+    // WHEN each is checked
+    // THEN each is valid with the same type in each order
+    type_rows(&[
+        ("let x = if c { [a] } else { [1, 2] }", "[u8]"),
+        ("let x = if c { [1, 2] } else { [a] }", "[u8]"),
+        (
+            "let mi: i64? = Some(5)\nlet x = if c { [mi] } else { [1] }",
+            "[i64?]",
+        ),
+        (
+            "let mi: i64? = Some(5)\nlet x = if c { [1] } else { [mi] }",
+            "[i64?]",
+        ),
+        (
+            "let mi: i64? = Some(5)\nlet x = match c { true => [mi]; false => [1] }",
+            "[i64?]",
+        ),
+        (
+            "let mi: i64? = Some(5)\nlet x = match c { true => [1]; false => [mi] }",
+            "[i64?]",
+        ),
+        (
+            "let mi: i64? = Some(5)\nlet x = if let Some(v) = mi { print(v); [mi] } else { [1] }",
+            "[i64?]",
+        ),
+        (
+            "let mi: i64? = Some(5)\nlet x = if let Some(v) = mi { print(v); [1] } else { [mi] }",
+            "[i64?]",
+        ),
+        ("let x = if c { [None; 2] } else { [Some(1)] }", "[i64?]"),
+        ("let x = if c { [Some(1)] } else { [None; 2] }", "[i64?]"),
+        ("let x = [e, Some(Eye(v: 1))]", "[(any Seen)?]"),
+        ("let x = [Some(Eye(v: 1)), e]", "[(any Seen)?]"),
+        ("let x = [Some(1), a]", "[u8?]"),
+        ("let x = [a, Some(1)]", "[u8?]"),
+        (
+            "let x = [e, if d { Eye(v: 1) } else { Lid(v: 2) }]",
+            "[any Seen]",
+        ),
+        (
+            "let x = [if d { Eye(v: 1) } else { Lid(v: 2) }, e]",
+            "[any Seen]",
+        ),
+        (
+            "let x = if c { [e] } else { [if d { Eye(v: 1) } else { Lid(v: 2) }] }",
+            "[any Seen]",
+        ),
+        (
+            "let x = if c { [if d { Eye(v: 1) } else { Lid(v: 2) }] } else { [e] }",
+            "[any Seen]",
+        ),
+    ]);
+}
+
+#[test]
+fn operator_operands_should_join_in_each_order() {
+    // GIVEN operators, comparisons and `??` whose sides need a wrap or a conversion, in each
+    //       order
+    // WHEN each is checked
+    // THEN each is valid with the same type in each order
+    type_rows(&[
+        ("let x = loop { break 1 } + a", "u8"),
+        ("let x = a + loop { break 1 }", "u8"),
+        ("let x = Some(1) == o", "bool"),
+        ("let x = o == Some(1)", "bool"),
+        ("let x = [1] == [a]", "bool"),
+        ("let x = [a] == [1]", "bool"),
+        ("let x = o ?? Some(1)", "u8?"),
+        ("let x = Some(1) ?? o", "u8?"),
+    ]);
+    // AND `??` with a right side that is not the payload of its left side reports one E0032
+    body_rows(&[("let x = o ?? \"s\"", &[(Code::Mismatch, (1, 11))])]);
+}
+
+#[test]
+fn compound_fix_should_convert_only_the_right_side() {
+    // GIVEN `+=` and `??` whose two sides have different types
+    // WHEN each is checked
+    // THEN each reports one E0032, and only a whole right side gets a fix
+    one_conflict_rows(&[(
+        "let mut s: u8 = 0\nlet bi: i64 = 300\ns += bi\nprint(s)",
+        (3, 3),
+        &[(3, 1), (3, 6)],
+    )]);
+    assert_eq!(
+        fixes_of("let mut s: u8 = 0\nlet bi: i64 = 300\ns += bi\nprint(s)"),
+        Vec::<Vec<_>>::new()
+    );
+    assert_eq!(
+        fixes_of("let mut s: i64 = 0\ns += a\nprint(s)"),
+        vec![vec![(2, 6, "a".to_owned(), "i64(a)".to_owned())]]
+    );
+    assert_eq!(
+        fixes_of("let bi: i64 = 300\nlet s = o ?? bi\nprint(s)"),
+        Vec::<Vec<_>>::new()
+    );
+}
+
+#[test]
+fn break_values_should_join_in_each_order() {
+    // GIVEN loops whose `break` values need a call or a literal settled by a later value, in each
+    //       order
+    // WHEN each is checked
+    // THEN each is valid with the same type in each order
+    type_rows(&[
+        ("let x = loop { if c { break a }; break 1 }", "u8"),
+        ("let x = loop { if c { break 1 }; break a }", "u8"),
+        ("let x = loop { if c { break 1 + 2 }; break a }", "u8"),
+        ("let x = loop { if c { break a }; break id(1) }", "u8"),
+        ("let x = loop { if c { break id(1) }; break a }", "u8"),
+        ("let x = loop { if c { break 1 }; break id(a) }", "u8"),
+        ("let x = loop { if c { break id(a) }; break 1 }", "u8"),
+    ]);
+    // AND a loop whose body failed is `[u8?]`, which a later `let` reports
+    body_rows(&[(
+        "let x = loop { prnt(\"a\"); if c { break [a] }; break [o] }\nlet y: string = x",
+        &[(Code::FunctionNotFound, (1, 16)), (Code::Mismatch, (2, 17))],
+    )]);
+}
+
+#[test]
+fn loop_under_a_required_type_should_report_once_when_the_break_values_agree() {
+    // GIVEN a loop whose `break` values `a, b: u8` agree, under a required `string`
+    // WHEN it is checked
+    // THEN it reports one E0032 at the whole loop
+    body_rows(&[(
+        "let x: string = loop { if c { break a }; break b }",
+        &[(Code::Mismatch, (1, 17))],
+    )]);
+}
+
+#[test]
+fn bare_break_should_require_a_unit_of_each_break_value() {
+    // GIVEN loops with a bare `break` beside a `break` with a value that is not a `unit`
+    // WHEN each is checked
+    // THEN each reports one E0043 at the bare `break`, and nothing for the values
+    body_rows(&[
+        (
+            "let x = loop { if c { break }; break None }",
+            &[(Code::NoValue, (1, 23))],
+        ),
+        (
+            "let x = if c { loop { if d { break }; break None } } else { Some(u()) }",
+            &[(Code::NoValue, (1, 30))],
+        ),
+        (
+            "let x = if c { loop { if c { break }; break None } } else { o }",
+            &[(Code::NoValue, (1, 30))],
+        ),
+        (
+            "let x = loop { if c { break }; break if d { None } else { Some(print(\"a\")) } }",
+            &[(Code::NoValue, (1, 23))],
+        ),
+        (
+            "let x: string = loop { if c { break }; if d { break a }; break a }",
+            &[(Code::NoValue, (1, 31))],
+        ),
+        (
+            "let x = loop { if c { break }; break if d { 1 } else { \"s\" } }",
+            &[(Code::NoValue, (1, 23))],
+        ),
+    ]);
 }

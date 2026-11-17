@@ -1,0 +1,10 @@
+fn main() {
+    let mut s: u8 = 0
+    let b: i64 = 300
+    s += b
+    print(s)
+    let mut t: i64 = 0
+    let a: u8 = 3
+    t += a
+    print(t)
+}

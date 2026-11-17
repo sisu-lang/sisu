@@ -1,0 +1,16 @@
+enum U {
+    A
+    fn log(self) {
+        print("log")
+    }
+}
+
+fn main() {
+    let o: U? = Some(U.A)
+    let c = [1].len() == 1
+    loop { if c { break o?.log() }; break }
+    outer: loop { loop { if c { break outer o?.log() }; break outer } }
+    outer: loop { loop { if c { break outer o?.log() }; break }; break outer }
+    let x = loop { if c { break o?.log() }; break }
+    print(x)
+}

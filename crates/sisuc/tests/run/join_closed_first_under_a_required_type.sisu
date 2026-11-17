@@ -1,0 +1,9 @@
+// GIVEN `first([None, Some(1)])` under a required `i64??`
+// WHEN the call is closed first, so that `T` is `i64?` and the result takes one wrap
+// THEN the value is not `None`
+fn first<T>(xs: [T]) -> T { xs[0] }
+
+fn main() {
+    let y: i64?? = first([None, Some(1)])
+    print(y == None) // false
+}

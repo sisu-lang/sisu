@@ -1,0 +1,10 @@
+fn pick<T>(a: T, b: T) -> T { a }
+
+fn main() {
+    let c = [1].len() == 1
+    let a: u8 = 3
+    let x = if c { pick(a, "s") } else { 1 }
+    print(x)
+    let y = if c { 1 } else { pick(a, "s") }
+    print(y)
+}
