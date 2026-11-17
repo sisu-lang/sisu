@@ -8995,3 +8995,66 @@ fn a_waiting_call_inside_id_should_take_the_type_of_the_let() {
                fn main() {\n    let x: Two<i64, bool> = id(k2())\n    print(x.a)\n}";
     clean(src);
 }
+
+/// The declarations of the bound tests below: an interface, a struct that conforms to it, a generic
+/// enum and generic calls that wait for their context.
+const BOUND_DECLS: &str = "interface I {\n}\ninterface J {\n}\nstruct W: I {\n}\n\
+                           enum Two<A, B> {\n    P(A, B)\n}\n\
+                           fn none<T>() -> T? { None }\n\
+                           fn arr<X>() -> [X] { panic(\"e\") }\n";
+
+/// GIVEN a generic call whose bound `I` holds for no number type
+/// WHEN an integer literal and a call that waits for its context are the arguments for `T`
+/// THEN the bound reports at the literal, as `main` does, and no join conflict comes in its place
+#[test]
+fn a_literal_beside_a_waiting_member_should_break_the_bound() {
+    with_prelude();
+    let src =
+        format!("{BOUND_DECLS}fn h<T: I>(_p: T, _a: T) {{}}\nfn main() {{\n    h(5, arr())\n}}");
+    codes(&src, &[(Code::NotConform, (14, 7))]);
+}
+
+/// GIVEN a generic call whose parameter `T` has the bounds `I` and `J`
+/// WHEN the part of an argument at `T` is `i64`
+/// THEN each bound that `i64` breaks reports at that argument, as `main` does
+#[test]
+fn a_member_that_breaks_two_bounds_should_report_each_bound() {
+    with_prelude();
+    let src = format!(
+        "{BOUND_DECLS}fn h<T: I & J>(_p: Two<T, i64>, _a: T) {{}}\n\
+         fn main() {{\n    let n: i64 = 5\n    h(Two.P(n, 7), W())\n}}"
+    );
+    codes(
+        &src,
+        &[(Code::NotConform, (15, 7)), (Code::NotConform, (15, 7))],
+    );
+}
+
+/// GIVEN a generic call whose member breaks the bound of `T`
+/// WHEN a call that waits for its context gives the other parameter `U`
+/// THEN the bound reports, and `U`, which nothing gives a type, is E0050, as on `main`
+#[test]
+fn a_waiting_call_after_a_broken_bound_should_report_cannot_infer() {
+    with_prelude();
+    let src = format!(
+        "{BOUND_DECLS}fn h<T: I, U>(_p: Two<T, i64>, _a: U?) {{}}\n\
+         fn main() {{\n    let n: i64 = 5\n    h(Two.P(n, 7), none())\n}}"
+    );
+    codes(
+        &src,
+        &[(Code::CannotInfer, (15, 5)), (Code::NotConform, (15, 7))],
+    );
+}
+
+/// GIVEN a generic call whose member breaks the bound of `T`
+/// WHEN a plain `None` gives the other parameter `U`
+/// THEN only the bound reports: a `None` waits for no context, as on `main`
+#[test]
+fn a_plain_none_after_a_broken_bound_should_add_no_report() {
+    with_prelude();
+    let src = format!(
+        "{BOUND_DECLS}fn h<T: I, U>(_p: Two<T, i64>, _a: U?) {{}}\n\
+         fn main() {{\n    let n: i64 = 5\n    h(Two.P(n, 7), None)\n}}"
+    );
+    codes(&src, &[(Code::NotConform, (15, 7))]);
+}
