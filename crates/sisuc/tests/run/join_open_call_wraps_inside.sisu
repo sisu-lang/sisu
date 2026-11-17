@@ -1,0 +1,11 @@
+// GIVEN an `if` whose branches are an array of an optional and a generic call on an array of a
+//       literal
+// WHEN the `if` takes the branch with the call
+// THEN the element of the call's array is wrapped, so it reads as `Some(1)`
+fn id<T>(x: T) -> T { x }
+fn main() {
+    let c = [1].len() == 2
+    let m: i64? = Some(5)
+    let x = if c { [m] } else { id([1]) }
+    print(x[0] ?? 0) // 1
+}

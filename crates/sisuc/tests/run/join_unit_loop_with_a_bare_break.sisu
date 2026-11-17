@@ -1,0 +1,15 @@
+// GIVEN a loop with a `break` whose value is a call that gives `unit`, and a bare `break`
+// WHEN the loop runs once with each value of the condition
+// THEN the loop is `unit`, and the call runs only when its `break` runs
+fn g() { print("g") }
+fn run(d: bool) {
+    let x = loop {
+        if d { break g() }
+        break
+    }
+    x
+}
+fn main() {
+    run(true) // g
+    run(false)
+}

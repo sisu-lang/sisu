@@ -1,0 +1,20 @@
+// GIVEN an interface value and an `if` whose other branch is a struct that conforms to it
+// WHEN the `if` takes the branch with the struct
+// THEN the struct converts to the interface value, and its method runs
+interface Seen {
+    fn seen(self) -> i64
+}
+struct Eye: Seen {
+    v: i64
+    fn seen(self) -> i64 { self.v }
+}
+struct Lid: Seen {
+    v: i64
+    fn seen(self) -> i64 { self.v }
+}
+fn main() {
+    let c = [1].len() == 1
+    let e: any Seen = Eye(v: 1)
+    let x = if c { Lid(v: 2) } else { e }
+    print(x.seen()) // 2
+}

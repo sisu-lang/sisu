@@ -1,0 +1,23 @@
+// GIVEN an `if` whose branches are an optional of an optional and a generic call on `None` and an
+//       optional, in each order
+// WHEN the `if` takes the branch with the call
+// THEN the call has the type of the optional and its result is wrapped once, so it is no `None`
+fn pick<T>(a: T, b: T) -> T { [a, b][0] }
+fn first() {
+    let c = [1].len() == 2
+    let o: i64? = None
+    let o2: i64?? = Some(Some(2))
+    let x = if c { o2 } else { pick(None, o) }
+    print(x == None) // false
+}
+fn second() {
+    let c = [1].len() == 1
+    let o: i64? = None
+    let o2: i64?? = Some(Some(2))
+    let x = if c { pick(None, o) } else { o2 }
+    print(x == None) // false
+}
+fn main() {
+    first()
+    second()
+}

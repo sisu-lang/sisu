@@ -1,0 +1,10 @@
+// GIVEN an `if` whose branches are an optional and a loop whose value comes from a `break` in an
+//       inner loop
+// WHEN the `if` takes the branch with the loop
+// THEN the value of the inner `break` is wrapped, so it reads as `Some(1)`
+fn main() {
+    let c = [1].len() == 2
+    let o: i64? = None
+    let x = if c { o } else { outer: loop { loop { break outer 1 } } }
+    print(x ?? 0) // 1
+}

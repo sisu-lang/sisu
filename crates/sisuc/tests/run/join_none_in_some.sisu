@@ -1,0 +1,8 @@
+// GIVEN an optional, and an array of a `None` and that value in a `Some`
+// WHEN the program reads the first element
+// THEN the `None` is the outer `None` of the element type, not a wrapped inner `None`
+fn main() {
+    let o: i64? = None
+    let x = [None, Some(o)]
+    print(x[0] == None) // true
+}

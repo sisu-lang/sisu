@@ -215,6 +215,8 @@ fn take2<T>(mut x: T?, n: i64) { x = None }
 fn keep<T>(mut x: T?) -> T? { x }
 fn opt<T>(v: T?) -> T? { v }
 fn g() {}
+fn pick<T>(a: T, b: T) -> T { a }
+fn oi() -> i64? { None }
 fn setu(mut x: unit) { x = {} }
 struct Su {
     u: unit
@@ -418,6 +420,9 @@ su.u
 xu[0]
 # An `if` without an `else` that gives a `unit`: it has no value to lift to `unit?`.
 if d { g() }
+# A join of two `unit` values.
+if c { g() } else { g() }
+match k { _ => g() }
 # An `if` whose `then` block jumps before an `if` without an `else`: the tail of a `never` block
 # is unreachable, so no code reads its value.
 if c { return; if d { 1 } } else { g() }
@@ -679,3 +684,24 @@ let _a = loop { if c { break $ }; break }
 loop { if c { break $ }; break }
 outer: loop { loop { if c { break outer $ }; break outer } }
 outer: loop { loop { if c { break outer $ }; break }; break outer }
+# A loop whose body has a failed statement.
+let _a = loop { nope(); break $ }
+let _a = loop { nope(); if c { break }; break $ }
+# A loop with a bare `break`, at each position: a `let`, a branch, an element, under a written
+# type, beside a loop that has no value, through a label, in an arm, at the right side of `??`, and
+# in a `Some`. Then a value under a written type beside a `unit`.
+let _a = if c { loop { if c { break $ }; break } } else { $ }
+let _a = [loop { if c { break $ }; break }]
+let _a: u8? = loop { if c { break }; break $ }
+let _a = [loop { break }, $]
+let _a = if c { $ } else { o: loop { loop { if c { break o }; break o $ } } }
+let _a = match k { _ => loop { if c { break }; break $ } }
+let _a = oi() ?? loop { if c { break }; break $ }
+let _a = Some(loop { if c { break }; break $ })
+let _a: u8 = loop { if c { break }; break $ }
+let _a: u8 = if c { $ } else { g() }
+let _a: [u8] = [$, g()]
+let _a: u8 = id($)
+let _a: [u8] = [$]
+let _a: u8 = pick($, g())
+let _a: u8 = loop { break $ }
