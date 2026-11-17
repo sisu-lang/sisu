@@ -1979,7 +1979,10 @@ impl Checker<'_> {
         // The parameters that are open for an outer join, each with its name and the arguments of
         // its members (see `OpenEntry`).
         let mut openable = Vec::new();
-        for &(t, var) in &decided {
+        // The arguments that fit their place with no type for any parameter: each was reported.
+        let mut misfits = Vec::new();
+        for (n, &(t, var)) in decided.iter().enumerate() {
+            let later: Vec<usize> = decided[n + 1..].iter().map(|&(k, _)| k).collect();
             let name = sig.declared[t];
             let mut with: Vec<Type> = (call.bindings.found.iter())
                 .map(|&ty| self.table.resolve(listed(ty)))
@@ -2004,6 +2007,47 @@ impl Checker<'_> {
                     continue;
                 }
                 let argument = args[i].value.span;
+                if misfits.contains(&i) {
+                    continue;
+                }
+                // An argument that does not fit its place, whatever type each parameter takes, is
+                // a mistake of its shape: it gets the directed report, as on main, and joins
+                // nothing.
+                if value.is_ok()
+                    && !param.has_assoc()
+                    && let Some(ty) = type_of(value)
+                    && ty != Type::NEVER
+                {
+                    let loose: Vec<Type> = (with.iter().enumerate())
+                        .map(|(k, &ty)| match ty.kind() {
+                            TypeKind::Infer(_) | TypeKind::Param(..) if k >= owned || k == t => {
+                                self.table.fresh(Kind::Any, argument)
+                            }
+                            _ => ty,
+                        })
+                        .collect();
+                    let place = param.subst(&loose);
+                    let snapshot = self.table.snapshot();
+                    let fits = self.converts(value, place, false).is_some();
+                    self.table.rollback(snapshot);
+                    if !fits {
+                        misfits.push(i);
+                        // The report names each open parameter by its name.
+                        let named: Vec<Type> = (with.iter().zip(0_u32..))
+                            .map(|(&ty, k)| match ty.kind() {
+                                TypeKind::Infer(_) => {
+                                    Type::intern(TypeKind::Param(sig.declared[k as usize], k))
+                                }
+                                _ => ty,
+                            })
+                            .collect();
+                        let got = self.table.default_open(self.table.resolve(ty));
+                        let origin = call.declarer.origin(i);
+                        let d = self.mismatch(argument, None, param.subst(&named), got, origin);
+                        failed.get_or_insert_with(|| self.diagnostics.error(d));
+                        continue;
+                    }
+                }
                 let filled = param.subst(&with_var);
                 if let Some(ty) = type_of(value)
                     && ty != Type::NEVER
@@ -2019,7 +2063,17 @@ impl Checker<'_> {
                     // An associated type in the place takes the member's part there.
                     valued.push((self.assoc_open(filled, argument), ty, argument));
                 }
-                let place = param.subst(&with);
+                // Each member has its own part at a parameter whose join comes later: a conflict
+                // there belongs to the join of that parameter, not to the join of `T`.
+                let own: Vec<Type> = (with.iter().enumerate())
+                    .map(|(k, &ty)| match ty.kind() {
+                        TypeKind::Infer(_) if later.contains(&k) => {
+                            self.table.fresh(Kind::Any, argument)
+                        }
+                        _ => ty,
+                    })
+                    .collect();
+                let place = param.subst(&own);
                 let place = if place.has_assoc() {
                     tied.push(i);
                     let place = self.normalize(place).unwrap_or(place);

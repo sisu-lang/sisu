@@ -375,7 +375,12 @@ impl Checker<'_> {
 
     /// The wraps that `value` takes to convert to `target`, or `None`. It binds what it unifies:
     /// `join` calls it under a snapshot. The member at a `fixed` place only unifies.
-    fn converts(&mut self, value: &mut Checked, target: Type, fixed: bool) -> Option<usize> {
+    pub(super) fn converts(
+        &mut self,
+        value: &mut Checked,
+        target: Type,
+        fixed: bool,
+    ) -> Option<usize> {
         match value {
             Ok(e) if fixed => self.unify(e.ty, target).then_some(0),
             Ok(e) => self.converts_at(e, target),
