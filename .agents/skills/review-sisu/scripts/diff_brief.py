@@ -30,6 +30,10 @@ the main checkout's gitignored docs/superpowers/ is not in a worktree.
            not exist, or when its last `coverage:` line does not name the diff's head commit, or
            says the run measured uncommitted changes or saw HEAD change. Unlike a mutation log,
            coverage of an earlier commit is refused: it is cheap to run again at the head
+  --memory-safety-log  the output of `make memory-safety` for the diff; Focus names it with its
+           result. It is checked as --coverage is. CI runs the memory tests only after the
+           merge. So when a diff changes crates/ and has no log, Focus says that they did not
+           run. This line only reports; it stops nothing.
 For a diff, Focus also lists each line the diff removes from the tests with no identical line
 added back, and each test file it deletes, and each sisu build in OUT's bin/<sha>/ that
 build_sisu.sh wrote.
@@ -37,6 +41,9 @@ build_sisu.sh wrote.
            needs --prior, the earlier reports, and --rulings, the caller's rulings on them
 The template comes from origin/main, so a branch that started before a change to the review
 criteria still gets the current ones. Without origin/main it falls back to ../brief.md.
+CODING_STANDARDS.md also comes from origin/main: the script copies it next to OUT, and the brief
+names the copy, so a diff cannot change the rules that judge it. A diff that changes the file gets
+a Focus line that says so. Without origin/main's copy, the brief names the checkout's file.
 """
 
 import argparse
@@ -50,6 +57,7 @@ from pathlib import Path
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "brief.md"
 MAIN_TEMPLATE = "origin/main:.agents/skills/review-sisu/brief.md"
+STANDARDS = "CODING_STANDARDS.md"
 KINDS = ("spec", "plan", "diff")
 # A full SHA-1 or SHA-256 commit name.
 FULL_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
@@ -170,28 +178,58 @@ def log_mismatch(
     return None
 
 
-def coverage_mismatch(path: Path, repo: Path | str, head: str) -> str | None:
-    """Return why the last `coverage:` line of `path` does not describe `head`, or None."""
-    lines = [line for line in path.read_text().splitlines() if line.startswith("coverage: ")]
-    found = (
-        re.search(r"\(HEAD ([0-9a-f]{40})( with uncommitted changes)?\)$", lines[-1])
-        if lines
-        else None
+def last_line(path: Path, target: str) -> re.Match[str] | None:
+    """Return the match of the last line of `path` that `make <target>` ends with, or None.
+
+    The group `word` is the first word after the target, such as PASS; `sha` is the measured
+    commit; `dirty` is set when the tree was not clean.
+    """
+    lines = [line for line in path.read_text().splitlines() if line.startswith(f"{target}: ")]
+    pattern = (
+        rf"^{re.escape(target)}: (?P<word>\S+).*"
+        r"\(HEAD (?P<sha>[0-9a-f]{40})(?P<dirty> with uncommitted changes)?\)$"
     )
+    return re.search(pattern, lines[-1]) if lines else None
+
+
+def head_mismatch(path: Path, repo: Path | str, head: str, target: str) -> str | None:
+    """Return why the last line of `make <target>` in `path` does not describe `head`, or None."""
+    found = last_line(path, target)
     if not found:
-        return f'no coverage line ending "(HEAD <sha>)" in {path}'
-    measured, want = found[1], commit(repo, head)
-    if found[2]:
+        return f'no {target} line ending "(HEAD <sha>)" in {path}'
+    measured, want = found["sha"], commit(repo, head)
+    if found["dirty"]:
         return (
             f"{path} measured uncommitted changes on {measured[:8]}, or HEAD changed during the "
-            "run; run make coverage again at the head on a clean tree"
+            f"run; run make {target} again at the head on a clean tree"
         )
     if measured != want:
         return (
             f"{path} measured {measured[:8]}, not the head {want[:8] or 'unknown'}; "
-            "run make coverage again at the head"
+            f"run make {target} again at the head"
         )
     return None
+
+
+def changes(repo: Path | str, base: str, head: str, path: str) -> bool:
+    """Tell whether `base`..`head` changes a file at or under `path`."""
+    return run_git(repo, "diff", "--quiet", base, head, "--", path, answers=(0, 1)).returncode == 1
+
+
+def main_standards(repo: Path) -> bytes | None:
+    """Return origin/main's CODING_STANDARDS.md, or None when origin/main has none."""
+    shown = subprocess.run(
+        ["git", "-C", str(repo), "show", f"origin/main:{STANDARDS}"],
+        capture_output=True,
+        check=False,
+    )
+    if shown.returncode != 0:
+        print(
+            f"diff_brief: cannot read origin/main:{STANDARDS}; using the checkout's",
+            file=sys.stderr,
+        )
+        return None
+    return shown.stdout
 
 
 # Test files whose removed lines Focus lists. Blessed output is left out: golden_diff.py checks
@@ -283,6 +321,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915  one linear pass: a branch f
     p.add_argument("--focus")
     p.add_argument("--mutation-log", action="append", default=[])
     p.add_argument("--coverage")
+    p.add_argument("--memory-safety-log")
     p.add_argument("--round", type=int, default=1)
     p.add_argument("--prior", action="append", default=[])
     p.add_argument("--rulings")
@@ -290,11 +329,12 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915  one linear pass: a branch f
     repo, out = Path(a.repo).resolve(), Path(a.out).resolve()
     if a.round > 1 and not (a.prior and a.rulings):
         sys.exit("diff_brief: a round after the first needs --prior and --rulings")
-    if a.kind != "diff" and (a.mutation_log or a.coverage):
-        sys.exit("diff_brief: --mutation-log and --coverage are for a diff")
+    if a.kind != "diff" and (a.mutation_log or a.coverage or a.memory_safety_log):
+        sys.exit("diff_brief: --mutation-log, --coverage and --memory-safety-log are for a diff")
     for path in [
         *a.mutation_log,
         a.coverage,
+        a.memory_safety_log,
         *a.prior,
         a.rulings,
         a.target if a.kind != "diff" else None,
@@ -331,9 +371,27 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915  one linear pass: a branch f
             focus_lines.append(f"Mutation-test log: {log}{note}")
         if a.coverage:
             coverage = Path(a.coverage).resolve()
-            if why := coverage_mismatch(coverage, repo, shas[1]):
+            if why := head_mismatch(coverage, repo, shas[1], "coverage"):
                 sys.exit(f"diff_brief: {why}")
             focus_lines.append(f"Coverage result: {coverage}")
+        if a.memory_safety_log:
+            log = Path(a.memory_safety_log).resolve()
+            if why := head_mismatch(log, repo, shas[1], "memory-safety"):
+                sys.exit(f"diff_brief: {why}")
+            # pyrefly: ignore[unsupported-operation]  `head_mismatch` has found the last line
+            result = last_line(log, "memory-safety")["word"]
+            focus_lines.append(f"Memory-safety log: {log}: {result}")
+        elif changes(repo, shas[0], shas[1], "crates/"):
+            focus_lines.append(
+                "Memory tests: not run. CI runs `make memory-safety` only after the merge. Name "
+                "the riskiest changed path that only ASan, Valgrind or `--rc-checks` would catch, "
+                "or say that there is none."
+            )
+        if changes(repo, shas[0], shas[1], STANDARDS):
+            focus_lines.append(
+                f"The diff changes `{STANDARDS}`. Judge the diff by the copy from origin/main "
+                "that the brief names, and review the changed rules as part of the target."
+            )
         if removed := removed_tests(repo, *shas):
             more = (
                 [f"- and {len(removed) - SHOWN} more: see the diff"] if len(removed) > SHOWN else []
@@ -372,10 +430,15 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915  one linear pass: a branch f
     t = t.replace("Target: <path, or base..head>.", f"Target: {target}.")
     t = t.replace("<repository root>", str(repo))
     t = t.replace("<base>..<head>", str(target))
+    rules = main_standards(repo) if "<coding standards path>" in t else None
+    rules_path = out.parent / STANDARDS if rules is not None else repo / STANDARDS
+    t = t.replace("<coding standards path>", str(rules_path))
     docs = "".join(f"- {Path(d).resolve()}\n" for d in a.doc)
     t = re.sub(r"- <the other documents to read.*?>\n", docs, t, flags=re.DOTALL)
     if a.kind != "diff":
         t = drop_line(t, "For a diff,")
+    # A departure from the Rust idiom is a nit, and a later round accepts no nit.
+    if a.kind != "diff" or a.round > 1:
         t = drop_line(t, "`<rust-best-practices SKILL.md path>`")
     for slot, path in SKILLS.items():
         if slot not in t:
@@ -406,7 +469,8 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915  one linear pass: a branch f
     focus_slot = '<what the caller knows that the target does not say, or "none">'
     top = t.split("# Report", 1)[0].replace(focus_slot, "", 1)
     left = re.findall(
-        r"<(?:spec|path|repository|base|the other|test-audit|codebase-design|rust-best-practices"
+        r"<(?:spec|path|repository|base|coding standards|the other|test-audit|codebase-design"
+        r"|rust-best-practices"
         r"|round|prior|rulings|previous|what the caller)[^>]*>",
         top,
     )
@@ -416,6 +480,8 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915  one linear pass: a branch f
     focus = "\n\n".join(filter(None, ["\n".join(focus_lines), focus])) or "none"
     if a.kind != "diff":
         shutil.copyfile(a.target, target)
+    if rules is not None:
+        rules_path.write_bytes(rules)
     out.write_text(t.replace(focus_slot, focus))
     print(out)
 

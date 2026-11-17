@@ -150,13 +150,13 @@ class LogMismatch(Repo):
 
 
 class CoverageMismatch(Repo):
-    """coverage_mismatch on outputs of `make coverage` for the range base..HEAD."""
+    """head_mismatch on outputs of `make coverage` for the range base..HEAD."""
 
     def mismatch(self, text: str) -> str | None:
         path = Path(self.repo) / "coverage.txt"
         path.write_text(text)
         with mock.patch.dict(os.environ, ENV, clear=True):
-            return diff_brief.coverage_mismatch(path, self.repo, "HEAD")
+            return diff_brief.head_mismatch(path, self.repo, "HEAD", "coverage")
 
     def test_coverage_on_the_head_should_pass(self) -> None:
         self.assertIsNone(self.mismatch(f"coverage: measured (HEAD {self.head})\nCoverage: 90%\n"))
@@ -270,6 +270,79 @@ class Brief(Repo):
         self.assertIn(
             f"Coverage result: {coverage}", self.brief("HEAD~2..HEAD", "--coverage", str(coverage))
         )
+
+    def commit_file(self, path: str, text: str) -> None:
+        """Commit `text` at `path` on HEAD."""
+        file = Path(self.repo) / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(text)
+        subprocess.run([*self.git, "add", path], check=True, env=ENV)
+        subprocess.run([*self.git, "commit", "-q", "-m", path], check=True, env=ENV)
+
+    def test_a_memory_safety_log_on_the_head_should_be_named_in_focus_with_its_result(
+        self,
+    ) -> None:
+        log = Path(self.repo) / "memory.txt"
+        log.write_text(f"Summary: 3 tests\nmemory-safety: FAIL (HEAD {self.head})\n")
+        text = self.brief("HEAD~2..HEAD", "--memory-safety-log", str(log))
+        self.assertIn(f"Memory-safety log: {log}: FAIL\n", text)
+
+    def test_a_memory_safety_log_on_an_earlier_commit_should_fail_before_writing(self) -> None:
+        log = Path(self.repo) / "memory.txt"
+        log.write_text(f"memory-safety: PASS (HEAD {self.mid})\n")
+        with self.assertRaises(SystemExit) as stop:
+            self.brief("HEAD~2..HEAD", "--memory-safety-log", str(log))
+        self.assertIn("run make memory-safety again", str(stop.exception))
+        self.assertEqual(list(self.run_dir.iterdir()), [])
+
+    def test_a_memory_safety_log_should_need_its_own_line_when_it_holds_a_coverage_line(
+        self,
+    ) -> None:
+        log = Path(self.repo) / "memory.txt"
+        log.write_text(f"coverage: measured (HEAD {self.head})\n")
+        with self.assertRaises(SystemExit) as stop:
+            self.brief("HEAD~2..HEAD", "--memory-safety-log", str(log))
+        self.assertIn("no memory-safety line", str(stop.exception))
+
+    def test_a_diff_of_crates_without_a_memory_safety_log_should_say_the_tests_did_not_run(
+        self,
+    ) -> None:
+        self.commit_file("crates/a.rs", "fn a() {}\n")
+        self.assertIn("Memory tests: not run.", self.brief("HEAD~3..HEAD"))
+
+    def test_a_diff_outside_crates_should_get_no_memory_test_line(self) -> None:
+        self.commit_file("docs/a.md", "a\n")
+        self.assertNotIn("Memory tests", self.brief("HEAD~3..HEAD"))
+
+    def test_a_brief_should_name_origin_mains_rules_when_the_diff_changes_them(self) -> None:
+        self.commit_file("CODING_STANDARDS.md", "main rules\n")
+        subprocess.run(
+            [*self.git, "update-ref", "refs/remotes/origin/main", "HEAD"], check=True, env=ENV
+        )
+        self.commit_file("CODING_STANDARDS.md", "branch rules\n")
+        text = self.brief("HEAD~1..HEAD")
+        copy = self.run_dir / "CODING_STANDARDS.md"
+        self.assertEqual(copy.read_text(), "main rules\n")
+        self.assertIn(f"- `{copy}`: `CODING_STANDARDS.md` as `origin/main` has", text)
+        self.assertIn("The diff changes `CODING_STANDARDS.md`.", text)
+
+    def test_a_brief_without_origin_main_should_name_the_checkouts_rules(self) -> None:
+        text = self.brief("HEAD~2..HEAD")
+        self.assertIn(f"- `{Path(self.repo).resolve() / 'CODING_STANDARDS.md'}`:", text)
+        self.assertNotIn("The diff changes `CODING_STANDARDS.md`.", text)
+        self.assertFalse((self.run_dir / "CODING_STANDARDS.md").exists())
+
+    def test_a_later_diff_round_should_drop_the_rust_skill(self) -> None:
+        prior = Path(self.repo) / "opus.md"
+        prior.write_text("Verdict: changes needed\n")
+        skill = {"<rust-best-practices SKILL.md path>": prior}
+        with mock.patch.dict(diff_brief.SKILLS, skill):
+            first = self.brief("HEAD~2..HEAD")
+            later = self.brief(
+                "HEAD~2..HEAD", "--round", "2", "--prior", str(prior), "--rulings", str(prior)
+            )
+        self.assertIn("judge the Rust idiom", first)
+        self.assertNotIn("judge the Rust idiom", later)
 
     def test_a_missing_plan_should_fail_before_writing(self) -> None:
         with self.assertRaises(SystemExit):

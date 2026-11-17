@@ -38,7 +38,8 @@ Each file name follows the round: round 1 writes brief.md and tree-1.txt, round 
 and tree-2.txt. RUN/focus.md (focus-N.md in a later round) goes in when it exists. A later round
 also takes rulings-<N-1>.md, which must exist, and each report in RUN: each Markdown file that is
 not a brief, a focus, a rulings file, a copy of the target or diagnostic-issues.md.
-Each other OPTION goes to diff_brief.py as it is, such as --doc, --mutation-log and --coverage.
+Each other OPTION goes to diff_brief.py as it is, such as --doc, --mutation-log, --coverage and
+--memory-safety-log.
 
 prepare stops before it builds when a diff starts on main but origin/main is not an ancestor of
 its head: main moved, so the diff is not what will merge. --old-main lets the diff of one task

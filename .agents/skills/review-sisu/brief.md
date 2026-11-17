@@ -12,8 +12,11 @@ probe only inside the scratch directory your launch names.
   `git -C <repository root> diff <base>..<head> -- . ':!*.err' ':!*.json'`.
   Then read the `.err` and `.json` files of the codes it changes.
 - <the other documents to read with the target, at their paths: for a plan, its spec; for a diff, its spec and plan when there are any. Delete this line when there are none.>
-- `CODING_STANDARDS.md`. Its rules apply to every diff. For a spec or a
-  plan, check that code built from it can meet them.
+- `<coding standards path>`: `CODING_STANDARDS.md` as `origin/main` has
+  it, so that a diff cannot change the rules that judge it. Where this
+  brief names `CODING_STANDARDS.md`, read this copy. Its rules apply to
+  every diff. For a spec or a plan, check that code built from it can
+  meet them.
 - `docs/adr/0006-values-correctness-simplicity-readability-performance.md`,
   and every other ADR in `docs/adr/` that the target touches.
 - `GLOSSARY.md`, and "What works today" in `docs/roadmap.md`.
@@ -224,6 +227,8 @@ vague or generic error, or with none.
   finding only when you name the contract it breaks; a changed
   seed-to-program mapping alone breaks none. Without a log or a result,
   name the riskiest changed path that no test runs.
+- When "Focus" names a memory-safety log that says `FAIL`, each case that
+  fails is a finding. It blocks when the case passes at the base.
 
 # Re-review
 

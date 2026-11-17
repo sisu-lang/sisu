@@ -36,8 +36,12 @@ test: ## Run every test but the memory tests (make memory-safety) with nextest, 
 	scripts/heavy-run.sh cargo nextest run --workspace --locked
 	list=$$(mktemp) && cargo nextest list --workspace --locked --message-format json > $$list && python3 scripts/nextest_filters.py .config/nextest.toml $$list; status=$$?; rm -f $$list; exit $$status
 
-memory-safety: ## Run the memory checkers (ASan, Valgrind, --rc-checks) of every run case
-	scripts/heavy-run.sh cargo nextest run --workspace --locked --profile memory
+memory-safety: ## Run the memory checkers (ASan, Valgrind, --rc-checks) of every run case; the last line names the result and the commit
+	head=$$(git rev-parse HEAD); git diff --quiet HEAD || dirty=' with uncommitted changes'; \
+	scripts/heavy-run.sh cargo nextest run --workspace --locked --profile memory; status=$$?; \
+	{ git diff --quiet HEAD && [ "$$(git rev-parse HEAD)" = "$$head" ]; } || dirty=' with uncommitted changes'; \
+	if [ $$status -eq 0 ]; then result=PASS; else result=FAIL; fi; \
+	echo "memory-safety: $$result (HEAD $$head$$dirty)"; exit $$status
 
 test-health: ## Show the counts, times and slowest tests of the last make test
 	python3 scripts/test_health.py target/nextest/default/junit.xml
