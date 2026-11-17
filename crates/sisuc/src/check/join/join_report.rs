@@ -1326,6 +1326,16 @@ mod tests {
     }
 
     #[test]
+    fn open_literals_should_share_one_group_beside_another_type() {
+        // GIVEN `[1, 2, "s"]`, THEN `1` and `2` are one group `i64`, and keep their labels
+        let groups = shown_groups(|c, _| vec![Ok(int(c, 1, 1)), Ok(int(c, 2, 2)), Ok(string(3))]);
+        assert_eq!(
+            groups,
+            vec![("i64".to_owned(), vec![at(1), at(2)]), group("string", 3)]
+        );
+    }
+
+    #[test]
     fn open_literal_should_join_the_group_that_holds_it_inside_an_array() {
         // GIVEN `[1]`, `xs: [u8]` and `"s"`, THEN the literal `1` has no group
         let groups = shown_groups(|c, _| {
@@ -1435,6 +1445,24 @@ mod tests {
         };
         assert_eq!(run(Type::U8), vec![at(1)]);
         assert_eq!(run(Type::optional(Type::U8)), vec![at(1)]);
+    }
+
+    #[test]
+    fn call_under_a_required_type_should_not_label_a_literal_argument() {
+        with_params("", "", |c, _| {
+            // GIVEN `let y: u8 = pick(1, "s")`, the declaration at 30
+            let origin = Origin::Declared {
+                at: at(30),
+                ty: Type::U8,
+            };
+            let mut values = vec![Ok(int(c, 1, 1)), Ok(string(2))];
+            let expected = Expectation::Required(Type::U8, origin);
+            // WHEN the call joins its arguments under the declared type
+            let _ = join_at(c, call(), &mut values, expected, None);
+            // THEN one E0032 at `"s"`, and no label at `1`: the literal gives `T` no type
+            assert_eq!(found(c), vec![(Code::Mismatch, at(2))]);
+            assert!(!labels(c).contains(&at(1)));
+        });
     }
 
     #[test]
