@@ -525,7 +525,8 @@ impl Checker<'_> {
                     self.lift(e, want)?
                 }
                 Conversion::ToAny(target) => {
-                    self.converted_to_any(e.span, e.ty, target);
+                    let got = self.table.resolve(e.ty);
+                    self.converted_to_any(e.span, got, target);
                     to_any(e, target)
                 }
             };

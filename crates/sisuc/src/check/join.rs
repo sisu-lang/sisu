@@ -24,6 +24,10 @@ thread_local! {
     pub(super) static SETTLED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nodes `value_positions` has visited, on this thread.
     pub(super) static VALUE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times `nested_leaves` has put a position around a leaf, on this thread.
+    pub(super) static LEAF_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many distinct types `fill` has filled, on this thread.
+    pub(super) static FILLED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A member of a join: a checked value, where it stands, and the span of the label of an E0043
@@ -112,8 +116,9 @@ struct Group {
     leaves: Vec<Span>,
 }
 
-/// A value at the end of the value positions of a member: its span, its type, and its type inside
-/// the positions around it (`[t]` for an element, `t?` for a `Some` payload).
+/// A value at the end of the value positions of a member, with its span and its type. `around` is
+/// its type inside the positions around it (`[t]` for an element, `t?` for a `Some` payload).
+/// `lifted` is its type with `?` added inside those positions (rule A).
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "the first caller comes in Task 5")
@@ -122,6 +127,18 @@ struct Leaf {
     at: Span,
     ty: Type,
     around: Type,
+    lifted: Type,
+}
+
+impl Leaf {
+    fn new(at: Span, ty: Type) -> Leaf {
+        Leaf {
+            at,
+            ty,
+            around: ty,
+            lifted: Type::optional(ty),
+        }
+    }
 }
 
 #[cfg_attr(
@@ -132,7 +149,8 @@ impl Checker<'_> {
     /// The one entry of a join: the type of the members, each settled to it. Under a required type
     /// that is the only candidate. `head` is the span of the form, and `binding` the name of a
     /// `let` without a type, which the fix of Task 3 reads. A conflict is untyped poison (typed by
-    /// a required type); its report comes in Task 3, so it gives only a promise of one now.
+    /// a required type); its report comes in Task 3, so it gives only a promise of one now. When
+    /// an untyped poisoned member is left out, a typed join is poison of its type (ADR 0049).
     pub(super) fn join_form(
         &mut self,
         form: JoinForm,
@@ -153,22 +171,26 @@ impl Checker<'_> {
             Expectation::Required(ty, _) => Some(ty),
             Expectation::None | Expectation::Poisoned | Expectation::Hint { .. } => None,
         };
+        // The first member that is left out: untyped poison.
+        let left_out = members.iter().find_map(|member| match &*member.value {
+            Err(poisoned) if poisoned.ty.is_none() => Some(poisoned.reported()),
+            _ => None,
+        });
         match self.join_members(members, hole, fixed, required) {
             Ok(Joined::Typed(ty)) => {
                 for (i, member) in members.iter_mut().enumerate() {
                     let target = target(member.at, hole, ty);
                     self.settle_member(member.value, target, fixed == Some(i));
                 }
-                Ok(self.table.resolve(ty))
+                let ty = self.table.resolve(ty);
+                match left_out {
+                    Some(reported) => Err(Poisoned::typed(ty, reported)),
+                    None => Ok(ty),
+                }
             }
             Ok(Joined::Never) => Ok(Type::NEVER),
             Ok(Joined::Untyped) => {
-                let reported = (members.iter())
-                    .find_map(|member| match &*member.value {
-                        Err(poisoned) if poisoned.ty.is_none() => Some(poisoned.reported()),
-                        _ => None,
-                    })
-                    .expect("an untyped join should have an untyped member");
+                let reported = left_out.expect("an untyped join should have an untyped member");
                 Err(Poisoned::untyped(reported))
             }
             Err(_conflict) => {
@@ -182,7 +204,8 @@ impl Checker<'_> {
     }
 
     /// The candidate that each member takes with the fewest wraps. Each test runs under a
-    /// snapshot, which it rolls back: the join binds nothing. `hole` is the `T` of a call's
+    /// snapshot, which it rolls back: the join binds nothing. A required type decides the join
+    /// also when a member is left out. `hole` is the `T` of a call's
     /// `Place::Part` members, and the member at `fixed` converts by unification only.
     fn join_members(
         &mut self,
@@ -200,18 +223,15 @@ impl Checker<'_> {
                 None => left_out = true,
             }
         }
-        if taking.is_empty() {
-            return Ok(if left_out {
-                Joined::Untyped
-            } else {
-                Joined::Never
-            });
+        if taking.is_empty() && !left_out {
+            return Ok(Joined::Never);
         }
-        // Without its poisoned member, a join is typed only by a member that states its type.
+        // Without its poisoned member, a join is typed only by a required type or by a member that
+        // states its type.
         let stated = |c: &Self, i: usize| {
             member_type(members[i].value).is_some_and(|ty| !c.table.resolve(ty).holds_infer())
         };
-        if left_out && !taking.iter().any(|&i| stated(self, i)) {
+        if required.is_none() && left_out && !taking.iter().any(|&i| stated(self, i)) {
             return Ok(Joined::Untyped);
         }
         let candidates = match required {
@@ -245,48 +265,47 @@ impl Checker<'_> {
         }
     }
 
-    /// The candidates of a join, one per key (`Table::key`): the type of each member and of each
-    /// leaf inside the positions around it. When a member is optional, the type of each other
-    /// member with `?` added is a candidate too (rule A). For a `Place::Part` member, each is
-    /// its part at `hole`.
+    /// The candidates of a join, one per key (`Table::key`): the type of each member, and of each
+    /// nested member (a leaf) inside the positions around it. A nested member is a member. So
+    /// when a member is optional, each other member's type with `?` added at its position is a
+    /// candidate too (rule A). For a `Place::Part` member, each is its part at `hole`.
     fn candidates(
         &self,
         members: &mut [JoinMember<'_>],
         taking: &[usize],
         hole: Option<Symbol>,
     ) -> Vec<Type> {
-        // Each member's top type, then the types of its leaves.
-        let mut found: Vec<(usize, Type)> = Vec::new();
-        let mut tops: FxHashMap<usize, Type> = FxHashMap::default();
+        let optional =
+            |c: &Self, ty: Type| matches!(c.table.resolve(ty).kind(), TypeKind::Optional(_));
+        // Each member's top, then its nested members: the candidate, the candidate with `?`
+        // added, and whether the member's own type is optional.
+        let mut found: Vec<(Type, Type, bool)> = Vec::new();
         for &i in taking {
             let member = &mut members[i];
-            let mut types = Vec::new();
+            let mut leaves = Vec::new();
             match &mut *member.value {
                 Ok(e) => {
-                    types.push(e.ty);
-                    let mut leaves = Vec::new();
-                    collect_leaves(e, &mut leaves);
-                    types.extend(leaves.iter().map(|leaf| leaf.around));
+                    leaves.push(Leaf::new(e.span, e.ty));
+                    nested_leaves(e, &mut leaves);
                 }
-                Err(poisoned) => types.extend(poisoned.ty),
+                Err(poisoned) => leaves.extend(poisoned.ty.map(|ty| Leaf::new(member.label, ty))),
             }
-            for ty in types {
-                let part = match member.at {
+            for (k, leaf) in leaves.into_iter().enumerate() {
+                let part = |ty: Type| match member.at {
                     Place::Whole => Some(ty),
                     Place::Part { place, .. } => {
                         let (place, ty) = (self.table.resolve(place), self.table.resolve(ty));
                         hole.and_then(|hole| part_at(place, hole, ty))
                     }
                 };
-                if let Some(part) = part {
-                    tops.entry(i).or_insert(part);
-                    found.push((i, part));
+                if let (Some(around), Some(lifted)) = (part(leaf.around), part(leaf.lifted)) {
+                    // A top is optional by its part at `hole`, a nested member by its own type.
+                    let own = if k == 0 { around } else { leaf.ty };
+                    found.push((around, lifted, optional(self, own)));
                 }
             }
         }
-        let optional =
-            |c: &Self, ty: Type| matches!(c.table.resolve(ty).kind(), TypeKind::Optional(_));
-        let optional_members = tops.values().filter(|&&ty| optional(self, ty)).count();
+        let optionals = found.iter().filter(|&&(.., own)| own).count();
         let mut keys = FxHashSet::default();
         let mut candidates = Vec::new();
         let mut add = |c: &Self, ty: Type| {
@@ -294,12 +313,10 @@ impl Checker<'_> {
                 candidates.push(ty);
             }
         };
-        for &(i, ty) in &found {
-            add(self, ty);
-            let top = tops.get(&i).copied() == Some(ty);
-            let own = usize::from(optional(self, ty));
-            if top && optional_members > own {
-                add(self, Type::optional(ty));
+        for &(around, lifted, own) in &found {
+            add(self, around);
+            if optionals > usize::from(own) {
+                add(self, lifted);
             }
         }
         candidates
@@ -455,7 +472,51 @@ impl Checker<'_> {
                 TypeKind::Optional(payload) => Some((payload, false)),
                 _ => None,
             },
-            _ => None,
+            // No value position: the value converts at its top. Each kind is named, so that a new
+            // kind is put on one side or the other.
+            ExprKind::If { .. }
+            | ExprKind::IfSome { .. }
+            | ExprKind::Match { .. }
+            | ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Char(_)
+            | ExprKind::Str(_)
+            | ExprKind::None
+            | ExprKind::Unit
+            | ExprKind::Local(_)
+            | ExprKind::Call { .. }
+            | ExprKind::InterfaceCall { .. }
+            | ExprKind::New { .. }
+            | ExprKind::Variant { .. }
+            | ExprKind::Field { .. }
+            | ExprKind::Struct { .. }
+            | ExprKind::StructField { .. }
+            | ExprKind::ToAny(_)
+            | ExprKind::DynCall { .. }
+            | ExprKind::Convert(_)
+            | ExprKind::Print { .. }
+            | ExprKind::Panic(_)
+            | ExprKind::ReadLine
+            | ExprKind::Index { .. }
+            | ExprKind::Slice { .. }
+            | ExprKind::Len(_)
+            | ExprKind::Chars(_)
+            | ExprKind::Bytes(_)
+            | ExprKind::Words(_)
+            | ExprKind::FromChars(_)
+            | ExprKind::Math { .. }
+            | ExprKind::Unary { .. }
+            | ExprKind::Binary { .. }
+            | ExprKind::Interpolate { .. }
+            | ExprKind::Concat { .. }
+            | ExprKind::Compare { .. }
+            | ExprKind::Equal { .. }
+            | ExprKind::Is { .. }
+            | ExprKind::Break { .. }
+            | ExprKind::Continue { .. }
+            | ExprKind::Return(_)
+            | ExprKind::MutCall { .. } => None,
         }
     }
 
@@ -468,11 +529,9 @@ impl Checker<'_> {
             let mut leaves = Vec::new();
             match &mut *member.value {
                 Ok(e) => collect_leaves(e, &mut leaves),
-                Err(poisoned) => leaves.extend(poisoned.ty.map(|ty| Leaf {
-                    at: member.label,
-                    ty,
-                    around: ty,
-                })),
+                Err(poisoned) => {
+                    leaves.extend(poisoned.ty.map(|ty| Leaf::new(member.label, ty)));
+                }
             }
             for leaf in leaves {
                 let ty = self.table.resolve(leaf.ty);
@@ -517,16 +576,24 @@ fn target(at: Place, hole: Option<Symbol>, ty: Type) -> Type {
 }
 
 /// Each leaf at the value positions of `e`, which is `e` itself when it has none.
-// shortcut: `around` is rebuilt at each depth, so a leaf costs its depth; pass the layers down
-// when a scaling shape shows it.
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "the first caller comes in Task 5")
 )]
 fn collect_leaves(e: &mut tir::Expr, out: &mut Vec<Leaf>) {
-    if e.ty == Type::NEVER {
-        return;
+    if e.ty != Type::NEVER && !nested_leaves(e, out) {
+        out.push(Leaf::new(e.span, e.ty));
     }
+}
+
+/// The leaves at the value positions inside `e`, each with the positions of `e` around it.
+/// `false` when `e` has no value position. Only an element and a payload change the type around
+/// a leaf, so a leaf costs one step per array or `Some` above it: the depth of its type.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+fn nested_leaves(e: &mut tir::Expr, out: &mut Vec<Leaf>) -> bool {
     let start = out.len();
     let mut inner = false;
     ensure_stack(|| {
@@ -535,22 +602,18 @@ fn collect_leaves(e: &mut tir::Expr, out: &mut Vec<Leaf>) {
             collect_leaves(child, out);
         });
     });
-    if !inner {
-        out.push(Leaf {
-            at: e.span,
-            ty: e.ty,
-            around: e.ty,
-        });
-        return;
-    }
     let around: fn(Type) -> Type = match e.kind {
         ExprKind::ArrayLit(_) | ExprKind::ArrayFill { .. } => Type::array,
         ExprKind::Wrap(_) => Type::optional,
-        _ => |ty| ty,
+        _ => return inner,
     };
     for leaf in &mut out[start..] {
+        #[cfg(test)]
+        LEAF_STEPS.set(LEAF_STEPS.get() + 1);
         leaf.around = around(leaf.around);
+        leaf.lifted = around(leaf.lifted);
     }
+    inner
 }
 
 /// Calls `f` on each value position directly in `e`. These are each branch's value of an `if` or
@@ -596,7 +659,51 @@ fn value_positions(e: &mut tir::Expr, f: &mut impl FnMut(&mut tir::Expr)) {
         | ExprKind::Wrap(value)
         | ExprKind::Dbg { operand: value, .. } => f(value),
         ExprKind::Loop(body) => body.each_expr_mut(&mut |child| breaks(child, 0, f)),
-        _ => {}
+        // No value position: the value converts at its top. Each kind is named, so that a new
+        // kind is put on one side or the other.
+        ExprKind::If { .. }
+        | ExprKind::IfSome { .. }
+        | ExprKind::Match { .. }
+        | ExprKind::Int(_)
+        | ExprKind::Float(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Char(_)
+        | ExprKind::Str(_)
+        | ExprKind::None
+        | ExprKind::Unit
+        | ExprKind::Local(_)
+        | ExprKind::Call { .. }
+        | ExprKind::InterfaceCall { .. }
+        | ExprKind::New { .. }
+        | ExprKind::Variant { .. }
+        | ExprKind::Field { .. }
+        | ExprKind::Struct { .. }
+        | ExprKind::StructField { .. }
+        | ExprKind::ToAny(_)
+        | ExprKind::DynCall { .. }
+        | ExprKind::Convert(_)
+        | ExprKind::Print { .. }
+        | ExprKind::Panic(_)
+        | ExprKind::ReadLine
+        | ExprKind::Index { .. }
+        | ExprKind::Slice { .. }
+        | ExprKind::Len(_)
+        | ExprKind::Chars(_)
+        | ExprKind::Bytes(_)
+        | ExprKind::Words(_)
+        | ExprKind::FromChars(_)
+        | ExprKind::Math { .. }
+        | ExprKind::Unary { .. }
+        | ExprKind::Binary { .. }
+        | ExprKind::Interpolate { .. }
+        | ExprKind::Concat { .. }
+        | ExprKind::Compare { .. }
+        | ExprKind::Equal { .. }
+        | ExprKind::Is { .. }
+        | ExprKind::Break { .. }
+        | ExprKind::Continue { .. }
+        | ExprKind::Return(_)
+        | ExprKind::MutCall { .. } => {}
     }
 }
 
@@ -625,8 +732,9 @@ fn block_positions(block: &mut tir::Block, span: Span, f: &mut impl FnMut(&mut t
 
 /// Calls `f` on each `break` value in `e` that ends the loop `depth` loops out from `e`, as
 /// `wrap_breaks` counts the depth.
-// shortcut: a nested loop is entered when it holds any jump; the loop's `crossed` flag of Task 5
-// enters it only when a `break` in it ends an outer loop, which keeps the walk linear.
+// shortcut: a nested loop is entered when it holds any jump (`exits` reads a kept flag). So each
+// join of an enclosing loop walks again into the nested loops that jump, and a deep nest costs n
+// squared. Task 5's `crossed` flag enters a loop only when a `break` in it ends an outer loop.
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "the first caller comes in Task 5")
@@ -650,37 +758,54 @@ fn breaks(e: &mut tir::Expr, depth: usize, f: &mut impl FnMut(&mut tir::Expr)) {
     }
 }
 
-/// `place` with each `hole` replaced by `with`.
+/// `place` with each `hole` replaced by `with`. Each distinct type inside `place` is filled once,
+/// however many paths lead to it.
 #[cfg_attr(
     not(test),
     expect(dead_code, reason = "the first caller comes in Task 5")
 )]
 fn fill(place: Type, hole: Symbol, with: Type) -> Type {
+    fill_in(place, hole, with, &mut FxHashMap::default())
+}
+
+/// `fill`, with `memo` holding each type that the walk has already filled.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the first caller comes in Task 5")
+)]
+fn fill_in(place: Type, hole: Symbol, with: Type, memo: &mut FxHashMap<Type, Type>) -> Type {
     if !place.has_param() {
         return place;
     }
-    let args = |args: TypeArgs| {
-        let filled: Vec<Type> = (args.get().iter())
-            .map(|&arg| fill(arg, hole, with))
-            .collect();
-        TypeArgs::intern(&filled)
-    };
-    ensure_stack(|| match place.kind() {
-        TypeKind::Param(name, _) if name == hole => with,
-        TypeKind::Array(inner) => Type::array(fill(inner, hole, with)),
-        TypeKind::Optional(inner) => Type::optional(fill(inner, hole, with)),
-        TypeKind::Class(id, list) => Type::intern(TypeKind::Class(id, args(list))),
-        TypeKind::Struct(id, list) => Type::intern(TypeKind::Struct(id, args(list))),
-        TypeKind::Enum(id, list) => Type::intern(TypeKind::Enum(id, args(list))),
-        TypeKind::Any(id, list) => Type::intern(TypeKind::Any(id, args(list))),
-        TypeKind::Assoc(base, interface, list, k) => Type::intern(TypeKind::Assoc(
-            fill(base, hole, with),
-            interface,
-            args(list),
-            k,
-        )),
-        _ => place,
-    })
+    if let Some(&done) = memo.get(&place) {
+        return done;
+    }
+    #[cfg(test)]
+    FILLED.set(FILLED.get() + 1);
+    let done = ensure_stack(|| {
+        let args = |list: TypeArgs, memo: &mut FxHashMap<Type, Type>| {
+            let filled: Vec<Type> = (list.get().iter())
+                .map(|&arg| fill_in(arg, hole, with, memo))
+                .collect();
+            TypeArgs::intern(&filled)
+        };
+        match place.kind() {
+            TypeKind::Param(name, _) if name == hole => with,
+            TypeKind::Array(inner) => Type::array(fill_in(inner, hole, with, memo)),
+            TypeKind::Optional(inner) => Type::optional(fill_in(inner, hole, with, memo)),
+            TypeKind::Class(id, list) => Type::intern(TypeKind::Class(id, args(list, memo))),
+            TypeKind::Struct(id, list) => Type::intern(TypeKind::Struct(id, args(list, memo))),
+            TypeKind::Enum(id, list) => Type::intern(TypeKind::Enum(id, args(list, memo))),
+            TypeKind::Any(id, list) => Type::intern(TypeKind::Any(id, args(list, memo))),
+            TypeKind::Assoc(base, interface, list, k) => {
+                let base = fill_in(base, hole, with, memo);
+                Type::intern(TypeKind::Assoc(base, interface, args(list, memo), k))
+            }
+            _ => place,
+        }
+    });
+    memo.insert(place, done);
+    done
 }
 
 /// The part of `ty`, an argument's type, at `hole` in its parameter's type `place`. An argument
@@ -995,10 +1120,14 @@ mod tests {
                 join_all(c, JoinForm::If, &mut values).ok(),
                 Some(Type::NEVER)
             );
-            // GIVEN an untyped poisoned member and `a: u8`, THEN the join is `u8`
+            // GIVEN an untyped poisoned member and `a: u8`, THEN the join is poison of type `u8`
             let poisoned = Poisoned::untyped(c.proof(at(3)));
             let mut values = vec![Err(poisoned), Ok(local(types[0], 2))];
-            assert_eq!(join_all(c, JoinForm::If, &mut values).ok(), Some(Type::U8));
+            let joined = join_all(c, JoinForm::If, &mut values);
+            assert_eq!(
+                joined.err().and_then(|poisoned| poisoned.ty),
+                Some(Type::U8)
+            );
             // GIVEN an untyped poisoned member and `1`, which states no type
             let poisoned = Poisoned::untyped(c.proof(at(3)));
             let mut values = vec![Err(poisoned), Ok(int(c, 1, 4))];
@@ -1295,5 +1424,63 @@ mod tests {
             let after: Vec<String> = values.iter().map(|value| shown(c, value)).collect();
             assert_eq!(before, after);
         });
+    }
+
+    /// The steps of the leaves and value positions of the join of `[c]`, where `c` is an `else if`
+    /// chain of `n` branches, with `xs: [i64]`.
+    fn else_if_chain(n: usize) -> usize {
+        with_params("", "", |c, _| {
+            let mut chain = local(Type::I64, 0);
+            for i in 1..n {
+                chain = if_else(local(Type::I64, i), chain, Type::I64, i);
+            }
+            let mut values = vec![
+                Ok(array(vec![chain], Type::I64, n)),
+                Ok(local(Type::array(Type::I64), n + 1)),
+            ];
+            LEAF_STEPS.set(0);
+            VALUE_STEPS.set(0);
+            let ty = join_all(c, JoinForm::Array, &mut values);
+            assert_eq!(ty.ok(), Some(Type::array(Type::I64)));
+            LEAF_STEPS.get() + VALUE_STEPS.get()
+        })
+    }
+
+    #[test]
+    fn leaves_of_an_else_if_chain_should_cost_linear_steps() {
+        // GIVEN an `else if` chain of n, 2n and 3n branches in an array, beside `xs: [i64]`
+        // WHEN each joins
+        let steps = [else_if_chain(100), else_if_chain(200), else_if_chain(300)];
+        // THEN the leaves cost one step per array around them, so the steps grow linearly
+        assert_near_linear(steps[0], steps[1], steps[2]);
+    }
+
+    /// How many types `fill` fills in `P_level<T>`, where `P_0<T>` is `T` and `P_n<T>` is
+    /// `Two<P_(n-1)<T>, P_(n-1)<T>>`.
+    fn filled_at(level: usize) -> usize {
+        let two = "struct Two<A, B> {\n    a: A\n    b: B\n}\n";
+        with_params(two, "t: Two<i64, i64>", |_, types| {
+            let TypeKind::Struct(two, _) = types[0].kind() else {
+                panic!("the parameter should be the struct `Two`");
+            };
+            let hole = Symbol::intern("T");
+            let mut place = Type::intern(TypeKind::Param(hole, 0));
+            for _ in 0..level {
+                place = Type::intern(TypeKind::Struct(two, TypeArgs::intern(&[place, place])));
+            }
+            FILLED.set(0);
+            let filled = fill(place, hole, Type::I64);
+            assert!(!filled.has_param());
+            FILLED.get()
+        })
+    }
+
+    #[test]
+    fn fill_should_fill_each_distinct_type_once() {
+        // GIVEN `P_n<T>`, which holds n + 1 distinct types and 2^n paths to `T`
+        // WHEN `fill` puts `i64` for `T` at levels 10 and 12
+        // THEN it fills each distinct type once
+        assert_eq!(filled_at(10), 11);
+        assert_eq!(filled_at(12), 13);
     }
 }
