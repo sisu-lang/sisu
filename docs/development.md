@@ -814,6 +814,19 @@ time. It lists every failure, not only the first:
 $ cargo nextest run -p sisuc --lib single_mistake_check_should_hold_for_the_fuzz_seeds --run-ignored only --no-capture
 ```
 
+To run the join-order check over the 128 seeds of the fuzz run, run the test
+below. The check swaps the two blocks of each `if` that has an `else` block.
+It also swaps the first and last elements of each array literal. An `if let`
+keeps its order. The checker
+must still accept the program. The check is not part of the judge yet: the
+checker still gives some `if` expressions and array literals a type that
+depends on the order of their parts. The test lists each seed that fails, with
+its first error:
+
+```console
+$ cargo nextest run -p sisuc --lib join_order_check_should_hold_for_the_fuzz_seeds --run-ignored only --no-capture
+```
+
 The script first builds the runtime archive in release mode and points
 `SISU_RUNTIME` at it, since the builds link it. The target's corpus is
 `fuzz/corpus/program`, its failing inputs go to `fuzz/artifacts/program/`,
