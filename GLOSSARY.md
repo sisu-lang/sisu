@@ -841,8 +841,9 @@ that `fuzz/known_cascades.txt` does not list.
 A place where two or more members give one value, so the checker finds one type
 for all of them. The branches of an `if` or a `match`, the elements of an array
 literal and the `break` values of one loop are joins. The join-order check of
-the program fuzzer swaps the two blocks of each `if` and the first and last
-elements of each array literal. The checker must still accept the program.
+the program fuzzer swaps the two blocks of each `if` that has an `else` block,
+but not of an `if let`. It also swaps the first and last elements of each array
+literal. The checker must still accept the program.
 
 **Expected type**:
 The type that the context asks of an expression. It is *required*: a mismatch is
