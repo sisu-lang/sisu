@@ -8931,3 +8931,67 @@ fn a_unit_argument_of_a_generic_place_should_report_no_value() {
     let src = "fn mk<E>(x: E?) {}\nfn f<T>(r: [T]) {}\nfn main() {\n    f(mk(Some(1)))\n}";
     codes(src, &[(Code::NoValue, (4, 7))]);
 }
+
+/// The declarations of the tests below: a safe method call whose `F` only a context decides.
+const WAITING_SAFE_DECLS: &str = "struct Two<A, B> {\n    a: A\n    b: B\n}\n\
+    struct D {\n    n: i64\n}\n\
+    extend D {\n    fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") }\n}\n\
+    fn id<T>(x: T) -> T { x }\n\
+    fn h<U, V>(_a: U, _b: Two<U, V>?) {}\n\
+    fn ha<U, V>(_a: U, _b: [Two<U, V>?]) {}\n\
+    fn hs<U, V>(_a: U, _b: Two<U, V>??) {}\n";
+
+/// GIVEN a safe generic call inside `id(..)`, an array or `Some(..)`, which is an argument of an
+///   outer call
+/// AND an earlier argument of the outer call that decides the `U` of the context
+/// WHEN the program is checked
+/// THEN the inner call stays open until the context reaches it, and the argument that does not fit
+///   the decided `U` is the mismatch
+#[test]
+fn a_waiting_call_inside_a_member_should_take_the_decided_part_of_the_context() {
+    with_prelude();
+    for (call, at) in [
+        ("h(true, id(d?.m2(\"s\")))", 22),
+        ("ha(true, [d?.m2(\"s\")])", 21),
+        ("hs(true, Some(d?.m2(\"s\")))", 25),
+    ] {
+        let src =
+            format!("{WAITING_SAFE_DECLS}fn main() {{\n    let d: D? = D(n: 1)\n    {call}\n}}");
+        let line = WAITING_SAFE_DECLS.lines().count() + 3;
+        codes_row(call, &src, &[(Code::Mismatch, (line, at))]);
+    }
+}
+
+/// GIVEN `Option.Some(None)` as the argument of a generic call with no context
+/// WHEN the program is checked
+/// THEN it is the same as `Some(None)`: the call cannot infer its parameter
+#[test]
+fn option_some_of_none_should_leave_the_parameter_uninferred_as_some_does() {
+    with_prelude();
+    let src = "fn f<T>(x: T?) -> T { panic(\"e\") }\n\
+               fn main() {\n    let y = f(Option.Some(None))\n    print(y)\n}";
+    codes(src, &[(Code::CannotInfer, (3, 13))]);
+}
+
+/// GIVEN a generic call that returns `unit` and gets `None` for its parameter
+/// WHEN it is the argument of another generic call
+/// THEN its parameter, which no context can reach, cannot be inferred, and the `unit` is no value
+#[test]
+fn a_member_call_whose_result_does_not_name_its_parameter_should_report_cannot_infer() {
+    with_prelude();
+    let src = "fn mk<E>(x: E?) {}\nfn f<T>(r: [T]) {}\nfn main() {\n    f(mk(None))\n}";
+    codes(src, &[(Code::CannotInfer, (4, 7)), (Code::NoValue, (4, 7))]);
+}
+
+/// GIVEN a generic call inside `id(..)` under a `let` with a written type
+/// WHEN the program is checked
+/// THEN the written type reaches the inner call and no error is reported
+#[test]
+fn a_waiting_call_inside_id_should_take_the_type_of_the_let() {
+    with_prelude();
+    let src = "struct Two<A, B> {\n    a: A\n    b: B\n}\n\
+               fn id<T>(x: T) -> T { x }\n\
+               fn k2<X>() -> Two<X, bool> { panic(\"e\") }\n\
+               fn main() {\n    let x: Two<i64, bool> = id(k2())\n    print(x.a)\n}";
+    clean(src);
+}
