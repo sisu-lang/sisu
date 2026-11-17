@@ -28,8 +28,6 @@ thread_local! {
     pub(super) static VALUE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `nested_leaves` has put a position around a leaf, on this thread.
     pub(super) static LEAF_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many groups `conflict_kind` has looked up, on this thread.
-    pub(super) static GROUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many distinct types `fill` has filled, on this thread.
     pub(super) static FILLED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }

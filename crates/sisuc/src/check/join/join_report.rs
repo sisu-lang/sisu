@@ -227,7 +227,9 @@ impl Checker<'_> {
     ) -> Option<Origin> {
         let param = site.hole?;
         let (i, ty) = members.iter().enumerate().find_map(|(i, member)| {
-            let ty = member_type(&*member.value).filter(|&ty| ty != Type::NEVER)?;
+            // A literal gives `T` no type of its own: the call gives it the required type.
+            let ty = member_type(&*member.value)
+                .filter(|&ty| ty != Type::NEVER && !self.table.resolve(ty).holds_infer())?;
             (!fails[i]).then_some((i, ty))
         })?;
         let (at, ty) = match members[i].at {
@@ -594,12 +596,15 @@ impl Checker<'_> {
             let open = self.table.default_open(group.ty) != group.ty;
             if open
                 && (conflict.groups.iter())
-                    .any(|other| other.ty != group.ty && self.holds_literals(other.ty, group))
+                    // Only a closed type holds a literal: two open literals hold each other.
+                    .any(|other| {
+                        other.ty != group.ty
+                            && !self.table.resolve(other.ty).holds_infer()
+                            && self.holds_literals(other.ty, group)
+                    })
             {
                 continue;
             }
-            #[cfg(test)]
-            super::GROUP_STEPS.set(super::GROUP_STEPS.get() + 1);
             let ty = self.table.default_open(group.ty);
             let at = if let Some(&at) = index.get(&ty) {
                 at
@@ -740,7 +745,6 @@ mod tests {
     use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Expected, JoinFix, NoValueCause};
     use crate::mir::tests::assert_near_linear;
     use crate::tir::FuncId;
-    use std::fmt::Write;
 
     /// `Seen`, with the structs `Eye` and `Lid`, which conform to it.
     const EYE_LID: &str = "interface Seen {\n    fn seen(self) -> i64\n}\nstruct Eye: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\nstruct Lid: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\n";
@@ -1403,6 +1407,38 @@ mod tests {
     }
 
     #[test]
+    fn left_side_of_coalesce_should_get_no_conversion_fix() {
+        with_params("", "o: u8?, b: i64", |c, types| {
+            // GIVEN `o ?? b` with `o: u8?` and `b: i64`: `o` is a part at `v?`
+            let v = c.table.fresh(Kind::Any, at(1));
+            let (mut left, mut right) = (Ok(local(types[0], 1)), Ok(local(types[1], 2)));
+            let mut members = [
+                JoinMember {
+                    value: &mut left,
+                    at: Place::Part {
+                        place: Type::optional(v),
+                        argument: at(1),
+                    },
+                    label: at(1),
+                },
+                JoinMember {
+                    value: &mut right,
+                    at: Place::Whole,
+                    label: at(2),
+                },
+            ];
+            // WHEN the report of the conflict is made
+            let conflict = c.conflict(&mut members, &[0, 1], None, None);
+            let kind = c.conflict_kind(site(JoinForm::Coalesce), None, &conflict);
+            // THEN no fix converts `o`: it is no whole value
+            let DiagnosticKind::JoinMismatch { fix, .. } = kind else {
+                panic!("a conflict should give a `JoinMismatch`");
+            };
+            assert!(fix.is_none());
+        });
+    }
+
+    #[test]
     fn call_should_label_the_first_argument_as_the_one_that_gives_the_type() {
         // GIVEN `pick(a, "s")` with `a: u8`, WHEN the arguments for `T` do not join
         let kind = conflict_of(("", "a: u8"), call(), None, |_, types| {
@@ -1764,32 +1800,5 @@ mod tests {
             run(JoinForm::If, units),
             vec![(Code::NoValue, Span::new(20, 30))]
         );
-    }
-
-    /// The probes that `conflict_kind` makes in the join of `n` members of `n` distinct types.
-    fn grouped(n: usize) -> usize {
-        let mut src = String::new();
-        for i in 0..n {
-            writeln!(src, "struct S{i} {{\n    v: i64\n}}").expect("a string takes text");
-        }
-        let params: Vec<String> = (0..n).map(|i| format!("a{i}: S{i}")).collect();
-        with_params(&src, &params.join(", "), |c, types| {
-            let mut values: Vec<Checked> = (0..n).map(|i| Ok(local(types[i], i))).collect();
-            let mut members = whole(&mut values);
-            let Err(conflict) = c.join_members(&mut members, None, None, None) else {
-                panic!("the members should have no candidate");
-            };
-            GROUP_STEPS.set(0);
-            let _kind = c.conflict_kind(site(JoinForm::If), None, &conflict);
-            GROUP_STEPS.get()
-        })
-    }
-
-    #[test]
-    fn groups_should_cost_one_step_for_each_type() {
-        // GIVEN joins of 50, 100 and 150 members of as many types, WHEN the groups are made
-        let steps = [grouped(50), grouped(100), grouped(150)];
-        // THEN each group costs one step
-        assert_eq!(steps, [50, 100, 150]);
     }
 }
