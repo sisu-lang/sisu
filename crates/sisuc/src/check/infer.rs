@@ -262,6 +262,10 @@ impl Table {
     /// snapshot they stay queued until `keep` returns them.
     #[must_use = "a check that was waiting for a type must be reported"]
     fn unify(&mut self, a: Type, b: Type) -> Option<Vec<Waiting>> {
+        // Two types with no variable unify only when they are one type: no snapshot is needed.
+        if !a.holds_infer() && !b.holds_infer() {
+            return (a == b).then(Vec::new);
+        }
         let snapshot = self.snapshot();
         if self.unify_pairs(a, b) {
             Some(self.keep(snapshot))
@@ -347,7 +351,7 @@ impl Table {
     }
 
     /// The first source of each open `Any` variable in `ty` that no failed use reached, which
-    /// `write_back` would report. Each one is poisoned, so that it reports once.
+    /// `write_back` would report, in source order. Each one is poisoned, so that it reports once.
     pub(super) fn unsettled(&mut self, ty: Type) -> Vec<Unsettled> {
         let mut found = Vec::new();
         for root in self.open_roots(ty) {
@@ -359,6 +363,7 @@ impl Table {
                 self.poison_root(root);
             }
         }
+        found.sort_by_key(|unsettled| unsettled.origin.start());
         found
     }
 

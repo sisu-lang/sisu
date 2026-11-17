@@ -117,8 +117,9 @@ impl Checker<'_> {
             return Err(Err(Poisoned::new(ret, reported)));
         };
         self.refuse_mut(args, Callee::Unnamed(&function));
-        // The argument is an operand, not a value part of the value, so a hint does not reach it.
-        // Not `value()`: a `never` argument needs its own code.
+        // A hint reaches the argument as a required type. The argument of `dbg` is a value
+        // position, so a member stays a member (see `Part::Argument`). Not `value()`: a `never`
+        // argument needs its own code.
         let checked = read_jump(self.expr(&arg.value, expected.part(Part::Argument)));
         let error = match type_of(&checked) {
             Some(Type::NEVER) => DiagnosticKind::PrintNever {

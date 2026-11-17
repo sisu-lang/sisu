@@ -717,7 +717,7 @@ impl Checker<'_> {
 
     /// `close` with no type to meet: the type of `checked` with each open `Int` as `i64`, or
     /// E0050 at the first source of each open `Any`. A failed context reports none: its own
-    /// report covers it, as `none` keeps quiet for it.
+    /// report covers it. A value that it leaves open fails with no type, as a `None` does there.
     fn close_open(&mut self, checked: Checked, expected: Expectation) -> Checked {
         let Ok(mut value) = checked else {
             return checked;
@@ -725,12 +725,18 @@ impl Checker<'_> {
         if !value.ty.holds_infer() {
             return Ok(value);
         }
-        let mut first = None;
-        for unsettled in self.table.unsettled(value.ty) {
-            if expected == Expectation::None {
-                let reported = self.report_unsettled(unsettled);
-                first.get_or_insert(reported);
+        let unsettled = self.table.unsettled(value.ty);
+        if expected == Expectation::Poisoned {
+            value.ty = self.table.default_open(value.ty);
+            if !unsettled.is_empty() || value.ty.holds_infer() {
+                return Err(Poisoned::untyped(self.poisoned_context(value.span)));
             }
+            return Ok(value);
+        }
+        let mut first = None;
+        for unsettled in unsettled {
+            let reported = self.report_unsettled(unsettled);
+            first.get_or_insert(reported);
         }
         if let Some(reported) = first {
             return Err(Poisoned::untyped(reported));

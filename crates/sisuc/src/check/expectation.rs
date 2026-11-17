@@ -107,8 +107,9 @@ pub(super) enum Part {
     Payload,
     /// The value of a block, which takes what the block takes.
     Tail,
-    /// The argument of `dbg`, which has the type of the call. It is an operand, so a hint does
-    /// not reach it.
+    /// The argument of `dbg`, `print` or `eprint`. A hint reaches it as a required type. The
+    /// argument of `dbg` is a value position, as the call has its type: a member gives it
+    /// `Member`.
     Argument,
 }
 
