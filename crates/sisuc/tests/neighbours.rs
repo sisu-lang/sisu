@@ -264,3 +264,24 @@ fn parts_should_hold_each_program_once() {
         "there should be one program for each value in each context"
     );
 }
+
+/// GIVEN the programs of `programs()` and a new, empty directory in `NEIGHBOURS_DUMP`
+/// WHEN the test runs
+/// THEN each program is in `<index>.sisu` there, the index padded to 5 digits, so that
+/// `scripts/diag_diff.py` can compare two builds on them.
+#[test]
+#[ignore = "a dump for diag_diff"]
+fn programs_should_dump_when_asked() {
+    let dir = std::env::var_os("NEIGHBOURS_DUMP").expect("NEIGHBOURS_DUMP should name a directory");
+    let dir = Path::new(&dir);
+    std::fs::create_dir_all(dir).expect("the dump directory should be made");
+    let empty = std::fs::read_dir(dir)
+        .expect("the dump directory should be read")
+        .next()
+        .is_none();
+    assert!(empty, "the dump directory should be new and empty");
+    for (index, (_, program, _)) in programs().iter().enumerate() {
+        std::fs::write(dir.join(format!("{index:05}.sisu")), program)
+            .expect("the program should be written");
+    }
+}

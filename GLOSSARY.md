@@ -426,6 +426,12 @@ A name for a type that a generic function, class, enum, interface or alias
 takes in angle brackets, such as `T` in `fn largest<T: Ord>(xs: [T])`.
 _Avoid_: generic parameter
 
+**Generic call**:
+A call of a generic function or method, a construction of a generic struct, a
+generic enum variant, `Ok` or `Err`. Each type parameter of it is an *inference
+variable*. A written type argument is not one. A type parameter that the
+receiver's type gives a method is not one either.
+
 **Type argument**:
 The type given for a type parameter at a use, written out (`Stack<i64>`) or
 inferred (`largest([3, 9, 2])`).
@@ -837,22 +843,29 @@ generator knows the errors that the edit must give. The single-mistake check
 of the fuzzer makes sure that the checker gives these errors and no *cascade*
 that `fuzz/known_cascades.txt` does not list.
 
+**Inference variable**:
+A type that the checker does not know yet, which the uses of a value settle.
+_Avoid_: variable, type variable, hole
+
 **Join**:
-A place where two or more members give one value, so the checker finds one type
-for all of them. The branches of an `if` or a `match`, the elements of an array
-literal and the `break` values of one loop are joins. The join-order check of
+The values that one expression combines into one type. These are the branches
+of an `if`, the arms of a `match`, the elements of an array and the `break`
+values of a loop. The two sides of `??` or of an operator, and the arguments of
+one type parameter of a call, are joins too. Their type is the type of one of
+them, which each of the others converts to. The join-order check of
 the program fuzzer swaps the two blocks of each `if` that has an `else` block,
 but not of an `if let`. It also swaps the first and last elements of each array
 literal. The checker must still accept the program.
+_Avoid_: unify, merge, anchor
 
 **Expected type**:
-The type that the context asks of an expression. It is *required*: a mismatch is
-an error. Or it is *hinted*: it guides the inference of a literal, a call, `None` or
-`[]`. A poisoned context asks for nothing, and a mistake that follows from it waits.
+The type that the context asks of an expression. It is required: a mismatch is
+an error. A literal without an expected type takes its type from its *join*. A
+poisoned context asks for nothing, and a mistake that follows from it waits.
 
 **Origin**:
-The declaration, earlier value or language rule that makes a context require or
-hint a type.
+The declaration, earlier value or language rule that makes a context require a
+type.
 
 **Foreign idiom**:
 A habit from another language, such as `var` or `len(xs)`, that has its own
