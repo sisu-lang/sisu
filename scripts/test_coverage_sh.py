@@ -81,7 +81,7 @@ class CoverageSh(unittest.TestCase):
         self.llvm_cov = toolchain / "bin" / "llvm-cov"
         self.llvm_cov.write_text("", encoding="utf-8")
         self.llvm_cov.chmod(self.llvm_cov.stat().st_mode | stat.S_IXUSR)
-        # Untracked, so the write does not change the marker.
+        # Ignored, as the real target/ is, so the write does not change the marker.
         self.profile_log = bin_dir / "profile"
         self.env = dict(
             ENV,
@@ -93,6 +93,7 @@ class CoverageSh(unittest.TestCase):
         self.git = ["git", "-C", self.repo, "-c", "user.name=t", "-c", "user.email=t@t"]
         subprocess.run([*self.git[:3], "init", "-q"], check=True, env=ENV)
         self.write_tracked("base\n")
+        Path(self.repo, ".gitignore").write_text("bin/\ntarget/\n", encoding="utf-8")
         subprocess.run([*self.git, "add", "-A"], check=True, env=ENV)
         subprocess.run([*self.git, "commit", "-q", "-m", "base"], check=True, env=ENV)
         self.head = self.rev_parse()
@@ -130,6 +131,12 @@ class CoverageSh(unittest.TestCase):
 
     def test_a_change_before_the_run_should_give_the_dirty_marker(self) -> None:
         self.write_tracked("changed\n")
+        self.assertEqual(
+            self.measure(), f"coverage: measured (HEAD {self.head} with uncommitted changes)"
+        )
+
+    def test_an_untracked_file_should_give_the_dirty_marker(self) -> None:
+        Path(self.repo, "new.rs").write_text("", encoding="utf-8")
         self.assertEqual(
             self.measure(), f"coverage: measured (HEAD {self.head} with uncommitted changes)"
         )

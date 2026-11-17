@@ -2,6 +2,7 @@
 
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -150,13 +151,13 @@ class LogMismatch(Repo):
 
 
 class CoverageMismatch(Repo):
-    """coverage_mismatch on outputs of `make coverage` for the range base..HEAD."""
+    """head_mismatch on outputs of `make coverage` for the range base..HEAD."""
 
     def mismatch(self, text: str) -> str | None:
         path = Path(self.repo) / "coverage.txt"
         path.write_text(text)
         with mock.patch.dict(os.environ, ENV, clear=True):
-            return diff_brief.coverage_mismatch(path, self.repo, "HEAD")
+            return diff_brief.head_mismatch(path, self.repo, "HEAD", "coverage")
 
     def test_coverage_on_the_head_should_pass(self) -> None:
         self.assertIsNone(self.mismatch(f"coverage: measured (HEAD {self.head})\nCoverage: 90%\n"))
@@ -270,6 +271,168 @@ class Brief(Repo):
         self.assertIn(
             f"Coverage result: {coverage}", self.brief("HEAD~2..HEAD", "--coverage", str(coverage))
         )
+
+    def commit_file(self, path: str, text: str) -> None:
+        """Commit `text` at `path` on HEAD."""
+        file = Path(self.repo) / path
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(text)
+        subprocess.run([*self.git, "add", path], check=True, env=ENV)
+        subprocess.run([*self.git, "commit", "-q", "-m", path], check=True, env=ENV)
+
+    def test_a_memory_safety_log_on_the_head_should_be_named_in_focus_with_its_result(
+        self,
+    ) -> None:
+        log = Path(self.repo) / "memory.txt"
+        log.write_text(f"Summary: 3 tests\nmemory-safety: FAIL (HEAD {self.head})\n")
+        text = self.brief("HEAD~2..HEAD", "--memory-safety-log", str(log))
+        self.assertIn(f"Memory-safety log: {log}: FAIL\n", text)
+
+    def test_a_memory_safety_log_of_the_base_should_fail_before_writing_in_round_one(
+        self,
+    ) -> None:
+        log = Path(self.repo) / "memory.txt"
+        log.write_text(f"memory-safety: PASS (HEAD {self.base})\n")
+        with self.assertRaises(SystemExit) as stop:
+            self.brief("HEAD~2..HEAD", "--memory-safety-log", str(log))
+        self.assertIn("run make memory-safety again", str(stop.exception))
+        self.assertEqual(list(self.run_dir.iterdir()), [])
+
+    def test_a_memory_safety_log_of_an_earlier_commit_should_list_the_commits_after_it(
+        self,
+    ) -> None:
+        log = Path(self.repo) / "memory.txt"
+        log.write_text(f"memory-safety: PASS (HEAD {self.mid})\n")
+        text = self.brief("HEAD~2..HEAD", "--memory-safety-log", str(log))
+        self.assertIn(
+            f"{log.resolve()}: PASS, measured at {self.mid[:8]}. Commits after it: {self.head[:8]}",
+            text,
+        )
+        self.assertNotIn("Memory tests: not run", text)
+
+    def test_a_later_round_should_take_the_memory_safety_log_of_an_earlier_round(self) -> None:
+        log, prior = Path(self.repo) / "memory.txt", Path(self.repo) / "opus.md"
+        log.write_text(f"memory-safety: PASS (HEAD {self.base})\n")
+        prior.write_text("Verdict: changes needed\n")
+        text = self.brief(
+            "HEAD~1..HEAD",
+            "--memory-safety-log",
+            str(log),
+            *("--round", "2", "--prior", str(prior), "--rulings", str(prior)),
+        )
+        self.assertIn(f"{log.resolve()}: PASS, measured at {self.base[:8]}.", text)
+
+    def test_commits_after_the_log_that_change_codegen_should_say_the_tests_did_not_run(
+        self,
+    ) -> None:
+        log = Path(self.repo) / "memory.txt"
+        log.write_text(f"memory-safety: PASS (HEAD {self.head})\n")
+        self.commit_file("crates/sisuc/src/codegen/a.rs", "fn a() {}\n")
+        text = self.brief("HEAD~3..HEAD", "--memory-safety-log", str(log))
+        self.assertIn("Memory tests: not run on the commits after the log.", text)
+
+    def test_a_memory_safety_log_should_need_its_own_line_when_it_holds_a_coverage_line(
+        self,
+    ) -> None:
+        log = Path(self.repo) / "memory.txt"
+        log.write_text(f"coverage: measured (HEAD {self.head})\n")
+        with self.assertRaises(SystemExit) as stop:
+            self.brief("HEAD~2..HEAD", "--memory-safety-log", str(log))
+        self.assertIn("no memory-safety line", str(stop.exception))
+
+    def test_a_diff_of_crates_without_a_memory_safety_log_should_say_the_tests_did_not_run(
+        self,
+    ) -> None:
+        self.commit_file("crates/sisuc/src/codegen/a.rs", "fn a() {}\n")
+        self.assertIn("Memory tests: not run.", self.brief("HEAD~3..HEAD"))
+
+    def test_a_diff_of_each_memory_path_should_say_the_memory_tests_did_not_run(self) -> None:
+        for path in (
+            "crates/runtime/src/a.rs",
+            "crates/runtime-system/src/lib.rs",
+            "crates/sisuc/src/codegen/a.rs",
+            "crates/sisuc/src/mir/a.rs",
+            "crates/sisuc/src/link.rs",
+            "crates/sisuc/src/prelude.sisu",
+            "crates/sisuc/tests/cases.rs",
+            "crates/sisuc/tests/support/mod.rs",
+            "crates/sisuc/tests/run/a.sisu",
+            "site/programs/run/a.sisu",
+            ".config/nextest.toml",
+            "scripts/build-runtime.sh",
+        ):
+            with self.subTest(path=path):
+                self.commit_file(path, "a\n")
+                self.assertIn("Memory tests: not run.", self.brief("HEAD~1..HEAD"))
+
+    def test_each_root_of_the_memory_cases_should_be_a_memory_path(self) -> None:
+        crate = Path(__file__).resolve().parents[1] / "crates/sisuc"
+        cases = (crate / "tests/cases.rs").read_text()
+        roots = re.findall(r'test = (?:site_)?memory, root = "([^"]+)"', cases)
+        self.assertEqual(len(roots), 2)
+        for root in roots:
+            path = (crate / root).resolve().relative_to(crate.parents[1]).as_posix()
+            self.assertTrue(
+                any(path == p or path.startswith(f"{p}/") for p in diff_brief.MEMORY_PATHS), path
+            )
+
+    def test_a_diff_of_the_checker_should_get_no_memory_test_line(self) -> None:
+        self.commit_file("crates/sisuc/src/check/a.rs", "fn a() {}\n")
+        self.assertNotIn("Memory tests", self.brief("HEAD~3..HEAD"))
+
+    def test_a_diff_of_crates_with_a_memory_safety_log_should_not_say_the_tests_did_not_run(
+        self,
+    ) -> None:
+        self.commit_file("crates/sisuc/src/codegen/a.rs", "fn a() {}\n")
+        head = subprocess.run(
+            [*self.git, "rev-parse", "HEAD"], capture_output=True, text=True, check=True, env=ENV
+        ).stdout.strip()
+        log = Path(self.repo) / "memory.txt"
+        log.write_text(f"memory-safety: PASS (HEAD {head})\n")
+        text = self.brief("HEAD~3..HEAD", "--memory-safety-log", str(log))
+        self.assertIn(f"Memory-safety log: {log.resolve()}: PASS", text)
+        self.assertNotIn("Memory tests", text)
+
+    def test_a_diff_outside_crates_should_get_no_memory_test_line(self) -> None:
+        self.commit_file("docs/a.md", "a\n")
+        self.assertNotIn("Memory tests", self.brief("HEAD~3..HEAD"))
+
+    def test_a_brief_should_name_origin_mains_rules_when_the_diff_changes_them(self) -> None:
+        self.commit_file("CODING_STANDARDS.md", "main rules\n")
+        subprocess.run(
+            [*self.git, "update-ref", "refs/remotes/origin/main", "HEAD"], check=True, env=ENV
+        )
+        self.commit_file("CODING_STANDARDS.md", "branch rules\n")
+        text = self.brief("HEAD~1..HEAD")
+        copy = self.run_dir / "CODING_STANDARDS.md"
+        self.assertEqual(copy.read_text(), "main rules\n")
+        self.assertIn(f"- `{copy}`: `CODING_STANDARDS.md` as `origin/main` has", text)
+        self.assertIn("The diff changes `CODING_STANDARDS.md`. Judge the diff by the copy", text)
+
+    def test_a_brief_without_origin_main_should_name_the_checkouts_rules(self) -> None:
+        text = self.brief("HEAD~2..HEAD")
+        self.assertIn(f"- `{Path(self.repo).resolve() / 'CODING_STANDARDS.md'}`:", text)
+        self.assertNotIn("The diff changes `CODING_STANDARDS.md`.", text)
+        self.assertFalse((self.run_dir / "CODING_STANDARDS.md").exists())
+        self.assertIn("because origin/main has none", text)
+
+    def test_a_diff_of_the_checkouts_rules_should_not_claim_origin_mains_copy(self) -> None:
+        self.commit_file("CODING_STANDARDS.md", "branch rules\n")
+        text = self.brief("HEAD~1..HEAD")
+        self.assertIn("The diff changes `CODING_STANDARDS.md`. Review the changed rules", text)
+        self.assertNotIn("Judge the diff by the copy", text)
+
+    def test_a_later_diff_round_should_drop_the_rust_skill(self) -> None:
+        prior = Path(self.repo) / "opus.md"
+        prior.write_text("Verdict: changes needed\n")
+        skill = {"<rust-best-practices SKILL.md path>": prior}
+        with mock.patch.dict(diff_brief.SKILLS, skill):
+            first = self.brief("HEAD~2..HEAD")
+            later = self.brief(
+                "HEAD~2..HEAD", "--round", "2", "--prior", str(prior), "--rulings", str(prior)
+            )
+        self.assertIn("judge the Rust idiom", first)
+        self.assertNotIn("judge the Rust idiom", later)
 
     def test_a_missing_plan_should_fail_before_writing(self) -> None:
         with self.assertRaises(SystemExit):

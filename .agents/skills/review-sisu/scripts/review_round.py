@@ -37,8 +37,10 @@ accepted in place of its STEM.
 Each file name follows the round: round 1 writes brief.md and tree-1.txt, round 2 writes brief-2.md
 and tree-2.txt. RUN/focus.md (focus-N.md in a later round) goes in when it exists. A later round
 also takes rulings-<N-1>.md, which must exist, and each report in RUN: each Markdown file that is
-not a brief, a focus, a rulings file, a copy of the target or diagnostic-issues.md.
-Each other OPTION goes to diff_brief.py as it is, such as --doc, --mutation-log and --coverage.
+not a brief, a focus, a rulings file, a copy of the target, diagnostic-issues.md, retro.md or
+the copy of CODING_STANDARDS.md.
+Each other OPTION goes to diff_brief.py as it is, such as --doc, --mutation-log, --coverage and
+--memory-safety-log.
 
 prepare stops before it builds when a diff starts on main but origin/main is not an ancestor of
 its head: main moved, so the diff is not what will merge. --old-main lets the diff of one task
@@ -81,7 +83,15 @@ REGISTER = "docs/register.md"
 # A debt row with a field count: its count, then its Where cell without the backticks.
 FIELD_ROW = re.compile(r"^\|[^|]* in (\d+) fields[^|]*\|\s*`?([^|`]*?)`?\s*\|", re.MULTILINE)
 # The Markdown files of a run directory that are not reports, by the stem of their name.
-NOT_REPORTS = {"brief", "focus", "rulings", "target", "diagnostic-issues", "retro"}
+NOT_REPORTS = {
+    "brief",
+    "focus",
+    "rulings",
+    "target",
+    "diagnostic-issues",
+    "retro",
+    "CODING_STANDARDS",
+}
 # A finding of a report: its number, then its text up to the next finding.
 FINDING = re.compile(r"^### (\d+)\.(.*?)(?=^### |\Z)", re.MULTILINE | re.DOTALL)
 

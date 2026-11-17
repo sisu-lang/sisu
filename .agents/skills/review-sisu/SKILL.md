@@ -46,7 +46,7 @@ Then let `review_round.py` do the fixed steps, for every kind. `<skill base>` is
 python3 <skill base>/scripts/review_round.py prepare <repository root> RUN <target> --kind <spec|plan|diff> --doc <spec or plan>
 ```
 
-It takes `build_sisu.sh` and `diff_brief.py` from `origin/main`, because a branch's own copy can be older than the template. It builds `sisu` at both ends of a diff, so that no reviewer builds them; earlier builds stay in `RUN/bin`. It writes `RUN/brief.md`, adds `RUN/focus.md`, and records the checkout in `RUN/tree-1.txt`. Run it just before the launch.
+It takes `build_sisu.sh` and `diff_brief.py` from `origin/main`, because a branch's own copy can be older than the template. It also copies `CODING_STANDARDS.md` from `origin/main` to `RUN`, and the brief names that copy, so that a diff cannot change the standards that judge it. It builds `sisu` at both ends of a diff, so that no reviewer builds them; earlier builds stay in `RUN/bin`. It writes `RUN/brief.md`, adds `RUN/focus.md`, and records the checkout in `RUN/tree-1.txt`. Run it just before the launch.
 
 - `<target>` is the path of a spec or a plan, or `<base>..<head>` for a diff. Write a branch as `origin/main..<branch>`. The brief writes a diff's range as full SHAs, and copies a spec or a plan to `RUN/target-<round>.md`, which the reviewer reads.
 - Repeat `--doc` for each document the reviewer reads with the target; leave it out when there is none.
@@ -54,7 +54,8 @@ It takes `build_sisu.sh` and `diff_brief.py` from `origin/main`, because a branc
 - The script stops when a diff makes an "in N fields" count in `docs/register.md` larger, and neither the Focus nor the body names the row. Name the row and the reason, then run it again.
 - The brief lists each build in `RUN/bin`, and each line that the diff removes from the tests.
 - For a diff, pass the `LOG=` file of each `make mutation-test` run as `--mutation-log`. Repeat the option for more than one log; Focus gets one line for each, and the script checks each one. Pass the output of `make coverage BASE=<base> > RUN/coverage.txt` as `--coverage`. Leave out each one that did not run. The script stops when the log measured uncommitted changes or a commit outside the range. It also stops when the coverage output measured uncommitted changes or a commit other than the head. A stage or a group runs mutation tests once, on its final head after the task reviews, so a task review has no log; the final review gets it. A large fix round of the final review runs one more ([final-diff.md](final-diff.md)). A log from an earlier commit of the range is still accepted, and the brief lists the commits after it.
-- The script drops a skill line it cannot find. Tell the user in the report.
+- `MEMORY_PATHS` in `diff_brief.py` lists codegen, MIR, the runtimes, the memory harness and the programs that the memory tests run. For a diff that changes them, run `make memory-safety > RUN/memory-safety.txt 2>&1`, which keeps the names of the failing cases. Pass that file as `--memory-safety-log`. CI runs the memory tests only after the merge. Without the log, Focus says that they did not run; the script does not stop. A log of an earlier commit of the range is accepted. In a later round, so is a log of the base or of a commit before it. Focus then lists the commits after it, and says that the tests did not run on them when they change those paths. Any other log stops the script, and so does a log of uncommitted changes.
+- The script drops a skill line it cannot find. Tell the user in the report. From round 2 on it also drops `rust-best-practices`, because a departure from it is a nit.
 
 ### 3. Launch the reviewers
 
@@ -177,29 +178,18 @@ Its "Re-review" section asks for a verdict on each accepted finding, the
 neighbours of each fix, and regressions against the base of the whole
 work. Send it to the Claude seat; its report goes to `RUN/opus-<round>.md`.
 
-A diff gets one fix round. After the review of that round, a blocking
-finding can still be open. Then file it as a GitHub issue with its repro
-(`docs/agents/issue-tracker.md`), and go on without a question to the
-user. One class of finding is the exception: a crash, wrong behavior at
-run time, or an invalid program that `sisu` accepts or a valid one that
-it rejects. For such a finding, do the redo below when it applies, or ask
-the user.
+The number of fix rounds, and what happens to a blocking finding that is
+still open after the review of the last one:
 
-A spec or a plan gets at most two fix rounds. After the review of the
-second fix round, ask the user about
-each blocking finding that is still open: a third round, or a deferral.
-With the question, say whether the open findings have one cause in the
-approach. When they do, name the other approach.
-A blocking finding in a diff can still be open after the review of its
-fix round. It can have a small fix, such as a pattern in a hook:
-fewer than 10 lines, and no change to `sisu` output. It needs no question and
-no reviewer: make the fix, read its diff yourself, and run its tests. A spec
-or a plan gets no such fix. Defer the nits.
+| | Diff | Spec or plan |
+| --- | --- | --- |
+| Fix rounds | One. | At most two. |
+| An open blocking finding | File it as a GitHub issue with its repro (`docs/agents/issue-tracker.md`). Go on without a question to the user. The exception is a crash, wrong behavior at run time, or an invalid program that `sisu` accepts or a valid one that it rejects: do the redo when it applies, or ask the user. | Ask the user about each one: a third round, or a deferral. Say whether the open findings have one cause in the approach. When they do, name the other approach. |
+| An open blocking finding with a small fix: fewer than 10 lines and no change to `sisu` output, such as a pattern in a hook | Make the fix with no question and no reviewer. Read its diff yourself and run its tests. | No such fix. |
+| Do the redo when | the fix round adds a finding of the exception class, or fails to fix one. | two fix rounds in a row each add a blocking regression. |
+| Nits | Defer them. | Defer them. |
 
-For a diff, the fix round can add a finding of that class, or fail to fix
-one. For a spec or a plan,
-two fix rounds in a row can each add a blocking regression. Then stop
-patching and do a redo. Give it to a fresh `opus-high` executor.
+A redo stops the patching. Give it to a fresh `opus-high` executor.
 It first commits failing tests for
 each open finding and its neighbours, then fixes the code until they pass.
 The Claude seat reviews the redo as one more round. When that review finds a blocking

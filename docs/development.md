@@ -140,6 +140,9 @@ The Valgrind run must exit 0 and print `<name>.out` on stdout. On ARM64 it does 
 `make memory-safety` runs them with the `memory` profile.
 A command-line filter is intersected with the default filter, so to run one memory test, add `--profile memory` (or `--ignore-default-filter`), for example `cargo nextest run --profile memory -E 'test(memory::<name>.sisu)'`.
 Run it after a change to code generation, drops, the runtime or the harness, before a pull request.
+Its last `memory-safety:` line says `PASS` or `FAIL`, then `(HEAD <sha>)`.
+It adds `with uncommitted changes` when the tree was not clean or HEAD moved during the run.
+`review-sisu` takes this output as `--memory-safety-log`.
 CI runs them in the `Memory safety (ASan, Valgrind)` job on a push to main and by hand with `workflow_dispatch`.
 `make mutation-test` and the ARM64 and macOS jobs keep them (`--ignore-default-filter`).
 
@@ -464,8 +467,8 @@ branch figure is missing. `make setup` installs the nightly toolchain, so a
 local `make coverage` measures branches. To change the nightly toolchain, edit
 `scripts/coverage-toolchain`: both the script and the job read it. Commit new files, or
 `git add -N` them, so the diff sees them. Before the report, the output has a
-line `coverage: measured (HEAD <sha>)`, with `with uncommitted changes` when the
-tracked tree differs from HEAD, or when HEAD changes during the run. The review
+line `coverage: measured (HEAD <sha>)`. It adds `with uncommitted changes` when the
+tree is not clean or HEAD changes during the run. An untracked file makes the tree not clean. The review
 script (`diff_brief.py --coverage`) refuses coverage of another commit or of
 uncommitted changes.
 

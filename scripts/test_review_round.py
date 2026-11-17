@@ -106,7 +106,14 @@ class ReviewRound(unittest.TestCase):
         self,
     ) -> None:
         names = ("rulings-1.md", "fable.md", "sol.md", "opus.md", "brief.md", "focus.md")
-        for name in (*names, "target-1.md", "diagnostic-issues.md", "focus-2.md", "retro.md"):
+        for name in (
+            *names,
+            "target-1.md",
+            "diagnostic-issues.md",
+            "focus-2.md",
+            "retro.md",
+            "CODING_STANDARDS.md",
+        ):
             (self.run_dir / name).write_text(name)
         result = self.script("prepare", "main..main", "--round", "2")
         self.assertEqual(result.returncode, 0, result.stderr)

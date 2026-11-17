@@ -101,12 +101,12 @@
 //! of closed arguments counts the choices of the slot for the lists with a parameter, which may
 //! be meant for any, and the associated type itself counts all of them (`Assocs`).
 //!
-//! The weights of a hub's edges are negative, and no known algorithm finds a cycle of positive
-//! weight in a graph with negative weights in linear time. This is an exception to
-//! `CODING_STANDARDS.md`'s "A pass is linear in the program", agreed by the user on 2026-10-25:
-//! the search is Bellman–Ford on each strongly connected component with a negative weight,
-//! which takes at most the nodes times the edges of the component, and its passes stop at the
-//! first that changes nothing. The nodes and the edges are linear in the program, but with hubs
+//! The weights of a hub's edges are negative. No known algorithm finds a cycle of positive weight
+//! in a graph with negative weights in linear time. So this is the first recorded exception to
+//! `CODING_STANDARDS.md`'s "A pass is linear in the program" (user, 2026-10-25). The search is
+//! Bellman–Ford on each strongly connected component with a negative weight. It takes at most
+//! the nodes times the edges of the component, and its passes stop at the first that changes
+//! nothing. The nodes and the edges are linear in the program, but with hubs
 //! a component can hold many functions. A component with no negative weight needs no search:
 //! any cycle through a positive edge is a cycle of positive weight. `check/tests` pins the cost
 //! of the worst input.
@@ -2478,12 +2478,13 @@ fn cyclic(growth: &[Option<i64>], rules: &[Rule]) -> Vec<bool> {
 /// that makes none ends the search. A node whose way a pass still lengthens after one pass for
 /// each node has a way that goes around such a cycle.
 ///
-/// This is an exception to `CODING_STANDARDS.md`'s "A pass is linear in the program" (user,
-/// 2026-10-25). The hubs' edges have negative weights, and no known algorithm finds a cycle of
-/// positive weight in a graph with negative weights in linear time. The nodes and the edges are
-/// linear in the program and the passes stop at the first that changes nothing, but a component
-/// can hold many functions through a hub, and a cycle costs the nodes plus one passes of the
-/// component's edges. A component with no negative weight is not searched (see the module doc).
+/// This is the first recorded exception to `CODING_STANDARDS.md`'s "A pass is linear in the
+/// program" (user, 2026-10-25). The hubs' edges have negative weights, and no known algorithm
+/// finds a cycle of positive weight in a graph with negative weights in linear time. The nodes
+/// and the edges are linear in the program, and the passes stop at the first that changes
+/// nothing. But a component can hold many functions through a hub, and a cycle costs the nodes
+/// plus one passes of the component's edges. A component with no negative weight is not searched
+/// (see the module doc).
 fn positive_cycle(
     graph: &Graph,
     out: &[Vec<usize>],

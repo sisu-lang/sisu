@@ -29,7 +29,7 @@ Take the facts from these sources, which hold more than the context after a comp
 - The session itself: each user correction, each rejected proposal, and each
   tool call that was blocked, failed or ran again.
 
-## 2. Answer four questions
+## 2. Answer five questions
 
 Give each answer its evidence: a commit, a ruling, a report line or the
 user's words.
@@ -48,6 +48,12 @@ user's words.
 4. **What can we leave in better shape?** Cleanups in the files that this
    work touched: a stale comment, a wrong docs line, dead code, a
    `shortcut:` comment that is now due.
+5. **What can go?** Rules, steps and memories only grow when nothing
+   removes them. Name each one that this work showed is not needed now:
+   a rule or a step that a hook, a test or a script now enforces; a step
+   that this work skipped with no harm; a rule that two files state; a
+   memory that the repository now records. Propose to delete each one,
+   or write `nothing`.
 
 Before you propose a change, search for a check, a rule, a memory or an
 issue that already holds it. When one exists but did not catch the problem,
@@ -65,9 +71,10 @@ to the same file. Save
 each lesson of kind 4 as a memory, and name it to the user. An agent with no
 memories proposes it as a line in `AGENTS.md`.
 
-Then give the user each proposal of kinds 1, 2, 3 and 5, and each cleanup,
+Then give the user each proposal of kinds 1, 2, 3 and 5, each cleanup and each deletion,
 the most severe first. For each one, give the change, the files and the
 cost. The user picks which ones to make. A picked change goes on its own
 branch and pull request, or into the current branch when the user says so.
+A picked memory change needs no branch: make it in the memory directory.
 
 The step is done when each lesson of question 3 is a proposal or a memory.
