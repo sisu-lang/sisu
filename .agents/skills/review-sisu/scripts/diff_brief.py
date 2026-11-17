@@ -240,14 +240,20 @@ def changes(repo: Path | str, base: str, head: str, *paths: str) -> bool:
 
 
 # The paths whose change needs `make memory-safety`, as AGENTS.md says: codegen, drops (MIR), the
-# runtimes and the harness, with the run cases that the memory tests run.
+# runtimes and the harness, with the programs that the memory tests build and run. The Makefile is
+# not here: most of its changes do not touch the memory tests.
 MEMORY_PATHS = (
     "crates/runtime*",
     "crates/sisuc/src/codegen",
     "crates/sisuc/src/mir",
+    "crates/sisuc/src/link.rs",
+    "crates/sisuc/src/prelude.sisu",
     "crates/sisuc/tests/cases.rs",
     "crates/sisuc/tests/support",
     "crates/sisuc/tests/run",
+    "site/programs/run",
+    ".config/nextest.toml",
+    "scripts/build-runtime.sh",
 )
 
 

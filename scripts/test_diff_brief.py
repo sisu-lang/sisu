@@ -2,6 +2,7 @@
 
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -345,9 +346,35 @@ class Brief(Repo):
         self.commit_file("crates/sisuc/src/codegen/a.rs", "fn a() {}\n")
         self.assertIn("Memory tests: not run.", self.brief("HEAD~3..HEAD"))
 
-    def test_a_diff_of_the_runtime_should_say_the_memory_tests_did_not_run(self) -> None:
-        self.commit_file("crates/runtime-system/src/lib.rs", "fn a() {}\n")
-        self.assertIn("Memory tests: not run.", self.brief("HEAD~3..HEAD"))
+    def test_a_diff_of_each_memory_path_should_say_the_memory_tests_did_not_run(self) -> None:
+        for path in (
+            "crates/runtime/src/a.rs",
+            "crates/runtime-system/src/lib.rs",
+            "crates/sisuc/src/codegen/a.rs",
+            "crates/sisuc/src/mir/a.rs",
+            "crates/sisuc/src/link.rs",
+            "crates/sisuc/src/prelude.sisu",
+            "crates/sisuc/tests/cases.rs",
+            "crates/sisuc/tests/support/mod.rs",
+            "crates/sisuc/tests/run/a.sisu",
+            "site/programs/run/a.sisu",
+            ".config/nextest.toml",
+            "scripts/build-runtime.sh",
+        ):
+            with self.subTest(path=path):
+                self.commit_file(path, "a\n")
+                self.assertIn("Memory tests: not run.", self.brief("HEAD~1..HEAD"))
+
+    def test_each_root_of_the_memory_cases_should_be_a_memory_path(self) -> None:
+        crate = Path(__file__).resolve().parents[1] / "crates/sisuc"
+        cases = (crate / "tests/cases.rs").read_text()
+        roots = re.findall(r'test = (?:site_)?memory, root = "([^"]+)"', cases)
+        self.assertEqual(len(roots), 2)
+        for root in roots:
+            path = (crate / root).resolve().relative_to(crate.parents[1]).as_posix()
+            self.assertTrue(
+                any(path == p or path.startswith(f"{p}/") for p in diff_brief.MEMORY_PATHS), path
+            )
 
     def test_a_diff_of_the_checker_should_get_no_memory_test_line(self) -> None:
         self.commit_file("crates/sisuc/src/check/a.rs", "fn a() {}\n")
