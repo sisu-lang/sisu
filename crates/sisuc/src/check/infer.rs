@@ -25,8 +25,8 @@ use crate::types::InferId;
 thread_local! {
     /// The obligations that a bind has looked at.
     static OBLIGATION_VISITS: Cell<usize> = const { Cell::new(0) };
-    /// The steps to keep each root of a type once: one for each root met.
-    static ROOT_STEPS: Cell<usize> = const { Cell::new(0) };
+    /// The types that `open_roots_in` has walked: the ones that its `seen` set did not hold.
+    static WALKED: Cell<usize> = const { Cell::new(0) };
     /// The types that `rebuild_in` has rebuilt: the ones that its memo did not hold.
     static REBUILDS: Cell<usize> = const { Cell::new(0) };
 }
@@ -412,17 +412,15 @@ impl Table {
             if !ty.holds_infer() || !seen.insert(ty) {
                 continue;
             }
+            #[cfg(test)]
+            WALKED.set(WALKED.get() + 1);
             match ty.kind() {
                 TypeKind::Infer(id) => {
                     let root = self.find(id.0);
                     if let Some(bound) = self.slots[root as usize].root.bound {
                         stack.push(bound);
-                    } else {
-                        #[cfg(test)]
-                        ROOT_STEPS.set(ROOT_STEPS.get() + 1);
-                        if kept.insert(root) {
-                            roots.push(root);
-                        }
+                    } else if kept.insert(root) {
+                        roots.push(root);
                     }
                 }
                 TypeKind::Array(inner) | TypeKind::Optional(inner) => stack.push(inner),
@@ -1242,12 +1240,31 @@ mod tests {
     }
 
     #[test]
-    fn open_roots_should_keep_each_root_in_linear_steps() {
+    fn bind_should_wake_an_obligation_of_a_variable_that_is_no_root() {
         let mut table = Table::default();
-        let vars: Vec<Type> = (0..400).map(|i| table.fresh(Kind::Any, at(i))).collect();
-        ROOT_STEPS.set(0);
-        table.poison(holding(&vars));
-        assert!(ROOT_STEPS.get() <= 4 * vars.len(), "{}", ROOT_STEPS.get());
+        let [a, c, d] = [0, 1, 2].map(|i| table.fresh(Kind::Any, at(i)));
+        table.obligation(Type::array(a), ObligationId(1));
+        assert!(table.unify(c, d).is_some());
+        // `a` joins the bigger set, so it is no root now.
+        assert!(table.unify(a, c).is_some());
+        let ready = table.unify(c, Type::I64).expect("C should unify");
+        assert_eq!(ready.len(), 1);
+    }
+
+    #[test]
+    fn rollback_should_put_a_moved_obligation_back() {
+        let mut table = Table::default();
+        let (a, b) = (table.fresh(Kind::Any, at(0)), table.fresh(Kind::Any, at(1)));
+        table.obligation(holding(&[a, b]), ObligationId(1));
+        // One of the two binds moves the obligation, whichever variable it waits at.
+        for var in [a, b] {
+            let snapshot = table.snapshot();
+            assert!(table.unify(var, Type::I64).is_some());
+            table.rollback(snapshot);
+        }
+        let mut ready = table.unify(a, Type::I64).expect("A should unify");
+        ready.extend(table.unify(b, Type::I64).expect("B should unify"));
+        assert_eq!(ready.len(), 1);
     }
 
     /// The types that writing back `n` nested inferred types rebuilds: `A_0` is `i64` and each
@@ -1265,9 +1282,16 @@ mod tests {
             .collect();
         let mut expr = tir::Expr::new(ExprKind::ArrayLit(nodes), Type::UNIT, at(0));
         REBUILDS.set(0);
+        WALKED.set(0);
         let written = expr.write_back_all(&mut table);
         assert!(!written.open);
         REBUILDS.get()
+    }
+
+    #[test]
+    fn settle_should_walk_each_type_once_for_a_function() {
+        rebuilds(200);
+        assert!(WALKED.get() <= 4 * 200, "{}", WALKED.get());
     }
 
     #[test]
