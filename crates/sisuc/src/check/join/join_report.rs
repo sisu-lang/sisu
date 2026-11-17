@@ -519,13 +519,14 @@ impl Checker<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::{array, at, eye, if_else, int, local, none, orders};
+    use super::super::tests::{array, at, eye, if_else, if_without_else, int, local, none, orders};
     use super::super::*;
     use crate::check::expectation::Origin;
     use crate::check::infer::Kind;
     use crate::check::operator::Operator;
     use crate::check::tests::joins::with_params;
-    use crate::diagnostic::{Code, Diagnostic, DiagnosticKind};
+    use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, NoValueCause};
+    use crate::mir::tests::assert_near_linear;
     use crate::tir::FuncId;
 
     /// `Seen`, with the structs `Eye` and `Lid`, which conform to it.
@@ -533,6 +534,9 @@ mod tests {
 
     /// `Seen` and `Heard`, which both `Eye` and `Lid` conform to.
     const EYE_LID_HEARD: &str = "interface Seen {\n    fn seen(self) -> i64\n}\ninterface Heard {\n    fn heard(self) -> i64\n}\nstruct Eye: Seen, Heard {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n    fn heard(self) -> i64 { self.v }\n}\nstruct Lid: Seen, Heard {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n    fn heard(self) -> i64 { self.v }\n}\n";
+
+    /// `Say`, which `Eye` conforms to, and which gives `unit`.
+    const EYE_LID_SAY: &str = "interface Say {\n    fn say(self)\n}\nstruct Eye: Say {\n    v: i64\n    fn say(self) {}\n}\n";
 
     /// The functions `u` and `g`, which give `unit`.
     const UNITS: &str = "fn u() {}\nfn g() {}\n";
@@ -806,6 +810,7 @@ mod tests {
         };
         assert!(!fix.safe());
         assert_eq!(fix.apply(LET_TEXT), "let x: any Seen = ...");
+        assert!(d.help().is_none(), "the fix says it: no help beside it");
         // AND an array of them writes `[any Seen]`
         let d = eye_lid(EYE_LID, JoinForm::Array, binding);
         let [fix] = d.fixes() else {
@@ -1025,29 +1030,58 @@ mod tests {
         assert_eq!(reported, vec![]);
     }
 
+    /// The `Site` of a join of `form`: a call has the type parameter `T`.
+    fn site(form: JoinForm) -> Site {
+        let hole = match form {
+            JoinForm::Call { param } => Some(param),
+            _ => None,
+        };
+        Site {
+            form,
+            head: head(),
+            hole,
+            fixed: None,
+        }
+    }
+
+    fn call() -> JoinForm {
+        JoinForm::Call {
+            param: Symbol::intern("T"),
+        }
+    }
+
+    /// The kind that the conflict of the members `build` makes gives, with `binding` as the name
+    /// of a `let` without a type.
+    fn conflict_of(
+        (src, params): (&str, &str),
+        form: JoinForm,
+        binding: Option<Span>,
+        build: fn(&mut Checker<'_>, &[Type]) -> Vec<Checked>,
+    ) -> DiagnosticKind {
+        with_params(src, params, |c, types| {
+            let mut values = build(c, types);
+            let mut members = whole(&mut values);
+            let site = site(form);
+            let Err(conflict) = c.join_members(&mut members, site.hole, None, None) else {
+                panic!("the members should have no candidate");
+            };
+            c.conflict_kind(site, binding, &conflict)
+        })
+    }
+
     /// The groups of the conflict of the members that `build` makes, as the report shows them.
     fn shown_groups(
         build: fn(&mut Checker<'_>, &[Type]) -> Vec<Checked>,
     ) -> Vec<(String, Vec<Span>)> {
-        with_params("", "a: u8", |c, types| {
-            let mut values = build(c, types);
-            let mut members = whole(&mut values);
-            let Err(conflict) = c.join_members(&mut members, None, None, None) else {
-                panic!("the members should have no candidate");
-            };
-            let site = Site {
-                form: JoinForm::If,
-                head: head(),
-                hole: None,
-                fixed: None,
-            };
-            let DiagnosticKind::JoinMismatch { groups, .. } =
-                c.conflict_kind(site, None, &conflict)
-            else {
-                panic!("a conflict should give a `JoinMismatch`");
-            };
-            groups
-        })
+        let kind = conflict_of(("", "a: u8, t: bool"), JoinForm::If, None, build);
+        let DiagnosticKind::JoinMismatch { groups, .. } = kind else {
+            panic!("a conflict should give a `JoinMismatch`");
+        };
+        groups
+    }
+
+    fn group(text: &str, at_: usize) -> (String, Vec<Span>) {
+        (text.to_owned(), vec![at(at_)])
     }
 
     #[test]
@@ -1058,22 +1092,320 @@ mod tests {
             let element = literal.ty;
             vec![Ok(array(vec![literal], element, 2)), Ok(string(3))]
         });
-        assert_eq!(
-            groups,
-            vec![
-                ("[i64]".to_owned(), vec![at(1)]),
-                ("string".to_owned(), vec![at(3)])
-            ]
-        );
+        assert_eq!(groups, vec![group("[i64]", 1), group("string", 3)]);
+        // GIVEN `None` and `"s"`, THEN the group shows `None`, as a program writes the value
+        let groups = shown_groups(|c, _| vec![Ok(none(c, 1)), Ok(string(2))]);
+        assert_eq!(groups, vec![group("None", 1), group("string", 2)]);
+        // GIVEN `[]` and `"s"`, THEN the group shows `[]`
+        let groups = shown_groups(|c, _| {
+            let open = c.table.fresh(Kind::Any, at(1));
+            vec![Ok(array(Vec::new(), open, 1)), Ok(string(2))]
+        });
+        assert_eq!(groups, vec![group("[]", 1), group("string", 2)]);
         // GIVEN `1`, `a: u8` and `"s"`, THEN `1` has no group: the type of `a` holds it
         let groups =
             shown_groups(|c, types| vec![Ok(int(c, 1, 1)), Ok(local(types[0], 2)), Ok(string(3))]);
+        assert_eq!(groups, vec![group("u8", 2), group("string", 3)]);
+    }
+
+    #[test]
+    fn open_literal_should_join_the_group_that_holds_it_inside_an_array() {
+        // GIVEN `[1]`, `xs: [u8]` and `"s"`, THEN the literal `1` has no group
+        let groups = shown_groups(|c, _| {
+            let literal = int(c, 1, 1);
+            let element = literal.ty;
+            let held = Type::array(Type::U8);
+            vec![
+                Ok(array(vec![literal], element, 1)),
+                Ok(local(held, 2)),
+                Ok(string(3)),
+            ]
+        });
+        assert_eq!(groups, vec![group("[u8]", 2), group("string", 3)]);
+    }
+
+    #[test]
+    fn open_literal_should_keep_its_group_when_the_held_type_cannot_hold_it() {
+        // GIVEN `300`, `a: u8` and `t: bool`, THEN `300` keeps its label: `u8` cannot hold it
+        let groups = shown_groups(|c, types| {
+            vec![
+                Ok(int(c, 300, 1)),
+                Ok(local(types[0], 2)),
+                Ok(local(types[1], 3)),
+            ]
+        });
         assert_eq!(
             groups,
-            vec![
-                ("u8".to_owned(), vec![at(2)]),
-                ("string".to_owned(), vec![at(3)])
-            ]
+            vec![group("i64", 1), group("u8", 2), group("bool", 3)]
         );
+    }
+
+    #[test]
+    fn left_side_of_coalesce_should_be_a_group_at_its_payload() {
+        with_params("", "o: u8?", |c, types| {
+            // GIVEN `o ?? "s"` with `o: u8?`: `o` is a part at `v?`, and `"s"` is whole
+            let v = c.table.fresh(Kind::Any, at(1));
+            let (mut left, mut right) = (Ok(local(types[0], 1)), Ok(string(2)));
+            let mut members = [
+                JoinMember {
+                    value: &mut left,
+                    at: Place::Part {
+                        place: Type::optional(v),
+                        argument: at(1),
+                    },
+                    label: at(1),
+                },
+                JoinMember {
+                    value: &mut right,
+                    at: Place::Whole,
+                    label: at(2),
+                },
+            ];
+            // WHEN the conflict of the members is made
+            let conflict = c.conflict(&mut members, &[0, 1], None, None);
+            // THEN `o` is a leaf of the group `u8`, and no argument part: only a call has them
+            assert_eq!(conflict.parts.len(), 0);
+            let groups: Vec<(Type, Vec<Span>)> = (conflict.groups.iter())
+                .map(|group| (group.ty, group.leaves.clone()))
+                .collect();
+            assert_eq!(
+                groups,
+                vec![(Type::U8, vec![at(1)]), (Type::STRING, vec![at(2)])]
+            );
+        });
+    }
+
+    #[test]
+    fn call_should_label_the_first_argument_as_the_one_that_gives_the_type() {
+        // GIVEN `pick(a, "s")` with `a: u8`, WHEN the arguments for `T` do not join
+        let kind = conflict_of(("", "a: u8"), call(), None, |_, types| {
+            vec![Ok(local(types[0], 1)), Ok(string(2))]
+        });
+        let DiagnosticKind::JoinMismatch { groups, parts, .. } = kind else {
+            panic!("a conflict should give a `JoinMismatch`");
+        };
+        // THEN `a` has the label of an argument, and `"s"` the label of its type
+        assert_eq!(parts, vec![(at(1), "u8".to_owned())]);
+        assert_eq!(groups, vec![group("string", 2)]);
+        // GIVEN `index_of(names, n)`, where `names: [string]` is at a place `[T]`
+        let kind = conflict_of(("", "n: i64"), call(), None, |c, types| {
+            vec![Ok(local(types[0], 3)), Ok(string(2)), Ok(none(c, 4))]
+        });
+        let DiagnosticKind::JoinMismatch { parts, .. } = kind else {
+            panic!("a conflict should give a `JoinMismatch`");
+        };
+        // THEN the first argument in the source is the one that gives `T` its type
+        assert_eq!(parts.first().map(|&(at, _)| at), Some(at(2)));
+    }
+
+    #[test]
+    fn call_under_a_required_type_should_label_the_first_argument_that_converts() {
+        let run = |required_ty: Type| {
+            with_params("", "a: u8", |c, types| {
+                // GIVEN `let y: u8 = pick(a, "s")`, the declaration at 30
+                let origin = Origin::Declared {
+                    at: at(30),
+                    ty: required_ty,
+                };
+                let mut values = vec![Ok(local(types[0], 1)), Ok(string(2))];
+                let expected = Expectation::Required(required_ty, origin);
+                // WHEN the call joins its arguments under the declared type
+                let _ = join_at(c, call(), &mut values, expected, None);
+                // THEN one E0032 at `"s"`, with the label of `a`, and none of the declaration
+                assert_eq!(found(c), vec![(Code::Mismatch, at(2))]);
+                labels(c)
+            })
+        };
+        assert_eq!(run(Type::U8), vec![at(1)]);
+        assert_eq!(run(Type::optional(Type::U8)), vec![at(1)]);
+    }
+
+    #[test]
+    fn unit_value_should_not_hide_the_mistake_at_another_member() {
+        // GIVEN `let xs: [u8] = [u(), "s"]`
+        with_params(UNITS, "", |c, _| {
+            let mut values = vec![Ok(unit_call(c, "u", 1)), Ok(string(2))];
+            // WHEN the elements join under `u8`
+            let _ = join_at(c, JoinForm::Array, &mut values, required(Type::U8), None);
+            // THEN E0043 at `u()` and E0032 at `"s"`
+            assert_eq!(
+                found(c),
+                vec![(Code::NoValue, at(1)), (Code::Mismatch, at(2))]
+            );
+        });
+    }
+
+    #[test]
+    fn unit_value_should_not_blame_a_member_that_converts() {
+        // GIVEN `let x: [[unit]] = [[u()], [1]]`
+        with_params(UNITS, "", |c, _| {
+            let one = int(c, 1, 5);
+            let element = one.ty;
+            let mut values = vec![
+                Ok(array(vec![unit_call(c, "u", 1)], Type::UNIT, 2)),
+                Ok(array(vec![one], element, 4)),
+            ];
+            // WHEN the elements join under `[unit]`
+            let required = required(Type::array(Type::UNIT));
+            let _ = join_at(c, JoinForm::Array, &mut values, required, None);
+            // THEN E0032 at `1` alone: `[u()]` converts, so `u()` has no mistake
+            assert_eq!(found(c), vec![(Code::Mismatch, at(5))]);
+        });
+    }
+
+    #[test]
+    fn nested_join_under_a_required_type_should_be_one_member() {
+        let nested = |c: &mut Checker<'_>, types: &[Type]| {
+            let open = c.table.fresh(Kind::Any, at(3));
+            if_else(local(types[0], 1), local(types[0], 2), open, 3)
+        };
+        // GIVEN `[if c { a } else { b }]` with `a, b: u8`, under `string`
+        with_params("", "a: u8", |c, types| {
+            let mut values = vec![Ok(nested(c, types))];
+            let _ = join_at(
+                c,
+                JoinForm::Array,
+                &mut values,
+                required(Type::STRING),
+                None,
+            );
+            // THEN one E0032 at the `if`
+            assert_eq!(found(c), vec![(Code::Mismatch, at(3))]);
+        });
+        // GIVEN `[if c { a } else { b }, "s"]`, THEN the same
+        with_params("", "a: u8", |c, types| {
+            let mut values = vec![Ok(nested(c, types)), Ok(string(4))];
+            let _ = join_at(
+                c,
+                JoinForm::Array,
+                &mut values,
+                required(Type::STRING),
+                None,
+            );
+            assert_eq!(found(c), vec![(Code::Mismatch, at(3))]);
+        });
+        // GIVEN `id(if c { a } else { b })`, THEN the same
+        with_params("", "a: u8", |c, types| {
+            let mut values = vec![Ok(nested(c, types))];
+            let _ = join_at(c, call(), &mut values, required(Type::STRING), None);
+            assert_eq!(found(c), vec![(Code::Mismatch, at(3))]);
+        });
+    }
+
+    /// The steps of the report of the join of `[chain]` under `string`. The `chain` is an
+    /// `else if` chain of `n` branches. Each gives `string`, but the last gives `u8`.
+    fn required_chain(n: usize) -> usize {
+        with_params("", "a: u8", |c, types| {
+            let mut chain = local(types[0], 0);
+            for i in 1..n {
+                let open = c.table.fresh(Kind::Any, at(i));
+                chain = if_else(local(Type::STRING, i), chain, open, i);
+            }
+            let mut values = vec![Ok(chain)];
+            LEAF_STEPS.set(0);
+            VALUE_STEPS.set(0);
+            let _ = join_at(
+                c,
+                JoinForm::Array,
+                &mut values,
+                required(Type::STRING),
+                None,
+            );
+            assert_eq!(
+                found(c).len(),
+                1,
+                "the one leaf that fails should be reported"
+            );
+            LEAF_STEPS.get() + VALUE_STEPS.get()
+        })
+    }
+
+    #[test]
+    fn required_report_should_cost_linear_steps_on_an_else_if_chain() {
+        // GIVEN an `else if` chain of n, 2n and 3n branches: only the last fails
+        let steps = [
+            required_chain(100),
+            required_chain(200),
+            required_chain(300),
+        ];
+        // THEN the report visits each value position once, so the steps grow linearly
+        assert_near_linear(steps[0], steps[1], steps[2]);
+    }
+
+    #[test]
+    fn declared_interface_that_cannot_be_any_should_give_no_help_and_no_fix() {
+        let src = "interface Copy {\n    fn copy(self) -> Self\n}\nstruct A: Copy {\n    v: i64\n    fn copy(self) -> A { self }\n}\nstruct B: Copy {\n    v: i64\n    fn copy(self) -> B { self }\n}\n";
+        with_params(src, "x: A, y: B", |c, types| {
+            let mut values = vec![Ok(eye(types[0], 1)), Ok(eye(types[1], 2))];
+            // GIVEN `let x = if c { A(v: 1) } else { B(v: 2) }`, where `Copy` returns `Self`
+            let binding = Some(Span::new(4, 5));
+            let _ = join_at(c, JoinForm::If, &mut values, Expectation::None, binding);
+            // THEN `any Copy` is no type: no fix, and no help
+            let [d] = diagnostics(c).try_into().unwrap_or_else(|all: Vec<_>| {
+                panic!("one diagnostic should be reported, not {}", all.len())
+            });
+            assert_eq!(d.fixes().len(), 0);
+            assert!(d.help().is_none());
+        });
+    }
+
+    #[test]
+    fn built_in_unit_value_should_keep_the_cause_of_its_call() {
+        let cause = |build: &dyn Fn(&mut Checker<'_>, &[Type]) -> tir::Expr| {
+            with_params(EYE_LID_SAY, "x: Eye", |c, types| {
+                let e = build(c, types);
+                c.unit_cause(&e, None)
+            })
+        };
+        let named = |cause: NoValueCause, text: &str| matches!(cause, NoValueCause::Call { ref name, .. } if name == text);
+        let print = |stream| {
+            let operand = Box::new(tir::Expr::new(ExprKind::Int(1), Type::I64, at(2)));
+            ExprKind::Print { stream, operand }
+        };
+        // `[print(1), 1]` and `[eprint(1), 1]` name the call that they make
+        let stdout = cause(&|_, _| tir::Expr::new(print(tir::Stream::Stdout), Type::UNIT, at(1)));
+        assert!(named(stdout, "print"));
+        let stderr = cause(&|_, _| tir::Expr::new(print(tir::Stream::Stderr), Type::UNIT, at(1)));
+        assert!(named(stderr, "eprint"));
+        // `dbg(print(1))` is the cause of its operand
+        let dbg = cause(&|_, _| {
+            let operand = Box::new(tir::Expr::new(
+                print(tir::Stream::Stdout),
+                Type::UNIT,
+                at(1),
+            ));
+            let kind = ExprKind::Dbg {
+                at: at(1),
+                text: String::new(),
+                operand,
+            };
+            tir::Expr::new(kind, Type::UNIT, at(1))
+        });
+        assert!(named(dbg, "print"));
+        // `u()` names the function, and its declaration
+        let user = cause(&|c, _| unit_call(c, "u", 1));
+        assert!(matches!(user, NoValueCause::Call { ref name, declared: Some(_) } if name == "u"));
+        // `x.say()` is a call of an interface method: its name, and no declaration
+        let method = cause(&|c, types| {
+            let say = (c.interfaces.iter())
+                .position(|interface| interface.name.name.as_str() == "Say")
+                .expect("the program should declare `Say`");
+            let receiver = local(types[0], 2);
+            let kind = ExprKind::InterfaceCall {
+                interface: tir::InterfaceId(say),
+                iargs: TypeArgs::NONE,
+                method: 0,
+                types: TypeArgs::NONE,
+                args: vec![receiver],
+            };
+            tir::Expr::new(kind, Type::UNIT, at(1))
+        });
+        assert!(matches!(method, NoValueCause::Call { ref name, declared: None } if name == "say"));
+        // `if c { print(0) }` has no `else`
+        let no_else = cause(&|_, _| if_without_else(1));
+        assert!(matches!(
+            no_else,
+            NoValueCause::NoElse { if_let: false, .. } | NoValueCause::UnitIf { if_let: false, .. }
+        ));
     }
 }

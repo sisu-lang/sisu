@@ -980,7 +980,7 @@ mod tests {
     }
 
     /// `if true { print(0) }`, which has no `else`.
-    fn if_without_else(n: usize) -> tir::Expr {
+    pub(super) fn if_without_else(n: usize) -> tir::Expr {
         let operand = tir::Expr::new(ExprKind::Int(0), Type::I64, at(n));
         let print = ExprKind::Print {
             stream: tir::Stream::Stdout,
