@@ -1143,6 +1143,55 @@ mod tests {
         });
     }
 
+    /// The type of `T` when `first` is an argument at a parameter `[T]` and `second` an argument
+    /// at a parameter `T`.
+    fn join_at_array_place(
+        src: &str,
+        params: &str,
+        build: fn(&mut Checker<'_>, &[Type]) -> (Checked, Checked),
+    ) -> Option<Type> {
+        with_params(src, params, |c, types| {
+            let hole = Symbol::intern("T");
+            let place = Type::array(Type::intern(TypeKind::Param(hole, 0)));
+            let (mut first, mut second) = build(c, types);
+            let mut members = [
+                JoinMember {
+                    value: &mut first,
+                    at: Place::Part {
+                        place,
+                        argument: at(2),
+                    },
+                    label: at(2),
+                },
+                JoinMember {
+                    value: &mut second,
+                    at: Place::Whole,
+                    label: at(3),
+                },
+            ];
+            let form = JoinForm::Call { param: hole };
+            let ty = c.join_form(form, at(0), &mut members, Expectation::None, None);
+            ty.ok().map(|ty| c.table.resolve(ty))
+        })
+    }
+
+    #[test]
+    fn join_should_take_the_part_of_a_made_argument_as_a_candidate() {
+        // GIVEN `opts: [u8?]` at a parameter `[T]` and the literal `3` at `T`
+        // WHEN they join at `T`
+        let ty = join_at_array_place("", "opts: [u8?]", |c, types| {
+            (Ok(local(types[0], 2)), Ok(int(c, 3, 3)))
+        });
+        // THEN `T` is `u8?`, the part of the argument
+        assert_eq!(ty, Some(Type::optional(Type::U8)));
+        // GIVEN `es: [any Seen]` at `[T]` and `Eye(v: 1)` at `T`, THEN `T` is `any Seen`
+        let ty = join_at_array_place(SEEN, "es: [any Seen], e: Eye", |_, types| {
+            (Ok(local(types[0], 2)), Ok(eye(types[1], 3)))
+        });
+        let seen = with_params(SEEN, "s: any Seen", |_, types| types[0]);
+        assert_eq!(ty, Some(seen));
+    }
+
     #[test]
     fn join_should_take_the_part_of_an_argument() {
         with_params("", "a: u8", |c, types| {
