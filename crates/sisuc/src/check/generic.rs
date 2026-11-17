@@ -11,9 +11,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::alias::{Through, Via};
 use super::array::innermost;
 use super::expr::{literal_type, option_written, read_jump};
-use super::infer::{Kind, ObligationId};
+use super::infer::{Kind, ObligationId, OpenCall};
 use super::interface::{Bound, Bounds, Required};
-use super::join::{Heading, JoinForm, JoinMember, Place};
+use super::join::{Heading, JoinForm, JoinMember, Place, part_at, target};
 use super::member::FieldOwner;
 use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
 use super::names::{self, ItemId, Resolved};
@@ -1205,6 +1205,34 @@ pub(super) struct BoundObligation {
     pub(super) with: Vec<Type>,
 }
 
+/// What the open form of a generic call needs (see `Checker::open_at`). Each type here holds each
+/// open parameter as its `Param`, and each other parameter as the closed form decided it.
+pub(super) struct OpenEntry {
+    /// The call's result type.
+    ret: Type,
+    /// The call's type arguments, a method's receiver's first.
+    types: Vec<Type>,
+    /// The name and the index of each open parameter.
+    params: Vec<(Symbol, usize)>,
+    /// Each bound of an open parameter, with the parameter's index.
+    bounds: Vec<(usize, Bound)>,
+    /// Each member at a place of an open parameter: the span of its argument and the type of its
+    /// parameter.
+    members: Vec<(Span, Type)>,
+}
+
+/// The argument at `at` of the call node `e`.
+fn argument_at(e: &mut tir::Expr, at: Span) -> Option<&mut tir::Expr> {
+    let (tir::ExprKind::Call { args, .. }
+    | tir::ExprKind::Struct { args, .. }
+    | tir::ExprKind::Variant { args, .. }
+    | tir::ExprKind::New { args, .. }) = &mut e.kind
+    else {
+        return None;
+    };
+    args.iter_mut().find(|arg| arg.span == at)
+}
+
 /// A generic call while its arguments bind its callee's parameters.
 pub(super) struct Inference<'s> {
     /// The call's span.
@@ -1862,6 +1890,8 @@ impl Checker<'_> {
         parts: &mut MutParts,
     ) -> Result<(Vec<Checked>, TypeArgs, Option<Type>), Poisoned> {
         let owned = sig.owner.len();
+        // A check of the call again keeps its own open form, or none.
+        self.table.forget_open(span);
         let mut call = Inference {
             at: span,
             bindings: Bindings::new(sig.declared.len(), sig.owner),
@@ -1951,6 +1981,15 @@ impl Checker<'_> {
                 Some(param) if param.has_assoc() && !decided.is_empty() => continue,
                 Some(param) => self.known_argument(&call, i, &arg.value, param),
             };
+            // A call at a place that names two or more decided parameters is closed only (Q28).
+            if let (Ok(e), Some(param)) = (&checked, sig.params[i])
+                && (decided.iter())
+                    .filter(|&&(t, _)| names_outside_assoc(param, t))
+                    .nth(1)
+                    .is_some()
+            {
+                self.table.forget_open(e.span);
+            }
             call.slots[i] = Some(checked);
         }
         let mut failed = None;
@@ -1963,6 +2002,9 @@ impl Checker<'_> {
         // The parameters whose join reported for its members that never finish, or holds one that
         // was reported.
         let mut quiet = Vec::new();
+        // The parameters that are open for an outer join, each with its name and the arguments of
+        // its members (see `OpenEntry`).
+        let mut openable = Vec::new();
         for &(t, var) in &decided {
             let name = sig.declared[t];
             let mut with: Vec<Type> = (call.bindings.found.iter())
@@ -1979,6 +2021,7 @@ impl Checker<'_> {
             // The members whose part at `T` is still open decide nothing of it. Each takes the
             // type that the others decide, or that the context gives.
             let mut open = Vec::new();
+            let tied_from = tied.len();
             for (i, slot) in call.slots.iter_mut().enumerate() {
                 let (Some(value), Some(param)) = (slot.as_mut(), sig.params[i]) else {
                     continue;
@@ -2039,7 +2082,12 @@ impl Checker<'_> {
                 quiet.push(t);
                 continue;
             }
+            let of: Vec<usize> = members.iter().map(|&(i, _)| i).collect();
             let mut members: Vec<JoinMember<'_>> = members.into_iter().map(|(_, m)| m).collect();
+            // The result type with `T` in it, when `T` has a place there that no associated type
+            // ties: the open form takes `T` from it.
+            let ret_t =
+                (sig.ret).filter(|&ret| tied.len() == tied_from && names_outside_assoc(ret, t));
             if let Some(first) = members.first().map(|member| member.label) {
                 let returns = (sig.ret)
                     .filter(|&ret| ret != with[t] && names_outside_assoc(ret, t))
@@ -2053,7 +2101,16 @@ impl Checker<'_> {
                 let held =
                     (members.iter()).find_map(|m| m.value.as_ref().err().map(Poisoned::reported));
                 let form = JoinForm::Call { param: name };
-                match self.join_form(form, heading, &mut members, Expectation::Member, None) {
+                // A call that failed already reports nothing more against `want`.
+                let joined = match (expected, ret_t) {
+                    (Expectation::Required(want, origin), Some(ret)) if failed.is_none() => {
+                        let at = (t, var, sig.bounds.get(t - owned));
+                        self.required_join(&mut members, at, (ret, &with), (want, origin))
+                    }
+                    _ => Expectation::Member,
+                };
+                let before: Vec<Option<Type>> = members.iter().map(|m| type_of(m.value)).collect();
+                match self.join_form(form, heading, &mut members, joined, None) {
                     Ok(Type::NEVER) if let Some(reported) = held => {
                         self.table.poison(var);
                         failed.get_or_insert(reported);
@@ -2072,6 +2129,22 @@ impl Checker<'_> {
                         if !self.unify(var, ty) {
                             // The join of an earlier parameter bound it through a shared argument.
                             failed.get_or_insert_with(|| self.proof(first)); // proof: quiet reader
+                        }
+                        // shortcut: a parameter whose closed join wraps a member is closed only,
+                        // so that no member takes two wraps; keep each member's own type in the
+                        // entry to open it too.
+                        let wrapped = (members.iter().zip(&before)).any(|(m, &own)| {
+                            own.is_some_and(|own| {
+                                let want = target(m.at, Some(name), ty);
+                                self.table.resolve(own) != self.table.resolve(want)
+                            })
+                        });
+                        if expected == Expectation::Member
+                            && ret_t.is_some()
+                            && open.is_empty()
+                            && !wrapped
+                        {
+                            openable.push((t, name, of));
                         }
                     }
                     Err(poisoned) => {
@@ -2139,6 +2212,14 @@ impl Checker<'_> {
             let arg = &args[i];
             let param =
                 sig.params[i].expect("an argument with no parameter type should be checked");
+            // A poisoned member poisoned the parameter, or a poisoned context the call: the
+            // argument reports its own mistakes only.
+            if expected == Expectation::Poisoned
+                || quiet.iter().any(|&t| names_outside_assoc(param, t))
+            {
+                call.slots[i] = Some(mark(self.operand(&arg.value, Expectation::Poisoned)));
+                continue;
+            }
             if joins(param) {
                 let checked = self.late_argument(&call, i, &arg.value, param);
                 // A poisoned argument decides nothing, and its report is the call's.
@@ -2206,6 +2287,34 @@ impl Checker<'_> {
                 ..Poisoned::new(ty, reported)
             });
         }
+        if !openable.is_empty()
+            && let Some(ret) = sig.ret
+        {
+            let mut types = list.get().to_vec();
+            for &(t, name, _) in &openable {
+                let index =
+                    u32::try_from(t).expect("a callee should have fewer than 2^32 parameters");
+                types[t] = Type::intern(TypeKind::Param(name, index));
+            }
+            let members = (openable.iter())
+                .flat_map(|(_, _, of)| of.iter())
+                .filter_map(|&i| Some((args[i].value.span, sig.params[i]?.subst(&types))))
+                .collect();
+            let bounds = (openable.iter())
+                .flat_map(|&(t, ..)| {
+                    let list = sig.bounds.get(t - owned).map_or(&[][..], |b| &b.list[..]);
+                    list.iter().map(move |&bound| (t, bound))
+                })
+                .collect();
+            let entry = OpenEntry {
+                ret: ret.subst(&types),
+                params: openable.iter().map(|&(t, name, _)| (name, t)).collect(),
+                types,
+                bounds,
+                members,
+            };
+            self.table.add_open(span, entry);
+        }
         self.instantiates = true;
         let checked = call
             .slots
@@ -2214,6 +2323,78 @@ impl Checker<'_> {
             .collect();
         let ret = sig.ret.and_then(|ret| self.subst(ret, list.get()));
         Ok((checked, list, ret))
+    }
+
+    /// The expectation of the join of the type parameter `t` (its variable `var`, its `bounds`) of
+    /// a call under the required type `want`. `ret` is the call's result type, which names `t`,
+    /// and `with` the call's type arguments with `t` as its `Param`.
+    ///
+    /// Closed first (Q26): `Member` when the members alone give `t` a type with which the result
+    /// converts to `want`. Else `t` is open at the part of `want` at its place in `ret`. Each
+    /// member that does not take that part gets the directed report (S26b). When the members
+    /// differ from the part only by its wraps, the closed form reports at the call (Q24).
+    fn required_join(
+        &mut self,
+        members: &mut [JoinMember<'_>],
+        (t, var, bounds): (usize, Type, Option<&Bounds>),
+        (ret, with): (Type, &[Type]),
+        (want, origin): (Type, Origin),
+    ) -> Expectation {
+        let TypeKind::Param(name, _) = with[t].kind() else {
+            return Expectation::Member;
+        };
+        let want = self.table.resolve(want);
+        let Some(part) = part_at(self.table.resolve(ret.subst(with)), name, want) else {
+            return Expectation::Member;
+        };
+        let closed = self.join_type(members, Some(name), None);
+        if let Some(ty) = closed {
+            let mut with_ty = with.to_vec();
+            with_ty[t] = ty;
+            let snapshot = self.table.snapshot();
+            let converts = self.unify(var, ty) && {
+                // A number unifies with `want`, else it is `i64`, as in `close_call`.
+                let ret = self.table.resolve(ret.subst(&with_ty));
+                self.conversion(ret, want).is_some() || {
+                    let ret = self.table.default_open(ret);
+                    self.conversion(ret, want).is_some()
+                }
+            };
+            self.table.rollback(snapshot);
+            if converts {
+                return Expectation::Member;
+            }
+        }
+        let mut with_part = with.to_vec();
+        with_part[t] = part;
+        let snapshot = self.table.snapshot();
+        let opens = self.join_type(members, Some(name), Some(part)).is_some()
+            && self.unify(ret.subst(&with_part), want)
+            && bounds.is_none_or(|bounds| {
+                (bounds.list.iter()).all(|bound| {
+                    let args = self.subst_args(bound.args, &with_part);
+                    part.holds_infer() || self.conforms(part, bound.interface, args)
+                })
+            });
+        self.table.rollback(snapshot);
+        // Neither form takes `want`. Members that differ from the part only by its wraps take too
+        // many (Q24): the call reports as a whole. Else each member that does not take the part
+        // gets the directed report.
+        let mut bare = part;
+        while let TypeKind::Optional(inner) = bare.kind() {
+            bare = inner;
+        }
+        let snapshot = self.table.snapshot();
+        let wraps_only = bare != part
+            && (members.iter()).all(|m| {
+                type_of(m.value).is_none_or(|ty| self.unify(ty, target(m.at, Some(name), bare)))
+            });
+        self.table.rollback(snapshot);
+        if opens || !wraps_only {
+            Expectation::Required(part, origin)
+        } else {
+            Expectation::Member
+        }
     }
 
     /// Whether a member of type `ty`, at a place that is `filled` with the variable `var` of its
@@ -2295,6 +2476,82 @@ impl Checker<'_> {
         }
     }
 
+    /// The type arguments of the open form of `call` at `candidate`: each open parameter takes the
+    /// part of `candidate` at its place in the result type. `None` when the result does not meet
+    /// `candidate` then (two places that give two parts), or a bound of an open parameter fails.
+    /// It binds what the result meets: the caller holds a snapshot.
+    fn open_types(&mut self, call: OpenCall, candidate: Type) -> Option<Vec<Type>> {
+        let entry = self.table.open_entry(call);
+        let (ret, mut with) = (entry.ret, entry.types.clone());
+        let candidate = self.table.resolve(candidate);
+        for &(name, t) in &entry.params {
+            with[t] = part_at(ret, name, candidate)?;
+        }
+        let bounds = entry.bounds.clone();
+        if !self.unify(ret.subst(&with), candidate) {
+            return None;
+        }
+        for (t, bound) in bounds {
+            let part = self.table.resolve(with[t]);
+            if part.holds_infer() {
+                continue;
+            }
+            let args = self.subst_args(bound.args, &with);
+            if !self.conforms(part, bound.interface, args) {
+                return None;
+            }
+        }
+        Some(with)
+    }
+
+    /// The wraps that the open form of `call`, the call node `e`, takes at `candidate`, or `None`.
+    /// Each member converts to its parameter's type with the open parameters filled, and takes at
+    /// most one wrap; the result itself takes none. It binds what it unifies: `join` calls it
+    /// under a snapshot.
+    pub(super) fn open_at(
+        &mut self,
+        call: OpenCall,
+        e: &mut tir::Expr,
+        candidate: Type,
+    ) -> Option<usize> {
+        let with = self.open_types(call, candidate)?;
+        let members = self.table.open_entry(call).members.clone();
+        let mut wraps = 0;
+        for (at, param) in members {
+            let arg = argument_at(e, at)?;
+            wraps += self.converts_at(arg, param.subst(&with))?;
+        }
+        Some(wraps)
+    }
+
+    /// Settles the open form of `call`, the call node `e`, at `candidate`, which `open_at` took:
+    /// each member gets its `Wrap` and `ToAny`, and the node its type and its type arguments.
+    pub(super) fn settle_open(
+        &mut self,
+        call: OpenCall,
+        e: &mut tir::Expr,
+        candidate: Type,
+    ) -> Result<(), Reported> {
+        let Some(with) = self.open_types(call, candidate) else {
+            return Err(self.proof(e.span)); // proof: quiet reader
+        };
+        let entry = self.table.open_entry(call);
+        let (ret, members) = (entry.ret, entry.members.clone());
+        let mut outcome = Ok(());
+        for (at, param) in members {
+            if let Some(arg) = argument_at(e, at) {
+                let done = self.settle_at(arg, param.subst(&with));
+                outcome = outcome.and(done);
+            }
+        }
+        e.ty = self.table.resolve(ret.subst(&with));
+        if let tir::ExprKind::Call { types, .. } = &mut e.kind {
+            let resolved: Vec<Type> = with.iter().map(|&ty| self.table.resolve(ty)).collect();
+            *types = TypeArgs::intern(&resolved);
+        }
+        outcome
+    }
+
     /// Whether the type `ty` of a late argument meets `filled`. An associated type of an open
     /// parameter meets the argument once the argument decides that parameter. One that the
     /// decided type cannot give meets it too: the parameter's bound reports.
@@ -2361,16 +2618,22 @@ impl Checker<'_> {
             let fits = self.unify(filled, ty);
             let part = self.table.resolve(var);
             self.table.rollback(snapshot);
-            // The open form (C1c) gives a member whose part at `T` is open to the candidate.
-            if !fits || part.holds_infer() {
+            // A part that is an open variable takes its type from the join, which checks the bound.
+            // A part that holds one inside, as `Boxed<Int>`, breaks the bound when it does with
+            // each `Int` as `i64`, as on `main`.
+            if !fits || matches!(self.table.resolve(part).kind(), TypeKind::Infer(_)) {
                 continue;
             }
+            let part = self.table.default_open(part);
             with[t] = part;
             for &bound in &bounds.list {
-                if self.subst_args(bound.args, &with).holds_infer() {
+                let args = self.subst_args(bound.args, &with);
+                if args.holds_infer() || part.holds_infer() {
                     continue;
                 }
-                if let Err(reported) = self.check_bound_of(at, part, bound, &with, None, None) {
+                if !self.conforms(part, bound.interface, args)
+                    && let Err(reported) = self.check_bound_of(at, part, bound, &with, None, None)
+                {
                     return Some(reported);
                 }
             }
@@ -2540,8 +2803,18 @@ impl Checker<'_> {
         let mut with = with.to_vec();
         with[t as usize] = wanted;
         let member_want = param?.subst(&with);
-        let got = self.table.default_open(self.table.resolve(got));
-        if got == member_want || wanted.holds_infer() || member_want.holds_infer() {
+        let got = self.table.resolve(got);
+        // A member whose type differs only by its wraps: the result takes too many (Q24), and the
+        // call reports as a whole.
+        let mut bare = member_want;
+        while let TypeKind::Optional(inner) = bare.kind() {
+            bare = inner;
+        }
+        let snapshot = self.table.snapshot();
+        let wraps_only = bare != member_want && self.unify(got, bare);
+        self.table.rollback(snapshot);
+        let got = self.table.default_open(got);
+        if got == member_want || wraps_only || wanted.holds_infer() || member_want.holds_infer() {
             return None;
         }
         let d = self.mismatch(at, None, member_want, got, origin);

@@ -234,6 +234,20 @@ impl Checker<'_> {
         }
     }
 
+    /// The type that the join of `members` takes, with no report and no bind: `None` when it has
+    /// no candidate, no type or no value. Under `required`, that type when each member takes it.
+    pub(super) fn join_type(
+        &mut self,
+        members: &mut [JoinMember<'_>],
+        hole: Option<Symbol>,
+        required: Option<Type>,
+    ) -> Option<Type> {
+        match self.join_members(members, hole, None, required) {
+            Ok(Joined::Typed(ty)) => Some(ty),
+            Ok(Joined::Untyped | Joined::Never) | Err(_) => None,
+        }
+    }
+
     /// The candidate that each member takes with the fewest wraps. Each test runs under a
     /// snapshot, which it rolls back: the join binds nothing. A required type decides the join
     /// also when a member is left out. `hole` is the `T` of a call's
@@ -379,7 +393,7 @@ impl Checker<'_> {
     /// `converts` for the value position `e`: a made value converts at its top, and a value that
     /// has value positions converts at each of them. It unifies what `settle_at` unifies, in the
     /// same order, so that `settle_at` takes the steps that this counts.
-    fn converts_at(&mut self, e: &mut tir::Expr, target: Type) -> Option<usize> {
+    pub(super) fn converts_at(&mut self, e: &mut tir::Expr, target: Type) -> Option<usize> {
         if e.ty == Type::NEVER {
             return Some(0);
         }
@@ -395,7 +409,19 @@ impl Checker<'_> {
                 }
                 wraps
             }
-            None => self.conversion(e.ty, target).map(|steps| steps.len()),
+            None => match self.table.open_call(e) {
+                // An open call converts as its closed form when it can, else at the candidate.
+                Some(call) => {
+                    let snapshot = self.table.snapshot();
+                    if let Some(steps) = self.conversion(e.ty, target) {
+                        self.keep_snapshot(snapshot);
+                        return Some(steps.len());
+                    }
+                    self.table.rollback(snapshot);
+                    self.open_at(call, e, target)
+                }
+                None => self.conversion(e.ty, target).map(|steps| steps.len()),
+            },
         })
     }
 
@@ -429,7 +455,7 @@ impl Checker<'_> {
     /// Settles the value position `e` to `target`: it adds each `Wrap` and `ToAny` at the position
     /// where it applies, and gives each value position on the way its type. `Err` holds the proof
     /// of an E0043.
-    fn settle_at(&mut self, e: &mut tir::Expr, target: Type) -> Result<(), Reported> {
+    pub(super) fn settle_at(&mut self, e: &mut tir::Expr, target: Type) -> Result<(), Reported> {
         #[cfg(test)]
         SETTLED.set(SETTLED.get() + 1);
         if e.ty == Type::NEVER {
@@ -452,10 +478,23 @@ impl Checker<'_> {
                 }
                 Ok(())
             }
-            None => match self.conversion(e.ty, target) {
-                Some(steps) => self.convert_in_place(e, &steps),
-                // `converts_at` took this value under the same bindings, so no value gets here.
-                None => Err(self.proof(e.span)),
+            None => match self.table.open_call(e) {
+                // As `converts_at`: the closed form when it converts, else the open form.
+                Some(call) => {
+                    let snapshot = self.table.snapshot();
+                    if let Some(steps) = self.conversion(e.ty, target) {
+                        self.keep_snapshot(snapshot);
+                        return self.convert_in_place(e, &steps);
+                    }
+                    self.table.rollback(snapshot);
+                    self.settle_open(call, e, target)
+                }
+                None => match self.conversion(e.ty, target) {
+                    Some(steps) => self.convert_in_place(e, &steps),
+                    // `converts_at` took this value under the same bindings, so no value gets
+                    // here.
+                    None => Err(self.proof(e.span)),
+                },
             },
         })
     }
@@ -648,7 +687,7 @@ fn member_type(value: &Checked) -> Option<Type> {
 
 /// The type that a member at `at` converts to when the join is `ty`: `ty` itself, or the type of
 /// its parameter with `hole` replaced by `ty`.
-fn target(at: Place, hole: Option<Symbol>, ty: Type) -> Type {
+pub(super) fn target(at: Place, hole: Option<Symbol>, ty: Type) -> Type {
     match (at, hole) {
         (Place::Part { place, .. }, Some(hole)) => fill(place, hole, ty),
         (Place::Part { place, .. }, None) => place,
@@ -864,7 +903,7 @@ fn fill_in(place: Type, hole: Symbol, with: Type, memo: &mut FxHashMap<Type, Typ
 /// The part of `ty`, an argument's type, at `hole` in its parameter's type `place`. An argument
 /// that is not optional against a `place` of `T?` converts at its top, so its part is its own
 /// type. `None` when `ty` does not have the shape of `place`.
-fn part_at(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
+pub(super) fn part_at(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
     match (place.kind(), ty.kind()) {
         (TypeKind::Optional(inner), kind) if !matches!(kind, TypeKind::Optional(_)) => {
             part_in(inner, hole, ty)

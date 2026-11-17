@@ -14,6 +14,7 @@ use std::cell::Cell;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::generic::OpenEntry;
 use super::reports::Reported;
 use super::{Checker, Poisoned};
 use crate::conformance::ensure_stack;
@@ -173,9 +174,48 @@ pub(super) struct Table {
     ready: Vec<Waiting>,
     /// How many snapshots are open: a change is logged, and a check is queued, only while one is.
     open: Cell<usize>,
+    /// The generic calls whose closed form is kept and whose open form a join can try. The list
+    /// is for the whole function, so a closure's body shares it (see `Checker::open_at`).
+    opens: Vec<OpenEntry>,
+    /// The index in `opens` of each such call, by the span of its call node.
+    open_spans: FxHashMap<Span, usize>,
 }
 
+/// A generic call whose open form a join can try: an index into the table's list of such calls.
+#[derive(Clone, Copy)]
+pub(super) struct OpenCall(usize);
+
 impl Table {
+    /// Keeps the open form of the generic call at `at`. A later entry for the same span, from a
+    /// check of the call again, takes its place.
+    pub(super) fn add_open(&mut self, at: Span, entry: OpenEntry) {
+        self.open_spans.insert(at, self.opens.len());
+        self.opens.push(entry);
+    }
+
+    /// Drops the open form of the call at `at`: the call is closed only.
+    pub(super) fn forget_open(&mut self, at: Span) {
+        self.open_spans.remove(&at);
+    }
+
+    /// The open call that the call node `e` is, if it has an open form.
+    pub(super) fn open_call(&self, e: &tir::Expr) -> Option<OpenCall> {
+        let call = matches!(
+            e.kind,
+            ExprKind::Call { .. }
+                | ExprKind::Struct { .. }
+                | ExprKind::Variant { .. }
+                | ExprKind::New { .. }
+        );
+        let index = self.open_spans.get(&e.span).copied();
+        index.filter(|_| call).map(OpenCall)
+    }
+
+    /// What the open form of `call` needs.
+    pub(super) fn open_entry(&self, call: OpenCall) -> &OpenEntry {
+        &self.opens[call.0]
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.slots.is_empty()
     }

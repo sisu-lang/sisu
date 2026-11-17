@@ -454,9 +454,10 @@ fn generic_call_in_a_join_should_check_in_each_order() {
 fn generic_call_with_no_taker_should_stay_an_error() {
     // GIVEN generic calls whose type no form can take
     // WHEN each is checked
-    // THEN each reports one E0032 where `main` reports it
+    // THEN each reports one E0032: the call's own join at the call, as a join report has no
+    //      direction (ADR 0052), and an `if` where `main` reports it
     body_rows(&[
-        ("let x = f(xs, Some(1))", &[(Code::Mismatch, (1, 15))]),
+        ("let x = f(xs, Some(1))", &[(Code::Mismatch, (1, 9))]),
         (
             "let t: Two<u8?, u8> = Two(a: Some(a), b: a)\nlet x = if c { t } else { dup(a) }",
             &[(Code::Mismatch, (2, 27))],
