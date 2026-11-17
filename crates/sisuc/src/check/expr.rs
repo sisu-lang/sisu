@@ -3,6 +3,7 @@
 use std::ops::Range;
 
 use super::generic::{Site, mismatch_poison};
+use super::infer::{Kind, LiteralCheck};
 use super::names::{self, Resolved};
 use super::reports::Reported;
 use super::stmt::optional_unit;
@@ -146,6 +147,15 @@ impl Checker<'_> {
     /// The integer literal `value` at `at`, whose token is `literal`, typed by `expected`. An
     /// `f64` must hold it exactly.
     fn integer(&mut self, at: Span, value: i64, literal: Span, expected: Expectation) -> Checked {
+        // A member's literal is an `Int` variable: its fit waits for the type that the join gives.
+        if matches!(expected, Expectation::Member) {
+            let ty = self.int_variable(LiteralCheck {
+                span: at,
+                value: value.unsigned_abs(),
+                negative: value < 0,
+            });
+            return Ok(tir::Expr::new(tir::ExprKind::Int(value), ty, at));
+        }
         let ty = literal_type(expected.ty());
         if ty == Type::F64 {
             // Through `i128`: 2^63, the nearest `f64` to `i64::MAX`, saturates back to it.
@@ -184,6 +194,13 @@ impl Checker<'_> {
             });
         }
         Ok(tir::Expr::new(tir::ExprKind::Int(value), ty, at))
+    }
+
+    /// A new `Int` variable, made at the literal of `check`, whose fit waits for its type.
+    pub(super) fn int_variable(&mut self, check: LiteralCheck) -> Type {
+        let ty = self.table.fresh(Kind::Int, check.span);
+        self.table.literal(ty, check);
+        ty
     }
 
     /// `expr` for each kind of expression.
@@ -664,7 +681,62 @@ impl Checker<'_> {
         if matches!(checked, Err(Poisoned { mismatch: true, .. })) {
             return (checked, true);
         }
-        self.against(e, checked, want)
+        self.close(e, checked, want)
+    }
+
+    /// `against`, as `settled` asks it for `e`, whose context is `expected`. A member keeps its
+    /// variables open. A required type takes the value through the steps of `conversion`, else
+    /// `against` reports it. A value with no type to meet shows each `Int` as `i64`, and an
+    /// open `Any` is E0050 at its first source. Each variable of a report is poisoned.
+    pub(super) fn close(
+        &mut self,
+        e: &ast::Expr,
+        checked: Checked,
+        expected: Expectation,
+    ) -> (Checked, bool) {
+        let checked = match (checked, expected) {
+            (checked, Expectation::Member) => return (checked, false),
+            (checked, Expectation::None | Expectation::Poisoned) => {
+                return (self.close_open(checked, expected), false);
+            }
+            (Ok(value), Expectation::Required(want, _)) if value.ty != want => {
+                match self.conversion(value.ty, want) {
+                    Some(steps) => return (self.apply(value, &steps), false),
+                    None => Ok(value),
+                }
+            }
+            (checked, _) => checked,
+        };
+        let found = type_of(&checked);
+        let (checked, reported) = self.against(e, checked, expected);
+        if reported && let Some(found) = found {
+            self.table.poison(found);
+        }
+        (checked, reported)
+    }
+
+    /// `close` with no type to meet: the type of `checked` with each open `Int` as `i64`, or
+    /// E0050 at the first source of each open `Any`. A failed context reports none: its own
+    /// report covers it, as `none` keeps quiet for it.
+    fn close_open(&mut self, checked: Checked, expected: Expectation) -> Checked {
+        let Ok(mut value) = checked else {
+            return checked;
+        };
+        if !value.ty.holds_infer() {
+            return Ok(value);
+        }
+        let mut first = None;
+        for unsettled in self.table.unsettled(value.ty) {
+            if expected == Expectation::None {
+                let reported = self.report_unsettled(unsettled);
+                first.get_or_insert(reported);
+            }
+        }
+        if let Some(reported) = first {
+            return Err(Poisoned::untyped(reported));
+        }
+        value.ty = self.table.default_open(value.ty);
+        Ok(value)
     }
 
     /// `operand` for `e`, already checked; a mismatch names where `want` came from.
@@ -709,6 +781,11 @@ impl Checker<'_> {
     /// A `None`, of the optional type `expected`.
     pub(super) fn none(&mut self, span: Span, expected: Expectation) -> Checked {
         let kind = match expected {
+            // A member's `None` is an `Any?`: the join gives its payload.
+            Expectation::Member => {
+                let ty = Type::optional(self.table.fresh(Kind::Any, span));
+                return Ok(tir::Expr::new(tir::ExprKind::None, ty, span));
+            }
             Expectation::Poisoned => return Err(Poisoned::untyped(self.poisoned_context(span))),
             Expectation::Required(ty, _) | Expectation::Hint { want: ty, .. }
                 if matches!(ty.kind(), TypeKind::Optional(_)) =>

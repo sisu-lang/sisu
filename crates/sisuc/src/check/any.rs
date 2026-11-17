@@ -483,10 +483,6 @@ impl Checker<'_> {
     /// value whose type conforms to its interface. A value of an `Int` or `Any` variable does not
     /// convert to an `any` type: it unifies. It binds what it unifies, so a caller that only
     /// tests asks under a snapshot.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first caller comes in Task 5")
-    )]
     pub(super) fn conversion(&mut self, from: Type, to: Type) -> Option<Vec<Conversion>> {
         if self.unify(from, to) {
             return Some(Vec::new());

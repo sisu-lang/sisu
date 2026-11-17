@@ -93,6 +93,23 @@ pub(super) enum Expectation {
         siblings: Type,
         origin: Origin,
     },
+    /// The value is a member of a join, or at a value position inside one: its inference
+    /// variables stay open. The join closes them when it applies its own expectation.
+    #[expect(dead_code, reason = "the first caller comes in Task 5")]
+    Member,
+}
+
+/// A position that hands the expectation of a value on to one part of it (see
+/// [`Expectation::part`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Part {
+    /// The argument of a `Some`, which takes the payload of an expected optional.
+    Payload,
+    /// The value of a block, which takes what the block takes.
+    Tail,
+    /// The argument of `dbg`, which has the type of the call. It is an operand, so a hint does
+    /// not reach it.
+    Argument,
 }
 
 const _: () = assert!(
@@ -105,7 +122,32 @@ impl Expectation {
     pub(super) fn ty(self) -> Option<Type> {
         match self {
             Self::Required(ty, _) | Self::Hint { want: ty, .. } => Some(ty),
-            Self::None | Self::Poisoned => None,
+            Self::None | Self::Poisoned | Self::Member => None,
+        }
+    }
+
+    /// What the part `at` of the value expects. A required optional gives its payload to a
+    /// `Some`, with no origin, so that `let x: u8? = Some("s")` names no declaration. A hinted
+    /// optional gives its payload as a hint. A hint gives `dbg` its required type. A member
+    /// gives each part `Member`. Any other expectation goes to the part as it is.
+    pub(super) fn part(self, at: Part) -> Self {
+        let payload = |ty: Type| match ty.kind() {
+            TypeKind::Optional(payload) => Some(payload),
+            _ => None,
+        };
+        match (self, at) {
+            (Self::Required(ty, _), Part::Payload) => {
+                payload(ty).map_or(self, |payload| Self::Required(payload, Origin::None))
+            }
+            (Self::Hint { want, .. }, Part::Payload) => {
+                payload(want).map_or(self, |payload| Self::Hint {
+                    want: payload,
+                    siblings: payload,
+                    origin: Origin::None,
+                })
+            }
+            (Self::Hint { .. }, Part::Argument) => self.plain(),
+            _ => self,
         }
     }
 
@@ -129,7 +171,7 @@ impl Expectation {
     pub(super) fn origin(self) -> Origin {
         match self {
             Self::Required(_, origin) | Self::Hint { origin, .. } => origin,
-            Self::None | Self::Poisoned => Origin::None,
+            Self::None | Self::Poisoned | Self::Member => Origin::None,
         }
     }
 

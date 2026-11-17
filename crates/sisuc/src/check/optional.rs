@@ -7,7 +7,7 @@ use super::any::is_target;
 use super::generic::{Declarer, GenericSig, Site, mark, written_args};
 use super::mut_args::Callee;
 use super::{
-    Checked, Checker, DiagnosticKind, Expectation, Origin, Poisoned, optional_of, type_of,
+    Checked, Checker, DiagnosticKind, Expectation, Origin, Part, Poisoned, optional_of, type_of,
 };
 use crate::ast;
 use crate::diagnostic::{Definition, suggestion};
@@ -87,16 +87,7 @@ impl Checker<'_> {
             {
                 let e = &args[0].value;
                 // A hinted `Some` gives its hint to the argument (see `Expectation::Hint`).
-                let checked = if hinted {
-                    let hint = Expectation::Hint {
-                        want: payload,
-                        siblings: payload,
-                        origin: Origin::None,
-                    };
-                    self.value(e, hint)
-                } else {
-                    self.value(e, Expectation::Required(payload, Origin::None))
-                };
+                let checked = self.value(e, site.expected.part(Part::Payload));
                 match type_of(&checked) {
                     // An object that does not convert to the hint keeps its own type: the join
                     // converts it to an `any` type, or the other values to it, or reports it. So
@@ -126,6 +117,16 @@ impl Checker<'_> {
                         TypeArgs::NONE,
                     ),
                 }
+            }
+            // A member gives its argument `Member`: the payload stays open, as the argument does.
+            None if matches!(site.expected, Expectation::Member)
+                && site.written.is_empty()
+                && plain =>
+            {
+                let checked = self.value(&args[0].value, site.expected.part(Part::Payload));
+                // The type is read only when the argument holds.
+                let found = type_of(&checked).map_or(Type::NEVER, optional_of);
+                (checked, found, TypeArgs::NONE)
             }
             _ => {
                 let (declared, payload, ret) = some_shape(open);

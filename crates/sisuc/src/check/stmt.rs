@@ -5,7 +5,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::any::{AnyJoin, SEED, is_target, widen};
 use super::array::must_unwrap;
 use super::enums::unwrapped;
-use super::expectation::own_name;
+use super::expectation::{Part, own_name};
 use super::expr::{fits, local};
 use super::extend::mut_self_removal;
 use super::generic::Ahead;
@@ -174,8 +174,12 @@ impl Checker<'_> {
             {
                 self.body.dropped = Some(e.span);
             }
-            let (checked, invalid_jump) =
-                self.jumps(|c| c.stmt(stmt, if last { expected } else { Expectation::None }));
+            let want = if last {
+                expected.part(Part::Tail)
+            } else {
+                Expectation::None
+            };
+            let (checked, invalid_jump) = self.jumps(|c| c.stmt(stmt, want));
             let stmt_ty = match checked {
                 Ok(lowered) => {
                     if !last

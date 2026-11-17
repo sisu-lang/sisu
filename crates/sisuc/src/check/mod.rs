@@ -61,7 +61,7 @@ use alias::{AliasInfo, Aliases, FieldType, UseCheck};
 use assoc::{Choice, Choices, Named};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable, reserved_name};
-use expectation::{Expectation, Origin};
+use expectation::{Expectation, Origin, Part};
 use extend::Extension;
 use infer::WriteBack;
 use interface::{Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
@@ -1591,7 +1591,7 @@ impl<'src> Checker<'src> {
         if !table.is_empty() {
             let written = result.write_back_all(&mut table);
             for unsettled in written.unsettled {
-                self.report_unsettled(unsettled);
+                let _reported = self.report_unsettled(unsettled);
             }
             debug_assert!(
                 !written.open || self.diagnostics.errors() > errors,

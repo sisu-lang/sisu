@@ -6,7 +6,7 @@ use super::array::pair;
 use super::expr::{path, read_jump, typed, unlabeled};
 use super::mut_args::Callee;
 use super::reports::Reported;
-use super::{Checked, Checker, Expectation, Origin, Poisoned, type_of};
+use super::{Checked, Checker, Expectation, Origin, Part, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Expected, MismatchFix};
 use crate::source::Span;
@@ -119,7 +119,7 @@ impl Checker<'_> {
         self.refuse_mut(args, Callee::Unnamed(&function));
         // The argument is an operand, not a value part of the value, so a hint does not reach it.
         // Not `value()`: a `never` argument needs its own code.
-        let checked = read_jump(self.expr(&arg.value, expected.plain()));
+        let checked = read_jump(self.expr(&arg.value, expected.part(Part::Argument)));
         let error = match type_of(&checked) {
             Some(Type::NEVER) => DiagnosticKind::PrintNever {
                 function,

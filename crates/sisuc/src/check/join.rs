@@ -230,7 +230,10 @@ impl Checker<'_> {
         };
         let required = match expected {
             Expectation::Required(ty, origin) => Some((ty, origin)),
-            Expectation::None | Expectation::Poisoned | Expectation::Hint { .. } => None,
+            Expectation::None
+            | Expectation::Poisoned
+            | Expectation::Hint { .. }
+            | Expectation::Member => None,
         };
         // The first member that is left out: untyped poison.
         let left_out = members.iter().find_map(|member| match &*member.value {

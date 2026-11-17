@@ -14,6 +14,7 @@ use std::cell::Cell;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use super::reports::Reported;
 use super::{Checker, Poisoned};
 use crate::conformance::ensure_stack;
 use crate::diagnostic::{DiagnosticKind, Literal};
@@ -174,10 +175,6 @@ impl Table {
     }
 
     /// A new variable of `kind`, made at `origin`. Its type is `Infer(id)`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first caller comes in Task 4")
-    )]
     pub(super) fn fresh(&mut self, kind: Kind, origin: Span) -> Type {
         let id = u32::try_from(self.slots.len())
             .expect("a function should make fewer than 2^32 variables");
@@ -200,10 +197,6 @@ impl Table {
 
     /// Keeps `check` for the `Int` variable `var`, which has no type yet: it reports when the
     /// variable gets one, and once however many variables unify with it.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first caller comes in Task 4")
-    )]
     pub(super) fn literal(&mut self, var: Type, check: LiteralCheck) {
         let TypeKind::Infer(id) = var.kind() else {
             debug_assert!(false, "a literal check should wait for a variable");
@@ -246,10 +239,6 @@ impl Table {
 
     /// `resolve`, with each open `Int` variable as `i64`: the type as a diagnostic shows it. An
     /// open `Any` stays open. It binds nothing, so a later use can still settle the variable.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first caller comes in Task 4")
-    )]
     pub(super) fn default_open(&self, ty: Type) -> Type {
         self.rebuild(ty, Open::Default)
     }
@@ -270,10 +259,6 @@ impl Table {
     /// not hold it (the occurs check). The checks whose variable got a type are returned; inside a
     /// snapshot they stay queued until `keep` returns them.
     #[must_use = "a check that was waiting for a type must be reported"]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first caller comes in Task 4")
-    )]
     fn unify(&mut self, a: Type, b: Type) -> Option<Vec<Waiting>> {
         let snapshot = self.snapshot();
         if self.unify_pairs(a, b) {
@@ -285,10 +270,6 @@ impl Table {
     }
 
     /// A mark to `rollback` to, or to `keep`. Each snapshot ends with one of the two.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first caller comes in Task 4")
-    )]
     pub(super) fn snapshot(&self) -> Snapshot {
         self.open.set(self.open.get() + 1);
         Snapshot {
@@ -337,10 +318,6 @@ impl Table {
     /// Ends the snapshot `to` and keeps what happened since. The checks that became ready are
     /// returned when no outer snapshot is open, and stay queued for the outer one otherwise.
     #[must_use = "a check that was waiting for a type must be reported"]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first caller comes in Task 4")
-    )]
     fn keep(&mut self, to: Snapshot) -> Vec<Waiting> {
         debug_assert!(to.log <= self.log.len(), "a snapshot should end once");
         self.close();
@@ -359,19 +336,33 @@ impl Table {
     }
 
     /// Each variable in `ty` reports nothing more: a failed use reached it.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first caller comes in Task 4")
-    )]
     pub(super) fn poison(&mut self, ty: Type) {
         for root in self.open_roots(ty) {
-            let slot = &mut self.slots[root as usize].root;
-            if !slot.poisoned {
-                slot.poisoned = true;
-                if self.open.get() > 0 {
-                    self.log.push(Undo::Poison { root });
-                }
+            self.poison_root(root);
+        }
+    }
+
+    /// The first source of each open `Any` variable in `ty` that no failed use reached, which
+    /// `write_back` would report. Each one is poisoned, so that it reports once.
+    pub(super) fn unsettled(&mut self, ty: Type) -> Vec<Unsettled> {
+        let mut found = Vec::new();
+        for root in self.open_roots(ty) {
+            let known = self.slots[root as usize].root;
+            if known.kind == Kind::Any && !known.poisoned {
+                found.push(Unsettled {
+                    origin: self.first_origin(root),
+                });
+                self.poison_root(root);
             }
+        }
+        found
+    }
+
+    fn poison_root(&mut self, root: u32) {
+        let slot = &mut self.slots[root as usize].root;
+        if !slot.poisoned {
+            slot.poisoned = true;
+            self.record(Undo::Poison { root });
         }
     }
 
@@ -907,10 +898,6 @@ impl Checker<'_> {
     /// Makes `a` and `b` one type, if the table lets it, and reports each check that was waiting
     /// for a type that this gave. With `keep`, the only place that reads the checks that the
     /// table gives back.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first caller comes in Task 4")
-    )]
     pub(super) fn unify(&mut self, a: Type, b: Type) -> bool {
         let Some(ready) = self.table.unify(a, b) else {
             return false;
@@ -925,7 +912,7 @@ impl Checker<'_> {
     /// if no outer snapshot is open.
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "the first caller comes in Task 4")
+        expect(dead_code, reason = "the first caller comes in Task 5")
     )]
     pub(super) fn keep_snapshot(&mut self, to: Snapshot) {
         for waiting in self.table.keep(to) {
@@ -934,13 +921,13 @@ impl Checker<'_> {
     }
 
     /// Reports E0050 at the origin of an `Any` variable that no type reached.
-    pub(super) fn report_unsettled(&mut self, unsettled: Unsettled) {
+    pub(super) fn report_unsettled(&mut self, unsettled: Unsettled) -> Reported {
         let literal = if self.source.text(unsettled.origin).starts_with('[') {
             Literal::EmptyArray
         } else {
             Literal::None
         };
-        let _reported = self.report_uninferred(literal, unsettled.origin);
+        self.report_uninferred(literal, unsettled.origin)
     }
 }
 
@@ -1074,6 +1061,23 @@ mod tests {
             ]
         );
         assert!(types.iter().all(|ty| ty.holds_infer()));
+    }
+
+    #[test]
+    fn unsettled_should_name_each_open_any_set_once() {
+        let mut table = Table::default();
+        let later = table.fresh(Kind::Any, at(10));
+        let earlier = table.fresh(Kind::Any, at(5));
+        let int = table.fresh(Kind::Int, at(1));
+        assert!(table.unify(later, earlier).is_some());
+        let ty = Type::array(Type::optional(later));
+        // The set is named at its first origin; an `Int` is not named.
+        assert_eq!(table.unsettled(ty), [Unsettled { origin: at(5) }]);
+        assert_eq!(table.unsettled(int), []);
+        // The set was poisoned: it is named once, and `write_back` reports it no more.
+        assert_eq!(table.unsettled(earlier), []);
+        let mut written = ty;
+        assert_eq!(write_back(&mut table, &mut written), []);
     }
 
     #[test]

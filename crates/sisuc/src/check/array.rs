@@ -3,6 +3,7 @@
 use super::any::{AnyJoin, is_target, widen};
 use super::expr::{fits, literal_type, no_member, path, takes_unit, typed};
 use super::generic::{Rank, mark, mismatch_poison};
+use super::infer::Kind;
 use super::place::{Change, first_safe, is_struct};
 use super::reports::Reported;
 use super::stmt::optional_unit;
@@ -85,6 +86,11 @@ impl Checker<'_> {
         let quiet = expected == Expectation::Poisoned;
         if elements.is_empty() {
             let d = match expected {
+                // A member's `[]` is an `[Any]`: the join gives its element.
+                Expectation::Member => {
+                    let element = self.table.fresh(Kind::Any, span);
+                    return self.array(span, element, Vec::new(), false);
+                }
                 Expectation::Poisoned => {
                     return Err(Poisoned::untyped(self.poisoned_context(span)));
                 }
@@ -531,10 +537,10 @@ impl Checker<'_> {
     ) -> Checked {
         let element = expected_element(expected.ty());
         // Without an element type, a `None` or `[]` cannot be inferred, unless `expected` is
-        // `Poisoned`.
+        // `Poisoned`. A member's value is a member too: the join gives the payload of its `None`.
         let hint = match element {
             Some(element) => Expectation::Required(element, expected.origin()),
-            None if expected == Expectation::Poisoned => Expectation::Poisoned,
+            None if matches!(expected, Expectation::Poisoned | Expectation::Member) => expected,
             None => Expectation::None,
         };
         // `operand`, split so the class rule runs between the check and the wrap.

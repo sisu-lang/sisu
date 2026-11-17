@@ -3,6 +3,7 @@
 use super::any::{is_target, widen};
 use super::expr::{fits, if_some, literal_type, local, operator, path, takes_unit, typed};
 use super::generic::{Rank, mismatched};
+use super::infer::LiteralCheck;
 use super::interface::Operation;
 use super::reports::{Held, Reported};
 use super::{
@@ -27,6 +28,21 @@ impl Checker<'_> {
         operand: &ast::Expr,
         expected: Expectation,
     ) -> Result<(Type, (Checked, bool)), Poisoned> {
+        // A member's `-` of a literal is a literal of an `Int` variable, as `integer` makes. Any
+        // other operand is not a value position, so it is not a member.
+        let expected = match (expected, &operand.kind) {
+            (Expectation::Member, &ExprKind::Int { value, .. }) => {
+                let ty = self.int_variable(LiteralCheck {
+                    span,
+                    value: value.unsigned_abs(),
+                    negative: true,
+                });
+                let literal = tir::Expr::new(tir::ExprKind::Int(value), ty, operand.span);
+                return Ok((ty, (Ok(literal), false)));
+            }
+            (Expectation::Member, _) => Expectation::None,
+            (expected, _) => expected,
+        };
         // A `None` expects an `i64`, as in `None + 1`. The operand is not a value part of the
         // value, so a hint does not reach it.
         let expected = if expected == Expectation::None && self.none_written(operand) {
