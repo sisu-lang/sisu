@@ -2182,6 +2182,7 @@ mod tests {
     #[test]
     fn judge_join_order_should_ignore_warnings() {
         let program = "fn main() {\n    let unused = 3\n    let c = [1].len() == 1\n    let x = if c { 1 } else { 2 }\n    print(x)\n}\n";
+        assert!(crate::generate::swap_joins(program).is_some());
         let g = with_mistakes(program, Vec::new());
         assert!(judge_join_order(&g).is_ok());
     }
@@ -2206,6 +2207,7 @@ mod tests {
             }
         }
         println!("programs with a join: {joined} of {FUZZ_SEEDS}");
+        assert!(joined > 0, "a program of the fuzz seeds should have a join");
         for failure in &failures {
             println!("{failure}");
         }

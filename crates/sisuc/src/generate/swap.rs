@@ -1,11 +1,12 @@
 //! The join-order check: the members of a join, in the other order. A join of an `if` or of an
-//! array literal must not depend on the order of its members. So a program that checks clean
-//! must still check clean when they swap. The swap reads tokens, not the syntax tree: the text
-//! is a generated program, which the clean check already passed. A swap of an array site must
-//! parse, which leaves out the brackets of a type.
+//! array literal must not depend on the order of its members. So a program with no error must
+//! still have no error when they swap. The swap reads tokens, not the syntax tree: the text is a
+//! generated program, which the clean check already passed. A swap of an array site must parse.
+//! This leaves out the brackets of a type, and most elements that hold two type arguments.
 
 use std::ops::Range;
 
+use crate::diagnostic::Severity;
 use crate::lexer::{self, Token, TokenKind};
 use crate::parser;
 
@@ -22,8 +23,10 @@ pub(crate) fn swap_joins(program: &str) -> Option<String> {
         .filter_map(|i| match tokens[i].kind {
             TokenKind::If => if_blocks(&tokens, i),
             // The commas of type arguments look like those of elements, as in `[Pair<i64, u8>]`.
-            // Such a swap does not parse, so the parse keeps only array literals. Only a `<`
-            // can start type arguments, and the parse is slow, so it runs only then.
+            // Most such swaps do not parse, so the parse removes them. A call with two type
+            // arguments, as in `[f<i64, u8>(x), y]`, still parses after a wrong swap. The
+            // generator does not write that form. Only a `<` can start type arguments, and the
+            // parse is slow, so it runs only then.
             TokenKind::LBracket => outer_elements(&tokens, i).filter(|pair| {
                 let close = closing(&tokens, i, &TokenKind::LBracket, &TokenKind::RBracket);
                 let angled = close
@@ -47,11 +50,13 @@ pub(crate) fn swap_joins(program: &str) -> Option<String> {
     Some(render(program, 0..program.len(), &pairs, &mut 0))
 }
 
-/// Whether `source` lexes and parses with no error.
+/// Whether `source` lexes and parses with no error. A warning, such as the W0007 that the
+/// generator writes, does not count.
 fn parses(source: &str) -> bool {
     lexer::lex(source).is_ok_and(|lexed| {
         let parsed = parser::parse(lexed, false);
-        parsed.diagnostics.is_empty() && parsed.checkable
+        let no_error = (parsed.diagnostics.iter()).all(|d| d.severity() != Severity::Error);
+        no_error && parsed.checkable
     })
 }
 
