@@ -156,6 +156,13 @@ enum Undo {
         from: u32,
         to: u32,
     },
+    /// The open call at `at` was dropped (`added` false) or added at the end of the list (`added`
+    /// true). `was` is its index before.
+    Open {
+        at: Span,
+        was: Option<usize>,
+        added: bool,
+    },
 }
 
 /// A mark in the undo log and in the queue of ready checks.
@@ -189,13 +196,23 @@ impl Table {
     /// Keeps the open form of the generic call at `at`. A later entry for the same span, from a
     /// check of the call again, takes its place.
     pub(super) fn add_open(&mut self, at: Span, entry: OpenEntry) {
-        self.open_spans.insert(at, self.opens.len());
+        let was = self.open_spans.insert(at, self.opens.len());
         self.opens.push(entry);
+        self.record(Undo::Open {
+            at,
+            was,
+            added: true,
+        });
     }
 
     /// Drops the open form of the call at `at`: the call is closed only.
     pub(super) fn forget_open(&mut self, at: Span) {
-        self.open_spans.remove(&at);
+        let was = self.open_spans.remove(&at);
+        self.record(Undo::Open {
+            at,
+            was,
+            added: false,
+        });
     }
 
     /// The open call that the call node `e` is, if it has an open form.
@@ -353,6 +370,15 @@ impl Table {
                 } => {
                     self.slots[to as usize].waiting.pop();
                     self.obligations[obligation].at = from;
+                }
+                Undo::Open { at, was, added } => {
+                    if added {
+                        self.opens.pop();
+                    }
+                    match was {
+                        Some(index) => self.open_spans.insert(at, index),
+                        None => self.open_spans.remove(&at),
+                    };
                 }
             }
         }

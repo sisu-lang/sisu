@@ -370,7 +370,10 @@ impl Checker<'_> {
         fix: Option<Conversion>,
         conversion: bool,
     ) -> Reported {
-        let kind = self.directed_kind(at, types, origin, fix, conversion);
+        let kind = match self.any_misfit(at, types.0, types.1, origin) {
+            Some(kind) => kind,
+            None => self.directed_kind(at, types, origin, fix, conversion),
+        };
         self.error(kind)
     }
 

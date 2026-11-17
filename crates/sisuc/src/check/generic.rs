@@ -1170,32 +1170,6 @@ fn listed_all(call: &Inference<'_>) -> Vec<Type> {
     call.bindings.found.iter().map(|&ty| listed(ty)).collect()
 }
 
-/// Whether `e` takes `Expectation::Member` as a member of a call's join. Such a value has its own
-/// type, or a type that stays open where the join decides it: an integer literal, a `None`, a
-/// `[]`, a generic call. A value that is a join of its own does not yet. That is an `if`, a
-/// `match`, a loop, a block, an array literal with elements, an operator or a `??`. It meets what
-/// the members decide (see `Checker::late_argument`). A call that has such an argument does not
-/// either, as `Some(if c { 1 } else { 2 })`. Nor does a method call: it can pick among
-/// conformances by the type that it meets.
-fn takes_member(e: &ast::Expr) -> bool {
-    use ast::ExprKind as K;
-    match &e.kind {
-        K::ArrayLit(elements) => elements.is_empty(),
-        K::Call { args, .. } => args.iter().all(|arg| takes_member(&arg.value)),
-        // A method call may pick its conformance by the type that it meets.
-        K::MethodCall { .. }
-        | K::Binary { .. }
-        | K::Coalesce { .. }
-        | K::ArrayFill { .. }
-        | K::If { .. }
-        | K::IfLet { .. }
-        | K::Match { .. }
-        | K::Loop { .. }
-        | K::Block(_) => false,
-        _ => true,
-    }
-}
-
 /// A bound of a decided type parameter of a call, which waits for the parameter's type (see
 /// `Table::obligation`): where it is reported, the bound, and the call's type arguments as a bound
 /// sees them (see `listed`).
@@ -1962,7 +1936,7 @@ impl Checker<'_> {
             }
             let checked = match sig.params[i] {
                 None => mark(self.operand(&arg.value, Expectation::Poisoned)),
-                Some(param) if joins(param) && takes_member(&arg.value) => {
+                Some(param) if joins(param) && self.takes_member(&arg.value) => {
                     let e = &arg.value;
                     let checked = read_jump(self.expr(e, Expectation::Member));
                     // A member that never finishes waits for its join (see `never_members` below).
@@ -2042,7 +2016,8 @@ impl Checker<'_> {
                     && let Some(ty) = type_of(value)
                     && ty != Type::NEVER
                 {
-                    valued.push((filled, ty, argument));
+                    // An associated type in the place takes the member's part there.
+                    valued.push((self.assoc_open(filled, argument), ty, argument));
                 }
                 let place = param.subst(&with);
                 let place = if place.has_assoc() {
@@ -2103,9 +2078,9 @@ impl Checker<'_> {
                 let form = JoinForm::Call { param: name };
                 // A call that failed already reports nothing more against `want`.
                 let joined = match (expected, ret_t) {
-                    (Expectation::Required(want, origin), Some(ret)) if failed.is_none() => {
+                    (Expectation::Required(want, _), Some(ret)) if failed.is_none() => {
                         let at = (t, var, sig.bounds.get(t - owned));
-                        self.required_join(&mut members, at, (ret, &with), (want, origin))
+                        self.required_join(&mut members, at, (ret, &with), want)
                     }
                     _ => Expectation::Member,
                 };
@@ -2264,7 +2239,11 @@ impl Checker<'_> {
                 Err(poisoned) => failed = Some(poisoned.reported()),
             }
         }
-        if let Some(reported) = self.bound_obligations(&call, sig, &decided, (span, failed)) {
+        // A parameter whose join or member reported has no bound left to check.
+        let bounded: Vec<(usize, Type)> = (decided.iter().copied())
+            .filter(|(t, _)| !quiet.contains(t))
+            .collect();
+        if let Some(reported) = self.bound_obligations(&call, sig, &bounded, (span, failed)) {
             failed = Some(reported);
         }
         let list = TypeArgs::intern(
@@ -2338,7 +2317,7 @@ impl Checker<'_> {
         members: &mut [JoinMember<'_>],
         (t, var, bounds): (usize, Type, Option<&Bounds>),
         (ret, with): (Type, &[Type]),
-        (want, origin): (Type, Origin),
+        want: Type,
     ) -> Expectation {
         let TypeKind::Param(name, _) = with[t].kind() else {
             return Expectation::Member;
@@ -2390,8 +2369,9 @@ impl Checker<'_> {
                 type_of(m.value).is_none_or(|ty| self.unify(ty, target(m.at, Some(name), bare)))
             });
         self.table.rollback(snapshot);
+        // The directed report of a member names no origin, as on main (owner ruling 2).
         if opens || !wraps_only {
-            Expectation::Required(part, origin)
+            Expectation::Required(part, Origin::None)
         } else {
             Expectation::Member
         }
@@ -2575,6 +2555,43 @@ impl Checker<'_> {
             .is_none_or(|filled| self.unify(filled, ty))
     }
 
+    /// Whether `e` takes `Expectation::Member` as a member of a call's join. Such a value has its
+    /// own type, or a type that stays open where the join decides it: an integer literal, a
+    /// `None`, a `[]`, a generic call, a case of a generic enum (`Two.P(5, 7)`). A value that is a
+    /// join of its own does not yet. That is an `if`, a `match`, a loop, a block, an array literal
+    /// with elements, an operator or a `??`. It meets what the members decide (see
+    /// `late_argument`). A call that has such an argument does not either, as
+    /// `Some(if c { 1 } else { 2 })`. Nor does a method call: it can pick among conformances by the
+    /// type that it meets.
+    fn takes_member(&mut self, e: &ast::Expr) -> bool {
+        use ast::ExprKind as K;
+        match &e.kind {
+            K::ArrayLit(elements) => elements.is_empty(),
+            K::Call { args, .. } => args.iter().all(|arg| self.takes_member(&arg.value)),
+            K::MethodCall {
+                receiver,
+                method,
+                types,
+                args,
+                safe: false,
+                ..
+            } if types.is_empty() && self.generic_variant(receiver, method).is_some() => {
+                args.iter().all(|arg| self.takes_member(&arg.value))
+            }
+            // A method call may pick its conformance by the type that it meets.
+            K::MethodCall { .. }
+            | K::Binary { .. }
+            | K::Coalesce { .. }
+            | K::ArrayFill { .. }
+            | K::If { .. }
+            | K::IfLet { .. }
+            | K::Match { .. }
+            | K::Loop { .. }
+            | K::Block(_) => false,
+            _ => true,
+        }
+    }
+
     /// An argument at a parameter of type `param`, which the call knows: it meets that type.
     fn known_argument(
         &mut self,
@@ -2679,13 +2696,18 @@ impl Checker<'_> {
                     slot.is_some() && param.is_some_and(|param| names_outside_assoc(param, t))
                 })
                 .map_or(span, |(_, arg)| arg.value.span);
+            // A failed call decides nothing more: each open `Int` of it is `i64`, as on main.
+            let close = |c: &Self, ty: Type| match failed {
+                Some(_) => c.table.default_open(ty),
+                None => c.table.resolve(ty),
+            };
             let with: Vec<Type> = (call.bindings.found.iter())
-                .map(|&ty| self.table.resolve(listed(ty)))
+                .map(|&ty| close(self, listed(ty)))
                 .collect();
-            let ty = self.table.resolve(var);
+            let ty = close(self, var);
             for &bound in &bounds.list {
                 // A bound on a closed type is checked at the call: a failed one poisons it.
-                if failed.is_none() && !ty.holds_infer() && !with.iter().any(|t| t.holds_infer()) {
+                if !ty.holds_infer() && !with.iter().any(|t| t.holds_infer()) {
                     if let Err(reported) = self.check_bound_of(at, ty, bound, &with, None, None) {
                         broken.get_or_insert(reported);
                     }

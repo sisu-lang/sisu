@@ -638,6 +638,22 @@ impl Checker<'_> {
         got: Type,
         origin: Origin,
     ) -> Diagnostic {
+        match self.any_misfit(at, want, got, origin) {
+            Some(kind) => kind.into(),
+            None => self.mismatch(at, source, want, got, origin),
+        }
+    }
+
+    /// The E0154 of the value at `at`, of type `got`, against `want`. `want` is an `any` type, or
+    /// an optional one, and `got` does not conform to its interface. `None` when the mistake is a
+    /// mismatch.
+    pub(super) fn any_misfit(
+        &mut self,
+        at: Span,
+        want: Type,
+        got: Type,
+        origin: Origin,
+    ) -> Option<DiagnosticKind> {
         let target = match want.kind() {
             TypeKind::Optional(payload) => payload,
             _ => want,
@@ -649,9 +665,9 @@ impl Checker<'_> {
                     && !matches!(got.kind(), TypeKind::Any(..))
                     && !self.conforms(got, interface, args) =>
             {
-                self.not_conform(at, got, target, origin).into()
+                Some(self.not_conform(at, got, target, origin))
             }
-            _ => self.mismatch(at, source, want, got, origin),
+            _ => None,
         }
     }
 
