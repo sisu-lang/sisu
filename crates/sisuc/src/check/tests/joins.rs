@@ -628,6 +628,21 @@ fn bound_breaking_member_of_a_closed_call_should_give_only_its_bound_error() {
 }
 
 #[test]
+fn closed_part_of_another_member_should_decide_a_part_that_holds_a_literal() {
+    // GIVEN `Boxed<u8>`, which conforms to `Seen` where `Boxed<i64>` does not, and
+    //       `big(Boxed(v: 1), b)` with `b: Boxed<u8>`
+    // WHEN it is checked
+    // THEN it checks clean: `b` decides the literal in the other member, and the bound holds
+    clean(
+        "interface Seen {\n    fn seen(self) -> i64\n}\nstruct Boxed<T> {\n    v: T\n}\n\
+         extend Boxed<u8>: Seen {\n    fn seen(self) -> i64 { 1 }\n}\n\
+         fn big<T: Seen>(a: T, _b: T) -> T { a }\n\
+         fn main() {\n    let b: Boxed<u8> = Boxed(v: 2)\n    let x = big(Boxed(v: 1), b)\n    \
+         print(x.seen())\n}\n",
+    );
+}
+
+#[test]
 fn open_call_in_a_call_join_should_take_the_candidate() {
     // GIVEN `pick` of a `Two<u8?, u8?>` and `dup(1)`, in each order
     // WHEN each is checked
