@@ -1008,35 +1008,6 @@ pub(super) fn literal_type(ty: Option<Type>) -> Type {
     }
 }
 
-/// Whether `e` is a bare `None` or an empty array literal, also under `dbg`, which passes its
-/// expected type to its argument. Nothing in such a value gives its type, so it takes the type
-/// of its siblings, or is reported if none is known.
-pub(super) fn bare_hole(e: &ast::Expr) -> bool {
-    if let Some(argument) = dbg_argument(e) {
-        return bare_hole(argument);
-    }
-    bare_none(e) || matches!(&e.kind, ExprKind::ArrayLit(elements) if elements.is_empty())
-}
-
-/// The argument of `e`, if `e` is a call of `dbg` with one argument, labeled or not, and no
-/// type argument. A label is an error (E0055), and the argument still takes the context, so
-/// the label adds no second error. No user item can have the name `dbg` (see
-/// `generic_callee`), so the name tells.
-pub(super) fn dbg_argument(e: &ast::Expr) -> Option<&ast::Expr> {
-    match &e.kind {
-        ExprKind::Call {
-            callee,
-            types,
-            args,
-            ..
-        } if types.is_empty() && callee.name.as_str() == "dbg" => match &args[..] {
-            [arg] => Some(&arg.value),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 /// Whether `e` is the empty optional, as `None`, `Option.None` or `Option<T>.None`.
 pub(super) fn none_literal(e: &ast::Expr) -> bool {
     matches!(e.kind, ExprKind::NoneLit) || option_none(e).is_some()

@@ -35,10 +35,6 @@ thread_local! {
 /// A member of a join: a checked value, where it stands, and the span of the label of an E0043
 /// `BareBreak` (the `break` of a loop's member, else the value). A poisoned member takes part with
 /// its type, or is left out when it has none.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 pub(super) struct JoinMember<'a> {
     pub(super) value: &'a mut Checked,
     pub(super) at: Place,
@@ -47,10 +43,6 @@ pub(super) struct JoinMember<'a> {
 
 /// Where a member stands in its join.
 #[derive(Clone, Copy)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 pub(super) enum Place {
     /// The member is its own value: a branch's value, an element, a `break` value, an operand,
     /// or an argument at a bare `T`.
@@ -84,10 +76,6 @@ pub(super) enum JoinForm {
 }
 
 /// What `join` found when no conflict stopped it.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 enum Joined {
     /// Each member converts to this type.
     Typed(Type),
@@ -119,10 +107,6 @@ struct Group {
 
 /// Where a join stands in the source.
 #[derive(Clone, Copy)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 pub(super) struct Heading {
     /// The primary label of a conflict: the `if`, the `[` of an array, the call's name.
     pub(super) head: Span,
@@ -147,10 +131,6 @@ struct Site {
 /// A value at the end of the value positions of a member, with its span and its type. `around` is
 /// its type inside the positions around it (`[t]` for an element, `t?` for a `Some` payload).
 /// `lifted` is its type with `?` added inside those positions (rule A).
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 struct Leaf {
     at: Span,
     ty: Type,
@@ -184,10 +164,6 @@ impl Leaf {
     }
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 impl Checker<'_> {
     /// The one entry of a join: the type of the members, each settled to it. Under a required type
     /// that is the only candidate. `heading` is where the form stands, and `binding` the name of a
@@ -663,10 +639,6 @@ impl Checker<'_> {
 }
 
 /// The type of a member that takes part: its value's, or its poison's when that is typed.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 fn member_type(value: &Checked) -> Option<Type> {
     match value {
         Ok(e) => Some(e.ty),
@@ -676,10 +648,6 @@ fn member_type(value: &Checked) -> Option<Type> {
 
 /// The type that a member at `at` converts to when the join is `ty`: `ty` itself, or the type of
 /// its parameter with `hole` replaced by `ty`.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 fn target(at: Place, hole: Option<Symbol>, ty: Type) -> Type {
     match (at, hole) {
         (Place::Part { place, .. }, Some(hole)) => fill(place, hole, ty),
@@ -689,10 +657,6 @@ fn target(at: Place, hole: Option<Symbol>, ty: Type) -> Type {
 }
 
 /// Each leaf at the value positions of `e`, which is `e` itself when it has none.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 fn collect_leaves(e: &mut tir::Expr, out: &mut Vec<Leaf>) {
     if e.ty != Type::NEVER && !nested_leaves(e, out) {
         out.push(Leaf::of(e));
@@ -702,10 +666,6 @@ fn collect_leaves(e: &mut tir::Expr, out: &mut Vec<Leaf>) {
 /// The leaves at the value positions inside `e`, each with the positions of `e` around it.
 /// `false` when `e` has no value position. Only an element and a payload change the type around
 /// a leaf, so a leaf costs one step per array or `Some` above it: the depth of its type.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 fn nested_leaves(e: &mut tir::Expr, out: &mut Vec<Leaf>) -> bool {
     let start = out.len();
     let mut inner = false;
@@ -735,10 +695,6 @@ fn nested_leaves(e: &mut tir::Expr, out: &mut Vec<Leaf>) -> bool {
 /// `dbg`. In a loop, they are each `break` value that ends that loop. A block with no value gives
 /// `f` a `unit` at the span of `e`, which the block keeps only when `f` changes it. A `match`
 /// with the made arm of an `if let` without an `else` has no value, so it has no value position.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 fn value_positions(e: &mut tir::Expr, f: &mut impl FnMut(&mut tir::Expr)) {
     #[cfg(test)]
     VALUE_STEPS.set(VALUE_STEPS.get() + 1);
@@ -822,10 +778,6 @@ fn value_positions(e: &mut tir::Expr, f: &mut impl FnMut(&mut tir::Expr)) {
 
 /// `value_positions` for the value of `block`, in an expression at `span`. A `never` block has no
 /// value. The block takes the type that `f` gives its value.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 fn block_positions(block: &mut tir::Block, span: Span, f: &mut impl FnMut(&mut tir::Expr)) {
     if block.ty == Type::NEVER {
         return;
@@ -848,10 +800,6 @@ fn block_positions(block: &mut tir::Block, span: Span, f: &mut impl FnMut(&mut t
 // shortcut: a nested loop is entered when it holds any jump (`exits` reads a kept flag). So each
 // join of an enclosing loop walks again into the nested loops that jump, and a deep nest costs n
 // squared. Task 5's `crossed` flag enters a loop only when a `break` in it ends an outer loop.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 fn breaks(e: &mut tir::Expr, depth: usize, f: &mut impl FnMut(&mut tir::Expr)) {
     #[cfg(test)]
     VALUE_STEPS.set(VALUE_STEPS.get() + 1);
@@ -873,19 +821,11 @@ fn breaks(e: &mut tir::Expr, depth: usize, f: &mut impl FnMut(&mut tir::Expr)) {
 
 /// `place` with each `hole` replaced by `with`. Each distinct type inside `place` is filled once,
 /// however many paths lead to it.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 fn fill(place: Type, hole: Symbol, with: Type) -> Type {
     fill_in(place, hole, with, &mut FxHashMap::default())
 }
 
 /// `fill`, with `memo` holding each type that the walk has already filled.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 fn fill_in(place: Type, hole: Symbol, with: Type, memo: &mut FxHashMap<Type, Type>) -> Type {
     if !place.has_param() {
         return place;
@@ -924,10 +864,6 @@ fn fill_in(place: Type, hole: Symbol, with: Type, memo: &mut FxHashMap<Type, Typ
 /// The part of `ty`, an argument's type, at `hole` in its parameter's type `place`. An argument
 /// that is not optional against a `place` of `T?` converts at its top, so its part is its own
 /// type. `None` when `ty` does not have the shape of `place`.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 fn part_at(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
     match (place.kind(), ty.kind()) {
         (TypeKind::Optional(inner), kind) if !matches!(kind, TypeKind::Optional(_)) => {
@@ -938,10 +874,6 @@ fn part_at(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
 }
 
 /// `part_at` below the top.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the first caller comes in Task 5")
-)]
 fn part_in(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
     let args = |ours: TypeArgs, theirs: TypeArgs| {
         (ours.get().iter().zip(theirs.get()))

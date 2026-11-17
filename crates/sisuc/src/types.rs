@@ -619,12 +619,6 @@ impl Type {
         names.open || names.rejected
     }
 
-    /// Whether the type names `REJECTED_INDEX` and not `HOLE_INDEX`, anywhere inside it.
-    pub(crate) fn holds_rejected_hole_only(self) -> bool {
-        let names = self.names();
-        names.rejected && !names.open
-    }
-
     /// Whether the type holds an associated type, anywhere inside it.
     pub(crate) fn has_assoc(self) -> bool {
         self.names().assoc
@@ -1049,18 +1043,14 @@ mod tests {
             let answer = query(ty);
             (answer, READS.get())
         };
-        for (ty, hole, rejected_only, param, optional) in [
-            (holed, true, false, true, false),
-            (rejected, true, true, true, false),
-            (mixed, true, false, true, false),
-            (named, false, false, true, true),
-            (plain, false, false, false, false),
+        for (ty, hole, param, optional) in [
+            (holed, true, true, false),
+            (rejected, true, true, false),
+            (mixed, true, true, false),
+            (named, false, true, true),
+            (plain, false, false, false),
         ] {
             assert_eq!(reads(Type::holds_hole, ty), (hole, 1));
-            assert_eq!(
-                reads(Type::holds_rejected_hole_only, ty),
-                (rejected_only, 1)
-            );
             assert_eq!(reads(Type::has_param, ty), (param, 1));
             assert_eq!(reads(Type::holds_optional, ty), (optional, 1));
         }

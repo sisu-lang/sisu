@@ -361,8 +361,6 @@ const GAP_POINTS: &[&str] = &[
     "type_meets",
     "assoc_conforms",
     "listed_inheritance",
-    "names_unbound",
-    "wider_than",
     "make_check keeps a conformance",
     "make_check keeps an any",
     "make_check keeps an applied type",
@@ -6920,7 +6918,7 @@ fn res<E>() -> Result<i64, E> { Ok(7) }
 fn empty<X>() -> Two<X, bool> { Two(a: [], b: true) }
 fn wait<T>(_c: Two<T, bool>, _d: Result<T, string>) -> i64 { 1 }
 fn main() { print(wait(empty(), res())) }",
-            &["names_unbound"],
+            &[],
         ),
         (
             "the same with a callee that is not generic",
@@ -6935,7 +6933,7 @@ fn main() { print(wait(empty(), res())) }",
             "the bound parameter is itself optional under a hint",
             r"fn wide<T>(a: T, _b: T?) -> T { a }
 fn main() { let w: u8? = wide(1, Some(Some(2))); print(w ?? 0) }",
-            &["wider_than"],
+            &[],
         ),
         (
             "the same value, a plain payload",

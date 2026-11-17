@@ -1079,11 +1079,12 @@ struct Body {
     self_type: SelfType,
     /// Loops open around the code being checked, innermost last: what a `break` would act on.
     loops: Vec<LoopContext>,
-    /// The waiting generic call that the outer call is checking as an argument.
-    context_hint: Option<generic::ContextHint>,
     /// The E0050 of each generic call whose result cannot meet its context (see `Misfit`). A
     /// report that uses the result takes its entry. Each entry left is pushed when the body ends.
     misfits: Vec<Option<Diagnostic>>,
+    /// The bounds of the decided type parameters of the calls in the body, by `ObligationId`,
+    /// each waiting for its parameter's type (see `Table::obligation`).
+    obligations: Vec<generic::BoundObligation>,
     /// The safe method call being checked: `receiver?.method(...)` at this span.
     safe_call: Option<Span>,
     /// The span of the expression or block being checked whose value no code uses: a statement,
@@ -1172,9 +1173,6 @@ struct Body {
     ahead: Vec<((Span, bool), Option<generic::Ahead>, bool)>,
     /// Where in `ahead` the last work kept for each span and kind is.
     ahead_at: FxHashMap<(Span, bool), usize>,
-    /// What `takes_context` answered for each array literal and `Some(...)`, with the context,
-    /// by the span of the expression.
-    taken: FxHashMap<(Span, Type), bool>,
     /// What `rank_value` answered for each expression, by its span, and whether ranking it
     /// cleared `fit`. A span is checked in one scope only (there are no closures yet), so the
     /// answer holds for every call that ranks it.

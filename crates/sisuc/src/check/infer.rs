@@ -218,10 +218,6 @@ impl Table {
 
     /// Keeps the obligation `id`, which needs `ty` to hold no open variable: it is ready when the
     /// last one gets its type, or now when `ty` holds none.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first caller comes in Task 5")
-    )]
     pub(super) fn obligation(&mut self, ty: Type, id: ObligationId) {
         let Some(&at) = self.open_roots(ty).first() else {
             let ty = self.resolve(ty);
@@ -253,10 +249,6 @@ impl Table {
     /// `resolve`, with each open variable as one stand-in for its kind: two types that differ only
     /// in their open variables of one kind give one key. A join tests one candidate per key. A
     /// key is no type to use: its stand-ins name no variable of the table.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first caller comes in Task 5")
-    )]
     pub(super) fn key(&self, ty: Type) -> Type {
         self.rebuild(ty, Open::Key)
     }
@@ -869,11 +861,16 @@ impl WriteBack for Result<tir::Expr, Poisoned> {
 }
 
 impl Checker<'_> {
-    /// Reports the check that was waiting, which `ty` has answered: a literal that does not fit
-    /// (E0040, E0042 or E0104, as `integer` reports it for a literal whose type is known).
+    /// Reports the check that was waiting, which `ty` has answered. It is a literal that does not
+    /// fit (E0040, E0042 or E0104, as `integer` reports it for a literal whose type is known). Or
+    /// it is a bound of a call's decided type parameter that `ty` does not meet.
     pub(super) fn report_waiting(&mut self, waiting: Waiting) {
-        let Waiting::Literal { check, ty } = waiting else {
-            panic!("the obligations of `generic.rs` and `conform.rs` land in Task 5");
+        let (check, ty) = match waiting {
+            Waiting::Literal { check, ty } => (check, ty),
+            Waiting::Obligation { id, ty } => {
+                self.report_obligation(id, ty);
+                return;
+            }
         };
         let LiteralCheck {
             span,
@@ -910,6 +907,23 @@ impl Checker<'_> {
         }
     }
 
+    /// Checks the bound of the obligation `id` on `ty`, its parameter's type. A bound that names
+    /// another parameter whose type is still open has nothing to check yet.
+    fn report_obligation(&mut self, id: ObligationId, ty: Type) {
+        let Some(obligation) = self.body.obligations.get(id.0) else {
+            return;
+        };
+        let (at, bound) = (obligation.at, obligation.bound);
+        let with: Vec<Type> = (obligation.with.iter())
+            .map(|&t| self.table.default_open(t))
+            .collect();
+        if !bound.args.get().is_empty() && with.iter().any(|t| t.holds_infer()) {
+            return;
+        }
+        // A bound that fails is reported here; the call keeps its type.
+        let _ = self.check_bound_of(at, ty, bound, &with, None, None);
+    }
+
     /// Makes `a` and `b` one type, if the table lets it, and reports each check that was waiting
     /// for a type that this gave. With `keep`, the only place that reads the checks that the
     /// table gives back.
@@ -925,10 +939,6 @@ impl Checker<'_> {
 
     /// Ends the snapshot `to`, keeps what happened since, and reports each check that became ready
     /// if no outer snapshot is open.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first caller comes in Task 5")
-    )]
     pub(super) fn keep_snapshot(&mut self, to: Snapshot) {
         for waiting in self.table.keep(to) {
             self.report_waiting(waiting);

@@ -78,15 +78,6 @@ impl Checker<'_> {
         self.normalized(ty, None)
     }
 
-    /// `normalize`, with `failed` in place of each associated type that has no type and holds no
-    /// hole (see `conformance::normalize_failing`).
-    pub(super) fn normalize_failing(&self, ty: Type, failed: Type) -> Option<Type> {
-        if !ty.has_assoc() {
-            return Some(ty);
-        }
-        self.normalized(ty, Some(failed))
-    }
-
     /// `normalize` of a type that holds an associated type.
     fn normalized(&self, ty: Type, failed: Option<Type>) -> Option<Type> {
         let mut stuck = Vec::new();

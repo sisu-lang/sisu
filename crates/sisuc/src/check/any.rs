@@ -9,9 +9,7 @@ use super::alias::UseCheck;
 use super::interface::{BOUND_CLOSURE_LIMIT, Bound, Check};
 use super::reports::Reported;
 use super::unused_names::Used;
-use super::{
-    Checked, CheckedBlock, Checker, DeferredAsType, Expectation, Origin, Poisoned, block_type, wrap,
-};
+use super::{Checked, CheckedBlock, Checker, DeferredAsType, Origin, Poisoned, block_type, wrap};
 use crate::ast;
 use crate::conformance::{any_closure, interface_closure};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, NotAny, NotConformForm};
@@ -687,14 +685,6 @@ pub(super) fn is_target(want: Type) -> bool {
         TypeKind::Optional(payload) => matches!(payload.kind(), TypeKind::Any(..)),
         _ => false,
     }
-}
-
-/// `expected`, split in two: the context that is no `any` type, and the one that is.
-pub(super) fn split_context(expected: Expectation) -> (Option<Type>, Option<Type>) {
-    (
-        expected.ty().filter(|&want| !is_target(want)),
-        expected.ty().filter(|&want| is_target(want)),
-    )
 }
 
 /// `e`, of a type that a join widened, as `want`. That is an `any` type, an optional `any` type,
