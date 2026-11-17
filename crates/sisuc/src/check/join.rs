@@ -853,6 +853,10 @@ fn part_in(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
 }
 
 #[cfg(test)]
+#[path = "join_report.rs"]
+mod join_report;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::check::expectation::Origin;
@@ -863,14 +867,14 @@ mod tests {
     use crate::tir::{Block, LocalId, StructId};
 
     /// An interface, and a struct that conforms to it.
-    const SEEN: &str = "interface Seen {\n    fn seen(self) -> i64\n}\nstruct Eye: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\n";
+    pub(super) const SEEN: &str = "interface Seen {\n    fn seen(self) -> i64\n}\nstruct Eye: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\n";
 
-    fn at(n: usize) -> Span {
+    pub(super) fn at(n: usize) -> Span {
         Span::new(n, n + 1)
     }
 
     /// The integer literal `value`, whose type is open.
-    fn int(c: &mut Checker<'_>, value: u64, n: usize) -> tir::Expr {
+    pub(super) fn int(c: &mut Checker<'_>, value: u64, n: usize) -> tir::Expr {
         let ty = c.table.fresh(Kind::Int, at(n));
         let check = LiteralCheck {
             span: at(n),
@@ -883,21 +887,21 @@ mod tests {
     }
 
     /// `None`, whose payload is open.
-    fn none(c: &mut Checker<'_>, n: usize) -> tir::Expr {
+    pub(super) fn none(c: &mut Checker<'_>, n: usize) -> tir::Expr {
         let payload = c.table.fresh(Kind::Any, at(n));
         tir::Expr::new(ExprKind::None, Type::optional(payload), at(n))
     }
 
-    fn local(ty: Type, n: usize) -> tir::Expr {
+    pub(super) fn local(ty: Type, n: usize) -> tir::Expr {
         tir::Expr::new(ExprKind::Local(LocalId(n)), ty, at(n))
     }
 
-    fn some(payload: tir::Expr) -> tir::Expr {
+    pub(super) fn some(payload: tir::Expr) -> tir::Expr {
         let (ty, span) = (Type::optional(payload.ty), payload.span);
         tir::Expr::new(ExprKind::Wrap(Box::new(payload)), ty, span)
     }
 
-    fn array(elements: Vec<tir::Expr>, element: Type, n: usize) -> tir::Expr {
+    pub(super) fn array(elements: Vec<tir::Expr>, element: Type, n: usize) -> tir::Expr {
         tir::Expr::new(ExprKind::ArrayLit(elements), Type::array(element), at(n))
     }
 
@@ -911,7 +915,7 @@ mod tests {
     }
 
     /// `if true { then } else { other }`, of the type `ty`.
-    fn if_else(then: tir::Expr, other: tir::Expr, ty: Type, n: usize) -> tir::Expr {
+    pub(super) fn if_else(then: tir::Expr, other: tir::Expr, ty: Type, n: usize) -> tir::Expr {
         let kind = ExprKind::If {
             cond: Box::new(tir::Expr::new(ExprKind::Bool(true), Type::BOOL, at(n))),
             then_block: block(then),
@@ -941,7 +945,7 @@ mod tests {
     }
 
     /// `Eye(v: 1)`, of the struct type `eye`.
-    fn eye(eye: Type, n: usize) -> tir::Expr {
+    pub(super) fn eye(eye: Type, n: usize) -> tir::Expr {
         let TypeKind::Struct(id, _) = eye.kind() else {
             panic!("the type should be the struct `Eye`");
         };
@@ -1000,7 +1004,7 @@ mod tests {
     }
 
     /// Each order of `0..n`.
-    fn orders(n: usize) -> Vec<Vec<usize>> {
+    pub(super) fn orders(n: usize) -> Vec<Vec<usize>> {
         if n == 0 {
             return vec![Vec::new()];
         }
