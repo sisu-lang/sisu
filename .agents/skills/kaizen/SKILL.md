@@ -75,5 +75,6 @@ Then give the user each proposal of kinds 1, 2, 3 and 5, each cleanup and each d
 the most severe first. For each one, give the change, the files and the
 cost. The user picks which ones to make. A picked change goes on its own
 branch and pull request, or into the current branch when the user says so.
+A picked memory change needs no branch: make it in the memory directory.
 
 The step is done when each lesson of question 3 is a proposal or a memory.

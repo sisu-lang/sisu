@@ -1512,8 +1512,9 @@ impl Checker<'_> {
     ///
     /// The fourth recorded exception to "A pass is linear in the program" (user, 2026-10-27;
     /// ruling F9): a query costs one step for each class or enum type that it forms (see
-    /// `conformance::Open`). It decides each such type once: a type with no type parameter once
-    /// in the program, and a type that names one once in each body. An array or an optional adds
+    /// `conformance::Open`). It decides each such type once for each interface and its arguments:
+    /// a type with no type parameter once in the program, and a type that names one once in each
+    /// body. An array or an optional adds
     /// one step for each of its levels where the query meets it. Each such type is a type that
     /// `mono` instantiates when the program uses it. The worst input is the branching chain of
     /// enums `E0<T>` … `En<T>`. Each `Ek` has the variants `A(E(k+1)<[T]>)` and

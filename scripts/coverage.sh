@@ -25,7 +25,7 @@ cd "$(git rev-parse --show-toplevel)"
 base=${1:-$(git merge-base origin/main HEAD)}
 head=$(git rev-parse HEAD)
 dirty=
-git diff --quiet HEAD || dirty=' with uncommitted changes'
+[[ -z $(git status --porcelain) ]] || dirty=' with uncommitted changes'
 
 # cargo-llvm-cov passes its target directory to cargo as an argument, so tell
 # the nextest setup script (scripts/build-runtime.sh) where sisu will look.
@@ -61,6 +61,6 @@ git diff --no-color --no-ext-diff -U0 --src-prefix=a/ --dst-prefix=b/ "$base" >"
 # and reverted during the run; measure an exported copy of HEAD if edits during a
 # run become common.
 [[ $(git rev-parse HEAD) == "$head" ]] || dirty=' with uncommitted changes'
-git diff --quiet HEAD || dirty=' with uncommitted changes'
+[[ -z $(git status --porcelain) ]] || dirty=' with uncommitted changes'
 echo "coverage: measured (HEAD $head$dirty)"
 python3 scripts/coverage_report.py target/llvm-cov/coverage.json target/llvm-cov/lcov.info target/llvm-cov/changes.diff

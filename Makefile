@@ -37,9 +37,9 @@ test: ## Run every test but the memory tests (make memory-safety) with nextest, 
 	list=$$(mktemp) && cargo nextest list --workspace --locked --message-format json > $$list && python3 scripts/nextest_filters.py .config/nextest.toml $$list; status=$$?; rm -f $$list; exit $$status
 
 memory-safety: ## Run the memory checkers (ASan, Valgrind, --rc-checks) of every run case; the last line names the result and the commit
-	head=$$(git rev-parse HEAD); git diff --quiet HEAD || dirty=' with uncommitted changes'; \
+	head=$$(git rev-parse HEAD); [ -z "$$(git status --porcelain)" ] || dirty=' with uncommitted changes'; \
 	scripts/heavy-run.sh cargo nextest run --workspace --locked --profile memory; status=$$?; \
-	{ git diff --quiet HEAD && [ "$$(git rev-parse HEAD)" = "$$head" ]; } || dirty=' with uncommitted changes'; \
+	{ [ -z "$$(git status --porcelain)" ] && [ "$$(git rev-parse HEAD)" = "$$head" ]; } || dirty=' with uncommitted changes'; \
 	if [ $$status -eq 0 ]; then result=PASS; else result=FAIL; fi; \
 	echo "memory-safety: $$result (HEAD $$head$$dirty)"; exit $$status
 
