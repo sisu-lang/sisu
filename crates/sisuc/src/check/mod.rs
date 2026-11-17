@@ -1579,7 +1579,7 @@ impl<'src> Checker<'src> {
     }
 
     /// Checks with a fresh inference table, then puts the type of each variable in `result`
-    /// (`infer::write_back`). It reports each `Any` variable that no type reached (E0050), and
+    /// (`infer::WriteBack`). It reports each `Any` variable that no type reached (E0050), and
     /// restores the table before it. A top-level function, a method and the value of a constant
     /// call it. No other code takes the table, and each of them has its own variables.
     fn with_table<R: WriteBack>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
@@ -1598,22 +1598,6 @@ impl<'src> Checker<'src> {
             );
         }
         result
-    }
-
-    /// Makes `a` and `b` one type, if the table lets it, and reports each check that was waiting
-    /// for a type that this gave. The only place that reads the checks of `Table::unify`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first caller comes in Task 4")
-    )]
-    fn unify(&mut self, a: Type, b: Type) -> bool {
-        let Some(ready) = self.table.unify(a, b) else {
-            return false;
-        };
-        for waiting in ready {
-            self.report_waiting(waiting);
-        }
-        true
     }
 
     /// The type that `checked`, a failed generic call, found for its result and could not meet

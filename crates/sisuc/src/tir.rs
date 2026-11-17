@@ -969,8 +969,13 @@ impl Type {
     /// parts, which codegen counts. `enums` and `structs` are the program's.
     pub(crate) fn is_counted(self, enums: &[Enum], structs: &[Struct]) -> bool {
         match self.kind() {
-            // An `any` is counted through its data pointer, an object or a box.
-            TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) | TypeKind::Any(..) => true,
+            // An `any` is counted through its data pointer, an object or a box. A variable may be
+            // counted: the checker asks before `write_back` puts its type in its place.
+            TypeKind::String
+            | TypeKind::Class(..)
+            | TypeKind::Array(_)
+            | TypeKind::Any(..)
+            | TypeKind::Infer(_) => true,
             TypeKind::Enum(id, _) => enums[id.0].counted,
             TypeKind::Struct(id, _) => structs[id.0].counted,
             TypeKind::Optional(payload) => {
@@ -987,9 +992,6 @@ impl Type {
             | TypeKind::Never
             | TypeKind::Param(..)
             | TypeKind::Assoc(..) => false,
-            TypeKind::Infer(_) => {
-                unreachable!("the checker's write_back should leave no inference variable")
-            }
         }
     }
 
@@ -1467,8 +1469,8 @@ fn each_args_type_mut(args: &mut TypeArgs, f: &mut impl FnMut(&mut Type)) {
 impl Expr {
     /// Calls `f` on each type in this expression and in everything inside it: the type of each
     /// node, the type of each block it holds, and the type arguments of each call.
-    /// `check::infer::write_back` uses this walk to put the type of each inference variable in
-    /// its place. The match is exhaustive, so a new kind of node cannot miss the walk.
+    /// The write-back of `check::infer` uses this walk to put the type of each inference
+    /// variable in its place. The match is exhaustive, so a new kind of node cannot miss the walk.
     pub(crate) fn each_type_mut(&mut self, f: &mut impl FnMut(&mut Type)) {
         f(&mut self.ty);
         match &mut self.kind {

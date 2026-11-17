@@ -4,7 +4,9 @@
 //!
 //! A variable is a union-find node with a kind on its root. Two variables that unify share a root.
 //! A root gets a type once, when it unifies with a type that is no variable. A snapshot marks the
-//! undo log, and a rollback removes each union, each bind and each queued check since the mark.
+//! undo log. A rollback removes each union, each bind, each queued check and each check made since
+//! the mark. A check that waits for a variable sits at that variable, and a bind wakes only the
+//! checks of its own set.
 //! The ids start at 0 in each table, so a type that holds a variable means something only in the
 //! table that made it: no check-wide cache keeps a key that holds one (`Type::holds_infer`).
 
@@ -23,8 +25,7 @@ use crate::types::InferId;
 thread_local! {
     /// The obligations that a bind has looked at.
     static OBLIGATION_VISITS: Cell<usize> = const { Cell::new(0) };
-    /// The steps to keep each root of a type once: one for each root met, and one for each root
-    /// already kept that a hand-made search compares it with.
+    /// The steps to keep each root of a type once: one for each root met.
     static ROOT_STEPS: Cell<usize> = const { Cell::new(0) };
     /// The types that `rebuild_in` has rebuilt: the ones that its memo did not hold.
     static REBUILDS: Cell<usize> = const { Cell::new(0) };
@@ -91,6 +92,9 @@ struct Slot {
     origin: Span,
     /// The literals that were made for this variable, not for its set.
     literals: Vec<LiteralCheck>,
+    /// The obligations that wait for this variable: each one waits at the one variable that it
+    /// needs next. An entry that the obligation has left is stale, and `bind` skips it.
+    waiting: Vec<usize>,
     /// Read for a root only.
     root: Root,
 }
@@ -99,14 +103,40 @@ struct Obligation {
     ty: Type,
     id: ObligationId,
     done: bool,
+    /// The variable whose `waiting` list holds this obligation now.
+    at: u32,
 }
 
 /// What a rollback undoes, most recent last.
 enum Undo {
-    Union { child: u32, root: u32, was: Root },
-    Bind { root: u32 },
-    Poison { root: u32 },
-    Done { obligation: usize },
+    Union {
+        child: u32,
+        root: u32,
+        was: Root,
+    },
+    Bind {
+        root: u32,
+    },
+    Poison {
+        root: u32,
+    },
+    Done {
+        obligation: usize,
+    },
+    /// A literal check was made for the variable `at`.
+    Literal {
+        at: u32,
+    },
+    /// An obligation was made, waiting at the variable `at`.
+    Obligation {
+        at: u32,
+    },
+    /// The obligation moved from the variable `from` to the variable `to`.
+    Move {
+        obligation: usize,
+        from: u32,
+        to: u32,
+    },
 }
 
 /// A mark in the undo log and in the queue of ready checks.
@@ -145,6 +175,7 @@ impl Table {
             next: id,
             origin,
             literals: Vec::new(),
+            waiting: Vec::new(),
             root: Root {
                 size: 1,
                 kind,
@@ -172,6 +203,7 @@ impl Table {
             "a literal check should wait for a variable with no type"
         );
         self.slots[id.0 as usize].literals.push(check);
+        self.record(Undo::Literal { at: id.0 });
     }
 
     /// Keeps the obligation `id`, which needs `ty` to hold no open variable: it is ready when the
@@ -181,15 +213,18 @@ impl Table {
         expect(dead_code, reason = "the first caller comes in Task 5")
     )]
     pub(super) fn obligation(&mut self, ty: Type, id: ObligationId) {
-        debug_assert!(
-            self.resolve(ty).holds_infer(),
-            "an obligation should wait for an open variable"
-        );
+        let Some(&at) = self.open_roots(ty).first() else {
+            debug_assert!(false, "an obligation should wait for an open variable");
+            return;
+        };
+        self.slots[at as usize].waiting.push(self.obligations.len());
         self.obligations.push(Obligation {
             ty,
             id,
             done: false,
+            at,
         });
+        self.record(Undo::Obligation { at });
     }
 
     /// `ty` with each variable that has a type replaced by it. An open variable stays, as the
@@ -212,11 +247,12 @@ impl Table {
     /// only with `i64`, `u8`, `f64` or another variable; an `Any` variable with any type that does
     /// not hold it (the occurs check). The checks whose variable got a type are returned; inside a
     /// snapshot they stay queued until `keep` returns them.
+    #[must_use = "a check that was waiting for a type must be reported"]
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "the first caller comes in Task 4")
     )]
-    pub(super) fn unify(&mut self, a: Type, b: Type) -> Option<Vec<Waiting>> {
+    fn unify(&mut self, a: Type, b: Type) -> Option<Vec<Waiting>> {
         let snapshot = self.snapshot();
         if self.unify_pairs(a, b) {
             Some(self.keep(snapshot))
@@ -255,6 +291,21 @@ impl Table {
                 Undo::Bind { root } => self.slots[root as usize].root.bound = None,
                 Undo::Poison { root } => self.slots[root as usize].root.poisoned = false,
                 Undo::Done { obligation } => self.obligations[obligation].done = false,
+                Undo::Literal { at } => {
+                    self.slots[at as usize].literals.pop();
+                }
+                Undo::Obligation { at } => {
+                    self.slots[at as usize].waiting.pop();
+                    self.obligations.pop();
+                }
+                Undo::Move {
+                    obligation,
+                    from,
+                    to,
+                } => {
+                    self.slots[to as usize].waiting.pop();
+                    self.obligations[obligation].at = from;
+                }
             }
         }
         self.ready.truncate(to.ready);
@@ -263,11 +314,12 @@ impl Table {
 
     /// Ends the snapshot `to` and keeps what happened since. The checks that became ready are
     /// returned when no outer snapshot is open, and stay queued for the outer one otherwise.
+    #[must_use = "a check that was waiting for a type must be reported"]
     #[cfg_attr(
         not(test),
         expect(dead_code, reason = "the first caller comes in Task 4")
     )]
-    pub(super) fn keep(&mut self, to: Snapshot) -> Vec<Waiting> {
+    fn keep(&mut self, to: Snapshot) -> Vec<Waiting> {
         debug_assert!(to.log <= self.log.len(), "a snapshot should end once");
         self.close();
         if self.open.get() == 0 {
@@ -346,10 +398,16 @@ impl Table {
         ty
     }
 
-    /// The roots of the open variables in `ty`, each once.
+    /// The roots of the open variables in `ty`, each once, in the order that the walk meets them.
     fn open_roots(&self, ty: Type) -> Vec<u32> {
-        let mut roots = Vec::new();
-        let (mut stack, mut seen) = (vec![ty], FxHashSet::default());
+        self.open_roots_in(ty, &mut FxHashSet::default())
+    }
+
+    /// `open_roots`, skipping each type in `seen` and adding each type it walks to it: a walk that
+    /// shares `seen` meets each distinct type once, and finds each root once.
+    fn open_roots_in(&self, ty: Type, seen: &mut FxHashSet<Type>) -> Vec<u32> {
+        let (mut roots, mut kept) = (Vec::new(), FxHashSet::default());
+        let mut stack = vec![ty];
         while let Some(ty) = stack.pop() {
             if !ty.holds_infer() || !seen.insert(ty) {
                 continue;
@@ -361,8 +419,8 @@ impl Table {
                         stack.push(bound);
                     } else {
                         #[cfg(test)]
-                        ROOT_STEPS.set(ROOT_STEPS.get() + roots.len() + 1);
-                        if !roots.contains(&root) {
+                        ROOT_STEPS.set(ROOT_STEPS.get() + 1);
+                        if kept.insert(root) {
                             roots.push(root);
                         }
                     }
@@ -577,36 +635,48 @@ impl Table {
         self.bind_raw(root, ty);
         let mut at = root;
         loop {
-            let slot = &self.slots[at as usize];
             if !known.poisoned {
-                self.ready.extend(
-                    slot.literals
-                        .iter()
-                        .map(|&check| Waiting::Literal { check, ty }),
-                );
+                let literals = &self.slots[at as usize].literals;
+                self.ready
+                    .extend(literals.iter().map(|&check| Waiting::Literal { check, ty }));
             }
-            at = slot.next;
+            self.wake(at);
+            at = self.slots[at as usize].next;
             if at == root {
                 break;
             }
         }
-        for at in 0..self.obligations.len() {
-            if self.obligations[at].done {
+        true
+    }
+
+    /// Looks at each obligation that waits at the variable `at`, whose root just got a type: it is
+    /// ready when its type holds no open variable, and else it waits at the next one.
+    fn wake(&mut self, at: u32) {
+        for entry in 0..self.slots[at as usize].waiting.len() {
+            let obligation = self.slots[at as usize].waiting[entry];
+            if self.obligations[obligation].done || self.obligations[obligation].at != at {
                 continue;
             }
             #[cfg(test)]
             OBLIGATION_VISITS.set(OBLIGATION_VISITS.get() + 1);
-            let resolved = self.resolve(self.obligations[at].ty);
-            if !resolved.holds_infer() {
-                self.obligations[at].done = true;
-                self.record(Undo::Done { obligation: at });
+            let resolved = self.resolve(self.obligations[obligation].ty);
+            if let Some(&next) = self.open_roots(resolved).first() {
+                self.obligations[obligation].at = next;
+                self.slots[next as usize].waiting.push(obligation);
+                self.record(Undo::Move {
+                    obligation,
+                    from: at,
+                    to: next,
+                });
+            } else {
+                self.obligations[obligation].done = true;
+                self.record(Undo::Done { obligation });
                 self.ready.push(Waiting::Obligation {
-                    id: self.obligations[at].id,
+                    id: self.obligations[obligation].id,
                     ty: resolved,
                 });
             }
         }
-        true
     }
 
     fn bind_raw(&mut self, root: u32, ty: Type) {
@@ -638,49 +708,72 @@ fn pair_args(work: &mut Vec<(Type, Type)>, ours: TypeArgs, theirs: TypeArgs) -> 
     ours.len() == theirs.len()
 }
 
-/// Puts the type of each variable in `ty` in its place, once the function is checked. An open
-/// `Int` becomes `i64`. An open `Any` stays open, and E0050 reports it: the answer is its
-/// origin, the first in the source in its set. A variable that a poisoned value or a failed use
-/// reached reports nothing, and a variable is reported once, however many types name it. When a
-/// type holds several that nothing reached, the answer is the first of them, and the others are
-/// marked: an error is reported, so no program goes on with a variable left in it.
-pub(super) fn write_back(table: &mut Table, ty: &mut Type) -> Option<Unsettled> {
-    let mut first: Option<Span> = None;
-    for root in table.open_roots(*ty) {
-        let known = table.slots[root as usize].root;
-        match known.kind {
-            Kind::Int => table.bind_raw(root, Type::I64),
-            Kind::Any => {
-                table.slots[root as usize].root.reported = true;
-                if !known.poisoned && !known.reported {
-                    let origin = table.first_origin(root);
-                    if first.is_none_or(|first| origin.start() < first.start()) {
-                        first = Some(origin);
+/// What a walk over types calls for each type that it visits.
+type Each<'a> = &'a mut dyn FnMut(&mut Type);
+
+/// What the write-back of a function or a constant found, and the state that its walk shares. The
+/// walk has two passes over the types. `settle` meets each distinct type once and deals with each
+/// open variable in it. Then `put` rebuilds each type, with one memo, so a chain of types that
+/// name each other costs a step for each link.
+#[derive(Default)]
+pub(super) struct Written {
+    /// The `Any` variables that no type reached, once for each set, by origin in the source.
+    pub(super) unsettled: Vec<Unsettled>,
+    /// A type still holds an inference variable.
+    pub(super) open: bool,
+    /// The types that `settle` has walked.
+    seen: FxHashSet<Type>,
+    /// The types that `put` has rebuilt.
+    memo: FxHashMap<Type, Type>,
+}
+
+impl Written {
+    /// Gives each open `Int` in `ty` the type `i64`. It notes the first origin in the source of
+    /// each open `Any` set that no earlier type has reported: E0050. A set that a poisoned value
+    /// or a failed use reached reports nothing.
+    fn settle(&mut self, table: &mut Table, ty: Type) {
+        if !ty.holds_infer() {
+            return;
+        }
+        for root in table.open_roots_in(ty, &mut self.seen) {
+            let known = table.slots[root as usize].root;
+            match known.kind {
+                Kind::Int => table.bind_raw(root, Type::I64),
+                Kind::Any => {
+                    table.slots[root as usize].root.reported = true;
+                    if !known.poisoned && !known.reported {
+                        self.unsettled.push(Unsettled {
+                            origin: table.first_origin(root),
+                        });
                     }
                 }
             }
         }
     }
-    *ty = table.resolve(*ty);
-    first.map(|origin| Unsettled { origin })
-}
 
-/// What `WriteBack` found in a function or a constant.
-#[derive(Default)]
-pub(super) struct Written {
-    pub(super) unsettled: Vec<Unsettled>,
-    /// A type still holds an inference variable.
-    pub(super) open: bool,
-}
-
-impl Written {
-    fn visit(&mut self, table: &mut Table, ty: &mut Type) {
-        self.unsettled.extend(write_back(table, ty));
+    /// Puts the type of each variable in `ty` in its place: the pass after `settle`.
+    fn put(&mut self, table: &Table, ty: &mut Type) {
+        if !ty.holds_infer() {
+            return;
+        }
+        *ty = table.rebuild_in(*ty, false, &mut self.memo);
         self.open |= ty.holds_infer();
+    }
+
+    /// The two passes over what `walk` visits, each type once for each pass.
+    fn walk_types(table: &mut Table, walk: &mut dyn FnMut(Each<'_>)) -> Written {
+        let mut written = Written::default();
+        walk(&mut |ty| written.settle(table, *ty));
+        walk(&mut |ty| written.put(table, ty));
+        written
+            .unsettled
+            .sort_by_key(|unsettled| unsettled.origin.start());
+        written
     }
 }
 
-/// A checked result whose types `write_back` puts in place.
+/// A checked result whose types the write-back puts in place: each open `Int` is `i64`, and each
+/// `Any` set that no type reached is E0050.
 pub(super) trait WriteBack {
     fn write_back_all(&mut self, table: &mut Table) -> Written;
 }
@@ -703,8 +796,8 @@ fn float_literals(e: &mut tir::Expr) {
 
 impl WriteBack for tir::Expr {
     fn write_back_all(&mut self, table: &mut Table) -> Written {
-        let mut written = Written::default();
-        self.each_type_mut(&mut |ty| written.visit(table, ty));
+        let written =
+            Written::walk_types(table, &mut |each| self.each_type_mut(&mut |ty| each(ty)));
         float_literals(self);
         written
     }
@@ -712,8 +805,8 @@ impl WriteBack for tir::Expr {
 
 impl WriteBack for tir::Function {
     fn write_back_all(&mut self, table: &mut Table) -> Written {
-        let mut written = Written::default();
-        self.each_type_mut(&mut |ty| written.visit(table, ty));
+        let written =
+            Written::walk_types(table, &mut |each| self.each_type_mut(&mut |ty| each(ty)));
         self.body.each_expr_mut(&mut float_literals);
         written
     }
@@ -731,16 +824,14 @@ impl WriteBack for Result<tir::Expr, Poisoned> {
     fn write_back_all(&mut self, table: &mut Table) -> Written {
         match self {
             Ok(expr) => expr.write_back_all(table),
-            Err(poisoned) => {
-                let mut written = Written::default();
+            Err(poisoned) => Written::walk_types(table, &mut |each| {
                 if let Some(ty) = &mut poisoned.ty {
-                    written.visit(table, ty);
+                    each(ty);
                 }
                 if let Some(misfit) = &mut poisoned.found {
-                    written.visit(table, &mut misfit.ty);
+                    each(&mut misfit.ty);
                 }
-                written
-            }
+            }),
         }
     }
 }
@@ -750,8 +841,7 @@ impl Checker<'_> {
     /// (E0040, E0042 or E0104, as `integer` reports it for a literal whose type is known).
     pub(super) fn report_waiting(&mut self, waiting: Waiting) {
         let Waiting::Literal { check, ty } = waiting else {
-            // Nothing makes an obligation before the calls that own the list of them (Task 5).
-            return;
+            panic!("the obligations of `generic.rs` and `conform.rs` land in Task 5");
         };
         let LiteralCheck {
             span,
@@ -789,6 +879,35 @@ impl Checker<'_> {
         }
     }
 
+    /// Makes `a` and `b` one type, if the table lets it, and reports each check that was waiting
+    /// for a type that this gave. With `keep`, the only place that reads the checks that the
+    /// table gives back.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the first caller comes in Task 4")
+    )]
+    pub(super) fn unify(&mut self, a: Type, b: Type) -> bool {
+        let Some(ready) = self.table.unify(a, b) else {
+            return false;
+        };
+        for waiting in ready {
+            self.report_waiting(waiting);
+        }
+        true
+    }
+
+    /// Ends the snapshot `to`, keeps what happened since, and reports each check that became ready
+    /// if no outer snapshot is open.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the first caller comes in Task 4")
+    )]
+    pub(super) fn keep_snapshot(&mut self, to: Snapshot) {
+        for waiting in self.table.keep(to) {
+            self.report_waiting(waiting);
+        }
+    }
+
     /// Reports E0050 at the origin of an `Any` variable that no type reached.
     pub(super) fn report_unsettled(&mut self, unsettled: Unsettled) {
         let literal = if self.source.text(unsettled.origin).starts_with('[') {
@@ -804,7 +923,7 @@ impl Checker<'_> {
 mod tests {
     use super::*;
     use crate::check::tests::joins::with_checker;
-    use crate::diagnostic::Code;
+    use crate::diagnostic::{Code, Diagnostic};
 
     fn at(n: usize) -> Span {
         Span::new(n, n + 1)
@@ -827,25 +946,17 @@ mod tests {
         }
     }
 
-    /// The checks that `unify` queued or returned, or `None` when the types do not unify.
-    fn unified(table: &mut Table, a: Type, b: Type) -> Option<Vec<Waiting>> {
-        table.unify(a, b)
-    }
-
     #[test]
     fn int_should_unify_with_each_number_type_only() {
         let mut table = Table::default();
         for ty in [Type::I64, Type::U8, Type::F64] {
             let var = table.fresh(Kind::Int, at(0));
-            assert!(unified(&mut table, var, ty).is_some(), "{ty:?}");
+            assert!(table.unify(var, ty).is_some(), "{ty:?}");
             assert_eq!(table.resolve(var), ty);
         }
         let other = table.fresh(Kind::Int, at(1));
         let var = table.fresh(Kind::Int, at(2));
-        assert!(
-            unified(&mut table, var, other).is_some(),
-            "an Int and an Int"
-        );
+        assert!(table.unify(var, other).is_some(), "an Int and an Int");
         for ty in [
             Type::STRING,
             Type::BOOL,
@@ -853,7 +964,7 @@ mod tests {
             Type::array(Type::I64),
         ] {
             let var = table.fresh(Kind::Int, at(3));
-            assert!(unified(&mut table, var, ty).is_none(), "{ty:?}");
+            assert!(table.unify(var, ty).is_none(), "{ty:?}");
             assert_eq!(
                 table.resolve(var),
                 var,
@@ -866,14 +977,14 @@ mod tests {
     fn any_should_refuse_a_type_that_holds_it() {
         let mut table = Table::default();
         let a = table.fresh(Kind::Any, at(0));
-        assert!(unified(&mut table, a, Type::array(a)).is_none());
+        assert!(table.unify(a, Type::array(a)).is_none());
         assert_eq!(table.resolve(a), a);
         // The check reads through a bound variable: `B = [A]` then `A = B` is `A = [A]`.
         let b = table.fresh(Kind::Any, at(1));
-        assert!(unified(&mut table, b, Type::array(a)).is_some());
-        assert!(unified(&mut table, a, b).is_none());
+        assert!(table.unify(b, Type::array(a)).is_some());
+        assert!(table.unify(a, b).is_none());
         assert_eq!(table.resolve(a), a);
-        assert!(unified(&mut table, a, Type::array(Type::I64)).is_some());
+        assert!(table.unify(a, Type::array(Type::I64)).is_some());
         assert_eq!(table.resolve(b), Type::array(Type::array(Type::I64)));
     }
 
@@ -883,14 +994,14 @@ mod tests {
         let a = table.fresh(Kind::Any, at(0));
         let b = table.fresh(Kind::Any, at(1));
         let snapshot = table.snapshot();
-        assert!(unified(&mut table, a, Type::I64).is_some());
-        assert!(unified(&mut table, b, a).is_some());
+        assert!(table.unify(a, Type::I64).is_some());
+        assert!(table.unify(b, a).is_some());
         assert_eq!(table.resolve(b), Type::I64);
         table.rollback(snapshot);
         assert_eq!(table.resolve(a), a);
         assert_eq!(table.resolve(b), b);
-        // The union went too: `b` can take another type and leave `a` open.
-        assert!(unified(&mut table, b, Type::STRING).is_some());
+        // `b` is free again: it can take another type and leave `a` open.
+        assert!(table.unify(b, Type::STRING).is_some());
         assert_eq!(table.resolve(a), a);
     }
 
@@ -899,7 +1010,7 @@ mod tests {
         let mut table = Table::default();
         let var = table.fresh(Kind::Int, at(0));
         let mut ty = Type::array(var);
-        assert_eq!(write_back(&mut table, &mut ty), None);
+        assert_eq!(write_back(&mut table, &mut ty), []);
         assert_eq!(ty, Type::array(Type::I64));
     }
 
@@ -908,7 +1019,7 @@ mod tests {
         let mut table = Table::default();
         let var = table.fresh(Kind::Int, at(0));
         let mut expr = tir::Expr::new(ExprKind::Int(3), var, at(0));
-        assert!(unified(&mut table, var, Type::F64).is_some());
+        assert!(table.unify(var, Type::F64).is_some());
         let written = expr.write_back_all(&mut table);
         assert!(written.unsettled.is_empty() && !written.open);
         assert_eq!(expr.ty, Type::F64);
@@ -921,9 +1032,9 @@ mod tests {
         let later = table.fresh(Kind::Any, at(10));
         let earlier = table.fresh(Kind::Any, at(5));
         let apart = table.fresh(Kind::Any, at(20));
-        assert!(unified(&mut table, later, earlier).is_some());
+        assert!(table.unify(later, earlier).is_some());
         let mut types = [Type::array(later), earlier, Type::optional(apart), later];
-        let unsettled: Vec<Option<Unsettled>> = types
+        let unsettled: Vec<Vec<Unsettled>> = types
             .iter_mut()
             .map(|ty| write_back(&mut table, ty))
             .collect();
@@ -931,10 +1042,10 @@ mod tests {
         assert_eq!(
             unsettled,
             [
-                Some(Unsettled { origin: at(5) }),
-                None,
-                Some(Unsettled { origin: at(20) }),
-                None
+                vec![Unsettled { origin: at(5) }],
+                vec![],
+                vec![Unsettled { origin: at(20) }],
+                vec![]
             ]
         );
         assert!(types.iter().all(|ty| ty.holds_infer()));
@@ -949,9 +1060,9 @@ mod tests {
         table.poison(Type::array(any));
         table.poison(int);
         let mut ty = any;
-        assert_eq!(write_back(&mut table, &mut ty), None);
+        assert_eq!(write_back(&mut table, &mut ty), []);
         // A literal that a failed use reached waits for nothing.
-        assert_eq!(unified(&mut table, int, Type::U8), Some(Vec::new()));
+        assert_eq!(table.unify(int, Type::U8), Some(Vec::new()));
     }
 
     #[test]
@@ -1027,7 +1138,7 @@ mod tests {
         let var = table.fresh(Kind::Int, at(0));
         table.literal(var, literal(at(0), 300));
         let snapshot = table.snapshot();
-        assert_eq!(unified(&mut table, var, Type::U8), Some(Vec::new()));
+        assert_eq!(table.unify(var, Type::U8), Some(Vec::new()));
         table.rollback(snapshot);
         let snapshot = table.snapshot();
         assert_eq!(
@@ -1037,7 +1148,7 @@ mod tests {
         );
         // Kept, the check is returned once, and the variable has its type.
         let snapshot = table.snapshot();
-        assert_eq!(unified(&mut table, var, Type::U8), Some(Vec::new()));
+        assert_eq!(table.unify(var, Type::U8), Some(Vec::new()));
         let ready = table.keep(snapshot);
         assert_eq!(
             ready,
@@ -1046,7 +1157,7 @@ mod tests {
                 ty: Type::U8
             }]
         );
-        assert_eq!(unified(&mut table, var, Type::U8), Some(Vec::new()));
+        assert_eq!(table.unify(var, Type::U8), Some(Vec::new()));
     }
 
     #[test]
@@ -1059,7 +1170,7 @@ mod tests {
             Type::intern(TypeKind::Class(tir::ClassId(0), TypeArgs::intern(&[a, b]))),
             ObligationId(9),
         );
-        let ready = unified(&mut table, a, Type::I64).expect("A should unify");
+        let ready = table.unify(a, Type::I64).expect("A should unify");
         assert_eq!(
             ready,
             [Waiting::Obligation {
@@ -1067,7 +1178,7 @@ mod tests {
                 ty: Type::array(Type::I64)
             }]
         );
-        let ready = unified(&mut table, b, Type::STRING).expect("B should unify");
+        let ready = table.unify(b, Type::STRING).expect("B should unify");
         assert_eq!(ready.len(), 2);
     }
 
@@ -1080,7 +1191,15 @@ mod tests {
         assert_eq!(shown, Type::array(Type::optional(Type::I64)));
         assert_eq!(table.default_open(Type::array(any)), Type::array(any));
         // It binds nothing: the literal can still settle to `u8`.
-        assert!(unified(&mut table, int, Type::U8).is_some());
+        assert!(table.unify(int, Type::U8).is_some());
+    }
+
+    /// The write-back of the one type `ty`: the walk of a function, over that type alone.
+    fn write_back(table: &mut Table, ty: &mut Type) -> Vec<Unsettled> {
+        let mut written = Written::default();
+        written.settle(table, *ty);
+        written.put(table, ty);
+        written.unsettled
     }
 
     /// A type of `Struct 0` that holds each of `args`.
@@ -1162,11 +1281,11 @@ mod tests {
         let mut table = Table::default();
         let (a, b) = (table.fresh(Kind::Any, at(0)), table.fresh(Kind::Any, at(1)));
         let snapshot = table.snapshot();
-        assert!(unified(&mut table, a, b).is_some());
-        assert!(unified(&mut table, a, Type::I64).is_some());
+        assert!(table.unify(a, b).is_some());
+        assert!(table.unify(a, Type::I64).is_some());
         table.rollback(snapshot);
-        assert!(unified(&mut table, a, Type::STRING).is_some());
-        assert!(unified(&mut table, b, Type::I64).is_some());
+        assert!(table.unify(a, Type::STRING).is_some());
+        assert!(table.unify(b, Type::I64).is_some());
         assert_eq!(table.resolve(a), Type::STRING);
         assert_eq!(table.resolve(b), Type::I64);
     }
@@ -1176,14 +1295,14 @@ mod tests {
         // A walk inside the snapshot must not halve a path through the union that is undone.
         let mut table = Table::default();
         let [one, two, three, four, five] = [0, 1, 2, 3, 4].map(|i| table.fresh(Kind::Any, at(i)));
-        assert!(unified(&mut table, one, two).is_some());
-        assert!(unified(&mut table, three, four).is_some());
-        assert!(unified(&mut table, four, five).is_some());
+        assert!(table.unify(one, two).is_some());
+        assert!(table.unify(three, four).is_some());
+        assert!(table.unify(four, five).is_some());
         let snapshot = table.snapshot();
-        assert!(unified(&mut table, two, three).is_some());
+        assert!(table.unify(two, three).is_some());
         assert_eq!(table.resolve(two), table.resolve(five));
         table.rollback(snapshot);
-        assert!(unified(&mut table, three, Type::I64).is_some());
+        assert!(table.unify(three, Type::I64).is_some());
         assert!(
             table.resolve(two).holds_infer(),
             "`two` is not in the set of `three` any more"
@@ -1200,12 +1319,9 @@ mod tests {
             |args: &[Type]| Type::intern(TypeKind::Class(tir::ClassId(0), TypeArgs::intern(args)));
         // `A` binds to `i64` before the second pair, `i64` and `string`, fails.
         assert!(
-            unified(
-                &mut table,
-                class(&[Type::I64, a]),
-                class(&[Type::STRING, Type::I64])
-            )
-            .is_none()
+            table
+                .unify(class(&[Type::I64, a]), class(&[Type::STRING, Type::I64]))
+                .is_none()
         );
         assert_eq!(table.resolve(a), a);
     }
@@ -1218,10 +1334,7 @@ mod tests {
         let snapshot = table.snapshot();
         table.poison(int);
         table.rollback(snapshot);
-        assert_eq!(
-            unified(&mut table, int, Type::U8).map(|ready| ready.len()),
-            Some(1)
-        );
+        assert_eq!(table.unify(int, Type::U8).map(|ready| ready.len()), Some(1));
     }
 
     #[test]
@@ -1231,8 +1344,8 @@ mod tests {
         table.literal(a, literal(at(0), 300));
         table.literal(b, literal(at(1), 300));
         table.poison(a);
-        assert!(unified(&mut table, b, a).is_some());
-        assert_eq!(unified(&mut table, a, Type::U8), Some(Vec::new()));
+        assert!(table.unify(b, a).is_some());
+        assert_eq!(table.unify(a, Type::U8), Some(Vec::new()));
     }
 
     #[test]
@@ -1241,9 +1354,9 @@ mod tests {
         let a = table.fresh(Kind::Any, at(0));
         table.obligation(Type::array(a), ObligationId(1));
         let snapshot = table.snapshot();
-        assert_eq!(unified(&mut table, a, Type::I64), Some(Vec::new()));
+        assert_eq!(table.unify(a, Type::I64), Some(Vec::new()));
         table.rollback(snapshot);
-        let ready = unified(&mut table, a, Type::I64).expect("A should unify");
+        let ready = table.unify(a, Type::I64).expect("A should unify");
         assert_eq!(ready.len(), 1);
     }
 
@@ -1255,8 +1368,8 @@ mod tests {
         table.literal(int, literal(at(0), 300));
         table.obligation(Type::array(any), ObligationId(1));
         table.rollback(snapshot);
-        assert_eq!(unified(&mut table, int, Type::U8), Some(Vec::new()));
-        assert_eq!(unified(&mut table, any, Type::I64), Some(Vec::new()));
+        assert_eq!(table.unify(int, Type::U8), Some(Vec::new()));
+        assert_eq!(table.unify(any, Type::I64), Some(Vec::new()));
     }
 
     #[test]
@@ -1265,5 +1378,21 @@ mod tests {
         let mut table = Table::default();
         let var = table.fresh(Kind::Int, at(0));
         assert!(var.is_counted(&[], &[]));
+    }
+
+    #[test]
+    fn checker_keep_should_report_the_checks_that_the_table_gives_back() {
+        let src = "fn main() {\n    let a = 300\n}\n";
+        let span = nth(src, "300", 0);
+        with_checker(src, |c| {
+            let var = c.table.fresh(Kind::Int, span);
+            c.table.literal(var, literal(span, 300));
+            let snapshot = c.table.snapshot();
+            assert!(c.unify(var, Type::U8));
+            assert!(c.diagnostics.is_empty(), "the check waits for the snapshot");
+            c.keep_snapshot(snapshot);
+            let reported: Vec<Code> = c.diagnostics.iter().map(Diagnostic::code).collect();
+            assert_eq!(reported, [Code::IntegerDoesNotFit]);
+        });
     }
 }
