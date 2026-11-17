@@ -430,6 +430,13 @@ impl Table {
         found
     }
 
+    /// Whether each open variable in `ty` was reached by a failed use already, so that it reports
+    /// nothing more. `false` when `ty` holds none.
+    pub(super) fn reported_open(&self, ty: Type) -> bool {
+        let roots = self.open_roots(ty);
+        !roots.is_empty() && (roots.iter()).all(|&root| self.slots[root as usize].root.poisoned)
+    }
+
     fn poison_root(&mut self, root: u32) {
         let slot = &mut self.slots[root as usize].root;
         if !slot.poisoned {

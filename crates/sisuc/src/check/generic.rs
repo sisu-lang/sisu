@@ -2511,7 +2511,18 @@ impl Checker<'_> {
         }
         // A method call is no join: the parts that are still open stay open in its context. An
         // associated type of an open parameter is no context: the argument decides the parameter.
-        if matches!(e.kind, ast::ExprKind::MethodCall { .. }) && !filled.has_assoc() {
+        // The members may decide a part of the context. That part reaches each call inside a
+        // call or an array argument, which keeps its open parts open as a member does.
+        let shaped = matches!(
+            &e.kind,
+            ast::ExprKind::Call { .. } | ast::ExprKind::ArrayLit(_)
+        );
+        let informed = shaped
+            && (with.iter().enumerate()).any(|(k, &ty)| {
+                names_outside_assoc(param, k)
+                    && !matches!(self.table.resolve(ty).kind(), TypeKind::Infer(_))
+            });
+        if (informed || matches!(e.kind, ast::ExprKind::MethodCall { .. })) && !filled.has_assoc() {
             return self.known_argument(call, i, e, param);
         }
         let checked = mark(self.operand(e, Expectation::None));
@@ -2650,6 +2661,21 @@ impl Checker<'_> {
                 safe: false,
                 ..
             } if types.is_empty() && self.generic_variant(receiver, method).is_some() => {
+                args.iter().all(|arg| self.takes_member(&arg.value))
+            }
+            // `Option.Some(x)` is `Some(x)`, as `generic_callee` takes it.
+            K::MethodCall {
+                receiver,
+                method,
+                types,
+                args,
+                safe: false,
+                ..
+            } if types.is_empty()
+                && method.name == Symbol::SOME
+                && (option_written(receiver) == Some(false)
+                    || matches!(receiver.kind, K::Name(n) if self.names_option(n))) =>
+            {
                 args.iter().all(|arg| self.takes_member(&arg.value))
             }
             // A method call may pick its conformance by the type that it meets.
@@ -2850,6 +2876,27 @@ impl Checker<'_> {
         (expected, met): (Expectation, Option<bool>),
     ) -> Result<(), Poisoned> {
         if expected == Expectation::Member {
+            // The outer join reaches a parameter only through the result: one that the result
+            // does not name gets its type from no context, so it is E0050 now. The value keeps
+            // its type, which does not name the parameter.
+            for &(t, var) in decided {
+                let ty = self.table.resolve(var);
+                if sig.ret.is_none_or(|ret| names_outside_assoc(ret, t)) || !ty.holds_infer() {
+                    continue;
+                }
+                let closed = self.table.default_open(ty);
+                if closed != ty {
+                    let _ = self.unify(ty, closed);
+                }
+                if self.table.resolve(var).holds_infer() {
+                    self.cannot_infer(sig, t);
+                    // One E0050 for the call: its other parameters report nothing more.
+                    for &(_, var) in decided {
+                        self.table.poison(var);
+                    }
+                    break;
+                }
+            }
             return Ok(());
         }
         if let (Some(false), Expectation::Required(want, origin)) = (met, expected) {
@@ -2884,6 +2931,11 @@ impl Checker<'_> {
             let ty = self.table.resolve(var);
             call.bindings.found[t] = Some(ty);
             if ty.holds_infer() {
+                // An inner call reported the parameter that this one holds (see the `Member` case).
+                if self.table.reported_open(ty) {
+                    let reported = self.proof(call.at); // proof: quiet reader
+                    return Err(Poisoned::untyped(reported));
+                }
                 self.table.poison(ty);
                 // A parameter's or the result type that is not found may be what would decide it.
                 if sig.params.contains(&None) || sig.ret.is_none() {

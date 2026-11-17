@@ -4391,7 +4391,7 @@ fn a_partly_bound_parameter_should_report_the_whole_argument_without_context() {
 /// The rows of the test with the name
 /// `a_partly_bound_parameter_should_report_cannot_infer_when_the_context_fixes_nothing`.
 const INFER_ROWS: &[PartialRow<'static>] = {
-    use Code::CannotInfer;
+    use Code::{CannotInfer, Mismatch};
     &[
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
@@ -4421,7 +4421,7 @@ const INFER_ROWS: &[PartialRow<'static>] = {
         (
             "fn h3<U, V>(a: U, b: V, c: Two<U, V>?) {}\n",
             "let c: C? = C()\nh3(true, 1, c?.m(true, None))",
-            &[(CannotInfer, "m(")],
+            &[(Mismatch, "None")],
         ),
     ]
 };
