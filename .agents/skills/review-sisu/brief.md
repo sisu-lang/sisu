@@ -13,7 +13,8 @@ probe only inside the scratch directory your launch names.
   Then read the `.err` and `.json` files of the codes it changes.
 - <the other documents to read with the target, at their paths: for a plan, its spec; for a diff, its spec and plan when there are any. Delete this line when there are none.>
 - `<coding standards path>`: `CODING_STANDARDS.md` as `origin/main` has
-  it, so that a diff cannot change the rules that judge it. Where this
+  it, so that a diff cannot change the standards that judge it. "Focus"
+  says when it is the checkout's file instead. Where this
   brief names `CODING_STANDARDS.md`, read this copy. Its rules apply to
   every diff. For a spec or a plan, check that code built from it can
   meet them.

@@ -33,7 +33,7 @@ the main checkout's gitignored docs/superpowers/ is not in a worktree.
   --memory-safety-log  the output of `make memory-safety` for the diff; Focus names it with its
            result. It is checked as --coverage is. CI runs the memory tests only after the
            merge. So when a diff changes crates/ and has no log, Focus says that they did not
-           run. This line only reports; it stops nothing.
+           run. That line only reports; it stops nothing.
 For a diff, Focus also lists each line the diff removes from the tests with no identical line
 added back, and each test file it deletes, and each sisu build in OUT's bin/<sha>/ that
 build_sisu.sh wrote.
@@ -42,8 +42,9 @@ build_sisu.sh wrote.
 The template comes from origin/main, so a branch that started before a change to the review
 criteria still gets the current ones. Without origin/main it falls back to ../brief.md.
 CODING_STANDARDS.md also comes from origin/main: the script copies it next to OUT, and the brief
-names the copy, so a diff cannot change the rules that judge it. A diff that changes the file gets
-a Focus line that says so. Without origin/main's copy, the brief names the checkout's file.
+names the copy, so a diff cannot change the standards that judge it. A diff that changes the file
+gets a Focus line that says so. Without origin/main's copy, the brief names the checkout's file,
+and Focus says so.
 """
 
 import argparse
@@ -342,6 +343,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915  one linear pass: a branch f
         if path and not Path(path).is_file():
             sys.exit(f"diff_brief: no file at {Path(path).resolve()}")
 
+    rules = main_standards(repo)
     focus_lines = []
     if a.kind == "diff":
         base, _, head = a.target.partition("..")
@@ -387,10 +389,17 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915  one linear pass: a branch f
                 "the riskiest changed path that only ASan, Valgrind or `--rc-checks` would catch, "
                 "or say that there is none."
             )
-        if changes(repo, shas[0], shas[1], STANDARDS):
+        if rules is None:
             focus_lines.append(
-                f"The diff changes `{STANDARDS}`. Judge the diff by the copy from origin/main "
-                "that the brief names, and review the changed rules as part of the target."
+                f"The brief names the checkout's `{STANDARDS}`, because origin/main has none. "
+                "So a change in the diff to those standards also judges the diff."
+            )
+        if changes(repo, shas[0], shas[1], STANDARDS):
+            judge = (
+                "Judge the diff by the copy that the brief names, and review" if rules else "Review"
+            )
+            focus_lines.append(
+                f"The diff changes `{STANDARDS}`. {judge} the changed rules as part of the target."
             )
         if removed := removed_tests(repo, *shas):
             more = (
@@ -430,7 +439,8 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915  one linear pass: a branch f
     t = t.replace("Target: <path, or base..head>.", f"Target: {target}.")
     t = t.replace("<repository root>", str(repo))
     t = t.replace("<base>..<head>", str(target))
-    rules = main_standards(repo) if "<coding standards path>" in t else None
+    if "<coding standards path>" not in t:
+        rules = None
     rules_path = out.parent / STANDARDS if rules is not None else repo / STANDARDS
     t = t.replace("<coding standards path>", str(rules_path))
     docs = "".join(f"- {Path(d).resolve()}\n" for d in a.doc)
