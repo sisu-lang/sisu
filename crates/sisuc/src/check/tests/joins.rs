@@ -710,6 +710,26 @@ fn open_value_in_a_failed_context_should_fail_quietly() {
 }
 
 #[test]
+fn poisoned_open_value_in_a_failed_context_should_fail_quietly() {
+    // GIVEN a `None` whose `Any` an earlier failed use has poisoned, in a context that failed
+    // WHEN `close` closes it
+    // THEN it fails with no type, as the variable is still open
+    let src = "fn main() {\n    None\n}\n";
+    let span = Span::new(16, 20);
+    with_checker(src, |c| {
+        let ty = Type::optional(c.table.fresh(Kind::Any, span));
+        c.table.poison(ty);
+        let value = tir::Expr::new(tir::ExprKind::None, ty, span);
+        let e = ast::Expr {
+            kind: ast::ExprKind::NoneLit,
+            span,
+        };
+        let (closed, _) = c.close(&e, Ok(value), Expectation::Poisoned);
+        assert!(matches!(closed, Err(Poisoned { ty: None, .. })));
+    });
+}
+
+#[test]
 fn join_after_a_conflict_should_be_untyped() {
     // GIVEN a join of a `u8` and an `i64`, and a `let` with a `u8` type that reads it
     // WHEN it is checked
