@@ -280,4 +280,13 @@ mod tests {
             "if (match n { _ => true }) { b } else { a }\n"
         );
     }
+
+    #[test]
+    fn swap_joins_should_swap_an_array_literal_that_holds_a_less_than_in_a_program_with_a_warning()
+    {
+        assert_eq!(
+            swapped("fn main() {\n    let xs = [1 < 2, false];\n}\n"),
+            "fn main() {\n    let xs = [false, 1 < 2];\n}\n"
+        );
+    }
 }
