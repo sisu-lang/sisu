@@ -2291,13 +2291,25 @@ impl Checker<'_> {
         let ret_named = sig
             .ret
             .map_or_else(Vec::new, |ret| params_named(ret, Reach::Everywhere));
+        // Whether the result type names each parameter outside an associated type.
+        let mut ret_outside = vec![false; sig.declared.len()];
+        if let Some(ret) = sig.ret {
+            for k in params_named(ret, Reach::OutsideAssoc) {
+                ret_outside[k] = true;
+            }
+        }
         for (n, &(t, var)) in join_order.iter().enumerate() {
             let name = sig.declared[t];
-            let returns_t = sig.ret.is_some_and(|ret| names_outside_assoc(ret, t));
+            // The join before this one left its `Param` in `with`. Its variable goes back, so that
+            // each entry of the result type is a type that resolves as the entry would. Only
+            // `required_join` reads the result type, and it resolves what it reads. The heading
+            // reads it only for a report.
+            if let Some(&(before, its_var)) = n.checked_sub(1).and_then(|n| join_order.get(n)) {
+                with[before] = its_var;
+            }
             let reads = (index.members[t].iter())
                 .flat_map(|&i| &index.everywhere[i])
-                .chain(&index.bound_named[t])
-                .chain(if returns_t { &ret_named[..] } else { &[] });
+                .chain(&index.bound_named[t]);
             for &k in reads {
                 with[k] = self.table.resolve(listed(call.bindings.found[k]));
             }
@@ -2491,16 +2503,22 @@ impl Checker<'_> {
             let mut members: Vec<JoinMember<'_>> = members.into_iter().map(|(_, m)| m).collect();
             // The result type with `T` in it, when `T` has a place there that no associated type
             // ties: the open form takes `T` from it.
-            let ret_t =
-                (sig.ret).filter(|&ret| tied.len() == tied_from && names_outside_assoc(ret, t));
+            let ret_t = (sig.ret).filter(|_| tied.len() == tied_from && ret_outside[t]);
             if let Some(first) = members.first().map(|member| member.label) {
-                let returns = (sig.ret)
-                    .filter(|&ret| ret != with[t] && names_outside_assoc(ret, t))
-                    .map(|ret| ret.subst(&with));
+                let found = &call.bindings.found;
+                let returns = |c: &mut Self| {
+                    let ret = (sig.ret).filter(|&ret| ret != with[t] && ret_outside[t])?;
+                    let mut now = with.clone();
+                    for &k in &ret_named {
+                        now[k] = c.table.resolve(listed(found[k]));
+                    }
+                    now[t] = with[t];
+                    Some(ret.subst(&now))
+                };
                 let heading = Heading {
                     head: sig.name.span,
                     whole: span,
-                    returns,
+                    returns: None,
                 };
                 // A poisoned member was reported: the others that never finish add no report. A
                 // member that never finishes, and failed only inside, is no such member: a valid
@@ -2519,7 +2537,7 @@ impl Checker<'_> {
                     _ => Expectation::Member,
                 };
                 let before: Vec<Option<Type>> = members.iter().map(|m| type_of(m.value)).collect();
-                match self.join_form(form, heading, &mut members, joined, None) {
+                match self.join_form_with(form, (heading, returns), &mut members, joined, None) {
                     Ok(Type::NEVER) if let Some(reported) = held => {
                         self.table.poison(var);
                         failed.get_or_insert(reported);
@@ -2940,13 +2958,16 @@ impl Checker<'_> {
         with_part[t] = part;
         // A part of the result that no join decides, as the `T` of a receiver, that does not
         // fit `want` makes the shape wrong: the closed form reports the call as a whole. The
-        // other joins of the call are open here.
+        // other joins of the call are open here. An entry of an earlier join is its variable,
+        // which resolves to its type.
         let snapshot = self.table.snapshot();
         let fits = members.first().is_none_or(|m| {
             let shape: Vec<Type> = (with_part.iter())
-                .map(|&ty| match ty.kind() {
-                    TypeKind::Param(..) => self.table.fresh(Kind::Any, m.label),
-                    _ => ty,
+                .map(|&ty| match self.table.resolve(ty) {
+                    ty if matches!(ty.kind(), TypeKind::Param(..)) => {
+                        self.table.fresh(Kind::Any, m.label)
+                    }
+                    ty => ty,
                 })
                 .collect();
             let shaped = self.table.resolve(ret.subst(&shape));

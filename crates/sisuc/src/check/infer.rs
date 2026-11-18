@@ -117,16 +117,20 @@ struct Obligation {
 
 /// What a rollback undoes, most recent last.
 enum Undo {
+    /// `stamps` are the stamps that `child` and `root` had (see `sets`).
     Union {
         child: u32,
         root: u32,
         was: Root,
+        stamps: (usize, usize),
     },
     Bind {
         root: u32,
+        stamp: usize,
     },
     Poison {
         root: u32,
+        stamp: usize,
     },
     Done {
         obligation: usize,
@@ -163,6 +167,7 @@ enum Undo {
 pub(super) struct Snapshot {
     log: usize,
     ready: usize,
+    memo: usize,
 }
 
 #[derive(Default)]
@@ -187,7 +192,15 @@ pub(super) struct Table {
     /// nested type, such as `[[[x]]]`, rebuilds each level once. Without it, the walk rebuilds a
     /// level again for each level above it. An entry is good while no variable that it read has
     /// changed (see `sets`), so a change rebuilds only the types that read the variable.
-    rebuilt: RefCell<[FxHashMap<Type, Entry>; 3]>,
+    rebuilt: RefCell<Memo>,
+}
+
+/// The memo of `Table::rebuilt`, and the entries that it held before each write inside a snapshot,
+/// which a rollback puts back.
+#[derive(Default)]
+struct Memo {
+    maps: [FxHashMap<Type, Entry>; 3],
+    log: Vec<(usize, Type, Option<Entry>)>,
 }
 
 /// A rebuilt type of `Table::rebuilt`: the ids of the variables that its rebuild read, and the
@@ -384,6 +397,7 @@ impl Table {
         Snapshot {
             log: self.log.len(),
             ready: self.ready.len(),
+            memo: self.rebuilt.borrow().log.len(),
         }
     }
 
@@ -395,30 +409,31 @@ impl Table {
                 .pop()
                 .expect("the log should hold an entry above the mark")
             {
-                Undo::Union { child, root, was } => {
-                    self.sets.set_root(root, was);
-                    self.sets.link(child, child);
+                Undo::Union {
+                    child,
+                    root,
+                    was,
+                    stamps,
+                } => {
+                    self.sets.restore_root(root, was, stamps.1);
+                    self.sets.unlink(child, stamps.0);
                     self.swap_next(root, child);
                 }
-                Undo::Bind { root } => {
+                Undo::Bind { root, stamp } => {
                     let known = self.sets.root(root);
-                    self.sets.set_root(
-                        root,
-                        Root {
-                            bound: None,
-                            ..known
-                        },
-                    );
+                    let root_was = Root {
+                        bound: None,
+                        ..known
+                    };
+                    self.sets.restore_root(root, root_was, stamp);
                 }
-                Undo::Poison { root } => {
+                Undo::Poison { root, stamp } => {
                     let known = self.sets.root(root);
-                    self.sets.set_root(
-                        root,
-                        Root {
-                            poisoned: false,
-                            ..known
-                        },
-                    );
+                    let root_was = Root {
+                        poisoned: false,
+                        ..known
+                    };
+                    self.sets.restore_root(root, root_was, stamp);
                 }
                 Undo::Done { obligation } => self.obligations[obligation].done = false,
                 Undo::Literal { at } => {
@@ -451,6 +466,13 @@ impl Table {
             }
         }
         self.ready.truncate(to.ready);
+        let memo = &mut *self.rebuilt.borrow_mut();
+        for (open, ty, was) in memo.log.drain(to.memo..).rev() {
+            match was {
+                Some(entry) => memo.maps[open].insert(ty, entry),
+                None => memo.maps[open].remove(&ty),
+            };
+        }
         self.close();
     }
 
@@ -462,6 +484,7 @@ impl Table {
         self.close();
         if self.open.get() == 0 {
             self.log.clear();
+            self.rebuilt.borrow_mut().log.clear();
             std::mem::take(&mut self.ready)
         } else {
             Vec::new()
@@ -508,14 +531,14 @@ impl Table {
     fn poison_root(&mut self, root: u32) {
         let known = self.sets.root(root);
         if !known.poisoned {
-            self.sets.set_root(
+            let stamp = self.sets.set_root(
                 root,
                 Root {
                     poisoned: true,
                     ..known
                 },
             );
-            self.record(Undo::Poison { root });
+            self.record(Undo::Poison { root, stamp });
         }
     }
 
@@ -617,21 +640,16 @@ impl Table {
             return ty;
         }
         let mut rebuilt = self.rebuilt.borrow_mut();
-        self.rebuild_in(ty, open, &mut rebuilt[open as usize]).0
+        self.rebuild_in(ty, open, &mut rebuilt).0
     }
 
     /// `rebuild`, with the types it has met, so that each distinct type is rebuilt once while the
     /// variables that it reads do not change. It also gives the ids of the roots that it read.
-    fn rebuild_in(
-        &self,
-        ty: Type,
-        open: Open,
-        memo: &mut FxHashMap<Type, Entry>,
-    ) -> (Type, Option<Reads>) {
+    fn rebuild_in(&self, ty: Type, open: Open, memo: &mut Memo) -> (Type, Option<Reads>) {
         if !ty.holds_infer() {
             return (ty, None);
         }
-        if let Some(&entry) = memo.get(&ty)
+        if let Some(&entry) = memo.maps[open as usize].get(&ty)
             && self.sets.newest(entry.reads.lo, entry.reads.hi) <= entry.made
         {
             return (entry.done, Some(entry.reads));
@@ -701,7 +719,10 @@ impl Table {
         });
         if let Some(reads) = reads {
             let made = self.sets.changes();
-            memo.insert(ty, Entry { done, reads, made });
+            let was = memo.maps[open as usize].insert(ty, Entry { done, reads, made });
+            if self.open.get() > 0 {
+                memo.log.push((open as usize, ty, was));
+            }
         }
         (done, reads)
     }
@@ -710,7 +731,7 @@ impl Table {
         &self,
         args: TypeArgs,
         open: Open,
-        memo: &mut FxHashMap<Type, Entry>,
+        memo: &mut Memo,
     ) -> (TypeArgs, Option<Reads>) {
         if !args.holds_infer() {
             return (args, None);
@@ -799,8 +820,8 @@ impl Table {
             (y, x)
         };
         let (was, other) = (self.sets.root(big), self.sets.root(small));
-        self.sets.link(small, big);
-        self.sets.set_root(
+        let child_stamp = self.sets.link(small, big);
+        let root_stamp = self.sets.set_root(
             big,
             Root {
                 size: was.size + other.size,
@@ -819,6 +840,7 @@ impl Table {
             child: small,
             root: big,
             was,
+            stamps: (child_stamp, root_stamp),
         });
     }
 
@@ -897,14 +919,14 @@ impl Table {
 
     fn bind_raw(&mut self, root: u32, ty: Type) {
         let known = self.sets.root(root);
-        self.sets.set_root(
+        let stamp = self.sets.set_root(
             root,
             Root {
                 bound: Some(ty),
                 ..known
             },
         );
-        self.record(Undo::Bind { root });
+        self.record(Undo::Bind { root, stamp });
     }
 
     /// The first origin in the source of the variables in the set of `root`.
@@ -1599,8 +1621,9 @@ mod tests {
     }
 
     /// A seeded random run of `fresh`, `unify`, `poison`, `snapshot`, `rollback` and `keep`. After
-    /// each step, `resolve`, `default_open` and `key` of each type made so far give what a rebuild
-    /// with an empty memo gives. So no memo entry outlives a change that it read.
+    /// each step, `resolve`, `default_open` and `key` of about half of the types made so far give
+    /// what a rebuild with an empty memo gives. So no memo entry outlives a change that it read. A
+    /// type that a step does not read keeps its old entry, which a rollback can make good again.
     #[test]
     fn rebuilt_types_should_match_a_rebuild_with_an_empty_memo() {
         for seed in 1..=100_u64 {
@@ -1636,18 +1659,38 @@ mod tests {
                         None => {}
                     },
                 }
-                for &ty in types.iter().chain(&vars) {
+                let read: Vec<Type> = (types.iter().chain(&vars))
+                    .filter(|_| next(2) == 0)
+                    .copied()
+                    .collect();
+                for ty in read {
                     for (open, read) in [
                         (Open::Keep, table.resolve(ty)),
                         (Open::Default, table.default_open(ty)),
                         (Open::Key, table.key(ty)),
                     ] {
-                        let fresh = table.rebuild_in(ty, open, &mut FxHashMap::default()).0;
+                        let fresh = table.rebuild_in(ty, open, &mut Memo::default()).0;
                         assert_eq!(read, fresh, "seed {seed}, step {step}");
                     }
                 }
             }
         }
+    }
+
+    /// A rollback puts back the stamp that a variable had when the snapshot was taken, not an
+    /// older one. So an entry that a change before the snapshot made stale stays stale.
+    #[test]
+    fn rollback_should_keep_an_entry_stale_that_a_change_before_it_made_stale() {
+        let mut table = Table::default();
+        let (a, c) = (table.fresh(Kind::Any, at(0)), table.fresh(Kind::Int, at(1)));
+        let ty = Type::array(a);
+        assert_eq!(table.default_open(ty), ty);
+        // `a` stays the root, and its set is an `Int` now.
+        table.unify(a, c).expect("two variables should unify");
+        let snapshot = table.snapshot();
+        table.poison(a);
+        table.rollback(snapshot);
+        assert_eq!(table.default_open(ty), Type::array(Type::I64));
     }
 
     /// A random type of at most `depth` levels over the variables `vars`.

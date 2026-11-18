@@ -2,6 +2,10 @@
 //! links and the root record of each variable that it names, and nothing else of the table. Each
 //! write of these goes through `link` or `set_root`, which stamps the variable. So a memo entry of
 //! a rebuilt type is good while no variable that it read has a stamp above the entry's.
+//!
+//! A rollback puts back each record and the stamp that it had (`unlink`, `restore_root`). So an
+//! entry made before the snapshot is good again after the rollback. The table also takes back
+//! each entry that was made inside the snapshot, which can hold a change that the rollback undid.
 
 use std::cell::Cell;
 
@@ -61,19 +65,32 @@ impl Sets {
         self.parents[id as usize].set(to);
     }
 
-    /// Puts `child` under `to`, or back on its own when `to` is `child`.
-    pub(super) fn link(&mut self, child: u32, to: u32) {
+    /// Puts `child` under `to`. It gives the stamp that `child` had, for `unlink`.
+    pub(super) fn link(&mut self, child: u32, to: u32) -> usize {
         self.parents[child as usize].set(to);
-        self.touch(child);
+        self.touch(child)
+    }
+
+    /// Puts `child` back on its own, with the stamp that `link` gave.
+    pub(super) fn unlink(&mut self, child: u32, stamp: usize) {
+        self.parents[child as usize].set(child);
+        self.stamps.set(child as usize, stamp);
     }
 
     pub(super) fn root(&self, id: u32) -> Root {
         self.roots[id as usize]
     }
 
-    pub(super) fn set_root(&mut self, id: u32, root: Root) {
+    /// Writes the root record of `id`. It gives the stamp that `id` had, for `restore_root`.
+    pub(super) fn set_root(&mut self, id: u32, root: Root) -> usize {
         self.roots[id as usize] = root;
-        self.touch(id);
+        self.touch(id)
+    }
+
+    /// Puts back the root record of `id` and the stamp that `set_root` gave.
+    pub(super) fn restore_root(&mut self, id: u32, root: Root, stamp: usize) {
+        self.roots[id as usize] = root;
+        self.stamps.set(id as usize, stamp);
     }
 
     /// How many changes were made: an entry made now is good while no variable that it read has
@@ -87,9 +104,11 @@ impl Sets {
         self.stamps.max(lo as usize, hi as usize)
     }
 
-    fn touch(&mut self, id: u32) {
+    fn touch(&mut self, id: u32) -> usize {
+        let was = self.stamps.get(id as usize);
         self.changes += 1;
         self.stamps.set(id as usize, self.changes);
+        was
     }
 }
 
@@ -120,6 +139,10 @@ impl Stamps {
             self.tree = tree;
         }
         self.len += 1;
+    }
+
+    fn get(&self, at: usize) -> usize {
+        self.tree[self.cap() + at]
     }
 
     fn set(&mut self, at: usize, stamp: usize) {

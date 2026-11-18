@@ -175,10 +175,28 @@ impl Checker<'_> {
     /// type that a member does not take, is reported here: a conflict is untyped poison (typed by
     /// a required type). When an untyped poisoned member is left out, a typed join is poison of its
     /// type (ADR 0049).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the other forms come in Task 5")
+    )]
     pub(super) fn join_form(
         &mut self,
         form: JoinForm,
         heading: Heading,
+        members: &mut [JoinMember<'_>],
+        expected: Expectation,
+        binding: Option<Span>,
+    ) -> Result<Type, Poisoned> {
+        let returns = |_: &mut Self| heading.returns;
+        self.join_form_with(form, (heading, returns), members, expected, binding)
+    }
+
+    /// `join_form`, where `returns` gives the `returns` of the heading. It is called only for a
+    /// report, so a call builds its result type only when its join fails.
+    pub(super) fn join_form_with(
+        &mut self,
+        form: JoinForm,
+        (heading, returns): (Heading, impl FnOnce(&mut Self) -> Option<Type>),
         members: &mut [JoinMember<'_>],
         expected: Expectation,
         binding: Option<Span>,
@@ -191,7 +209,7 @@ impl Checker<'_> {
             JoinForm::Compound { assigned, .. } => Some(assigned),
             _ => None,
         };
-        let site = Site {
+        let mut site = Site {
             form,
             heading,
             hole,
@@ -227,6 +245,7 @@ impl Checker<'_> {
                 Err(Poisoned::untyped(reported))
             }
             Err(conflict) => {
+                site.heading.returns = returns(self);
                 if let Some((ty, origin)) = required {
                     let reported = self.report_required(site, (ty, origin), members);
                     Err(Poisoned::typed(ty, reported))
