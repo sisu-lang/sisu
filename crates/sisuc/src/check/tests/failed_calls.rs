@@ -629,7 +629,7 @@ fn a_labeled_generic_call_should_still_report_an_open_parameter() {
     let rows: [(&str, &[Wanted]); 3] = [
         (
             "let _a = id(first(xs: []))",
-            &[(Code::CannotInfer, (4, 14)), (LabeledArgument, (4, 23))],
+            &[(Code::CannotInfer, (4, 17)), (LabeledArgument, (4, 23))],
         ),
         (
             "let _a: i64? = id(first(xs: []))",
