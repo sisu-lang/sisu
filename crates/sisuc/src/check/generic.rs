@@ -2429,11 +2429,12 @@ impl Checker<'_> {
             {
                 lone.push((t, member.label, ty, sig.params[*i]));
                 if matches!(member.at, Place::Whole)
-                    && sig.ret.is_some_and(
-                        |ret| matches!(ret.kind(), TypeKind::Param(_, k) if k as usize == t),
-                    )
+                    && let Some(ret) = sig.ret
                 {
-                    self.body.lone_args.insert(span, (member.label, ty));
+                    let (_, args) =
+                        (self.body.lone_args.entry(span)).or_insert_with(|| (ret, Vec::new()));
+                    args.retain(|&(k, ..)| k != t);
+                    args.push((t, member.label, ty));
                 }
             }
             // The closed call checks a bound of `T` before its join (Q22): E0154 at a member that
@@ -2446,9 +2447,21 @@ impl Checker<'_> {
             // A misfit is reported after the bound check. After a broken bound, the rejected `T`
             // meets each type, as on `main`: only a misfit with no open part is still wrong there.
             if broke.is_some() {
-                misfit_at.retain(|&(_, ty, ..)| {
-                    !(self.table.default_open(self.table.resolve(ty))).holds_infer()
-                });
+                with[t] = var;
+                let mut kept = Vec::new();
+                for misfit in misfit_at {
+                    let (at, ty, param, _) = misfit;
+                    let want = self
+                        .table
+                        .default_open(self.table.resolve(param.subst(&with)));
+                    if !(self.table.default_open(self.table.resolve(ty))).holds_infer()
+                        || self.blamed_part(at, ty, want).is_some()
+                    {
+                        kept.push(misfit);
+                    }
+                }
+                misfit_at = kept;
+                with[t] = param_t;
             }
             if !misfit_at.is_empty() {
                 let mut whole: Vec<JoinMember<'_>> = (members.iter_mut())
@@ -3057,9 +3070,18 @@ impl Checker<'_> {
             // place on to that argument: the report is at `true`, with no label, as on `main`.
             let mut inner = at;
             while !want.holds_infer()
-                && let Some(&(arg, _)) = self.body.lone_args.get(&inner)
+                && let Some((arg, _)) = self.lone_arg(inner)
             {
                 inner = arg;
+            }
+            // A part of the place that is known and clashes with the type that one argument of the
+            // call gives alone: the report is at that argument, as on `main`.
+            if inner == at
+                && let Some((arg, part, ty)) = self.blamed_part(at, ty, want)
+            {
+                let reported = self.mismatch(arg, None, part, ty, Origin::None);
+                first.get_or_insert_with(|| self.diagnostics.error(reported));
+                continue;
             }
             let (at, binder) = if inner == at {
                 (at, binder)
@@ -3089,6 +3111,78 @@ impl Checker<'_> {
             first.get_or_insert(reported);
         }
         first
+    }
+
+    /// The span and type of the one argument of the generic call at `call` whose bare type
+    /// parameter is the call's result type (see `Body::lone_args`).
+    pub(super) fn lone_arg(&self, call: Span) -> Option<(Span, Type)> {
+        let (ret, args) = self.body.lone_args.get(&call)?;
+        let TypeKind::Param(_, k) = ret.kind() else {
+            return None;
+        };
+        (args.iter())
+            .find(|&&(t, ..)| t == k as usize)
+            .map(|&(_, at, ty)| (at, ty))
+    }
+
+    /// The argument of the generic call at `call` that a known part of `want` clashes with, as
+    /// `main` blames it. `want` is the call's place. The call is open: its result type `got`
+    /// holds an open part, which takes the place. The argument alone decides a type parameter.
+    /// Each known part of `want` at that parameter is one type, and the argument's type does not
+    /// convert to it. It gives the argument's span, that part and the argument's type. The result
+    /// can wrap once at its top. Each pair of types is walked once, so a type with repeated parts
+    /// is walked in linear time.
+    fn blamed_part(&mut self, call: Span, got: Type, want: Type) -> Option<(Span, Type, Type)> {
+        if !(self.table.default_open(self.table.resolve(got))).holds_infer() {
+            return None;
+        }
+        let (ret, args) = self.body.lone_args.get(&call)?.clone();
+        let want = match (ret.kind(), want.kind()) {
+            (TypeKind::Optional(_), _) => want,
+            (_, TypeKind::Optional(payload)) => payload,
+            _ => want,
+        };
+        let mut seen = FxHashSet::default();
+        let mut pairs = vec![(ret, want)];
+        // The known part of `want` at each parameter of `args`, or `None` after two that differ.
+        let mut parts: Vec<Option<Option<Type>>> = vec![Some(None); args.len()];
+        while let Some((ret, want)) = pairs.pop() {
+            if !seen.insert((ret, want)) {
+                continue;
+            }
+            let list = |pairs: &mut Vec<_>, ret: TypeArgs, want: TypeArgs| {
+                pairs.extend(ret.get().iter().copied().zip(want.get().iter().copied()));
+            };
+            match (ret.kind(), want.kind()) {
+                (TypeKind::Param(_, k), _) if !want.holds_infer() => {
+                    if let Some(n) = args.iter().position(|&(t, ..)| t == k as usize) {
+                        parts[n] = match parts[n] {
+                            Some(None) => Some(Some(want)),
+                            Some(Some(part)) if part != want => None,
+                            same => same,
+                        };
+                    }
+                }
+                (TypeKind::Optional(r), TypeKind::Optional(w))
+                | (TypeKind::Array(r), TypeKind::Array(w)) => pairs.push((r, w)),
+                (TypeKind::Class(a, r), TypeKind::Class(b, w)) if a == b => list(&mut pairs, r, w),
+                (TypeKind::Struct(a, r), TypeKind::Struct(b, w)) if a == b => {
+                    list(&mut pairs, r, w);
+                }
+                (TypeKind::Enum(a, r), TypeKind::Enum(b, w)) if a == b => list(&mut pairs, r, w),
+                _ => {}
+            }
+        }
+        for (&(_, at, ty), part) in args.iter().zip(parts) {
+            if let Some(Some(part)) = part
+                && !ty.holds_infer()
+                && !super::expr::fits(part, ty)
+                && !self.converts_to_any(ty, part)
+            {
+                return Some((at, part, ty));
+            }
+        }
+        None
     }
 
     /// The type `got` of an argument as its report against `want` shows it: each open part that

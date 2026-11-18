@@ -270,6 +270,10 @@ fn wk() -> Wk { Wk() }
 // A place whose known part `string` clashes with `wk().mkb()`, beside a parameter that waits for
 // its other part: E0032 at the late method call, as on `main`.
 fn sk<T>(_p: Two<string, T>?, _a: T) {}
+// An open call whose known part clashes with the type that one argument gives alone: E0032 at
+// that argument, as on `main`, also after a broken bound of the outer call.
+fn pyb<X, Y>(_y: Y, _x: X) -> Two<X, Y> { panic("no") }
+fn gbm<T: Named>(_a: Two<T?, i64>, _b: T) {}
 fn tfst<A>(p: Two<A, u8>, _a: A) -> A { p.a }
 fn generic<U: Named, V, W: Km>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?, w: W?, st: St) {
     let mut mq: (any Pet)? = op
@@ -848,3 +852,6 @@ let _a: [string] = [pick(panic("x"), $)]
 let _a = pick("a{return}b", $)
 # A late method call whose result clashes with a known part of its place.
 sk(wk().mkb(), $)
+# An open call whose known part clashes with the type of one argument, beside a broken bound.
+gbm(pyb(true, nothing()), $)
+gbm(pyb($, nothing()), 1)

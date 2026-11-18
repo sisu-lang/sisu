@@ -387,7 +387,7 @@ impl Checker<'_> {
         // is still open, it would take the required type, so the report goes to it, at each depth.
         let mut at = e.span;
         if matches!(e.kind, ExprKind::Call { .. }) {
-            while let Some(&(inner, ty)) = self.body.lone_args.get(&at)
+            while let Some((inner, ty)) = self.lone_arg(at)
                 && self.table.resolve(ty).holds_infer()
             {
                 at = inner;

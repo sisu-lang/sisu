@@ -1008,6 +1008,10 @@ impl SelfType {
     }
 }
 
+/// The return type of a generic call and the parameter, span and type of each argument that
+/// alone decides its bare type parameter (see `Body::lone_args`).
+type LoneArgs = (Type, Vec<(usize, Span, Type)>);
+
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
 #[expect(
@@ -1199,11 +1203,12 @@ struct Body {
     /// What `int_literal` answered for each unary `-` and operator, by its span. The answer
     /// depends only on the node, and no two operator nodes have one span.
     int_literals: FxHashMap<Span, bool>,
-    /// The span and type of the one argument of a generic call whose result is that argument's
-    /// bare type parameter, by the call's span. When the argument's type is open, the directed
-    /// report of the call goes to the argument, as on `main`: in `id(id(mk2()))`, it is at
-    /// `mk2()`.
-    lone_args: FxHashMap<Span, (Span, Type)>,
+    /// The return type of a generic call, by the call's span. With it, the parameter, span and
+    /// type of each argument that alone decides its bare type parameter. The directed report of
+    /// a call whose result misfits goes to such an argument, as on `main`. In `id(id(mk2()))`, it
+    /// is at `mk2()`. In `g(py(true, none()))` at `Two<i64?, i64>`, with `py<X, Y>(y: Y, x: X) ->
+    /// Two<X, Y>`, it is at `true` (see `Checker::blamed_part`).
+    lone_args: FxHashMap<Span, LoneArgs>,
 }
 
 impl Body {
