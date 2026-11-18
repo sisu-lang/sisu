@@ -1831,6 +1831,47 @@ fn a_wide_constructor_should_cost_linear_work_in_its_parameters() {
     }
 }
 
+/// One argument at a parameter type that names each of the `k` parameters of the callee. Each
+/// join reads the argument's part at its parameter. A join that converts the whole argument again
+/// makes the work grow with the square of `k`. In the first row the argument is closed. In the
+/// second row a second argument is open at each part, and the closed one decides each part.
+#[test]
+fn a_wide_member_should_cost_linear_work_in_its_parameters() {
+    let program = |k: usize, open: bool| {
+        let list = |name: &str| (0..k).map(|i| format!("{name}{i}")).collect::<Vec<_>>();
+        let fields: Vec<String> = (0..k).map(|i| format!("    _f{i}: A{i}\n")).collect();
+        let tup = |name: &str| format!("Tup<{}>", list(name).join(", "));
+        let (made, params, args) = if open {
+            (
+                format!(
+                    "fn mkall<{}>() -> {} {{ panic(\"e\") }}\n",
+                    list("X").join(", "),
+                    tup("X")
+                ),
+                format!("_c: {}, _d: {}", tup("T"), tup("T")),
+                "mkall(), mkt()",
+            )
+        } else {
+            (String::new(), format!("_c: {}", tup("T")), "mkt()")
+        };
+        format!(
+            "struct {} {{\n{}}}\n\
+             fn mkt() -> Tup<{}> {{ panic(\"e\") }}\n\
+             {made}\
+             fn gk<{}>({params}) -> i64 {{ 0 }}\n\
+             fn main() {{\n    print(gk({args}))\n}}",
+            tup("A"),
+            fields.concat(),
+            vec!["i64"; k].join(", "),
+            list("T").join(", "),
+        )
+    };
+    for (row, open) in [("closed: ", false), ("open: ", true)] {
+        let work = |k: usize| call_work(&program(k, open));
+        assert_near_linear_for(row, work(100), work(200), work(300));
+    }
+}
+
 /// One call with `n` literal arguments at one parameter `T: Ord`. Each literal part of the join is
 /// examined a fixed number of times, so the work grows with `n`, not with its square. A check of
 /// each literal part against all the other parts makes the work grow with the square of `n`.
