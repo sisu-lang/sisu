@@ -3,6 +3,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{ErrorKind, Write};
+use std::panic::{self, AssertUnwindSafe};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
@@ -637,6 +638,21 @@ pub(crate) fn stray_message(path: &Path) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Runs `case`, which takes whether to bless, with `bless`. A case that `tests/parked.txt` parks
+/// for `task` runs with no bless, and it must fail.
+pub(crate) fn unless_parked(task: Option<&str>, path: &Path, bless: bool, case: impl FnOnce(bool)) {
+    let Some(task) = task else {
+        case(bless);
+        return;
+    };
+    let passed = panic::catch_unwind(AssertUnwindSafe(|| case(false))).is_ok();
+    assert!(
+        !passed,
+        "{} passes, but tests/parked.txt parks it ({task}): remove its line",
+        path.display()
+    );
 }
 
 /// Writes each `(path, contents)` under a fresh `<CARGO_TARGET_TMPDIR>/fixtures/<test>/` and

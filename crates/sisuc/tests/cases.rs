@@ -25,7 +25,6 @@
 //!
 //! A case that `tests/parked.txt` names for its test is parked: it must fail until its task.
 
-use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
 use std::process::Command;
 
@@ -49,18 +48,9 @@ fn parked(test: &str, path: &Path) -> Option<&'static str> {
         })
 }
 
-/// Runs `case`, which takes whether to bless. A parked case runs with no bless, and it must fail.
+/// `support::unless_parked` for the case at `path` of `test`.
 fn unless_parked(test: &str, path: &Path, case: impl FnOnce(bool)) {
-    let Some(task) = parked(test, path) else {
-        case(bless());
-        return;
-    };
-    let passed = panic::catch_unwind(AssertUnwindSafe(|| case(false))).is_ok();
-    assert!(
-        !passed,
-        "{} passes, but tests/parked.txt parks it ({task}): remove its line",
-        path.display()
-    );
+    support::unless_parked(parked(test, path), path, bless(), case);
 }
 
 // datatest-stable names each test `<function>::<path under root>`, so these function names are
