@@ -445,18 +445,19 @@ fn an_interface_value_should_have_only_the_methods_of_its_interface() {
     )]);
 }
 
-/// An argument binds a type parameter before the context does, and the result converts after
-/// that: the context never binds a parameter to an `any` type that an argument fixes.
+/// A call whose arguments each convert to an `any` context opens at that type: the context binds
+/// the parameter to the `any` type, also when the arguments are of different classes. An argument
+/// that the `any` type does not take still reports.
 #[test]
-fn inference_should_bind_arguments_before_an_any_context() {
+fn a_call_should_open_at_an_any_context_that_its_arguments_convert_to() {
     for (row, src, expected) in [
         (
-            "two arguments of different classes",
+            "two arguments of different classes, which each convert to `any Shape`",
             "fn pair<T>(a: T, b: T) -> T { a }\nfn main() {\n    let c = Circle(r: 1.0)\n    let r = Rect(w: 1.0)\n    let s: any Shape = pair(c, r)\n}",
             vec![],
         ),
         (
-            "an array of the argument's type, which no conversion makes an array of `any`",
+            "an array of the argument's type, which opens at an array of `any`",
             "fn single<T>(x: T) -> [T] { [x] }\nfn main() {\n    let c = Circle(r: 1.0)\n    let xs: [any Shape] = single(c)\n}",
             vec![],
         ),

@@ -8297,20 +8297,25 @@ fn waiting_variant_should_bind_the_whole_optional_when_its_alias_holds_one() {
 /// THEN the report is the one that `main` gives
 #[test]
 fn waiting_variant_should_keep_its_report_when_its_alias_holds_an_unrelated_optional() {
-    let rows: Vec<ErrorRow<'_>> = vec![
-        (
-            "g1",
-            alias_variant_program("let x: i64?? = snd(BP.P(a: None, b: 5))"),
-            vec![],
-        ),
-        // A false E0032, as on `main`: the deferred class of `first(mkll())`.
-        (
-            "g2",
-            alias_variant_program("let x: [i64?]? = unb(BL.B(v: []))"),
-            vec![(Code::Mismatch, (12, 26))],
-        ),
-    ];
+    let rows: Vec<ErrorRow<'_>> = vec![(
+        "g1",
+        alias_variant_program("let x: i64?? = snd(BP.P(a: None, b: 5))"),
+        vec![],
+    )];
     error_rows(&rows);
+}
+
+/// GIVEN `unb(BL.B(v: []))` under `[i64?]?`, with `type BL<X> = Bx<[X?]>`, which `main` rejects
+///   with a false E0032
+/// WHEN the program is checked
+/// THEN `T` is `[i64?]`, and the closed result takes one wrap at the top (Q24): no error
+#[test]
+fn an_alias_variant_call_under_an_optional_should_wrap_its_closed_result_once() {
+    // `unb` holds no call of itself here: `call_types` reads the first call of `unb`.
+    let src = "enum Bx<T> {\n    B(v: T)\n}\ntype BL<X> = Bx<[X?]>\n\
+               fn unb<T>(b: Bx<T>) -> T { match b { Bx.B(v) => v } }\n\
+               fn main() {\n    let x: [i64?]? = unb(BL.B(v: []))\n    print(x == None)\n}";
+    assert_eq!(call_types(src, "unb"), ["[i64?]", "[i64?]"]);
 }
 
 const LITERAL_HEAD: &str = concat!(
@@ -8989,11 +8994,14 @@ fn a_member_call_whose_result_does_not_name_its_parameter_should_report_cannot_i
     codes(src, &[(Code::CannotInfer, (4, 7)), (Code::NoValue, (4, 7))]);
 }
 
+/// The control of `a_waiting_call_inside_a_member_should_take_the_decided_part_of_the_context`:
+/// the type of a `let` reached the inner call before that fix too, and the fix keeps it.
+///
 /// GIVEN a generic call inside `id(..)` under a `let` with a written type
 /// WHEN the program is checked
 /// THEN the written type reaches the inner call and no error is reported
 #[test]
-fn a_waiting_call_inside_id_should_take_the_type_of_the_let() {
+fn a_waiting_call_inside_id_should_still_take_the_type_of_the_let() {
     with_prelude();
     let src = "struct Two<A, B> {\n    a: A\n    b: B\n}\n\
                fn id<T>(x: T) -> T { x }\n\

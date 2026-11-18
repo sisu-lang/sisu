@@ -182,7 +182,7 @@ The examples use `fn pick<T>(a: T, b: T) -> T`, `fn h<T>(a: T, b: T?) -> T` and 
 - An argument that makes an optional fixes `T` before a plain literal. `pick(1, Some(2))` is an `i64?`.
 - An argument that holds an optional also comes first. `pick([1], [Some(2)])` is a `[i64?]`.
 - So does a call that wraps an optional. For `fn wrap<T>(x: T) -> [T]`, `pick([1], wrap(Some(2)))` is a `[i64?]`. A call wraps an optional when its parameter and its return type name one type parameter.
-- An optional at a `T?` place fills that `?`, so the call does not hold an optional. `pick(h(1, Some(2)), Some(3))` is an `i64?`, and `let v: i64?? = h(1, Some(2))` is valid.
+- An optional at a `T?` place fills that `?`, so the call does not hold an optional. `pick(h(1, Some(2)), Some(3))` is an `i64?`. The call is an `i64`, so `let v: i64?? = h(1, Some(2))` is an error: expected `i64??`, found `i64`. `let v: i64?? = Some(h(1, Some(2)))` is valid.
 - A call that waits can also make the outer call hold an optional: the arguments of `T` join. For `fn okv<T>(r: Result<T, string>) -> T`, `pick(1, okv(Ok(Some(2))))` is an `i64?`.
 - A call that returns `T` can bind `T` to the whole optional context. It does so when an argument at a `T` or `[T]` place makes or holds an optional. For `first<T>(xs: [T]) -> T`, `let v: i64?? = first([None, Some(1)])` binds `T` to `i64??`, so `v` is the outer `None`.
 - A call that returns `T?` does the same when the context has no more optionals than the call makes. `let w: i64?? = opt(Some(2))` binds `T` to `i64?`.
