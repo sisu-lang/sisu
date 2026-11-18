@@ -946,7 +946,7 @@ mod tests {
         with_params("", "names: [string], n: i64", |c, types| {
             // GIVEN `names` at a parameter `[T]` and `n` at a parameter `T`
             let hole = Symbol::intern("T");
-            let place = Type::array(Type::intern(TypeKind::Param(hole, 0)));
+            let place = Type::array(Type::intern(TypeKind::Param(hole, MARK_INDEX)));
             let (mut first, mut second) = (Ok(local(types[0], 2)), Ok(local(types[1], 3)));
             let mut members = [
                 JoinMember {
@@ -1789,7 +1789,7 @@ mod tests {
                     whole: head(),
                     returns: Some(Type::array(Type::intern(TypeKind::Param(
                         Symbol::intern("T"),
-                        0,
+                        MARK_INDEX,
                     )))),
                 },
                 ..site(call())

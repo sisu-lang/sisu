@@ -34,7 +34,7 @@ use crate::parser::is_place;
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
-use crate::types::{HOLE_INDEX, Head, REJECTED_INDEX};
+use crate::types::{HOLE_INDEX, Head, MARK_INDEX, REJECTED_INDEX};
 
 /// How many visits a walk makes before its `WalkMemo` keeps answers. The types of a normal call
 /// are small, so such a walk makes no entry and does no hashing.
@@ -1298,12 +1298,15 @@ pub(super) struct BoundObligation {
     pub(super) call: Option<Span>,
 }
 
-/// What the open form of a generic call needs (see `Checker::open_at`). Each type here holds each
-/// open parameter as its `Param`, and each other parameter as the closed form decided it.
+/// What the open form of a generic call needs (see `Checker::open_at`).
 pub(super) struct OpenEntry {
-    /// The call's result type.
+    /// The call's result type, as the callee declares it.
     ret: Type,
-    /// The call's type arguments, a method's receiver's first.
+    /// The result type with each open parameter as its mark (`MARK_INDEX`), and each other
+    /// parameter as the closed form decided it. A decided type can hold a parameter of the caller
+    /// with the name of an open one, never its mark.
+    marked: Type,
+    /// The call's type arguments, a method's receiver's first. An open parameter has its mark.
     types: Vec<Type>,
     /// The name and the index of each open parameter.
     params: Vec<(Symbol, usize)>,
@@ -1312,7 +1315,7 @@ pub(super) struct OpenEntry {
     /// parameter whose interface arguments name an open one.
     bounds: Vec<(usize, Bound, Span)>,
     /// Each member at a place of an open parameter: the span of its argument and the type of its
-    /// parameter.
+    /// parameter, as the callee declares it.
     members: Vec<(Span, Type)>,
 }
 
@@ -2339,8 +2342,9 @@ impl Checker<'_> {
             for &k in reads {
                 with[k] = self.table.resolve(listed(call.bindings.found[k]));
             }
-            let place = u32::try_from(t).expect("a callee should have fewer than 2^32 parameters");
-            let param_t = Type::intern(TypeKind::Param(name, place));
+            // The mark of `T`'s place: a type that the call decided before can hold a parameter of
+            // the caller named `T`, which is not the place.
+            let param_t = Type::intern(TypeKind::Param(name, MARK_INDEX));
             with[t] = param_t;
             let found = &call.bindings.found;
             // A split member goes back to the place that it has when it is not split: a join
@@ -2994,13 +2998,11 @@ impl Checker<'_> {
         {
             let mut types = list.get().to_vec();
             for &(t, name, _) in &openable {
-                let index =
-                    u32::try_from(t).expect("a callee should have fewer than 2^32 parameters");
-                types[t] = Type::intern(TypeKind::Param(name, index));
+                types[t] = Type::intern(TypeKind::Param(name, MARK_INDEX));
             }
             let members = (openable.iter())
                 .flat_map(|(_, _, of)| of.iter())
-                .filter_map(|&i| Some((args[i].value.span, sig.params[i]?.subst(&types))))
+                .filter_map(|&i| Some((args[i].value.span, sig.params[i]?)))
                 .collect();
             let mut opened = vec![false; sig.declared.len()];
             for &(t, ..) in &openable {
@@ -3026,7 +3028,8 @@ impl Checker<'_> {
                 }
             }
             let entry = OpenEntry {
-                ret: ret.subst(&types),
+                ret,
+                marked: ret.subst(&types),
                 params: openable.iter().map(|&(t, name, _)| (name, t)).collect(),
                 types,
                 bounds,
@@ -3602,7 +3605,7 @@ impl Checker<'_> {
         let (ret, mut with) = (entry.ret, entry.types.clone());
         let candidate = self.table.resolve(candidate);
         for &(name, t) in &entry.params {
-            with[t] = part_at(ret, name, candidate)?;
+            with[t] = part_at(entry.marked, name, candidate)?;
         }
         let bounds = entry.bounds.clone();
         if !self.unify(ret.subst(&with), candidate) {
@@ -6168,6 +6171,7 @@ mod tests {
         // GIVEN an open call at `kept`, and a snapshot that drops it and adds one at `added`
         let entry = || OpenEntry {
             ret: Type::I64,
+            marked: Type::I64,
             types: Vec::new(),
             params: Vec::new(),
             bounds: Vec::new(),

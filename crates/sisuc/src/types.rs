@@ -67,6 +67,12 @@ pub(crate) const HOLE_INDEX: u32 = u32::MAX;
 /// declaration has a parameter at this index.
 pub(crate) const REJECTED_INDEX: u32 = u32::MAX - 1;
 
+/// The index of a join's mark: the callee's type parameter that a call's join decides, at its
+/// place in a parameter's type (see `check::join::part_at`). A type that the call decided before
+/// can hold a type parameter of the caller with the same name, never one at this index. No
+/// declaration has a parameter at this index.
+pub(crate) const MARK_INDEX: u32 = u32::MAX - 2;
+
 /// What a type names, anywhere inside it. Each interned type and list holds its own, so a read
 /// does not walk the type.
 #[derive(Clone, Copy, Debug, Default)]

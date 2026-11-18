@@ -18,6 +18,7 @@ use crate::conformance::ensure_stack;
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, ExprKind, Type, TypeArgs, TypeKind};
+use crate::types::MARK_INDEX;
 
 #[cfg(test)]
 thread_local! {
@@ -973,8 +974,9 @@ fn breaks(e: &mut tir::Expr, depth: usize, f: &mut impl FnMut(&mut tir::Expr)) {
     }
 }
 
-/// `place` with each `hole` replaced by `with`. Each distinct type inside `place` is filled once,
-/// however many paths lead to it.
+/// `place` with each `hole` replaced by `with`. The hole is the join's mark, the `Param` of that
+/// name at `MARK_INDEX`: a parameter of the caller with the same name stays. Each distinct type
+/// inside `place` is filled once, however many paths lead to it.
 fn fill(place: Type, hole: Symbol, with: Type) -> Type {
     fill_in(place, hole, with, &mut FxHashMap::default())
 }
@@ -997,7 +999,7 @@ fn fill_in(place: Type, hole: Symbol, with: Type, memo: &mut FxHashMap<Type, Typ
             TypeArgs::intern(&filled)
         };
         match place.kind() {
-            TypeKind::Param(name, _) if name == hole => with,
+            TypeKind::Param(name, MARK_INDEX) if name == hole => with,
             TypeKind::Array(inner) => Type::array(fill_in(inner, hole, with, memo)),
             TypeKind::Optional(inner) => Type::optional(fill_in(inner, hole, with, memo)),
             TypeKind::Class(id, list) => Type::intern(TypeKind::Class(id, args(list, memo))),
@@ -1015,7 +1017,8 @@ fn fill_in(place: Type, hole: Symbol, with: Type, memo: &mut FxHashMap<Type, Typ
     done
 }
 
-/// The part of `ty`, an argument's type, at `hole` in its parameter's type `place`. An argument
+/// The part of `ty`, an argument's type, at `hole` in its parameter's type `place`. The hole is
+/// the join's mark, as in `fill`. An argument
 /// that is not optional against a `place` of `T?` converts at its top, so its part is its own
 /// type. `None` when `ty` does not have the shape of `place`.
 pub(super) fn part_at(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
@@ -1043,7 +1046,7 @@ fn part_in(
     }
     let found = ensure_stack(|| {
         let lists = match (place.kind(), ty.kind()) {
-            (TypeKind::Param(name, _), _) if name == hole => return Some(ty),
+            (TypeKind::Param(name, MARK_INDEX), _) if name == hole => return Some(ty),
             (TypeKind::Array(ours), TypeKind::Array(theirs))
             | (TypeKind::Optional(ours), TypeKind::Optional(theirs)) => {
                 return part_in(ours, hole, theirs, misses);
@@ -1379,7 +1382,7 @@ mod tests {
     ) -> Option<Type> {
         with_params(src, params, |c, types| {
             let hole = Symbol::intern("T");
-            let place = Type::array(Type::intern(TypeKind::Param(hole, 0)));
+            let place = Type::array(Type::intern(TypeKind::Param(hole, MARK_INDEX)));
             let (mut first, mut second) = build(c, types);
             let mut members = [
                 JoinMember {
@@ -1424,7 +1427,7 @@ mod tests {
         with_params("", "a: u8", |c, types| {
             // GIVEN the arguments `[1]` at a parameter `[T]` and `a: u8` at a parameter `T`
             let hole = Symbol::intern("T");
-            let place = Type::array(Type::intern(TypeKind::Param(hole, 0)));
+            let place = Type::array(Type::intern(TypeKind::Param(hole, MARK_INDEX)));
             let literal = int(c, 1, 1);
             let element = literal.ty;
             let mut first = Ok(array(vec![literal], element, 2));
@@ -1740,7 +1743,7 @@ mod tests {
                 panic!("the parameter should be the struct `Two`");
             };
             let hole = Symbol::intern("T");
-            let mut place = Type::intern(TypeKind::Param(hole, 0));
+            let mut place = Type::intern(TypeKind::Param(hole, MARK_INDEX));
             for _ in 0..level {
                 place = Type::intern(TypeKind::Struct(two, TypeArgs::intern(&[place, place])));
             }
