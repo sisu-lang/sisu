@@ -38,6 +38,6 @@ jobs:
           trigger_phrase: "@claude"
           claude_args: |
             --model claude-opus-5-5
-            --effort high
+            --effort medium
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*)"
             --append-system-prompt "This repository has no CLAUDE.md. Read AGENTS.md and CODING_STANDARDS.md first and review the diff against them. Read docs/register.md before you judge a design choice. Find real defects: wrong behaviour, missing tests, broken rules. Do not report style that a linter checks. Put each finding in an inline comment on its line. Write in ASD-STE100 Simplified Technical English. No praise, no filler. Do not change files or push commits."
