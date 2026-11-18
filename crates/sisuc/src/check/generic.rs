@@ -2219,12 +2219,14 @@ impl Checker<'_> {
             }
             let checked = match sig.params[i] {
                 None => mark(self.operand(&arg.value, Expectation::Poisoned)),
-                Some(_)
+                Some(param)
                     if joins(i)
-                        && let Some(member) = self.takes_member(
-                            &arg.value,
-                            self.body.closed_place || index.decided_at(i).nth(1).is_some(),
-                        ) =>
+                        && let Some(member) = self
+                            .takes_member(
+                                &arg.value,
+                                self.body.closed_place || index.decided_at(i).nth(1).is_some(),
+                            )
+                            .or_else(|| self.own_typed(&arg.value, param, expected)) =>
                 {
                     let e = &arg.value;
                     let checked = read_jump(self.expr(e, member));
@@ -3843,10 +3845,68 @@ impl Checker<'_> {
         }
     }
 
+    /// The expectation of a waiting argument `e` at a place of type `param`, when it is a member of
+    /// its join all the same. Under a hint or a required optional, the context could decide the
+    /// parameter before the call's own arguments. Its `?` is not in the program. So an argument
+    /// that gives itself a type (`Rank::Concrete`) is a member then, checked with no context: the
+    /// call decides each parameter from its own arguments (Q22). These stay out, and keep their
+    /// reports:
+    /// - a loop, which needs its context for its literal breaks;
+    /// - a value that is an optional by itself, as a safe call: the context's `?` is its own;
+    /// - a value that never finishes, and an `if` with no `else` (E0043);
+    /// - an array literal with elements at a place that is not `T` or `[T]`, whose elements meet
+    ///   their part (see `late_argument`).
+    fn own_typed(
+        &mut self,
+        e: &ast::Expr,
+        param: Type,
+        expected: Expectation,
+    ) -> Option<Expectation> {
+        let adds = match expected {
+            Expectation::Hint { .. } => true,
+            Expectation::Required(want, _) => matches!(want.kind(), TypeKind::Optional(_)),
+            Expectation::None | Expectation::Poisoned | Expectation::Member => false,
+        };
+        if !adds {
+            return None;
+        }
+        let bare = |ty: Type| matches!(ty.kind(), TypeKind::Param(..));
+        let mut shown = e;
+        while let ast::ExprKind::Call { callee, args, .. } = &shown.kind
+            && callee.name.as_str() == "dbg"
+            && let [arg] = args.as_slice()
+        {
+            shown = &arg.value;
+        }
+        let elements = matches!(&shown.kind, ast::ExprKind::ArrayLit(elements) if !elements.is_empty())
+            && !bare(param)
+            && !matches!(param.kind(), TypeKind::Array(inner) if bare(inner));
+        let no_else = matches!(
+            &e.kind,
+            ast::ExprKind::If {
+                else_block: None,
+                ..
+            } | ast::ExprKind::IfLet {
+                else_block: None,
+                ..
+            }
+        );
+        let ranked = self.rank_value(e, &mut true);
+        (ranked.rank == Rank::Concrete
+            && !ranked.holds_loop
+            && !ranked.optional
+            && !ranked.never
+            && !elements
+            && !no_else)
+            .then_some(Expectation::None)
+    }
+
     /// Whether an argument of `call` that is still to check can make an optional by itself, or
     /// holds one (see `Ranked`). Ranking stops at a `Concrete` value, so such a value can, unless
-    /// it is an operator, whose value is never optional.
-    fn late_optional(&mut self, call: &Inference<'_>) -> bool {
+    /// it is an operator, whose value is never optional. Under a hint (`hint`), a value that
+    /// holds a loop does not count by its rank: the loop meets the hint's payload, and the call
+    /// takes the type of its own arguments.
+    fn late_optional(&mut self, call: &Inference<'_>, hint: bool) -> bool {
         (call.slots.iter().zip(call.args)).any(|(slot, arg)| {
             let e = &arg.value;
             let operator = matches!(
@@ -3855,7 +3915,9 @@ impl Checker<'_> {
             );
             let ranked = slot.is_none().then(|| self.rank_value(e, &mut true));
             ranked.is_some_and(|r| {
-                r.rank == Rank::Concrete && !operator || r.optional || r.holds_optional
+                r.rank == Rank::Concrete && !operator && !(hint && r.holds_loop)
+                    || r.optional
+                    || r.holds_optional
             })
         })
     }
@@ -4065,10 +4127,12 @@ impl Checker<'_> {
         (expected, whole): (Expectation, bool),
     ) -> Option<bool> {
         let want = match expected {
-            Expectation::Hint { want, siblings, .. } if whole && !self.late_optional(call) => {
+            Expectation::Hint { want, siblings, .. }
+                if whole && !self.late_optional(call, true) =>
+            {
                 (siblings, want)
             }
-            Expectation::Required(want, _) if whole && !self.late_optional(call) => {
+            Expectation::Required(want, _) if whole && !self.late_optional(call, false) => {
                 (payload(want), want)
             }
             Expectation::Required(want, _) | Expectation::Hint { want, .. } => (want, want),

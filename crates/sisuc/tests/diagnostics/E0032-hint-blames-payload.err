@@ -54,25 +54,17 @@ error[E0032]: expected `u8`, found `i64`
    |                            |
    |                            this branch gives the type `u8`
 
-error[E0032]: expected `[u8?]`, found `[i64]`
-  --> E0032-hint-blames-payload.sisu:69:31
+error[E0032]: expected `u8`, found `i64`
+  --> E0032-hint-blames-payload.sisu:69:18
    |
 69 |     let x = v == first(first([ys]))
-   |                               ^^
+   |                  ^^^^^^^^^^^^^^^^^^
 
 error[E0032]: expected `u8`, found `i64`
   --> E0032-hint-blames-payload.sisu:76:18
    |
 76 |     let x = v == id(first(ys))
    |                  ^^^^^^^^^^^^^
-
-warning[W0015]: `x` can be `None`, and then this writes the word "None"
-  --> E0032-hint-blames-payload.sisu:83:11
-   |
-83 |     print(x)
-   |           ^
-   |
-   = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
 error[E0032]: expected `u8`, found `i64`
   --> E0032-hint-blames-payload.sisu:95:18
@@ -183,5 +175,5 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
     |
     = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
-sisu: 16 errors, 8 warnings
+sisu: 16 errors, 7 warnings
 sisu: for more on a code, run `sisu explain <code>`: E0032, E0167, W0015

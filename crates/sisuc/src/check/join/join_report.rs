@@ -295,6 +295,12 @@ impl Checker<'_> {
     /// Whether the value `e`, which has no value position, does not convert to `target`. It binds
     /// nothing.
     fn leaf_fails(&mut self, e: &mut tir::Expr, target: Type) -> bool {
+        // A `None` takes each optional: its own type is the one that the join gave it.
+        if matches!(e.kind, ExprKind::None)
+            && matches!(self.table.resolve(target).kind(), TypeKind::Optional(_))
+        {
+            return false;
+        }
         let snapshot = self.table.snapshot();
         let wraps = self.converts_at(e, target);
         self.table.rollback(snapshot);
@@ -317,6 +323,16 @@ impl Checker<'_> {
             return None;
         }
         ensure_stack(|| {
+            // A leaf that the join wrapped converts at its wrap: it is reported against the
+            // optional, as a value written there is.
+            if matches!(e.kind, ExprKind::Wrap(_))
+                && let Some((payload, _)) = self.enter(e, target)
+                && let ExprKind::Wrap(inner) = &mut e.kind
+                && self.enter(inner, payload).is_none()
+                && self.leaf_fails(inner, payload)
+            {
+                return Some(self.report_value(inner, inner.ty, target, origin, top));
+            }
             let Some((part, _)) = self.enter(e, target) else {
                 if !self.leaf_fails(e, target) {
                     return None;

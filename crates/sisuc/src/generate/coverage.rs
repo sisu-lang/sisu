@@ -46,10 +46,9 @@ const SEED_LEN: usize = 4_096;
 /// The seeds of the walk whose programs `main` accepts and the branch rejects with an E0032 or an
 /// E0062 (interim: Task 5d). The walk leaves them out, and `parked_seeds_should_fail_to_check`
 /// fails when one checks. Task 5d then removes it, and `PARKED_KEYS` with the last seed.
-const PARKED_SEEDS: &[u64] = &[75, 85, 87, 97, 118, 128, 226, 288];
+const PARKED_SEEDS: &[u64] = &[];
 /// The key that only the programs of `PARKED_SEEDS` hold: it waits for them (interim: Task 5d).
-const PARKED_KEYS: &[&str] =
-    &["reach: a `mut self` call on a local, a field, an element and an element of a field"];
+const PARKED_KEYS: &[&str] = &[];
 
 /// What no generated program holds, and why.
 const EXCLUDED: &[(&str, &str)] = &[

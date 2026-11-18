@@ -72,14 +72,6 @@ help: if the types are right, convert it with `i64(...)`
 53 |     let x = match k { 0 => q; _ => loop { break i64(v) } }
    |                                                 ++++ +
 
-warning[W0015]: `x` can be `None`, and then this writes the word "None"
-  --> E0032-hint-names-siblings.sisu:61:11
-   |
-61 |     print(x)
-   |           ^
-   |
-   = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
-
 error[E0032]: expected `i64`, found `u8`
   --> E0032-hint-names-siblings.sisu:67:31
    |
@@ -159,5 +151,5 @@ error[E0032]: expected `i64?`, found `u8?`
 101 |     let x = q == loop { break o }
     |                               ^
 
-sisu: 12 errors, 3 warnings
+sisu: 12 errors, 2 warnings
 sisu: for more on a code, run `sisu explain <code>`: E0032, W0015
