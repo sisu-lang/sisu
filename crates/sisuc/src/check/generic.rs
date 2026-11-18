@@ -3674,7 +3674,11 @@ impl Checker<'_> {
         (decided, lone): (&[(usize, Type)], &[Lone]),
         (expected, met): (Expectation, Option<bool>),
     ) -> Result<(), Poisoned> {
-        if expected == Expectation::Member {
+        // A function call with a labeled argument failed (E0055): it is checked as alone, and
+        // reports its own parameters, as on `main`.
+        let labeled = matches!(call.declarer, Declarer::Function(_))
+            && call.args.iter().any(|arg| arg.label.is_some());
+        if expected == Expectation::Member && !labeled {
             // A parameter that the result names and that is still open waits for the outer call.
             // That call reports it when it settles no type for it.
             let waits: Vec<(Type, DiagnosticKind)> = (decided.iter())
