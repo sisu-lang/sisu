@@ -31,6 +31,9 @@ thread_local! {
     pub(super) static LEAF_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many distinct types `fill` has filled, on this thread.
     pub(super) static FILLED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times `part_in` has compared a part of a place with a part of a type, on this
+    /// thread.
+    pub(super) static PART_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A member of a join: a checked value, where it stands, and the span of the label of an E0043
@@ -950,6 +953,8 @@ pub(super) fn part_at(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
 
 /// `part_at` below the top.
 fn part_in(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
+    #[cfg(test)]
+    PART_STEPS.set(PART_STEPS.get() + 1);
     let args = |ours: TypeArgs, theirs: TypeArgs| {
         (ours.get().iter().zip(theirs.get()))
             .find_map(|(&ours, &theirs)| part_in(ours, hole, theirs))

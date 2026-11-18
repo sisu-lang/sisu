@@ -1678,6 +1678,36 @@ fn waiting_bounds_should_be_looked_at_once_for_each_parameter_they_name() {
     assert_near_linear(examined(100), examined(200), examined(300));
 }
 
+/// A call of `shape<A, B>(p: P<A, B>)` on a chain of `k + 1` aliases, each of which names the one
+/// before it twice: `k + 1` distinct types, but `2^k` paths. After the join of `A`, the place of
+/// `B` holds the chain at `A`. So a search for the part at `B` that walks into that closed part
+/// visits each path, and the work grows with `2^k`.
+#[test]
+fn the_part_at_a_parameter_should_be_found_in_linear_work_on_an_alias_chain() {
+    let steps = |k: usize| {
+        let aliases: Vec<String> = (1..=k)
+            .map(|i| format!("type A{i} = P<A{}, A{}>", i - 1, i - 1))
+            .collect();
+        let lets: Vec<String> = (1..=k)
+            .map(|i| format!("    let a{i}: A{i} = P.X(a{})", i - 1))
+            .collect();
+        let src = format!(
+            "enum P<A, B> {{\n    X(A)\n    Y(B)\n}}\ntype A0 = P<i64, i64>\n{}\n\
+             fn shape<A, B>(p: P<A, B>) -> i64 {{\n    match p {{\n        P.X(_) => 1\n        \
+             P.Y(_) => 2\n    }}\n}}\n\
+             fn main() {{\n    let a0: A0 = P.Y(2)\n{}\n    print(shape(a{k}))\n}}",
+            aliases.join("\n"),
+            lets.join("\n"),
+        );
+        join::PART_STEPS.set(0);
+        clean(&src);
+        join::PART_STEPS.get()
+    };
+    let (eight, sixteen) = (steps(8), steps(16));
+    assert_at_most_doubles(eight, sixteen);
+    assert_at_most_doubles(sixteen, steps(32));
+}
+
 /// The work of checking `src`: the steps of the type walks, the snapshots, the types rebuilt and
 /// the variables made. A guard of a generic call's cost reads it.
 fn call_work(src: &str) -> usize {
