@@ -2962,9 +2962,25 @@ impl Checker<'_> {
                 self.body.closed_place |= index.decided_at(i).nth(1).is_some();
                 let checked = self.late_argument(&call, i, &arg.value, param);
                 self.body.closed_place = closed;
-                // A poisoned argument decides nothing, and its report is the call's.
+                // A poisoned argument decides nothing, and its report is the call's. A parameter
+                // that it leaves open is poisoned, so a later argument there reports only its own
+                // mistakes, as on `main`.
                 if let Err(poisoned) = &checked {
                     failed.get_or_insert_with(|| poisoned.reported());
+                    for t in index.decided_at(i) {
+                        let Ok(found) = decided.binary_search_by_key(&t, |&(k, _)| k) else {
+                            continue;
+                        };
+                        let var = decided[found].1;
+                        let open = self.table.resolve(var);
+                        if matches!(open.kind(), TypeKind::Infer(_))
+                            && self.table.default_open(open) == open
+                        {
+                            self.table.poison(var);
+                            quiet.push(t);
+                            hushed[t] = true;
+                        }
+                    }
                 }
                 call.slots[i] = Some(checked);
                 continue;
