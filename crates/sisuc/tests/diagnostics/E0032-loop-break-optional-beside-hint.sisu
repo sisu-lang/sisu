@@ -1,0 +1,10 @@
+fn id<T>(a: T) -> T { a }
+fn main() {
+    let o: f64? = None
+    let p: f64? = None
+    let x: f64? = o ?? id(loop { break p })
+    let y = o ?? id(loop { break (if false { 1.5 } else { None }) })
+    print(x ?? y ?? 0.0)
+}
+
+// interim: Task 5e gives no error; x and y are f64?

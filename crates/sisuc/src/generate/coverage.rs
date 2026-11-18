@@ -43,11 +43,12 @@ pub(crate) const SEARCH_SEEDS: u64 = 16 * SEEDS;
 /// `seed`: a shell step cannot call a test-only function.
 pub(crate) const FUZZ_SEEDS: u64 = 128;
 const SEED_LEN: usize = 4_096;
-/// The seeds of the walk whose programs `main` accepts and the branch rejects with an E0032 or an
-/// E0062 (interim: Task 5d). The walk leaves them out, and `parked_seeds_should_fail_to_check`
-/// fails when one checks. Task 5d then removes it, and `PARKED_KEYS` with the last seed.
-const PARKED_SEEDS: &[u64] = &[];
-/// The key that only the programs of `PARKED_SEEDS` hold: it waits for them (interim: Task 5d).
+/// Seeds whose programs `main` accepts and the branch rejects with an E0032 (interim: Task 5e).
+/// Each holds a loop beside a hint whose `break` gives an optional that its form does not show,
+/// such as `break ([o][0])`. The walk leaves them out, and `parked_seeds_should_fail_to_check`
+/// fails when one checks. Task 5e then removes it, and `PARKED_KEYS` with the last seed.
+const PARKED_SEEDS: &[u64] = &[34531, 43555, 50142];
+/// The key that only the programs of `PARKED_SEEDS` hold: it waits for them (interim: Task 5e).
 const PARKED_KEYS: &[&str] = &[];
 
 /// What no generated program holds, and why.
@@ -3981,12 +3982,14 @@ fn parked_seeds_should_fail_to_check() {
 
 /// Seeds whose programs `main` accepts and that once failed to check on the branch. In 33, the
 /// context decided a call's type before its own arguments. Two hold a block argument with a
-/// nested block. In 23, a type parameter of the caller has the name of the callee's.
+/// nested block. In 23, a type parameter of the caller has the name of the callee's. In 14, a loop
+/// beside a hint breaks a `None`.
 const ACCEPTED_SEEDS: &[u64] = &[
     75, 85, 87, 97, 118, 128, 226, 288, 313, 314, 356, 365, 379, 388, 404, 408, 423, 466, 494, 527,
     578, 580, 596, 667, 735, 745, 784, 788, 794, 903, 916, 995, 1012, 12023, 51950, 7138, 8193,
     8980, 9928, 15045, 18070, 23316, 24710, 26474, 30475, 34915, 37612, 42874, 48275, 53226, 53329,
-    54407, 55756, 56810, 58720, 59300, 60727, 63829,
+    54407, 55756, 56810, 58720, 59300, 60727, 63829, 8907, 12203, 17382, 25403, 31220, 31305,
+    43168, 46088, 54491, 57020, 57280, 59201, 59907, 60088,
 ];
 
 /// GIVEN the program of each seed of `ACCEPTED_SEEDS`
