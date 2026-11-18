@@ -4052,22 +4052,22 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
             "h(true, Two.P(\"s\", Two.P(1, \"x\")))",
-            &[(Mismatch, S), (Mismatch, X)],
+            &[(Mismatch, "Two.P(\"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
             "h(true, Two.P(true, Two.P(1, \"x\")))",
-            &[(Mismatch, X)],
+            &[(Mismatch, "Two.P(true")],
         ),
         (
             "fn h<U, V>(a: U, b: Box<U, Box<V, i64>>) {}\n",
             "h(true, Box(a: \"s\", b: Box(a: 1, b: \"x\")))",
-            &[(Mismatch, S), (Mismatch, X)],
+            &[(Mismatch, "Box(a: \"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, Two<V, i64>?>) {}\n",
             "h(true, Two.P(\"s\", Some(Two.P(1, \"x\"))))",
-            &[(Mismatch, S), (Mismatch, X)],
+            &[(Mismatch, "Two.P(\"s\"")],
         ),
         (
             "fn h<T: I, U>(_a: U, _b: [Two<U, T.Item>], _c: T) {}\n",
@@ -4406,7 +4406,7 @@ const INFER_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, Some(None))",
-            &[(CannotInfer, "h(")],
+            &[(Mismatch, "Some(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
@@ -4416,7 +4416,7 @@ const INFER_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>??) {}\n",
             "h(true, Some(Some(None)))",
-            &[(CannotInfer, "h(")],
+            &[(Mismatch, "Some(")],
         ),
         (
             "fn h3<U, V>(a: U, b: V, c: Two<U, V>?) {}\n",
@@ -4435,34 +4435,34 @@ fn a_partly_bound_parameter_should_report_cannot_infer_when_the_context_fixes_no
 
 /// The rows of `a_safe_call_that_waits_for_a_plain_context_should_get_no_context`.
 const SAFE_ROWS: &[PartialRow<'static>] = {
-    use Code::CannotInfer;
+    use Code::Mismatch;
     &[
         (
             "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "let d: D? = D()\nh(true, id(d?.m2(\"s\")))",
-            &[(CannotInfer, "id(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let d: D? = D()\nh(true, [d?.m2(\"s\")])",
-            &[(CannotInfer, "h(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn hn<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
             "let d: D? = D()\nhn(true, Two.P(d?.m2(\"s\"), 2))",
-            &[(CannotInfer, "Two.P(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "fn h3<U, V>(a: U, b: V, c: Two<U, V>) {}\n",
             "let c: C? = C()\nh3(true, 1, c?.m(\"s\", None))",
-            &[(CannotInfer, "m(")],
+            &[(Mismatch, "\"s\"")],
         ),
     ]
 };
 
-/// A safe call has an optional value, so a plain context cannot meet it. A safe call has a hint
-/// only as the direct waiting argument of a parameter that is not a bare type parameter. It
-/// must also report no mistake of its own. Without the hint, it reports its unbound parameter.
+/// A safe call has an optional value, so a plain context cannot meet it. The call stays open
+/// until the outer context settles it. It then reports the part that is wrong (`"s"` where `U`
+/// is `bool`) in each position, as under a `let`.
 #[test]
 fn a_safe_call_that_waits_for_a_plain_context_should_get_no_context() {
     check_partial_rows(SAFE_ROWS);
@@ -4470,27 +4470,27 @@ fn a_safe_call_that_waits_for_a_plain_context_should_get_no_context() {
 
 /// The rows of `a_waiting_call_for_a_bare_type_parameter_should_report_its_own_parameter`.
 const BARE_ROWS: &[PartialRow<'static>] = {
-    use Code::CannotInfer;
+    use Code::{CannotInfer, Mismatch};
     &[
         (
             "fn k2<A>() -> Two<string, A> { panic(\"e\") }\nfn ho<U, V>(a: U, b: Two<U, V>?) {}\n",
             "ho(true, Some(k2()))",
-            &[(CannotInfer, "k2(")],
+            &[(Mismatch, "ho(")],
         ),
         (
             "fn k2<A>() -> Two<string, A> { panic(\"e\") }\nfn hn<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
             "hn(true, Two.P(k2(), 2))",
-            &[(CannotInfer, "k2(")],
+            &[(Mismatch, "hn(")],
         ),
         (
             "fn k2<A>() -> Two<string, A> { panic(\"e\") }\nfn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, id(k2()))",
-            &[(CannotInfer, "k2(")],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn k3<A>() -> Two<string, A>? { panic(\"e\") }\nfn ho<U, V>(a: U, b: Two<U, V>?) {}\n",
             "ho(true, id(k3()))",
-            &[(CannotInfer, "k3(")],
+            &[(Mismatch, "ho(")],
         ),
         (
             "class K { fn k4<A>(self) -> Two<string, A> { panic(\"e\") } }\nfn ho<U, V>(a: U, b: Two<U, V>?) {}\n",
@@ -5183,7 +5183,7 @@ const OTHER_WAIT_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: U?) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), none())",
-            &[(NotConform, "Two.P(n"), (CannotInfer, "none()")],
+            &[(NotConform, "Two.P(n"), (CannotInfer, "h(")],
         ),
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: [U?]) {}\n",
@@ -5345,12 +5345,12 @@ const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
              fn two_p<B>() -> Two<P, B> { panic(\"e\") }\n\
              fn h<T: I, U>(_a: T, _b: Two<T, U>) {}\n",
             "h(P(), two_p())",
-            &[(NotConform, "P()"), (CannotInfer, "two_p()")],
+            &[(NotConform, "P()"), (CannotInfer, "h(")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: Two<T, U>?) {}\n",
             "h(5, dbg(none()))",
-            &[(NotConform, "5"), (CannotInfer, "none()")],
+            &[(NotConform, "5"), (CannotInfer, "h(")],
         ),
         (
             "fn g<A, B>(_x: B?) -> A? { None }\n\
@@ -5361,24 +5361,24 @@ const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I, U>(_p: T, _a: U?) {}\n",
             "h(5, id(none()))",
-            &[(NotConform, "5"), (CannotInfer, "none()")],
+            &[(NotConform, "5"), (CannotInfer, "h(")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: U?) {}\n",
             "h(5, none())",
-            &[(NotConform, "5"), (CannotInfer, "none()")],
+            &[(NotConform, "5"), (CannotInfer, "h(")],
         ),
         // One call has a rejected parameter and an unbound one, in both orders: `A` is rejected
         // and `B` is not, or the reverse.
         (
             "fn h<T: I, U>(_p: T, _a: Two<T, U>) {}\n",
             "h(5, two())",
-            &[(NotConform, "5"), (CannotInfer, "two()")],
+            &[(NotConform, "5"), (CannotInfer, "h(")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: Two<U, T>) {}\n",
             "h(5, two())",
-            &[(NotConform, "5"), (CannotInfer, "two()")],
+            &[(NotConform, "5"), (CannotInfer, "h(")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: [Two<T, U>]) {}\n",
@@ -5388,7 +5388,7 @@ const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I, U>(_p: T, _a: Two<T, U>) {}\n",
             "h(5, id(two()))",
-            &[(NotConform, "5"), (CannotInfer, "two()")],
+            &[(NotConform, "5"), (CannotInfer, "h(")],
         ),
         // `A` of `two` sits in `[T]`, a part that holds `REJECTED` and no `HOLE`; `B` sits at `U`.
         // The call keeps the E0050 of the parameter that is not rejected-only, whichever comes
@@ -5396,23 +5396,23 @@ const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I, U>(_p: T, _a: Two<[T], U>) {}\n",
             "h(5, two())",
-            &[(NotConform, "5"), (CannotInfer, "two()")],
+            &[(NotConform, "5"), (CannotInfer, "h(")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: Two<U, [T]>) {}\n",
             "h(5, two())",
-            &[(NotConform, "5"), (CannotInfer, "two()")],
+            &[(NotConform, "5"), (CannotInfer, "h(")],
         ),
         // A part that holds both holes is not rejected-only.
         (
             "fn h<T: I, U>(_p: T, _a: Two<[T], U>?) {}\n",
             "h(5, none())",
-            &[(NotConform, "5"), (CannotInfer, "none()")],
+            &[(NotConform, "5"), (CannotInfer, "h(")],
         ),
         (
             "fn any<X>() -> X { panic(\"e\") }\nfn h<T: I, U>(_p: T, _a: [T], _b: U?) {}\n",
             "h(5, any(), none())",
-            &[(NotConform, "5"), (CannotInfer, "none()")],
+            &[(NotConform, "5"), (CannotInfer, "h(")],
         ),
     ]
 };
@@ -5853,9 +5853,9 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
         ("print(gaa(mkxx(), mkw()))", &[(Mismatch, "mkxx()")]),
         // `mkdv()` waits for `T` and `U`, its `X` at two places. Only `mk()` binds `T`, and no
         // argument binds `U`, so nothing wakes it: it is checked when the sweep ends, in order.
-        // In `fc`, `mk2()` needs the `V` that `mkdv()` binds and comes first: E0050. In `fc2`,
-        // `mkdv()` comes first, so it checks.
-        ("print(fc(mk2(), mkdv(), mk()))", &[(CannotInfer, "mk2()")]),
+        // In `fc` and `fc2`, `mk2()` takes the `V` that `mkdv()` binds, in each order: another
+        // member gives the type argument (ADR 0052).
+        ("print(fc(mk2(), mkdv(), mk()))", &[]),
         ("print(fc2(mkdv(), mk2(), mk()))", &[]),
         // A call that nothing wakes is checked when the sweep ends, with what the later
         // arguments bound. `mkv()` has `X` under `T`, and `mks()` binds `U`: the call checks.
@@ -5878,8 +5878,8 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
         ),
         // A woken call that disagrees with the argument that woke it is blamed.
         ("print(gn(mkr(), mks()))", &[(Mismatch, "mkr()")]),
-        // The limit: a call under another call does not wait.
-        ("print(g(id(mk2()), mk()))", &[(CannotInfer, "mk2()")]),
+        // A call under another call takes the type argument that another member gives too.
+        ("print(g(id(mk2()), mk()))", &[]),
         // A call that is wrong for its parameter reports the mismatch, as it did.
         (
             "print(g(mk(), mk2()))",

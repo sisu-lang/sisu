@@ -1983,8 +1983,27 @@ impl Checker<'_> {
         let mut openable = Vec::new();
         // The arguments that fit their place with no type for any parameter: each was reported.
         let mut misfits = Vec::new();
-        for (n, &(t, var)) in decided.iter().enumerate() {
-            let later: Vec<usize> = decided[n + 1..].iter().map(|&(k, _)| k).collect();
+        // A parameter whose bound names another decided one joins after it, so that the bound is
+        // closed when the members are checked against it (Q22): `T` of `fn h<T: K<U>, U>`.
+        let bound_names = |t: usize| {
+            let args = (sig.bounds.get(t - owned).into_iter())
+                .flat_map(|bounds| bounds.list.iter())
+                .flat_map(|bound| bound.args.get().iter().map(|&ty| Some(ty)));
+            named_params(args, sig.declared.len())
+        };
+        let mut left = decided.clone();
+        let mut join_order = Vec::with_capacity(left.len());
+        while !left.is_empty() {
+            let next = (left.iter())
+                .position(|&(t, _)| {
+                    let named = bound_names(t);
+                    !left.iter().any(|&(u, _)| u != t && named[u])
+                })
+                .unwrap_or(0);
+            join_order.push(left.remove(next));
+        }
+        for (n, &(t, var)) in join_order.iter().enumerate() {
+            let later: Vec<usize> = join_order[n + 1..].iter().map(|&(k, _)| k).collect();
             let name = sig.declared[t];
             let mut with: Vec<Type> = (call.bindings.found.iter())
                 .map(|&ty| self.table.resolve(listed(ty)))
@@ -2246,10 +2265,27 @@ impl Checker<'_> {
             .map(|i| (self.sibling_rank(&args[i].value) == Rank::Waits, i))
             .collect();
         order.sort_unstable();
-        for (_, i) in order {
+        for (waits, i) in order {
             let arg = &args[i];
             let param =
                 sig.params[i].expect("an argument with no parameter type should be checked");
+            // A method call that waits for its context to pick a method, at a bare parameter that
+            // nothing decides: the call cannot infer that parameter, as on `main`.
+            if waits
+                && failed.is_none()
+                && matches!(arg.value.kind, ast::ExprKind::MethodCall { .. })
+                && let TypeKind::Param(_, t) = param.kind()
+                && let Some(&(t, var)) = decided.iter().find(|&&(k, _)| k == t as usize)
+                && let open = self.table.resolve(var)
+                && matches!(open.kind(), TypeKind::Infer(_))
+                && self.table.default_open(open) == open
+            {
+                failed = Some(self.cannot_infer(sig, t));
+                self.table.poison(var);
+                quiet.push(t);
+                call.slots[i] = Some(mark(self.operand(&arg.value, Expectation::Poisoned)));
+                continue;
+            }
             // A poisoned member poisoned the parameter, or a poisoned context the call: the
             // argument reports its own mistakes only. A part at a parameter that no failure
             // reached still meets that parameter, as on `main`.
@@ -2311,8 +2347,13 @@ impl Checker<'_> {
             failed.get_or_insert_with(|| self.proof(span)); // proof: declaration
         }
         // A parameter whose join or member reported has no bound left to check.
+        // A bound that names such a parameter has no check left either: that failure is the report.
         let bounded: Vec<(usize, Type)> = (decided.iter().copied())
             .filter(|(t, _)| !quiet.contains(t))
+            .filter(|&(t, _)| {
+                let named = bound_names(t);
+                !quiet.iter().any(|&q| named[q])
+            })
             .collect();
         if let Some(reported) = self.bound_obligations(&call, sig, &bounded, (span, failed)) {
             failed = Some(reported);
@@ -2527,6 +2568,31 @@ impl Checker<'_> {
             });
         if (informed || matches!(e.kind, ast::ExprKind::MethodCall { .. })) && !filled.has_assoc() {
             return self.known_argument(call, i, e, param);
+        }
+        // An array literal takes the open context as its type, so that each element meets its part
+        // with its own wraps (`[[None], [1]]` at `[[T?]]`). A parameter `T` or `[T]` gives the
+        // elements nothing: they join, as with no context, so that a `[]` waits for its siblings
+        // (`[[], 1]`). A part that a failure reached gives it none: the elements report their
+        // own mistakes only.
+        // `dbg(x)` gives `x` its context, so the literal inside it is checked the same way.
+        let bare = |ty: Type| matches!(ty.kind(), TypeKind::Param(..));
+        let mut shown = e;
+        while let ast::ExprKind::Call { callee, args, .. } = &shown.kind
+            && callee.name.as_str() == "dbg"
+            && let [arg] = args.as_slice()
+        {
+            shown = &arg.value;
+        }
+        if matches!(&shown.kind, ast::ExprKind::ArrayLit(elements) if !elements.is_empty())
+            && !bare(param)
+            && !matches!(param.kind(), TypeKind::Array(inner) if bare(inner))
+            && !filled.has_assoc()
+            && !(with.iter().enumerate())
+                .any(|(k, &ty)| names_outside_assoc(param, k) && self.table.reported_open(ty))
+        {
+            let origin = call.declarer.origin(i);
+            let checked = mark(self.operand(e, Expectation::Required(filled, origin)));
+            return self.refuse_valueless(read_jump(checked));
         }
         let checked = mark(self.operand(e, Expectation::None));
         let checked = self.refuse_valueless(read_jump(checked));
@@ -2776,21 +2842,32 @@ impl Checker<'_> {
             }
             let part = self.table.default_open(part);
             with[t] = part;
-            // Each bound that the part breaks is a report, as on `main`.
-            let mut broken = None;
-            for &bound in &bounds.list {
-                let args = self.subst_args(bound.args, &with);
-                if args.holds_infer() || part.holds_infer() {
-                    continue;
+            // Each bound that the part breaks is a report, as on `main`. A bound that names
+            // another parameter is checked only when no bound of the part alone breaks.
+            for others in [false, true] {
+                let mut broken = None;
+                for &bound in &bounds.list {
+                    let named = named_params(
+                        bound.args.get().iter().map(|&ty| Some(ty)),
+                        sig.declared.len(),
+                    );
+                    if (named.iter().enumerate()).any(|(k, &n)| n && k != t) != others {
+                        continue;
+                    }
+                    let args = self.subst_args(bound.args, &with);
+                    if args.holds_infer() || part.holds_infer() {
+                        continue;
+                    }
+                    if !self.conforms(part, bound.interface, args)
+                        && let Err(reported) =
+                            self.check_bound_of(at, part, bound, &with, None, None)
+                    {
+                        broken.get_or_insert(reported);
+                    }
                 }
-                if !self.conforms(part, bound.interface, args)
-                    && let Err(reported) = self.check_bound_of(at, part, bound, &with, None, None)
-                {
-                    broken.get_or_insert(reported);
+                if broken.is_some() {
+                    return broken;
                 }
-            }
-            if broken.is_some() {
-                return broken;
             }
         }
         None

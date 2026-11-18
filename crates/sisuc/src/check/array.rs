@@ -85,8 +85,21 @@ impl Checker<'_> {
         }
         let quiet = expected == Expectation::Poisoned;
         if elements.is_empty() {
+            // An optional of an open variable takes the `[]` as it is: its element is open.
+            let open = expected.ty().is_some_and(|ty| {
+                let mut ty = self.table.resolve(ty);
+                let optional = matches!(ty.kind(), TypeKind::Optional(_));
+                while let TypeKind::Optional(inner) = ty.kind() {
+                    ty = inner;
+                }
+                optional && matches!(ty.kind(), TypeKind::Infer(_))
+            });
             let d = match expected {
                 // A member's `[]` is an `[Any]`: the join gives its element.
+                _ if open => {
+                    let element = self.table.fresh(Kind::Any, span);
+                    return self.array(span, element, Vec::new(), false);
+                }
                 Expectation::Member => {
                     let element = self.table.fresh(Kind::Any, span);
                     return self.array(span, element, Vec::new(), false);

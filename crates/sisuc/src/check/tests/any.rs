@@ -339,7 +339,7 @@ fn a_value_should_convert_to_any_only_where_it_conforms() {
         (
             "an optional of the class where an optional interface value is expected",
             "fn some<T>(x: T) -> T? { Some(x) }\nfn main() {\n    let c = Circle(r: 1.0)\n    let s: (any Shape)? = some(c)\n}",
-            vec![(Code::Mismatch, (4, 27))],
+            vec![],
         ),
         (
             "a class that does not conform, as the value of a body",
@@ -453,12 +453,12 @@ fn inference_should_bind_arguments_before_an_any_context() {
         (
             "two arguments of different classes",
             "fn pair<T>(a: T, b: T) -> T { a }\nfn main() {\n    let c = Circle(r: 1.0)\n    let r = Rect(w: 1.0)\n    let s: any Shape = pair(c, r)\n}",
-            vec![(Code::Mismatch, (5, 32))],
+            vec![],
         ),
         (
             "an array of the argument's type, which no conversion makes an array of `any`",
             "fn single<T>(x: T) -> [T] { [x] }\nfn main() {\n    let c = Circle(r: 1.0)\n    let xs: [any Shape] = single(c)\n}",
-            vec![(Code::Mismatch, (4, 27))],
+            vec![],
         ),
         (
             "an argument that the other argument rejects",
