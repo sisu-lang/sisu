@@ -2,14 +2,12 @@
 
 use super::any::{AnyJoin, SEED, is_target};
 use super::expr::{fits, takes_unit};
-use super::generic::{Ahead, Rank};
-use super::infer::Kind;
-use super::join::{Heading, JoinForm, JoinMember, Place};
-use super::pattern::LetPattern;
+use super::generic::{Ahead, Rank, Ranked};
+use super::pattern::{LetPattern, arm_key};
 use super::reports::Reported;
 use super::{
     Checked, CheckedBlock, Checker, Expectation, Misfit, Origin, Poisoned, as_optional, block_type,
-    is_jumped, is_kept, payload, value_span,
+    is_jumped, is_kept, payload, tail, value_span,
 };
 use crate::ast;
 use crate::diagnostic::{Diagnostic, DiagnosticKind, NoValueCause, Unwrap};
@@ -60,9 +58,9 @@ impl Checker<'_> {
         let dropped = self.body.dropped == Some(span);
         let (cond, _) = self.operand(cond, Expectation::Required(Type::BOOL, Origin::Condition));
         let (then, other, ty) = self.branches(
-            span,
             (then_block, else_block),
             (expected, dropped),
+            |_| None,
             |c, expected| c.block(then_block, expected),
         );
         let valueless = valueless_join((span, false), else_block, &then);
@@ -110,10 +108,11 @@ impl Checker<'_> {
                 (checked, form)
             };
         let mut checked = None;
+        let bind = |c: &mut Self| Some(c.bind_pattern(Some(Unwrap::IfLet), &form, pattern, None));
         let (then, other, ty) = self.branches(
-            span,
             (then_block, else_block),
             (expected, dropped),
+            bind,
             |c, expected| {
                 let (bound, block) =
                     c.let_block(Unwrap::IfLet, &form, pattern, then_block, expected);
@@ -161,14 +160,14 @@ impl Checker<'_> {
         Ok(tir::Expr::new(kind, ty, span))
     }
 
-    /// The blocks of the `if` or `if let` at `span`, `then` checking the first, and their type:
-    /// `unit` without an `else`; else their join (see `join_blocks`). With `dropped`, no code uses
-    /// the value (see `Body::dropped`).
+    /// The blocks of an `if` or `if let`, `then` checking the first, and their type:
+    /// `unit` without an `else`; see `join`. `bind` binds what the first block sees, for the
+    /// ranking of its value. With `dropped`, no code uses the value (see `Body::dropped`).
     fn branches(
         &mut self,
-        span: Span,
         (then_block, else_block): (&ast::Block, Option<&ast::Block>),
         (expected, dropped): (Expectation, bool),
+        bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
         then: impl FnOnce(&mut Self, Expectation) -> CheckedBlock,
     ) -> (CheckedBlock, Option<CheckedBlock>, Result<Type, Poisoned>) {
         let Some(else_block) = else_block else {
@@ -176,137 +175,29 @@ impl Checker<'_> {
             self.body.dropped = Some(then_block.span);
             return (then(self, Expectation::None), None, Ok(Type::UNIT));
         };
-        let binding = self.let_name(span);
-        let member = branch_expectation(expected);
-        let first = self.waiting(expected, |c| {
-            c.body.dropped = dropped.then_some(then_block.span);
-            then(c, member)
+        let (expected, siblings) = expected.split_hint();
+        let mut then = Some(then);
+        let (blocks, ty) = self.ranked(|c| {
+            let sources = [
+                c.block_branch(then_block, expected, bind),
+                c.block_branch(else_block, expected, |_| None),
+            ];
+            c.join(&sources, (expected, siblings), dropped, |c, i, expected| {
+                if i == 0 {
+                    c.body.dropped = dropped.then_some(then_block.span);
+                    let then = then
+                        .take()
+                        .expect("`join` should check the `then` branch once");
+                    then(c, expected)
+                } else {
+                    c.body.dropped = dropped.then_some(else_block.span);
+                    c.block(else_block, expected)
+                }
+            })
         });
-        let other = self.waiting(expected, |c| {
-            c.body.dropped = dropped.then_some(else_block.span);
-            c.block(else_block, member)
-        });
-        let heading = Heading {
-            head: Span::new(span.start(), span.start() + "if".len()),
-            whole: span,
-            returns: None,
-        };
-        let spans = [value_span(then_block), value_span(else_block)];
-        let (blocks, ty) = self.join_blocks(
-            (JoinForm::If, heading, binding),
-            vec![first, other],
-            &spans,
-            expected,
-        );
         let [first, other] =
             <[_; 2]>::try_from(blocks).unwrap_or_else(|_| panic!("`join` should give two blocks"));
         (first, Some(other), ty)
-    }
-
-    /// Closes the open variables of `ty`, the type of a join at `at` that is no member: with no
-    /// type to meet, as a value does (see `close_open`). A hint first gives an open `Int` its type,
-    /// as it gives a literal.
-    fn close_join(&mut self, ty: Type, at: Span, expected: Expectation) -> Result<Type, Poisoned> {
-        match expected {
-            Expectation::Member | Expectation::Required(..) => return Ok(ty),
-            Expectation::Hint { want, .. } => {
-                let snapshot = self.table.snapshot();
-                if self.conversion(ty, want).is_some() {
-                    self.keep_snapshot(snapshot);
-                } else {
-                    self.table.rollback(snapshot);
-                }
-            }
-            Expectation::None | Expectation::Poisoned => {}
-        }
-        let open = tir::Expr::new(tir::ExprKind::Unit, self.table.resolve(ty), at);
-        let closed = self.close_open(Ok(open), expected)?.ty;
-        self.unify(ty, closed);
-        Ok(closed)
-    }
-
-    /// The join of the values of `blocks`, the branches of an `if` or the arms of a `match`, whose
-    /// values are at `spans`: `join_form` with the `form`, its `heading` and the name `binding` of
-    /// the `let` it is the value of. Under `Member` it is a nested join, which has no type of its
-    /// own: its branches are members of the outer join, which settles them. A join of `never`
-    /// branches of which one is a failed `break` or `continue` keeps that mark (see
-    /// `Poisoned::jumped`).
-    pub(super) fn join_blocks(
-        &mut self,
-        (form, heading, binding): (JoinForm, Heading, Option<Span>),
-        blocks: Vec<CheckedBlock>,
-        spans: &[Span],
-        expected: Expectation,
-    ) -> (Vec<CheckedBlock>, Result<Type, Poisoned>) {
-        let mut values: Vec<Checked> = (blocks.into_iter().zip(spans))
-            .map(|(block, &at)| {
-                block.map(|block| {
-                    let ty = block.ty;
-                    tir::Expr::new(tir::ExprKind::Block(block), ty, at)
-                })
-            })
-            .collect();
-        let ty = if expected == Expectation::Member {
-            let never = (values.iter()).all(|v| v.as_ref().is_ok_and(|e| e.ty == Type::NEVER));
-            if never {
-                Ok(Type::NEVER)
-            } else if values.iter().all(Result::is_ok) {
-                Ok(self.table.fresh(Kind::Any, heading.whole))
-            } else {
-                // A failed branch makes the nested join poison, typed as its members join, else
-                // untyped by that branch (`None`).
-                let mut members = whole_members(&mut values, spans);
-                self.join_type(&mut members, None, None).ok_or(None)
-            }
-        } else {
-            let mut members = whole_members(&mut values, spans);
-            // Members that join to the payload of a required optional keep that type, as a
-            // block's value does: the context lifts the whole value.
-            let expected = match expected {
-                Expectation::Required(want, _) => match self.join_type(&mut members, None, None) {
-                    Some(own) if own != want && fits(want, self.table.resolve(own)) => {
-                        Expectation::None
-                    }
-                    _ => expected,
-                },
-                _ => expected,
-            };
-            (self.join_form(form, heading, &mut members, expected, binding)).map_err(Some)
-        };
-        let blocks: Vec<CheckedBlock> = (values.into_iter())
-            .map(|value| {
-                value.map(|e| match e.kind {
-                    tir::ExprKind::Block(block) => block,
-                    _ => panic!("a join should settle a block as a block"),
-                })
-            })
-            .collect();
-        let ty = ty.map_err(|p| p.unwrap_or_else(|| Poisoned::untyped(failed_branch(&blocks))));
-        let ty = match ty {
-            Ok(ty) if self.table.resolve(ty).holds_infer() => {
-                self.close_join(ty, heading.whole, expected)
-            }
-            ty => ty,
-        };
-        let ty = match ty {
-            Ok(Type::NEVER) if blocks.iter().any(is_jumped) => Err(Poisoned {
-                jumped: true,
-                ..Poisoned::typed(Type::NEVER, failed_branch(&blocks))
-            }),
-            Ok(ty) => Ok(ty),
-            // A join that fails with a type required, with no failed branch, rejected that type.
-            Err(poisoned) => Err(Poisoned {
-                mismatch: poisoned.mismatch
-                    || matches!(expected, Expectation::Required(..))
-                        && blocks.iter().all(Result::is_ok)
-                    || (blocks.iter()).any(|b| matches!(b, Err(Poisoned { mismatch: true, .. }))),
-                // A join that has no type is kept when a branch is: that call's E0050 is the one
-                // report.
-                kept: poisoned.ty.is_none() && blocks.iter().any(is_kept),
-                ..poisoned
-            }),
-        };
-        (blocks, ty)
     }
 
     /// The `sources.len()` branches of the `if` or arms of the `match` at `span`, `check(i)`
@@ -748,11 +639,7 @@ impl Branch<'_> {
 impl Checker<'_> {
     /// Runs `work`. When `expected` is `Poisoned`, a `break` in it to a loop that is open now
     /// waits for the next run (see `Body::waiting_loops`).
-    pub(super) fn waiting<T>(
-        &mut self,
-        expected: Expectation,
-        work: impl FnOnce(&mut Self) -> T,
-    ) -> T {
+    fn waiting<T>(&mut self, expected: Expectation, work: impl FnOnce(&mut Self) -> T) -> T {
         let outer = self.body.waiting_loops;
         if expected == Expectation::Poisoned {
             self.body.waiting_loops = Some(self.body.loops.len());
@@ -760,6 +647,28 @@ impl Checker<'_> {
         let result = work(self);
         self.body.waiting_loops = outer;
         result
+    }
+
+    /// The branch for the value of `block`. Its value is ranked only when no type is expected or
+    /// the context failed, as `join` orders the branches only then. `bind` binds what the block
+    /// sees (see `block_rank`).
+    pub(super) fn block_branch<'a>(
+        &mut self,
+        block: &'a ast::Block,
+        expected: Expectation,
+        bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
+    ) -> Branch<'a> {
+        let mut fit = true;
+        let ranked = matches!(expected, Expectation::None | Expectation::Poisoned)
+            .then(|| self.waiting(expected, |c| c.block_rank(block, &mut fit, bind)))
+            .flatten();
+        Branch {
+            rank: ranked.map_or(Rank::Concrete, |ranked| ranked.sibling(fit)),
+            optional: ranked.is_some_and(|ranked| ranked.optional),
+            literal: fit && ranked.is_some_and(Ranked::of_literals),
+            span: value_span(block),
+            tail: tail(block),
+        }
     }
 
     /// The branch for `e`, an element of an array literal that joins as a branch does (see
@@ -770,6 +679,30 @@ impl Checker<'_> {
             rank,
             optional,
             literal: rank == Rank::Literal,
+            span: e.span,
+            tail: Some(e),
+        }
+    }
+
+    /// The branch for the body `e` of an arm that is not a block, the arm's value. See
+    /// `block_branch`.
+    pub(super) fn expr_branch<'a>(
+        &mut self,
+        arm: &ast::Arm,
+        e: &'a ast::Expr,
+        expected: Expectation,
+        bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
+    ) -> Branch<'a> {
+        let mut fit = true;
+        let ranked = matches!(expected, Expectation::None | Expectation::Poisoned).then(|| {
+            self.waiting(expected, |c| {
+                c.tail_rank(arm_key(arm), None, e, &mut fit, bind)
+            })
+        });
+        Branch {
+            rank: ranked.map_or(Rank::Concrete, |ranked| ranked.sibling(fit)),
+            optional: ranked.is_some_and(|ranked| ranked.optional),
+            literal: fit && ranked.is_some_and(Ranked::of_literals),
             span: e.span,
             tail: Some(e),
         }
@@ -866,27 +799,6 @@ fn after_branch(ty: Option<Type>, exact: bool, origin: Origin) -> Expectation {
             origin,
         },
     }
-}
-
-/// What a branch of an `if` or an arm of a `match` expects: it is a member of the join, unless
-/// the context failed.
-pub(super) fn branch_expectation(expected: Expectation) -> Expectation {
-    if expected == Expectation::Poisoned {
-        Expectation::Poisoned
-    } else {
-        Expectation::Member
-    }
-}
-
-/// Each of `values`, the value of the branch at its span in `spans`, as a whole member of a join.
-fn whole_members<'a>(values: &'a mut [Checked], spans: &[Span]) -> Vec<JoinMember<'a>> {
-    (values.iter_mut().zip(spans))
-        .map(|(value, &label)| JoinMember {
-            value,
-            at: Place::Whole,
-            label,
-        })
-        .collect()
 }
 
 /// Whether `expected` takes a `unit`: there a `unit` branch is a value, and a branch of another

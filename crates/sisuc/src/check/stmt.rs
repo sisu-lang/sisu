@@ -391,7 +391,7 @@ impl Checker<'_> {
                 let declared = ty.as_ref().map(|ty| self.resolve(ty));
                 let shown = ty.as_ref().and_then(|ty| self.shown_text(ty, uses));
                 let init_expr = init;
-                self.body.let_init = Some((init.span, name.name, mutable.is_some(), name.span));
+                self.body.let_init = Some((init.span, name.name, mutable.is_some()));
                 self.body.failed_let = matches!(declared, Some(None)).then_some(init.span);
                 let init = match ty.as_ref().zip(declared) {
                     Some((ty, declared)) => {
@@ -1697,17 +1697,6 @@ impl Checker<'_> {
                     return checked;
                 }
                 if expected == Expectation::Poisoned {
-                    checked
-                } else if expected == Expectation::Member {
-                    // A member's values are leaves of the join around the loop, which gives the
-                    // loop its type.
-                    if first.is_none() {
-                        let loop_at = self.frame(target).keyword;
-                        let open = self.table.fresh(super::infer::Kind::Any, loop_at);
-                        let frame = self.frame(target);
-                        frame.first = Some((open, span));
-                        frame.first_value = v.span;
-                    }
                     checked
                 } else {
                     let want = (expected, hinted, first);

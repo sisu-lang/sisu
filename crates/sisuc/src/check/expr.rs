@@ -734,7 +734,7 @@ impl Checker<'_> {
     /// `close` with no type to meet: the type of `checked` with each open `Int` as `i64`, or
     /// E0050 at the first source of each open `Any`. A failed context reports none: its own
     /// report covers it. A value that it leaves open fails with no type, as a `None` does there.
-    pub(super) fn close_open(&mut self, checked: Checked, expected: Expectation) -> Checked {
+    fn close_open(&mut self, checked: Checked, expected: Expectation) -> Checked {
         let Ok(mut value) = checked else {
             return checked;
         };
@@ -978,16 +978,9 @@ impl Checker<'_> {
     /// What the `let` whose whole initializer is the literal at `span` writes before its type,
     /// if any: its name, after `mut` when it has it.
     pub(super) fn let_binding(&self, span: Span) -> Option<String> {
-        let (init, name, mutable, _) = self.body.let_init?;
+        let (init, name, mutable) = self.body.let_init?;
         (init == span && name.as_str() != "_")
             .then(|| format!("{}{name}", if mutable { "mut " } else { "" }))
-    }
-
-    /// The name of the `let` whose whole initializer is at `span`, if any: the fix of a join
-    /// writes its type after it.
-    pub(super) fn let_name(&self, span: Span) -> Option<Span> {
-        let (init, name, _, at) = self.body.let_init?;
-        (init == span && name.as_str() != "_").then_some(at)
     }
 
     /// Whether a comment starts in one of the byte ranges `deleted`. The comment starts are in
