@@ -1192,6 +1192,11 @@ struct Body {
     /// What `int_literal` answered for each unary `-` and operator, by its span. The answer
     /// depends only on the node, and no two operator nodes have one span.
     int_literals: FxHashMap<Span, bool>,
+    /// The span and type of the one argument of a generic call whose result is that argument's
+    /// bare type parameter, by the call's span. When the argument's type is open, the directed
+    /// report of the call goes to the argument, as on `main`: in `id(id(mk2()))`, it is at
+    /// `mk2()`.
+    lone_args: FxHashMap<Span, (Span, Type)>,
 }
 
 impl Body {

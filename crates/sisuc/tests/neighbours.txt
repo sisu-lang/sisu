@@ -824,3 +824,9 @@ let _a: i64?? = tfst(wk().mkb(), $)
 let _a: i64 = named_whole($)
 let _a: i64 = named_two($, $)
 let _a: Rock = named_two($, Cat())
+# A generic call that gives its one argument's type is a nested join: under a required type, an
+# open argument takes the report, and a closed one leaves it at the inner call. The result wraps
+# once at the top of an optional.
+let _a: i64 = id(id($))
+let _a: i64? = id(id($))
+let _a: i64?? = id($)

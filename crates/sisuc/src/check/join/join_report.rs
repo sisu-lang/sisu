@@ -383,17 +383,27 @@ impl Checker<'_> {
             let cause = self.unit_cause(e, Some(want));
             return self.no_value(e.span, cause);
         }
+        // A generic call that gives its one argument's type is a nested join. When that argument
+        // is still open, it would take the required type, so the report goes to it, at each depth.
+        let mut at = e.span;
+        if matches!(e.kind, ExprKind::Call { .. }) {
+            while let Some(&(inner, ty)) = self.body.lone_args.get(&at)
+                && self.table.resolve(ty).holds_infer()
+            {
+                at = inner;
+            }
+        }
         let fix =
             (convertible.then(|| number_conversion(want, got)).flatten()).map(|(to, through)| {
                 Conversion {
                     to,
                     through,
-                    operand: e.span,
+                    operand: at,
                 }
             });
         let conversion = matches!(got.kind(), TypeKind::Optional(p) if p == want)
             && matches!(e.kind, ExprKind::Convert(_));
-        self.directed(e.span, (want, got), origin, fix, conversion)
+        self.directed(at, (want, got), origin, fix, conversion)
     }
 
     /// "expected `want`, found `got`" at `at`, as a mismatch with a written type reports it.

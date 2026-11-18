@@ -2410,6 +2410,13 @@ impl Checker<'_> {
                 && let Some(ty) = type_of(member.value)
             {
                 lone.push((t, member.label, ty, sig.params[*i]));
+                if matches!(member.at, Place::Whole)
+                    && sig.ret.is_some_and(
+                        |ret| matches!(ret.kind(), TypeKind::Param(_, k) if k as usize == t),
+                    )
+                {
+                    self.body.lone_args.insert(span, (member.label, ty));
+                }
             }
             // The closed call checks a bound of `T` before its join (Q22): E0154 at a member that
             // breaks it poisons the call, and the join adds no conflict. A bound of each parameter
@@ -2818,7 +2825,24 @@ impl Checker<'_> {
         // A result that is not optional meets the payload of an optional `want`, and the call's
         // value is wrapped (see `meet_context`).
         let shown = self.table.resolve(ret.subst(with));
-        let Some(part) = part_at(shown, name, want).or_else(|| match want.kind() {
+        // A member at a bare `T` whose type has a head that is not optional cannot make an
+        // optional. So the result wraps once at the top (Q24): its report names the payload, as on
+        // `main`.
+        let wraps_top = matches!(want.kind(), TypeKind::Optional(_))
+            && !members.is_empty()
+            && (members.iter()).all(|m| {
+                matches!(m.at, Place::Whole)
+                    && type_of(m.value).is_some_and(|ty| {
+                        let ty = self.table.resolve(ty);
+                        !matches!(ty.kind(), TypeKind::Optional(_) | TypeKind::Infer(_))
+                    })
+            });
+        let part = if wraps_top {
+            None
+        } else {
+            part_at(shown, name, want)
+        };
+        let Some(part) = part.or_else(|| match want.kind() {
             TypeKind::Optional(inner) => part_at(shown, name, inner),
             _ => None,
         }) else {
