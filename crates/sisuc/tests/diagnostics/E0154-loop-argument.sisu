@@ -14,3 +14,5 @@ fn main() {
     let a: Lone = named(loop { break Lone(n: 1) })
     print(a.n)
 }
+
+// interim: Task 5e gives the E0154 of main at 14:19

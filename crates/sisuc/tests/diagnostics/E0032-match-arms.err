@@ -1,0 +1,10 @@
+error[E0032]: expected `u8`, found `i64`
+ --> E0032-match-arms.sisu:7:18
+  |
+6 |         true => a
+  |                 - this branch gives the type `u8`
+7 |         false => b
+  |                  ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

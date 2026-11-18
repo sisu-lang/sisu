@@ -1,22 +1,24 @@
-error[E0032]: expected `[u8]`, found `[i64]`
-  --> E0032-hint-blames-payload.sisu:12:22
+error[E0032]: expected `u8`, found `i64`
+  --> E0032-hint-blames-payload.sisu:12:16
    |
 12 |     print(b == first(ys))
-   |                      ^^
+   |                ^^^^^^^^^
 
-error[E0032]: expected `[u8]`, found `[i64]`
-  --> E0032-hint-blames-payload.sisu:19:35
+error[E0032]: expected `u8`, found `i64`
+  --> E0032-hint-blames-payload.sisu:19:29
    |
 19 |     print(if c { b } else { first(ys) })
-   |                                   ^^
+   |                  -          ^^^^^^^^^
+   |                  |
+   |                  this branch gives the type `u8`
 
-error[E0032]: expected `[u8]`, found `[i64]`
-  --> E0032-hint-blames-payload.sisu:25:22
+error[E0032]: expected `u8`, found `i64`
+  --> E0032-hint-blames-payload.sisu:25:16
    |
 25 |     print(o ?? first(ys))
-   |                      ^^
+   |                ^^^^^^^^^
 
-error[E0032]: expected `[u8]`, found `[i64]`
+error[E0032]: expected `u8?`, found `i64`
   --> E0032-hint-blames-payload.sisu:30:24
    |
 30 |     let x: u8? = first(ys)
@@ -30,18 +32,6 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
    |
    = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-blames-payload.sisu:36:21
-   |
-36 |     let x = v == id(loop { break 1 })
-   |                     ^^^^^^^^^^^^^^^^
-
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-blames-payload.sisu:41:21
-   |
-41 |     let x: u8? = id(loop { break 1 })
-   |                     ^^^^^^^^^^^^^^^^
-
 warning[W0015]: `x` can be `None`, and then this writes the word "None"
   --> E0032-hint-blames-payload.sisu:42:11
    |
@@ -50,47 +40,45 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
    |
    = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
-error[E0032]: expected `[u8]`, found `[i64]`
-  --> E0032-hint-blames-payload.sisu:48:24
+error[E0032]: expected `u8`, found `i64`
+  --> E0032-hint-blames-payload.sisu:48:18
    |
 48 |     let x = v != first(ys)
-   |                        ^^
+   |                  ^^^^^^^^^
 
-error[E0032]: expected `[u8]`, found `[i64]`
-  --> E0032-hint-blames-payload.sisu:56:42
+error[E0032]: expected `u8`, found `i64`
+  --> E0032-hint-blames-payload.sisu:56:36
    |
 56 |     let x = match k { 0 => v; _ => first(ys) }
-   |                                          ^^
+   |                            -       ^^^^^^^^^
+   |                            |
+   |                            this branch gives the type `u8`
 
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-blames-payload.sisu:62:21
-   |
-62 |     let x = v != id(loop { break 1 })
-   |                     ^^^^^^^^^^^^^^^^
-
-error[E0032]: expected `[u8]`, found `[i64]`
-  --> E0032-hint-blames-payload.sisu:69:24
+error[E0032]: expected `[u8?]`, found `[i64]`
+  --> E0032-hint-blames-payload.sisu:69:31
    |
 69 |     let x = v == first(first([ys]))
-   |                        ^^^^^^^^^^^
+   |                               ^^
 
 error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-blames-payload.sisu:76:21
+  --> E0032-hint-blames-payload.sisu:76:18
    |
 76 |     let x = v == id(first(ys))
-   |                     ^^^^^^^^^
+   |                  ^^^^^^^^^^^^^
+
+warning[W0015]: `x` can be `None`, and then this writes the word "None"
+  --> E0032-hint-blames-payload.sisu:83:11
+   |
+83 |     print(x)
+   |           ^
+   |
+   = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
 error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-blames-payload.sisu:82:21
+  --> E0032-hint-blames-payload.sisu:95:18
    |
-82 |     let x = o ?? id(id(loop { break 1 }))
-   |                     ^^^^^^^^^^^^^^^^^^^^
-
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-blames-payload.sisu:88:21
-   |
-88 |     let x = v == id(1 + loop { break 1 })
-   |                     ^^^^^^^^^^^^^^^^^^^^
+95 |     let x = v == first(mut ys)
+   |                  ^^^^^^^^^^^^^
 
 error[E0167]: the parameter `xs` of `first` is not `mut`
   --> E0032-hint-blames-payload.sisu:95:24
@@ -109,12 +97,6 @@ help: remove `mut`
 95 +     let x = v == first(ys)
    |
 
-error[E0032]: expected `[u8]`, found `[i64]`
-  --> E0032-hint-blames-payload.sisu:95:28
-   |
-95 |     let x = v == first(mut ys)
-   |                            ^^
-
 error[E0032]: expected `i64?`, found `u8?`
    --> E0032-hint-blames-payload.sisu:101:22
     |
@@ -129,11 +111,16 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
     |
     = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
-error[E0032]: expected `[u8?]`, found `[i64?]`
-   --> E0032-hint-blames-payload.sisu:107:24
+error[E0032]: expected `u8?`, found `i64`
+   --> E0032-hint-blames-payload.sisu:107:25
     |
 107 |     let x: u8? = first([q, None])
-    |                        ^^^^^^^^^
+    |                         ^
+    |
+help: if the types are right, convert it with `u8(...)`
+    |
+107 |     let x: u8? = first([u8(q), None])
+    |                         +++ +
 
 warning[W0015]: `x` can be `None`, and then this writes the word "None"
    --> E0032-hint-blames-payload.sisu:108:11
@@ -143,11 +130,11 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
     |
     = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
-error[E0032]: expected `i64?`, found `u8?`
-   --> E0032-hint-blames-payload.sisu:114:21
+error[E0032]: expected `i64`, found `u8?`
+   --> E0032-hint-blames-payload.sisu:114:18
     |
 114 |     let x = q == id(o)
-    |                     ^
+    |                  ^^^^^
 
 error[E0032]: expected `i64`, found `u8`
    --> E0032-hint-blames-payload.sisu:120:22
@@ -169,21 +156,10 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
     = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
 error[E0032]: expected `i64?`, found `u8`
-   --> E0032-hint-blames-payload.sisu:131:24
+   --> E0032-hint-blames-payload.sisu:131:19
     |
 131 |     let x: i64? = pick(v, ao)
-    |                        ^
-    |
-help: if the types are right, convert it with `i64(...)`
-    |
-131 |     let x: i64? = pick(i64(v), ao)
-    |                        ++++ +
-
-error[E0032]: expected `[i64??]`, found `[u8?]`
-   --> E0032-hint-blames-payload.sisu:131:27
-    |
-131 |     let x: i64? = pick(v, ao)
-    |                           ^^
+    |                   ^^^^^^^^^^^
 
 warning[W0015]: `x` can be `None`, and then this writes the word "None"
    --> E0032-hint-blames-payload.sisu:132:11
@@ -193,7 +169,7 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
     |
     = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
-error[E0032]: expected `i64?`, found `Result<u8?, bool>`
+error[E0032]: expected `i64`, found `Result<u8?, bool>`
    --> E0032-hint-blames-payload.sisu:137:22
     |
 137 |     let x: i64? = id(rr)
@@ -207,5 +183,5 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
     |
     = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
-sisu: 22 errors, 7 warnings
+sisu: 16 errors, 8 warnings
 sisu: for more on a code, run `sisu explain <code>`: E0032, E0167, W0015

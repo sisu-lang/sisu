@@ -15,3 +15,5 @@ struct Lid: Seen {
 fn main() {
     print([Eye(v: 1), Lid(v: 2)].len())
 }
+
+// interim: Task 5c gives the join report with the interface help (S6b)

@@ -3,3 +3,5 @@ fn main() {
     let b: i64 = 4
     print(a == b)
 }
+
+// interim: Task 5d gives the join report of ADR 0052 at the comparison

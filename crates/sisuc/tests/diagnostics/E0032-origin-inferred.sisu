@@ -94,3 +94,6 @@ fn main() {
     none_arm(1, 2)
     literal_element(2)
 }
+
+// S26: a conflict between the arguments for `T` is reported at the call (line 23).
+// interim: Task 5c gives the one E0032 of main at 59:27.

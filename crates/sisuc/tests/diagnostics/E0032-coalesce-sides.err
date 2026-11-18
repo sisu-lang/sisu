@@ -1,0 +1,8 @@
+error[E0032]: expected `u8`, found `i64`
+ --> E0032-coalesce-sides.sisu:4:18
+  |
+4 |     let s = o ?? b
+  |                  ^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

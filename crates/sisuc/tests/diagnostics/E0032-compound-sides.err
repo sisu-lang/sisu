@@ -1,0 +1,19 @@
+error[E0032]: expected `u8`, found `i64`
+ --> E0032-compound-sides.sisu:4:10
+  |
+4 |     s += b
+  |          ^
+
+error[E0032]: expected `i64`, found `u8`
+ --> E0032-compound-sides.sisu:8:10
+  |
+8 |     t += a
+  |          ^
+  |
+help: if the types are right, convert it with `i64(...)`
+  |
+8 |     t += i64(a)
+  |          ++++ +
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

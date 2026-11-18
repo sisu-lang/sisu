@@ -1,0 +1,10 @@
+error[E0032]: expected `Eye`, found `Lid`
+  --> E0032-array-interface-help.sisu:16:23
+   |
+16 |     print([Eye(v: 1), Lid(v: 2)].len())
+   |            ---------  ^^^^^^^^^
+   |            |
+   |            this element gives the type `Eye`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

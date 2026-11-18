@@ -4,3 +4,5 @@ fn main() {
     let x: [string] = [a, b]
     print(x.len())
 }
+
+// interim: Task 5c gives one E0032 at the array under the written type (Q33)

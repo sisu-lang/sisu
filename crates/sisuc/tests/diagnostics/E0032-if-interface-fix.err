@@ -1,0 +1,10 @@
+error[E0032]: expected `Eye`, found `Lid`
+  --> E0032-if-interface-fix.sisu:17:39
+   |
+17 |     let x = if c { Eye(v: 1) } else { Lid(v: 2) }
+   |                    ---------          ^^^^^^^^^
+   |                    |
+   |                    this branch gives the type `Eye`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

@@ -5,3 +5,5 @@ fn main() {
     let x: string = loop { if c { break a }; break b }
     print(x)
 }
+
+// interim: Task 5e gives one E0032 at the loop under the written type (Q33)

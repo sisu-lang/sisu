@@ -1,4 +1,4 @@
-error[E0032]: expected `i64` or `f64`, found `[u8]`
+error[E0032]: expected `i64` or `f64`, found `[i64]`
  --> E0032-generic-negated-array.sisu:2:36
   |
 2 |     let r: Result<[u8], i64> = Ok(-[5; 2])

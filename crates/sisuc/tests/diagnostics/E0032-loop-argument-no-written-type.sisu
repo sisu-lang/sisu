@@ -18,3 +18,5 @@ fn main() {
     print(d.len())
     print(e)
 }
+
+// valid: the spec gives `pick(a, loop { break 1 })` no error (line 13).

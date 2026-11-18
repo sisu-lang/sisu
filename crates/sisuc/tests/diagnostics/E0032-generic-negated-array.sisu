@@ -2,3 +2,5 @@ fn main() {
     let r: Result<[u8], i64> = Ok(-[5; 2])
     print(r)
 }
+
+// interim: Task 5d gives "found `[u8]`" at 2:36, as main does

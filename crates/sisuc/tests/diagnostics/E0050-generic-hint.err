@@ -1,338 +1,218 @@
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:10:19
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:10:16
    |
 10 |     print(1 == id(mk2()))
-   |                   ^^^
+   |                ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:11:14
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:11:11
    |
 11 |     print(id(mk2()) == 1)
-   |              ^^^
+   |           ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:12:22
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:12:16
    |
 12 |     print(1 == id(id(mk2())))
-   |                      ^^^
+   |                ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:14:22
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:14:16
    |
 14 |     print(o ?? id(id(mk2())))
-   |                      ^^^
+   |                ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:16:35
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:16:29
    |
 16 |     print(if c { 1 } else { id(id(mk2())) })
-   |                                   ^^^
+   |                             ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:21:29
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:21:26
    |
 21 | fn add_calls() { let z = id(mk2()) + id(mk2()) }
-   |                             ^^^
+   |                          ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:21:41
-   |
-21 | fn add_calls() { let z = id(mk2()) + id(mk2()) }
-   |                                         ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:22:34
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:22:31
    |
 22 | fn subtract_calls() { let z = id(mk2()) - id(mk2()) }
-   |                                  ^^^
+   |                               ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:22:46
-   |
-22 | fn subtract_calls() { let z = id(mk2()) - id(mk2()) }
-   |                                              ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:23:33
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:23:30
    |
 23 | fn compare_calls() { let z = id(mk2()) < id(mk2()) }
-   |                                 ^^^
+   |                              ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:23:45
-   |
-23 | fn compare_calls() { let z = id(mk2()) < id(mk2()) }
-   |                                             ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:24:31
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:24:28
    |
 24 | fn add_literal() { let z = id(mk2()) + 1 }
-   |                               ^^^
+   |                            ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:25:35
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:25:32
    |
 25 | fn compare_literal() { let z = id(mk2()) < 1 }
-   |                                   ^^^
+   |                                ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:26:27
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:26:24
    |
 26 | fn print_sum() { print(id(mk2()) + id(mk2())) }
-   |                           ^^^
+   |                        ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:26:39
-   |
-26 | fn print_sum() { print(id(mk2()) + id(mk2())) }
-   |                                       ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:27:38
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:27:35
    |
 27 | fn string_sum() { let z: string = id(mk2()) + id(mk2()) }
-   |                                      ^^^
+   |                                   ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:27:50
-   |
-27 | fn string_sum() { let z: string = id(mk2()) + id(mk2()) }
-   |                                                  ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:28:38
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:28:35
    |
 28 | fn bool_compare() { let z: bool = id(mk2()) < id(mk2()) }
-   |                                      ^^^
+   |                                   ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:28:50
-   |
-28 | fn bool_compare() { let z: bool = id(mk2()) < id(mk2()) }
-   |                                                  ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:29:34
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:29:31
    |
 29 | fn multiply_calls() { let z = id(mk2()) * id(mk2()) }
-   |                                  ^^^
+   |                               ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:29:46
-   |
-29 | fn multiply_calls() { let z = id(mk2()) * id(mk2()) }
-   |                                              ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:30:35
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:30:32
    |
 30 | fn add_three_calls() { let z = id(mk2()) + id(mk2()) + id(mk2()) }
-   |                                   ^^^
+   |                                ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:30:47
-   |
-30 | fn add_three_calls() { let z = id(mk2()) + id(mk2()) + id(mk2()) }
-   |                                               ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:30:59
-   |
-30 | fn add_three_calls() { let z = id(mk2()) + id(mk2()) + id(mk2()) }
-   |                                                           ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:31:34
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:31:31
    |
 31 | fn remainder_call() { let z = id(mk2()) % 2 }
-   |                                  ^^^
+   |                               ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:32:32
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:32:29
    |
 32 | fn negate_sum() { let z = -(id(mk2()) + 1) }
-   |                                ^^^
+   |                             ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:33:36
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:33:33
    |
 33 | fn chain_call_first() { let z = id(mk2()) < 1 < 2 }
-   |                                    ^^^
+   |                                 ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:34:33
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:34:30
    |
 34 | fn coalesce_sum() { let z = (id(mk2()) + 1) ?? 0 }
-   |                                 ^^^
+   |                              ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:35:31
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:35:28
    |
 35 | fn divide_call() { let z = id(mk2()) / 2 }
-   |                               ^^^
+   |                            ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:36:34
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:36:28
    |
 36 | fn nested_call() { let z = id(id(mk2())) + 1 }
-   |                                  ^^^
+   |                            ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:37:36
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:37:33
    |
 37 | fn call_beside_call() { let z = id(mk2()) + id(1) }
-   |                                    ^^^
+   |                                 ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:38:38
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:38:35
    |
 38 | fn left_sum_of_calls() { let z = (id(mk2()) + id(mk2())) + id(mk2()) }
-   |                                      ^^^
+   |                                   ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:38:50
-   |
-38 | fn left_sum_of_calls() { let z = (id(mk2()) + id(mk2())) + id(mk2()) }
-   |                                                  ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:38:63
-   |
-38 | fn left_sum_of_calls() { let z = (id(mk2()) + id(mk2())) + id(mk2()) }
-   |                                                               ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:39:38
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:39:48
    |
 39 | fn right_sum_of_calls() { let z = id(mk2()) + (id(mk2()) + id(mk2())) }
-   |                                      ^^^
+   |                                                ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:39:51
-   |
-39 | fn right_sum_of_calls() { let z = id(mk2()) + (id(mk2()) + id(mk2())) }
-   |                                                   ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:39:63
-   |
-39 | fn right_sum_of_calls() { let z = id(mk2()) + (id(mk2()) + id(mk2())) }
-   |                                                               ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:41:16
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:41:13
    |
 41 |     let z = id(mk2()) + id(mk2())
-   |                ^^^
+   |             ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:41:28
-   |
-41 |     let z = id(mk2()) + id(mk2())
-   |                            ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:45:16
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:45:13
    |
 45 |     let z = id(mk2()) + 1
-   |                ^^^
+   |             ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:49:21
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:49:18
    |
 49 |     let z = o ?? id(mk2())
-   |                     ^^^
+   |                  ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0032]: expected `string`, found `i64`
-  --> E0050-generic-hint.sisu:50:21
-   |
-50 |     let w: string = z
-   |            ------   ^
-   |            |
-   |            declared as `string` here
+   = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `i64`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:55:36
@@ -394,13 +274,13 @@ error[E0032]: expected `f64`, found `Two<_, bool>`
 70 | fn call_after_f64_literal() { let z = 1.5 + id(mk2()) }
    |                                                ^^^^^
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:72:21
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:72:18
    |
 72 |     let z = 1 == id(mk2())
-   |                     ^^^
+   |                  ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `string`, found `bool`
   --> E0050-generic-hint.sisu:73:21
@@ -410,13 +290,13 @@ error[E0032]: expected `string`, found `bool`
    |            |
    |            declared as `string` here
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:76:34
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:76:31
    |
 76 |     let z = if c { 1 } else { id(mk2()) }
-   |                                  ^^^
+   |                               ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `i64`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:79:51
@@ -424,37 +304,21 @@ error[E0032]: expected `i64`, found `Two<_, bool>`
 79 | fn typed_sum_first(x: i64) { let z = (x + 1) + id(mk2()) }
    |                                                   ^^^^^
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:89:46
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:89:43
    |
 89 | fn field_of_sum_then_u8(x: u8) { let z = (id(mk2()) + id(mk2())).a + x }
-   |                                              ^^^
+   |                                           ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:89:58
-   |
-89 | fn field_of_sum_then_u8(x: u8) { let z = (id(mk2()) + id(mk2())).a + x }
-   |                                                          ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:90:51
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:90:48
    |
 90 | fn match_on_sum_then_u8(x: u8) { let z = match id(mk2()) + id(mk2()) { _ => nope } + x }
-   |                                                   ^^^
+   |                                                ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:90:63
-   |
-90 | fn match_on_sum_then_u8(x: u8) { let z = match id(mk2()) + id(mk2()) { _ => nope } + x }
-   |                                                               ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0033]: cannot find binding `nope`
   --> E0050-generic-hint.sisu:90:77
@@ -462,301 +326,205 @@ error[E0033]: cannot find binding `nope`
 90 | fn match_on_sum_then_u8(x: u8) { let z = match id(mk2()) + id(mk2()) { _ => nope } + x }
    |                                                                             ^^^^
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:91:38
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:91:35
    |
 91 | fn call_compare_array() { let z = id(mk2()) < [] }
-   |                                      ^^^
+   |                                   ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:92:34
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:92:31
    |
 92 | fn call_add_array() { let z = id(mk2()) + [] }
-   |                                  ^^^
+   |                               ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:93:33
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:93:30
    |
 93 | fn call_add_none() { let z = id(mk2()) + None }
-   |                                 ^^^
+   |                              ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:94:39
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:94:36
    |
 94 | fn two_calls_add_array() { let z = id(mk2()) + id(mk2()) + [] }
-   |                                       ^^^
+   |                                    ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:94:51
-   |
-94 | fn two_calls_add_array() { let z = id(mk2()) + id(mk2()) + [] }
-   |                                                   ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:95:46
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:95:43
    |
 95 | fn sum_of_calls_then_u8(x: u8) { let z = (id(mk2()) + id(mk2())) + x }
-   |                                              ^^^
+   |                                           ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:95:58
-   |
-95 | fn sum_of_calls_then_u8(x: u8) { let z = (id(mk2()) + id(mk2())) + x }
-   |                                                          ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:96:50
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:96:47
    |
 96 | fn sum_of_calls_then_bool(b: bool) { let z = (id(mk2()) + id(mk2())) + b }
-   |                                                  ^^^
+   |                                               ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:96:62
-   |
-96 | fn sum_of_calls_then_bool(b: bool) { let z = (id(mk2()) + id(mk2())) + b }
-   |                                                              ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:97:47
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:97:44
    |
 97 | fn sum_with_literal_then_bool() { let z = (id(mk2()) + 1) + true }
-   |                                               ^^^
+   |                                            ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:98:51
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:98:48
    |
 98 | fn flat_sum_with_literal_then_bool() { let z = id(mk2()) + 1 + true }
-   |                                                   ^^^
+   |                                                ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:99:44
-   |
-99 | fn block_sum_then_u8(x: u8) { let z = { id(mk2()) + id(mk2()) } + x }
-   |                                            ^^^
-   |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-  --> E0050-generic-hint.sisu:99:56
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:99:41
    |
 99 | fn block_sum_then_u8(x: u8) { let z = { id(mk2()) + id(mk2()) } + x }
-   |                                                        ^^^
+   |                                         ^^
    |
-   = help: annotate the result, or write the type: `mk2<...>(...)`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:100:50
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:100:47
     |
 100 | fn flat_sum_of_calls_then_u8(x: u8) { let z = id(mk2()) + id(mk2()) + x }
-    |                                                  ^^^
+    |                                               ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:100:62
-    |
-100 | fn flat_sum_of_calls_then_u8(x: u8) { let z = id(mk2()) + id(mk2()) + x }
-    |                                                              ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:101:45
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:101:42
     |
 101 | fn grouped_sum_then_u8(x: u8) { let z = (id(mk2()) + 1) + x }
-    |                                             ^^^
+    |                                          ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:102:51
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:102:48
     |
 102 | fn nested_call_sum_then_u8(x: u8) { let z = id(id(mk2()) + 1) + x }
-    |                                                   ^^^
+    |                                                ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:103:43
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:103:40
     |
 103 | fn field_of_sum_then_call() { let z = (id(mk2()) + id(mk2())).a + id(mk2()) }
-    |                                           ^^^
+    |                                        ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:103:55
-    |
-103 | fn field_of_sum_then_call() { let z = (id(mk2()) + id(mk2())).a + id(mk2()) }
-    |                                                       ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:105:17
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:105:14
     |
 105 |     let z = (id(mk2()) + id(mk2())).a + 1 + id(mk2())
-    |                 ^^^
+    |              ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:105:29
-    |
-105 |     let z = (id(mk2()) + id(mk2())).a + 1 + id(mk2())
-    |                             ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:107:57
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:107:54
     |
 107 | fn product_of_calls_then_remainder(x: u8) { let z = (id(mk2()) * id(mk2())) % x }
-    |                                                         ^^^
+    |                                                      ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:107:69
-    |
-107 | fn product_of_calls_then_remainder(x: u8) { let z = (id(mk2()) * id(mk2())) % x }
-    |                                                                     ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:108:55
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:108:52
     |
 108 | fn difference_of_calls_then_less(x: u8) { let z = (id(mk2()) - id(mk2())) < x }
-    |                                                       ^^^
+    |                                                    ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:108:67
-    |
-108 | fn difference_of_calls_then_less(x: u8) { let z = (id(mk2()) - id(mk2())) < x }
-    |                                                                   ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:109:46
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:109:43
     |
 109 | fn negated_sum_then_u8(x: u8) { let z = -(id(mk2()) + id(mk2())) + x }
-    |                                              ^^^
+    |                                           ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:109:58
-    |
-109 | fn negated_sum_then_u8(x: u8) { let z = -(id(mk2()) + id(mk2())) + x }
-    |                                                          ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:110:44
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:110:41
     |
 110 | fn three_calls_then_u8(x: u8) { let z = id(mk2()) + id(mk2()) + id(mk2()) + x }
-    |                                            ^^^
+    |                                         ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:110:56
-    |
-110 | fn three_calls_then_u8(x: u8) { let z = id(mk2()) + id(mk2()) + id(mk2()) + x }
-    |                                                        ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:110:68
-    |
-110 | fn three_calls_then_u8(x: u8) { let z = id(mk2()) + id(mk2()) + id(mk2()) + x }
-    |                                                                    ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:111:59
+error[E0050]: cannot infer `T` for `g`
+   --> E0050-generic-hint.sisu:111:54
     |
 111 | fn method_call_sum_then_u8(k: K, x: u8) { let z = (k.g(id(mk2())) + 1) + x }
-    |                                                           ^^^
+    |                                                      ^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `g<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:113:24
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:113:21
     |
 113 |     let z = (if c { id(mk2()) + 1 } else { id(mk2()) + 1 }) + x
-    |                        ^^^
+    |                     ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:113:47
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:113:44
     |
 113 |     let z = (if c { id(mk2()) + 1 } else { id(mk2()) + 1 }) + x
-    |                                               ^^^
+    |                                            ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:115:50
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:115:47
     |
 115 | fn block_value_sum_then_u8(x: u8) { let z = { id(mk2()) + 1 } + x }
-    |                                                  ^^^
+    |                                               ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:117:26
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:117:23
     |
 117 |     let z = { let q = id(mk2()) + 1; id(mk2()) + 1 } + x
-    |                          ^^^
+    |                       ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:117:41
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:117:38
     |
 117 |     let z = { let q = id(mk2()) + 1; id(mk2()) + 1 } + x
-    |                                         ^^^
+    |                                      ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:122:16
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:122:13
     |
 122 |     let z = id(mk2()) < 3
-    |                ^^^
+    |             ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `string`, found `bool`
    --> E0050-generic-hint.sisu:123:21
@@ -782,21 +550,13 @@ error[E0032]: expected `string`, found `bool`
     |            |
     |            declared as `string` here
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:130:17
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:130:14
     |
 130 |     let z = (id(mk2()) + id(mk2())) < 3
-    |                 ^^^
+    |              ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:130:29
-    |
-130 |     let z = (id(mk2()) + id(mk2())) < 3
-    |                             ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `string`, found `bool`
    --> E0050-generic-hint.sisu:131:21
@@ -806,13 +566,13 @@ error[E0032]: expected `string`, found `bool`
     |            |
     |            declared as `string` here
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:134:16
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:134:13
     |
 134 |     let z = id(mk2()) + 1 < 3
-    |                ^^^
+    |             ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `string`, found `bool`
    --> E0050-generic-hint.sisu:135:21
@@ -822,29 +582,21 @@ error[E0032]: expected `string`, found `bool`
     |            |
     |            declared as `string` here
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:138:17
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:138:14
     |
 138 |     let z = (id(mk2()) + id(mk2())) < (id(mk2()) + 1)
-    |                 ^^^
+    |              ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:138:29
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:138:40
     |
 138 |     let z = (id(mk2()) + id(mk2())) < (id(mk2()) + 1)
-    |                             ^^^
+    |                                        ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:138:43
-    |
-138 |     let z = (id(mk2()) + id(mk2())) < (id(mk2()) + 1)
-    |                                           ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `string`, found `bool`
    --> E0050-generic-hint.sisu:139:21
@@ -854,13 +606,13 @@ error[E0032]: expected `string`, found `bool`
     |            |
     |            declared as `string` here
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:142:16
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:142:13
     |
 142 |     let z = id(mk2()) + 1 < 3 + id(mk2())
-    |                ^^^
+    |             ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `i64`, found `Two<_, bool>`
    --> E0050-generic-hint.sisu:142:36
@@ -876,13 +628,13 @@ error[E0032]: expected `string`, found `bool`
     |            |
     |            declared as `string` here
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:146:31
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:146:28
     |
 146 |     let z = { let q = 1 == id(mk2()); 5 } < 3
-    |                               ^^^
+    |                            ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `string`, found `bool`
    --> E0050-generic-hint.sisu:147:21
@@ -892,13 +644,13 @@ error[E0032]: expected `string`, found `bool`
     |            |
     |            declared as `string` here
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:149:58
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:149:55
     |
 149 | fn block_less_then_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } < x }
-    |                                                          ^^^
+    |                                                       ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0033]: cannot find binding `nope`
    --> E0050-generic-hint.sisu:149:66
@@ -906,13 +658,13 @@ error[E0033]: cannot find binding `nope`
 149 | fn block_less_then_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } < x }
     |                                                                  ^^^^
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:150:54
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:150:51
     |
 150 | fn block_times_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } * x }
-    |                                                      ^^^
+    |                                                   ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0033]: cannot find binding `nope`
    --> E0050-generic-hint.sisu:150:62
@@ -920,13 +672,13 @@ error[E0033]: cannot find binding `nope`
 150 | fn block_times_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } * x }
     |                                                              ^^^^
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:151:58
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:151:55
     |
 151 | fn block_nope_then_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } + x }
-    |                                                          ^^^
+    |                                                       ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0033]: cannot find binding `nope`
    --> E0050-generic-hint.sisu:151:66
@@ -934,13 +686,13 @@ error[E0033]: cannot find binding `nope`
 151 | fn block_nope_then_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } + x }
     |                                                                  ^^^^
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:152:71
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:152:68
     |
 152 | fn block_nope_then_literal_then_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } + 1 + x }
-    |                                                                       ^^^
+    |                                                                    ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0033]: cannot find binding `nope`
    --> E0050-generic-hint.sisu:152:79
@@ -948,21 +700,21 @@ error[E0033]: cannot find binding `nope`
 152 | fn block_nope_then_literal_then_u8(x: u8) { let z = { let q = 1 == id(mk2()); nope } + 1 + x }
     |                                                                               ^^^^
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:158:25
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:158:22
     |
 158 |         let q = 1 == id(mk2())
-    |                         ^^^
+    |                      ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:165:25
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:165:22
     |
 165 |         let q = 1 == id(mk2())
-    |                         ^^^
+    |                      ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `string`, found `i64`
    --> E0050-generic-hint.sisu:168:21
@@ -972,13 +724,13 @@ error[E0032]: expected `string`, found `i64`
     |            |
     |            declared as `string` here
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:172:25
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:172:22
     |
 172 |         let q = 1 == id(mk2())
-    |                         ^^^
+    |                      ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0033]: cannot find binding `nope`
    --> E0050-generic-hint.sisu:173:9
@@ -986,29 +738,21 @@ error[E0033]: cannot find binding `nope`
 173 |         nope
     |         ^^^^
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:179:25
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:179:22
     |
 179 |         let q = 1 == id(mk2())
-    |                         ^^^
+    |                      ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:185:22
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:185:19
     |
 185 |     let z = match id(mk2()) + id(mk2()) { _ => 1 } + 1
-    |                      ^^^
+    |                   ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:185:34
-    |
-185 |     let z = match id(mk2()) + id(mk2()) { _ => 1 } + 1
-    |                                  ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `string`, found `i64`
    --> E0050-generic-hint.sisu:186:21
@@ -1018,13 +762,13 @@ error[E0032]: expected `string`, found `i64`
     |            |
     |            declared as `string` here
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:189:27
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:189:24
     |
 189 |     let z = match 1 == id(mk2()) { _ => 1 } + 1
-    |                           ^^^
+    |                        ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `string`, found `i64`
    --> E0050-generic-hint.sisu:190:21
@@ -1034,29 +778,29 @@ error[E0032]: expected `string`, found `i64`
     |            |
     |            declared as `string` here
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:193:30
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:193:27
     |
 193 |     let z = id(match 1 == id(mk2()) { _ => 1 })
-    |                              ^^^
+    |                           ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:197:35
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:197:32
     |
 197 |     let z = k.g({ let q = 1 == id(mk2()); 5 })
-    |                                   ^^^
+    |                                ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:201:37
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:201:34
     |
 201 |     let z = o ?? ({ let q = 1 == id(mk2()); nope } + 1)
-    |                                     ^^^
+    |                                  ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0033]: cannot find binding `nope`
    --> E0050-generic-hint.sisu:201:45
@@ -1064,13 +808,13 @@ error[E0033]: cannot find binding `nope`
 201 |     let z = o ?? ({ let q = 1 == id(mk2()); nope } + 1)
     |                                             ^^^^
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:205:24
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:205:21
     |
 205 |     let z = (if c { id(mk2()) + 1 } else { 2 }) + 1
-    |                        ^^^
+    |                     ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `u8`, found `Two<_, bool>`
    --> E0050-generic-hint.sisu:211:21
@@ -1078,13 +822,13 @@ error[E0032]: expected `u8`, found `Two<_, bool>`
 211 |     let z = pair(id(mk2()) + 1, x)
     |                     ^^^^^
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:215:36
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:215:33
     |
 215 |     let z = pair({ let q = 1 == id(mk2()); x }, x)
-    |                                    ^^^
+    |                                 ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0050]: cannot infer `X` for `mk2`
    --> E0050-generic-hint.sisu:220:43
@@ -1144,11 +888,13 @@ error[E0033]: cannot find binding `nope`
 239 | fn negated_failure_then_call() { let z = -nope + id(mk2()) }
     |                                           ^^^^
 
-error[E0032]: expected `i64`, found `Two<_, bool>`
-   --> E0050-generic-hint.sisu:243:26
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:243:23
     |
 243 |     let z = o ?? pair(id(mk2()) + 1, nope)
-    |                          ^^^^^
+    |                       ^^
+    |
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0033]: cannot find binding `nope`
    --> E0050-generic-hint.sisu:243:38
@@ -1156,27 +902,19 @@ error[E0033]: cannot find binding `nope`
 243 |     let z = o ?? pair(id(mk2()) + 1, nope)
     |                                      ^^^^
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:246:48
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:246:45
     |
 246 | fn pair_with_sum_then_call() { let z = pair(id(mk2()) + 1, nope) + id(mk2()) }
-    |                                                ^^^
+    |                                             ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0033]: cannot find binding `nope`
    --> E0050-generic-hint.sisu:246:60
     |
 246 | fn pair_with_sum_then_call() { let z = pair(id(mk2()) + 1, nope) + id(mk2()) }
     |                                                            ^^^^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:246:71
-    |
-246 | fn pair_with_sum_then_call() { let z = pair(id(mk2()) + 1, nope) + id(mk2()) }
-    |                                                                       ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
 
 error[E0032]: expected `u8`, found `Two<_, bool>`
    --> E0050-generic-hint.sisu:251:23
@@ -1198,175 +936,101 @@ error[E0032]: expected `u8`, found `Two<_, bool>`
 255 |     let z = snd(id(mk2()) + 1, x) + 1
     |                    ^^^^^
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:265:42
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:265:39
     |
 265 | fn call_minus_bool(b: bool) { let z = id(mk2()) - b }
-    |                                          ^^^
+    |                                       ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0032]: expected `i64`, `u8` or `f64`, found `bool`
-   --> E0050-generic-hint.sisu:265:51
-    |
-265 | fn call_minus_bool(b: bool) { let z = id(mk2()) - b }
-    |                                                   ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:266:40
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:266:37
     |
 266 | fn call_times_class(k: K) { let z = id(mk2()) * k }
-    |                                        ^^^
+    |                                     ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0032]: expected `i64`, `u8` or `f64`, found `K`
-   --> E0050-generic-hint.sisu:266:49
-    |
-266 | fn call_times_class(k: K) { let z = id(mk2()) * k }
-    |                                                 ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:267:44
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:267:41
     |
 267 | fn call_plus_array(xs: [i64]) { let z = id(mk2()) + xs }
-    |                                            ^^^
+    |                                         ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `[i64]`
-   --> E0050-generic-hint.sisu:267:53
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:268:40
     |
-267 | fn call_plus_array(xs: [i64]) { let z = id(mk2()) + xs }
+268 | fn call_plus_array_literal() { let z = id(mk2()) + [1] }
+    |                                        ^^
+    |
+    = help: annotate the result, or write the type: `id<...>(...)`
+
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:269:31
+    |
+269 | fn call_plus_some() { let z = id(mk2()) + Some(1) }
+    |                               ^^
+    |
+    = help: annotate the result, or write the type: `id<...>(...)`
+
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:271:13
+    |
+271 |     let z = id(mk2()) + b
+    |             ^^
+    |
+    = help: annotate the result, or write the type: `id<...>(...)`
+
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:274:53
+    |
+274 | fn call_minus_bool_minus_literal(b: bool) { let z = id(mk2()) - b - 1 }
     |                                                     ^^
+    |
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:268:43
-    |
-268 | fn call_plus_array_literal() { let z = id(mk2()) + [1] }
-    |                                           ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `[i64]`
-   --> E0050-generic-hint.sisu:268:52
-    |
-268 | fn call_plus_array_literal() { let z = id(mk2()) + [1] }
-    |                                                    ^^^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:269:34
-    |
-269 | fn call_plus_some() { let z = id(mk2()) + Some(1) }
-    |                                  ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0032]: expected `i64`, found `i64?`
-   --> E0050-generic-hint.sisu:269:43
-    |
-269 | fn call_plus_some() { let z = id(mk2()) + Some(1) }
-    |                                           ^^^^^^^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:271:16
-    |
-271 |     let z = id(mk2()) + b
-    |                ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
-   --> E0050-generic-hint.sisu:271:25
-    |
-271 |     let z = id(mk2()) + b
-    |                         ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:274:56
-    |
-274 | fn call_minus_bool_minus_literal(b: bool) { let z = id(mk2()) - b - 1 }
-    |                                                        ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0032]: expected `i64`, `u8` or `f64`, found `bool`
-   --> E0050-generic-hint.sisu:274:65
-    |
-274 | fn call_minus_bool_minus_literal(b: bool) { let z = id(mk2()) - b - 1 }
-    |                                                                 ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:275:53
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:275:50
     |
 275 | fn call_minus_bool_minus_call(b: bool) { let z = id(mk2()) - b - id(mk2()) }
-    |                                                     ^^^
+    |                                                  ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0032]: expected `i64`, `u8` or `f64`, found `bool`
-   --> E0050-generic-hint.sisu:275:62
-    |
-275 | fn call_minus_bool_minus_call(b: bool) { let z = id(mk2()) - b - id(mk2()) }
-    |                                                              ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:275:69
-    |
-275 | fn call_minus_bool_minus_call(b: bool) { let z = id(mk2()) - b - id(mk2()) }
-    |                                                                     ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:276:49
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:276:46
     |
 276 | fn call_plus_optional_i64(o: i64?) { let z = id(mk2()) + o }
-    |                                                 ^^^
+    |                                              ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0032]: expected `i64`, found `i64?`
-   --> E0050-generic-hint.sisu:276:58
-    |
-276 | fn call_plus_optional_i64(o: i64?) { let z = id(mk2()) + o }
-    |                                                          ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:277:47
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:277:44
     |
 277 | fn call_plus_optional_u8(o: u8?) { let z = id(mk2()) + o }
-    |                                               ^^^
+    |                                            ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0032]: expected `u8`, found `u8?`
-   --> E0050-generic-hint.sisu:277:56
-    |
-277 | fn call_plus_optional_u8(o: u8?) { let z = id(mk2()) + o }
-    |                                                        ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:278:50
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:278:47
     |
 278 | fn call_times_optional_f64(o: f64?) { let z = id(mk2()) * o }
-    |                                                  ^^^
+    |                                               ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0032]: expected `f64`, found `f64?`
-   --> E0050-generic-hint.sisu:278:59
-    |
-278 | fn call_times_optional_f64(o: f64?) { let z = id(mk2()) * o }
-    |                                                           ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:279:42
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:279:39
     |
 279 | fn call_plus_param<T>(t: T) { let z = id(mk2()) + t }
-    |                                          ^^^
+    |                                       ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0139]: `T` has no `+`
    --> E0050-generic-hint.sisu:279:51
@@ -1374,111 +1038,61 @@ error[E0139]: `T` has no `+`
 279 | fn call_plus_param<T>(t: T) { let z = id(mk2()) + t }
     |                                                   ^ this has type `T`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:280:39
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:280:36
     |
 280 | fn call_minus_enum(e: E) { let z = id(mk2()) - e }
-    |                                       ^^^
+    |                                    ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0032]: expected `i64`, `u8` or `f64`, found `E`
-   --> E0050-generic-hint.sisu:280:48
-    |
-280 | fn call_minus_enum(e: E) { let z = id(mk2()) - e }
-    |                                                ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:281:49
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:281:46
     |
 281 | fn call_less_optional_i64(o: i64?) { let z = id(mk2()) < o }
-    |                                                 ^^^
+    |                                              ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0032]: expected `i64`, found `i64?`
-   --> E0050-generic-hint.sisu:281:58
-    |
-281 | fn call_less_optional_i64(o: i64?) { let z = id(mk2()) < o }
-    |                                                          ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:282:58
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:282:55
     |
 282 | fn call_plus_bool_plus_i64(b: bool, n: i64) { let z = id(mk2()) + b + n }
-    |                                                          ^^^
+    |                                                       ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
-   --> E0050-generic-hint.sisu:282:67
-    |
-282 | fn call_plus_bool_plus_i64(b: bool, n: i64) { let z = id(mk2()) + b + n }
-    |                                                                   ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:283:46
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:283:43
     |
 283 | fn call_remainder_bool(b: bool) { let z = id(mk2()) % b }
-    |                                              ^^^
+    |                                           ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0032]: expected `i64`, `u8` or `f64`, found `bool`
-   --> E0050-generic-hint.sisu:283:55
-    |
-283 | fn call_remainder_bool(b: bool) { let z = id(mk2()) % b }
-    |                                                       ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:284:54
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:284:51
     |
 284 | fn call_plus_bool_less_literal(b: bool) { let z = id(mk2()) + b < 3 }
-    |                                                      ^^^
+    |                                                   ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
-   --> E0050-generic-hint.sisu:284:63
-    |
-284 | fn call_plus_bool_less_literal(b: bool) { let z = id(mk2()) + b < 3 }
-    |                                                               ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:286:16
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:286:13
     |
 286 |     let z = id(mk2()) + o
-    |                ^^^
+    |             ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0032]: expected `u8`, found `u8?`
-   --> E0050-generic-hint.sisu:286:25
-    |
-286 |     let z = id(mk2()) + o
-    |                         ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:289:56
+error[E0050]: cannot infer `T` for `pair`
+   --> E0050-generic-hint.sisu:289:48
     |
 289 | fn pair_of_calls_minus_bool(b: bool) { let z = pair(id(mk2()), id(mk2())) - b }
-    |                                                        ^^^
+    |                                                ^^^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:289:67
-    |
-289 | fn pair_of_calls_minus_bool(b: bool) { let z = pair(id(mk2()), id(mk2())) - b }
-    |                                                                   ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0032]: expected `i64`, `u8` or `f64`, found `bool`
-   --> E0050-generic-hint.sisu:289:77
-    |
-289 | fn pair_of_calls_minus_bool(b: bool) { let z = pair(id(mk2()), id(mk2())) - b }
-    |                                                                             ^
+    = help: annotate the result, or write the type: `pair<...>(...)`
 
 error[E0032]: expected `i64`, `u8` or `f64`, found `bool`
    --> E0050-generic-hint.sisu:292:39
@@ -1516,81 +1130,69 @@ error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `Two<_, bool>`
 297 | fn concrete_plus_optional_i64(o: i64?) { let z = mk2() + o }
     |                                                  ^^^^^
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:301:54
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:301:51
     |
 301 | fn block_negated_sum_then_u8(x: u8) { let z = { -(id(mk2()) + 1) } + x }
-    |                                                      ^^^
+    |                                                   ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:303:26
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:303:23
     |
 303 |     let z = (if c { -(id(mk2()) + 1) } else { -(id(mk2()) + 1) }) + x
-    |                          ^^^
+    |                       ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:303:52
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:303:49
     |
 303 |     let z = (if c { -(id(mk2()) + 1) } else { -(id(mk2()) + 1) }) + x
-    |                                                    ^^^
+    |                                                 ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:305:57
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:305:54
     |
 305 | fn call_of_negated_sum_then_u8(x: u8) { let z = id(-(id(mk2()) + 1)) + x }
-    |                                                         ^^^
+    |                                                      ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:307:18
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:307:15
     |
 307 |     let z = -(id(mk2()) + 1)
-    |                  ^^^
+    |               ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:311:18
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:311:15
     |
 311 |     let z = -(id(mk2()) + 1)
-    |                  ^^^
+    |               ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:317:46
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:317:43
     |
 317 | fn call_minus_string(s: string) { let z = id(mk2()) - s }
-    |                                              ^^^
+    |                                           ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0032]: expected `i64`, `u8` or `f64`, found `string`
-   --> E0050-generic-hint.sisu:317:55
-    |
-317 | fn call_minus_string(s: string) { let z = id(mk2()) - s }
-    |                                                       ^
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:318:50
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:318:47
     |
 318 | fn call_remainder_string(s: string) { let z = id(mk2()) % s }
-    |                                                  ^^^
+    |                                               ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0032]: expected `i64`, `u8` or `f64`, found `string`
-   --> E0050-generic-hint.sisu:318:59
-    |
-318 | fn call_remainder_string(s: string) { let z = id(mk2()) % s }
-    |                                                           ^
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `i64`, `u8` or `f64`, found `string?`
    --> E0050-generic-hint.sisu:319:65
@@ -1598,53 +1200,29 @@ error[E0032]: expected `i64`, `u8` or `f64`, found `string?`
 319 | fn call_minus_optional_string(o: string?) { let z = id(mk2()) - o }
     |                                                                 ^
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:323:50
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:323:47
     |
 323 | fn negated_sum_plus_char(c: char) { let z = -(id(mk2()) + 1) + c }
-    |                                                  ^^^
+    |                                               ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0094]: arithmetic does not apply to `char`
-   --> E0050-generic-hint.sisu:323:62
-    |
-323 | fn negated_sum_plus_char(c: char) { let z = -(id(mk2()) + 1) + c }
-    |                                                              ^
-    |
-    = help: convert through `i64`, then give a default: `char(i64(c) + 1) ?? c`
-
-error[E0094]: arithmetic does not apply to `char`
-   --> E0050-generic-hint.sisu:324:47
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:324:51
     |
 324 | fn char_plus_negated_sum(c: char) { let z = c + -(id(mk2()) + 1) }
-    |                                               ^
+    |                                                   ^^
     |
-    = help: convert through `i64`, then give a default: `char(i64(c) + 1) ?? c`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:324:54
-    |
-324 | fn char_plus_negated_sum(c: char) { let z = c + -(id(mk2()) + 1) }
-    |                                                      ^^^
-    |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:325:55
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:325:52
     |
 325 | fn parenthesised_sum_plus_char(c: char) { let z = (id(mk2()) + 1) + c }
-    |                                                       ^^^
+    |                                                    ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
-
-error[E0094]: arithmetic does not apply to `char`
-   --> E0050-generic-hint.sisu:325:67
-    |
-325 | fn parenthesised_sum_plus_char(c: char) { let z = (id(mk2()) + 1) + c }
-    |                                                                   ^
-    |
-    = help: convert through `i64`, then give a default: `char(i64(c) + 1) ?? c`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0094]: arithmetic does not apply to `char`
    --> E0050-generic-hint.sisu:326:48
@@ -1654,13 +1232,13 @@ error[E0094]: arithmetic does not apply to `char`
     |
     = help: convert through `i64`, then give a default: `char(i64(c) + 1) ?? c`
 
-error[E0050]: cannot infer `X` for `mk2`
-   --> E0050-generic-hint.sisu:327:50
+error[E0050]: cannot infer `V` for `id`
+   --> E0050-generic-hint.sisu:327:47
     |
 327 | fn negated_sum_less_char(c: char) { let z = -(id(mk2()) + 1) < c }
-    |                                                  ^^^
+    |                                               ^^
     |
-    = help: annotate the result, or write the type: `mk2<...>(...)`
+    = help: annotate the result, or write the type: `id<...>(...)`
 
-sisu: 223 errors
+sisu: 165 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032, E0033, E0050, E0094, E0139

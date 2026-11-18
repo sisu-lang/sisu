@@ -1,0 +1,10 @@
+error[E0032]: expected `u8`, found `i64`
+ --> E0032-array-elements.sisu:4:17
+  |
+4 |     let x = [a, b]
+  |              -  ^
+  |              |
+  |              this element gives the type `u8`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

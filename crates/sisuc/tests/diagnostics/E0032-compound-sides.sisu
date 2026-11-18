@@ -8,3 +8,5 @@ fn main() {
     t += a
     print(t)
 }
+
+// interim: Task 5d gives the reports of S23 rows 1 and 2

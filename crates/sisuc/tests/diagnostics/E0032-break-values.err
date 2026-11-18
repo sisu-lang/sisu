@@ -1,0 +1,10 @@
+error[E0032]: expected `u8`, found `i64`
+ --> E0032-break-values.sisu:5:44
+  |
+5 |     let x = loop { if c { break a }; break b }
+  |                           -------          ^
+  |                           |
+  |                           this `break` gave the loop the type `u8`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

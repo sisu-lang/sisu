@@ -4,3 +4,5 @@ fn main() {
     let s = o ?? b
     print(s)
 }
+
+// interim: Task 5d gives the join report of S23 row 3

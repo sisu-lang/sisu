@@ -11,12 +11,6 @@ help: if the types are right, convert it with `i64(...)`
 9 |     let x = if c == 1 { q } else { loop { break i64(v) } }
   |                                                 ++++ +
 
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-names-siblings.sisu:15:21
-   |
-15 |     let x = v == id(loop { break 1 })
-   |                     ^^^^^^^^^^^^^^^^
-
 error[E0032]: expected `i64`, found `u8`
   --> E0032-hint-names-siblings.sisu:22:31
    |
@@ -40,15 +34,17 @@ help: if the types are right, convert it with `i64(...)`
    |                               ++++ +
 
 error[E0032]: expected `i64`, found `u8`
-  --> E0032-hint-names-siblings.sisu:37:39
+  --> E0032-hint-names-siblings.sisu:37:36
    |
 37 |     let x = if c == 1 { q } else { id(v) }
-   |                                       ^
+   |                         -          ^^^^^
+   |                         |
+   |                         this branch gives the type `i64`
    |
 help: if the types are right, convert it with `i64(...)`
    |
-37 |     let x = if c == 1 { q } else { id(i64(v)) }
-   |                                       ++++ +
+37 |     let x = if c == 1 { q } else { i64(id(v)) }
+   |                                    ++++     +
 
 error[E0032]: expected `i64?`, found `u8`
   --> E0032-hint-names-siblings.sisu:45:49
@@ -76,11 +72,13 @@ help: if the types are right, convert it with `i64(...)`
 53 |     let x = match k { 0 => q; _ => loop { break i64(v) } }
    |                                                 ++++ +
 
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-names-siblings.sisu:60:47
+warning[W0015]: `x` can be `None`, and then this writes the word "None"
+  --> E0032-hint-names-siblings.sisu:61:11
    |
-60 |     let x = match k { 0 => v; 1 => v; _ => id(loop { break 1 }) }
-   |                                               ^^^^^^^^^^^^^^^^
+61 |     print(x)
+   |           ^
+   |
+   = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
 error[E0032]: expected `i64`, found `u8`
   --> E0032-hint-names-siblings.sisu:67:31
@@ -94,15 +92,15 @@ help: if the types are right, convert it with `i64(...)`
    |                               ++++ +
 
 error[E0032]: expected `i64`, found `u8`
-  --> E0032-hint-names-siblings.sisu:74:21
+  --> E0032-hint-names-siblings.sisu:74:18
    |
 74 |     let x = q == id(v)
-   |                     ^
+   |                  ^^^^^
    |
 help: if the types are right, convert it with `i64(...)`
    |
-74 |     let x = q == id(i64(v))
-   |                     ++++ +
+74 |     let x = q == i64(id(v))
+   |                  ++++     +
 
 error[E0032]: expected `i64`, found `u8`
   --> E0032-hint-names-siblings.sisu:82:60
@@ -161,5 +159,5 @@ error[E0032]: expected `i64?`, found `u8?`
 101 |     let x = q == loop { break o }
     |                               ^
 
-sisu: 14 errors, 2 warnings
+sisu: 12 errors, 3 warnings
 sisu: for more on a code, run `sisu explain <code>`: E0032, W0015

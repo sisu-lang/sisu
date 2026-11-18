@@ -6,3 +6,5 @@ fn main() {
     let x = if c { a } else if d { b } else { "s" }
     print(x)
 }
+
+// interim: Task 5b gives the join report of ADR 0052 at the chain
