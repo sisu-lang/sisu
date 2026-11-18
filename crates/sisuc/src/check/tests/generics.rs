@@ -1292,8 +1292,9 @@ fn a_call_that_binds_its_parameters_should_not_wait_for_context() {
     ));
 }
 
-/// Finding the type parameters that a call's parameter types name visits each type once, so it
-/// grows with the declaration, not with the square of its type parameters.
+/// The search for the type parameters that a call's parameter types name visits each type once.
+/// So it grows with the declaration, not with the square of its type parameters. `call_work`
+/// counts the work of the join of the call, which looks at each parameter and its arguments once.
 #[test]
 fn named_parameters_should_be_found_in_one_walk() {
     let marked = |n: usize| {
@@ -1305,9 +1306,7 @@ fn named_parameters_should_be_found_in_one_walk() {
             params.join(", "),
             vec!["1"; n].join(", "),
         );
-        generic::MARKED.set(0);
-        clean(&src);
-        generic::MARKED.get()
+        call_work(&src)
     };
     assert_near_linear(marked(100), marked(200), marked(300));
     // A type without a parameter is not walked again at each call: the declaration and the
@@ -1315,15 +1314,13 @@ fn named_parameters_should_be_found_in_one_walk() {
     let repeated = |n: usize| {
         let types: Vec<_> = (0..n).map(|i| format!("P{i}")).collect();
         let src = format!(
-            "fn id<T>(x: T) -> T {{ x }}\nclass C<{}> {{}}\nfn f<T>(x: T, c: C<{}>) -> T {{ x }}\nfn g(c: C<{}>) {{\n{}}}\nfn main() {{}}",
+            "fn id<T>(x: T) -> T {{ x }}\nstruct C<{}> {{}}\nfn f<T>(x: T, c: C<{}>) -> T {{ x }}\nfn g(c: C<{}>) {{\n{}}}\nfn main() {{}}",
             types.join(", "),
             vec!["i64"; n].join(", "),
             vec!["i64"; n].join(", "),
             "    let _ = id(f(1, c))\n".repeat(n),
         );
-        generic::MARKED.set(0);
-        clean(&src);
-        generic::MARKED.get()
+        call_work(&src)
     };
     assert_near_linear(repeated(100), repeated(200), repeated(300));
     // A call that does not fit its declaration is not walked at all: a function, a method, a
@@ -1609,8 +1606,9 @@ fn a_waiting_branch_of_a_failed_call_should_report_its_own_mistakes() {
     }
 }
 
-/// Each binding is checked once, and a failed one undoes only what it bound, so inference's
-/// work grows with a call's type parameters, not with their square.
+/// Each binding is checked once, and a failed one undoes only what it bound. So the work of
+/// inference grows with a call's type parameters, not with their square. The join of each
+/// parameter tests its one argument as its one candidate.
 #[test]
 fn inference_should_check_each_binding_once() {
     let visits = |n: usize| {
@@ -1622,9 +1620,9 @@ fn inference_should_check_each_binding_once() {
             params.join(", "),
             vec!["true"; n].join(", ")
         );
-        generic::VISITS.set(0);
+        join::CANDIDATES.set(0);
         clean(&src);
-        generic::VISITS.get()
+        join::CANDIDATES.get()
     };
     assert_eq!(visits(64), 64);
     assert_eq!(visits(128), 128);
@@ -1633,47 +1631,44 @@ fn inference_should_check_each_binding_once() {
 /// A call whose `n` parameters each have a bound, and whose arguments bind them one by one. Each
 /// binding checks its own bound, so the substitution list that the check reads is built once for
 /// the call and changes one entry for each binding. A list built again for each binding makes the
-/// work grow with the square of `n`.
+/// work grow with the square of `n`. `call_work` counts the work of the call.
 #[test]
 fn early_bound_checks_should_build_the_substitution_list_once() {
     let listed = |n: usize| {
         let types: Vec<_> = (0..n).map(|i| format!("T{i}: I")).collect();
         let params: Vec<_> = (0..n).map(|i| format!("_a{i}: T{i}")).collect();
         let src = format!(
-            "interface I {{\n}}\nclass W: I {{\n}}\n\
+            "interface I {{\n}}\nstruct W: I {{\n}}\n\
              fn h<{}>({}) {{}}\nfn main() {{\n    let w = W()\n    h({})\n}}",
             types.join(", "),
             params.join(", "),
             vec!["w"; n].join(", ")
         );
-        generic::LISTED.set(0);
-        clean(&src);
-        generic::LISTED.get()
+        call_work(&src)
     };
-    assert!(listed(1) > 0, "the counter should count the list");
+    assert!(listed(1) > 0, "the counters should count the work");
     assert_near_linear(listed(100), listed(200), listed(300));
 }
 
 /// A call whose `n` parameters each have a bound `K<Z>`, which waits until the last argument binds
 /// `Z`. Each waiting bound moves once to the list of `Z` and is checked once. Taking the whole list
-/// of waiting bounds for each binding makes the work grow with the square of `n`.
+/// of waiting bounds for each binding makes the work grow with the square of `n`. `call_work`
+/// counts the work of the call.
 #[test]
 fn waiting_bounds_should_be_looked_at_once_for_each_parameter_they_name() {
     let examined = |n: usize| {
         let types: Vec<_> = (0..n).map(|i| format!("T{i}: K<Z>")).collect();
         let params: Vec<_> = (0..n).map(|i| format!("_a{i}: T{i}")).collect();
         let src = format!(
-            "interface K<X> {{\n}}\nclass V: K<i64> {{\n}}\n\
+            "interface K<X> {{\n}}\nstruct V: K<i64> {{\n}}\n\
              fn h<Z, {}>({}, _z: Z) {{}}\nfn main() {{\n    let v = V()\n    h({}, 1)\n}}",
             types.join(", "),
             params.join(", "),
             vec!["v"; n].join(", ")
         );
-        generic::EXAMINED.set(0);
-        clean(&src);
-        generic::EXAMINED.get()
+        call_work(&src)
     };
-    assert!(examined(1) > 0, "the counter should count the bounds");
+    assert!(examined(1) > 0, "the counters should count the work");
     assert_near_linear(examined(100), examined(200), examined(300));
 }
 
@@ -1686,6 +1681,20 @@ fn call_work(src: &str) -> usize {
     infer::MADE.set(0);
     clean(src);
     generic::TYPE_STEPS.get() + infer::SNAPSHOTS.get() + infer::REBUILDS.get() + infer::MADE.get()
+}
+
+/// `call_work` for a program that may have diagnostics: the work, and the count of diagnostics.
+fn checked_work(src: &str) -> (usize, usize) {
+    generic::TYPE_STEPS.set(0);
+    infer::SNAPSHOTS.set(0);
+    infer::REBUILDS.set(0);
+    infer::MADE.set(0);
+    let (_, ds) = checked(src);
+    let work = generic::TYPE_STEPS.get()
+        + infer::SNAPSHOTS.get()
+        + infer::REBUILDS.get()
+        + infer::MADE.get();
+    (work, ds.len())
 }
 
 /// Asserts that `two` is at most two times `one`, plus a small constant. `one` is the work for an
@@ -1734,33 +1743,38 @@ fn a_call_with_many_type_parameters_should_cost_linear_work() {
     assert_at_most_doubles(work(400), work(800));
 }
 
-/// An element pattern 20 arrays deep, so a walk of it for each element would show. Once the
-/// first element binds `T`, a later one adds no walk. A `P<i64, bool>` before it binds `T`,
-/// then fails at `bool` and undoes the binding: it adds no walk either.
+/// An element pattern `depth` arrays deep, so a walk of it for each element would show. Once the
+/// first element binds `T`, a later one adds one step, at each depth. A `P<i64, bool>` before it
+/// gives a mismatch, and the work grows linearly with the count of such elements.
 #[test]
 fn array_elements_should_meet_a_bound_element_type_with_no_new_walk() {
-    let walked = |elements: &str| {
-        let (open, close) = ("[".repeat(20), "]".repeat(20));
-        let src = format!(
-            "class P<A, B> {{\n    a: A\n    b: B\n}}\n\
+    let work = |depth: usize, elements: &str| {
+        let (open, close) = ("[".repeat(depth), "]".repeat(depth));
+        checked_work(&format!(
+            "struct P<A, B> {{\n    a: A\n    b: B\n}}\n\
              fn take<T>(xs: [{open}P<T, T>?{close}]) -> i64 {{ xs.len() }}\n\
              fn main() {{\n    let b: {open}P<i64, bool>?{close} = {open}P(a: 1, b: true){close}\n    \
              let x: {open}P<i64, i64>?{close} = {open}P(a: 1, b: 2){close}\n    \
              print(take([{elements}]))\n}}"
-        );
-        generic::WALKED.set(0);
-        let mismatches = diags(&src).len();
-        (generic::WALKED.get(), mismatches)
+        ))
     };
-    let (one, _) = walked("x");
-    assert!(one > 0, "the counter should count the walk of `known`");
-    assert_eq!(walked(&vec!["x"; 100].join(", ")), (one, 0));
-    let (bad, _) = walked("b, x");
-    assert_eq!(walked(&format!("{}x", "b, ".repeat(100))), (bad, 100));
+    let added = |depth: usize| {
+        let (one, clean_one) = work(depth, "x");
+        let (more, clean_more) = work(depth, &vec!["x"; 101].join(", "));
+        assert_eq!((clean_one, clean_more), (0, 0));
+        more - one
+    };
+    assert_eq!(added(20), added(40));
+    let bad = |n: usize| {
+        let (steps, mismatches) = work(20, &format!("{}x", "b, ".repeat(n)));
+        assert_eq!(mismatches, n);
+        steps
+    };
+    assert_near_linear(bad(100), bad(200), bad(300));
 }
 
 /// Each waiting argument is a generic call for a parameter of its own, which its context binds.
-/// The sweeps look at each parameter type a fixed number of times. So the work grows with the
+/// The join looks at each parameter type a fixed number of times. So the work grows with the
 /// arguments, not with their square.
 #[test]
 fn waiting_arguments_should_cost_the_same_walk_each() {
@@ -1776,13 +1790,9 @@ fn waiting_arguments_should_cost_the_same_walk_each() {
             params.join(", "),
             vec!["Ok(1)"; n].join(", ")
         );
-        generic::WALKED.set(0);
-        clean(&src);
-        generic::WALKED.get()
+        call_work(&src)
     };
-    let fifty = walked(50);
-    assert!(fifty > 0, "the counter should count the walks");
-    assert_eq!(walked(100), 2 * fifty);
+    assert_near_linear(walked(50), walked(100), walked(150));
 }
 
 /// A call that leaves type parameters unbound looks at each declared name once to find the
@@ -4641,10 +4651,9 @@ fn a_waiting_call_inside_a_waiting_call_should_bind_the_parameter() {
     }
 }
 
-/// `takes_context` looks at each element of an array literal once. `inferred_array` then gives
-/// each element its context with no new walk. So the work for an array literal of generic calls
-/// grows with the elements, not with their square. Each element is a call that the context
-/// reaches.
+/// The join of the call looks at each element of an array literal once, and gives each element
+/// its context with no new walk. So the work for an array literal of generic calls grows with the
+/// elements, not with their square. Each element is a call that the context reaches.
 #[test]
 fn array_literal_context_should_cost_one_step_for_each_element() {
     let steps = |n: usize| {
@@ -4654,11 +4663,8 @@ fn array_literal_context_should_cost_one_step_for_each_element() {
              fn main() {{\n    h(true, [{}])\n}}",
             vec!["Two.P(true, 1)"; n].join(", ")
         );
-        generic::CONTEXT_STEPS.set(0);
-        clean(&src);
-        generic::CONTEXT_STEPS.get()
+        call_work(&src)
     };
-    assert!(steps(1) > 0, "the counter should count the walk");
     assert_near_linear(steps(100), steps(200), steps(300));
 }
 
@@ -6278,17 +6284,17 @@ fn rejecting_the_parameters_of_failed_arguments_should_visit_each_type_once() {
             .collect();
         let levels = levels.join("");
         let src = format!(
-            "class Two<A, B> {{\n    a: A\n    b: B\n}}\ntype A0<T> = T\n{levels}\
+            "struct Two<A, B> {{\n    a: A\n    b: B\n}}\ntype A0<T> = T\n{levels}\
              fn h<T>(_a: A{n}<T>, _b: T?) -> i64 {{ 1 }}\nfn none<X>() -> X? {{ None }}\n\
              fn main() {{\n    print(h(nope, none()))\n}}"
         );
-        generic::MARKED.set(0);
+        generic::TYPE_STEPS.set(0);
         let (_, ds) = checked(&src);
         assert_eq!(
             ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
             [Code::BindingNotFound]
         );
-        generic::MARKED.get()
+        generic::TYPE_STEPS.get()
     };
     // The first line catches a walk of each path before a deep chain can take long: the paths
     // double at each level. The walk keeps answers only after `MEMO_AFTER` visits, so for depths
@@ -6338,10 +6344,8 @@ fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
 }
 
 /// A clean call of `n` arguments, whose last argument binds `T`, finds that argument once for
-/// each other argument. A walk of the arguments before it for each would cost n². Two counters
-/// guard this. `PEELED` counts the layers that each search for the argument peels from a pattern.
-/// `ORIGINS` counts each read of the private list of origins, so a search that scans the list
-/// ticks it.
+/// each other argument. A walk of the arguments before it for each would cost n². `call_work`
+/// counts the work of the join of the call, so a search that walks the arguments adds to it.
 #[test]
 fn the_argument_that_bound_a_parameter_should_be_found_without_a_walk() {
     let reads = |n: usize| {
@@ -6352,16 +6356,9 @@ fn the_argument_that_bound_a_parameter_should_be_found_without_a_walk() {
             params.join(", "),
             args.join(", ")
         );
-        generic::PEELED.set(0);
-        generic::ORIGINS.set(0);
-        let (_, ds) = checked(&src);
-        assert!(ds.is_empty(), "{ds:?}");
-        (generic::PEELED.get(), generic::ORIGINS.get())
+        call_work(&src)
     };
-    let ((peeled20, origins20), (peeled40, origins40), (peeled60, origins60)) =
-        (reads(20), reads(40), reads(60));
-    assert_near_linear(peeled20, peeled40, peeled60);
-    assert_near_linear(origins20, origins40, origins60);
+    assert_near_linear(reads(20), reads(40), reads(60));
 }
 
 /// A pattern that names no type parameter gives no origin of one. So the search for the

@@ -1799,9 +1799,10 @@ fn mut_call_should_hide_each_argument_that_a_mut_argument_can_change() {
 
 /// GIVEN a generic `f` with a `mut` array parameter after an `i64`, and a generic `g` with the
 ///   same parameters but no `mut`, each nested as an argument of another generic call
-/// WHEN the checker ranks the nested call
-/// THEN the place at the `mut` parameter is not ranked, as a place has no rank to find: the call
-///   of `f` costs one step less than the call of `g`, which ranks its array argument
+/// WHEN the checker joins the arguments of the nested call
+/// THEN the place at the `mut` parameter is no candidate of the join, as a place has no type to
+///   give: the call of `f` tests one candidate less than the call of `g`, whose array argument is
+///   a candidate
 #[test]
 fn place_at_a_mut_parameter_should_not_be_ranked() {
     crate::on_compiler_stack(|| {
@@ -1813,12 +1814,12 @@ fn place_at_a_mut_parameter_should_not_be_ranked() {
                 fn main() {{\n    let mut xs = [1]\n    let r: i64 = k(1, {inner})\n    print(r)\n    \
                 xs[0] = 2\n}}"
             );
-            generic::RANK_STEPS.set(0);
+            join::CANDIDATES.set(0);
             clean(&src);
-            generic::RANK_STEPS.get()
+            join::CANDIDATES.get()
         };
         let (with_mut, without) = (steps("f(0, mut xs)"), steps("g(0, xs)"));
-        assert!(with_mut > 0, "the counter should count the walk");
+        assert!(with_mut > 0, "the counter should count the candidates");
         assert_eq!(with_mut + 1, without);
     });
 }
