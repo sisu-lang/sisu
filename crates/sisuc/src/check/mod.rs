@@ -1091,6 +1091,10 @@ struct Body {
     waits: FxHashMap<Span, Vec<(Type, DiagnosticKind)>>,
     /// The safe method call being checked: `receiver?.method(...)` at this span.
     safe_call: Option<Span>,
+    /// Whether the argument being checked late is at a place that names two or more decided
+    /// parameters of its call (Q28): a method call with arguments in it waits (see
+    /// `takes_member`).
+    closed_place: bool,
     /// The span of the expression or block being checked whose value no code uses: a statement,
     /// the body of a loop or of a `unit` function, or a branch or arm of such a value. A join
     /// there wraps a branch with no value to lift, as nothing reads it (see `Checker::join`).

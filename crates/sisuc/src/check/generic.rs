@@ -2160,7 +2160,10 @@ impl Checker<'_> {
                 None => mark(self.operand(&arg.value, Expectation::Poisoned)),
                 Some(_)
                     if joins(i)
-                        && let Some(member) = self.takes_member(&arg.value) =>
+                        && let Some(member) = self.takes_member(
+                            &arg.value,
+                            self.body.closed_place || index.decided_at(i).nth(1).is_some(),
+                        ) =>
                 {
                     let e = &arg.value;
                     let checked = read_jump(self.expr(e, member));
@@ -2403,9 +2406,13 @@ impl Checker<'_> {
                     whole: span,
                     returns,
                 };
-                // A poisoned member was reported: the others that never finish add no report.
-                let held =
-                    (members.iter()).find_map(|m| m.value.as_ref().err().map(Poisoned::reported));
+                // A poisoned member was reported: the others that never finish add no report. A
+                // member that never finishes, and failed only inside, is no such member: a valid
+                // jump makes it `never`, as `{ if c { break }; return 1 }`.
+                let held = (members.iter()).find_map(|m| {
+                    let poisoned = m.value.as_ref().err()?;
+                    (poisoned.ty != Some(Type::NEVER)).then(|| poisoned.reported())
+                });
                 let form = JoinForm::Call { param: name };
                 // A call that failed already reports nothing more against `want`.
                 let joined = match (expected, ret_t) {
@@ -2543,9 +2550,16 @@ impl Checker<'_> {
                 sig.params[i].expect("an argument with no parameter type should be checked");
             // A method call that waits for its context to pick a method, at a bare parameter that
             // nothing decides: the call cannot infer that parameter, as on `main`.
+            // A block gives its value's context to that value.
+            let mut value = &arg.value;
+            while let ast::ExprKind::Block(block) = &value.kind
+                && let Some(tail) = tail(block)
+            {
+                value = tail;
+            }
             if waits
                 && failed.is_none()
-                && matches!(arg.value.kind, ast::ExprKind::MethodCall { .. })
+                && matches!(value.kind, ast::ExprKind::MethodCall { .. })
                 && let TypeKind::Param(_, t) = param.kind()
                 && let Ok(found) = decided.binary_search_by_key(&(t as usize), |&(k, _)| k)
                 && let (t, var) = decided[found]
@@ -2570,7 +2584,10 @@ impl Checker<'_> {
                 continue;
             }
             if joins(i) {
+                let closed = self.body.closed_place;
+                self.body.closed_place |= index.decided_at(i).nth(1).is_some();
                 let checked = self.late_argument(&call, i, &arg.value, param);
+                self.body.closed_place = closed;
                 // A poisoned argument decides nothing, and its report is the call's.
                 if let Err(poisoned) = &checked {
                     failed.get_or_insert_with(|| poisoned.reported());
@@ -2778,6 +2795,25 @@ impl Checker<'_> {
         }
         let mut with_part = with.to_vec();
         with_part[t] = part;
+        // A part of the result that no join decides, as the `T` of a receiver, that does not
+        // fit `want` makes the shape wrong: the closed form reports the call as a whole. The
+        // other joins of the call are open here.
+        let snapshot = self.table.snapshot();
+        let fits = members.first().is_none_or(|m| {
+            let shape: Vec<Type> = (with_part.iter())
+                .map(|&ty| match ty.kind() {
+                    TypeKind::Param(..) => self.table.fresh(Kind::Any, m.label),
+                    _ => ty,
+                })
+                .collect();
+            let shaped = self.table.resolve(ret.subst(&shape));
+            self.unify(shaped, want)
+                || matches!(want.kind(), TypeKind::Optional(inner) if self.unify(shaped, inner))
+        });
+        self.table.rollback(snapshot);
+        if !fits {
+            return Expectation::Member;
+        }
         let snapshot = self.table.snapshot();
         let opens = self.join_type(members, Some(name), Some(part)).is_some()
             && self.unify(ret.subst(&with_part), want)
@@ -3046,22 +3082,27 @@ impl Checker<'_> {
     }
 
     /// The expectation that `e` takes as a member of a call's join, or `None` when it waits. It is
-    /// `Expectation::Member`, or `Expectation::None` for a method call. Such a value has its
-    /// own type, or a type that stays open where the join decides it: an integer literal, a
-    /// `None`, a `[]`, a generic call, a case of a generic enum (`Two.P(5, 7)`). A value that is a
-    /// join of its own does not yet. That is an `if`, a `match`, a loop, a block, an array literal
-    /// with elements, an operator or a `??`. It meets what the members decide (see
-    /// `late_argument`). A call that has such an argument does not either, as
-    /// `Some(if c { 1 } else { 2 })`. A method call with no argument does, unless it waits for
-    /// its context to pick among conformances (`Rank::Waits`). A block that is only its value
-    /// does when the value does.
-    fn takes_member(&mut self, e: &ast::Expr) -> Option<Expectation> {
+    /// `Expectation::Member`, or `Expectation::None` for a method call that is closed. Such a
+    /// value has its own type, or a type that stays open where the join decides it: an integer
+    /// literal, a `None`, a `[]`, a generic call or method call, a case of a generic enum
+    /// (`Two.P(5, 7)`). A value that is a join of its own does not yet. That is an `if`, a
+    /// `match`, a loop, an array literal with elements, an operator or a `??`. It meets what the
+    /// members decide (see `late_argument`). A call that has such an argument does not either, as
+    /// `Some(if c { 1 } else { 2 })`. A block does when its value does.
+    ///
+    /// A method call with no argument is closed, unless it waits for its context to pick among
+    /// conformances (`Rank::Waits`). A method call that checks its receiver as a place is closed.
+    /// Under `closed`, at a place that names two or more decided parameters (Q28), a method call
+    /// with arguments waits: it meets its parameter type, so that the part that is wrong is
+    /// reported (`h(true, C().m("s", 1))` at `"s"`). So does such a call in an argument that
+    /// waits at such a place, as `h(true, id(c?.m("s", 1)))` (`Body::closed_place`).
+    fn takes_member(&mut self, e: &ast::Expr, closed: bool) -> Option<Expectation> {
         use ast::ExprKind as K;
         match &e.kind {
             K::ArrayLit(elements) => elements.is_empty().then_some(Expectation::Member),
             K::Call { args, .. } => (args
                 .iter()
-                .all(|arg| self.takes_member(&arg.value).is_some()))
+                .all(|arg| self.takes_member(&arg.value, closed).is_some()))
             .then_some(Expectation::Member),
             K::MethodCall {
                 receiver,
@@ -3072,7 +3113,7 @@ impl Checker<'_> {
                 ..
             } if types.is_empty() && self.generic_variant(receiver, method).is_some() => (args
                 .iter()
-                .all(|arg| self.takes_member(&arg.value).is_some()))
+                .all(|arg| self.takes_member(&arg.value, closed).is_some()))
             .then_some(Expectation::Member),
             // `Option.Some(x)` is `Some(x)`, as `generic_callee` takes it.
             K::MethodCall {
@@ -3089,22 +3130,40 @@ impl Checker<'_> {
             {
                 (args
                     .iter()
-                    .all(|arg| self.takes_member(&arg.value).is_some()))
+                    .all(|arg| self.takes_member(&arg.value, closed).is_some()))
                 .then_some(Expectation::Member)
             }
+            // A method call that checks its receiver as a place is not ranked (see `call_shape`):
+            // it is a member closed, and a literal argument takes its default type.
+            K::MethodCall {
+                receiver,
+                method,
+                safe,
+                ..
+            } if self.parks_receiver(receiver, method.name, *safe) => Some(Expectation::None),
             // A method call with no argument is a member closed, as a local is, unless it waits
-            // for its context to pick a method. A generic method with arguments can take a part
-            // of its context from the other members: it waits (see `late_argument`).
+            // for its context to pick a method.
             K::MethodCall { args, types, .. }
                 if args.is_empty() && types.is_empty() && self.sibling_rank(e) != Rank::Waits =>
             {
                 Some(Expectation::None)
             }
-            // A block with statements is ranked ahead, and keeps that work (see `Ahead`).
-            K::Block(block) => match block.stmts.as_slice() {
-                [_] => tail(block).and_then(|value| self.takes_member(value)),
-                _ => None,
-            },
+            K::MethodCall { args, .. }
+                if !args.is_empty() && !closed && self.sibling_rank(e) != Rank::Waits =>
+            {
+                (args
+                    .iter()
+                    .all(|arg| self.takes_member(&arg.value, closed).is_some()))
+                .then_some(Expectation::Member)
+            }
+            // Ranking checks the statements in the block's scope, where its value is seen, and
+            // keeps that work for the block's check.
+            K::Block(block) => {
+                self.rank_value(e, &mut true);
+                tail(block).map_or(Some(Expectation::Member), |value| {
+                    self.takes_member(value, closed)
+                })
+            }
             K::MethodCall { .. }
             | K::Binary { .. }
             | K::Coalesce { .. }
