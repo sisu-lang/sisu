@@ -9219,3 +9219,67 @@ fn a_bound_with_an_open_number_should_check_the_associated_type_part() {
         );
     }
 }
+
+/// The declarations of the tests of a bound of an open call. `part` and `whole` are bounded calls,
+/// at a part and at the whole place. `eo()` gives an open variable. The bound of the closed `T` of
+/// `f` and `g` names an open parameter.
+const OPEN_BOUND_DECLS: &str = "interface Seen {\n    fn seen(self) -> i64\n}\n\
+    struct Eye: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\n\
+    interface K<U> {\n    fn k(self, u: U) -> i64\n}\n\
+    struct X: K<i64> {\n    fn k(self, u: i64) -> i64 { u }\n}\n\
+    struct Box<U> {\n    v: U\n}\n\
+    struct P2<A, B> {\n    a: A\n    b: B\n}\n\
+    fn pick<T>(_a: T, b: T) -> T { b }\n\
+    fn eo<T>() -> [T?] { [] }\n\
+    fn eb<U>() -> Box<U?> { Box(v: None) }\n\
+    fn ep<A, B>() -> P2<[A?], [B?]> { P2(a: [], b: []) }\n\
+    fn part<T: Seen>(x: T) -> [T] { print(x.seen()); [x] }\n\
+    fn whole<T: Seen>(x: T) -> T { print(x.seen()); x }\n\
+    fn f<T: K<U>, U>(x: T, u: U) -> Box<U> { print(x.k(u)); Box(v: u) }\n\
+    fn g<U, T: K<U>>(u: U, x: T) -> Box<U> { print(x.k(u)); Box(v: u) }\n\
+    fn f3<T: K<U>, U>(x: T, u: U) -> P2<[T], [U]> { print(x.k(u)); P2(a: [x], b: [u]) }\n\
+    fn main() {\n    ";
+
+/// GIVEN a generic call whose open form can give a bounded parameter a type that breaks its bound
+/// WHEN the join around the call gives that type through an open variable
+/// AND the variable is from `eo()` or a literal, in each order, or under a required type
+/// THEN the bound reports (E0154), or the closed form reports the join (E0032), as on `main`
+/// AND the open form does not settle the call with the broken bound
+#[test]
+fn an_open_call_should_check_each_bound_that_its_open_form_changes() {
+    with_prelude();
+    let bound = |needle: &'static str| Some((Code::NotConform, needle));
+    let join = Some((Code::Mismatch, "pick"));
+    let rows: [(&str, Option<(Code, &str)>); 14] = [
+        // The bound of an open parameter at a part, with the open variable of `eo()`.
+        ("print(pick(eo(), part(Eye(v: 1))).len())", bound("Eye(")),
+        ("print(pick(part(Eye(v: 1)), eo()).len())", bound("Eye(")),
+        (
+            "let x: [Eye?] = pick(eo(), part(Eye(v: 1)))\n    print(x.len())",
+            bound("Eye("),
+        ),
+        // A bound whose subject and interface argument both reopen.
+        ("print(pick(ep(), f3(X(), 3)).a.len())", bound("X()")),
+        ("print(pick(f3(X(), 3), ep()).a.len())", bound("X()")),
+        // The bound of a closed parameter that names an open one: the open form breaks it, and
+        // the closed form reports the join.
+        ("print(pick(f(X(), 3), Box<i64?>(v: None)).v ?? 0)", join),
+        ("print(pick(Box<i64?>(v: None), f(X(), 3)).v ?? 0)", join),
+        ("print(pick(g(3, X()), Box<i64?>(v: None)).v ?? 0)", join),
+        ("print(pick(f(X(), 3), Box(v: None)).v ?? 0)", join),
+        ("print(pick(f(X(), 3), eb()).v ?? 0)", join),
+        ("print(pick(eb(), f(X(), 3)).v ?? 0)", join),
+        // The controls: a closed `[Eye?]` and a `Box<i64>`, which the closed form takes.
+        (
+            "let ys: [Eye?] = []\n    print(pick(ys, part(Eye(v: 1))).len())",
+            join,
+        ),
+        ("print(pick(f(X(), 3), Box<i64>(v: 4)).v)", None),
+        ("print(pick(whole(Eye(v: 1)), Eye(v: 2)).v)", None),
+    ];
+    for (row, expected) in rows {
+        let src = format!("{OPEN_BOUND_DECLS}{row}\n}}");
+        let found = expected.map(|(code, needle)| (code, in_row(&src, row, needle)));
+        codes_row(row, &src, found.as_slice());
+    }
+}
