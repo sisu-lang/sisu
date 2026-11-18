@@ -1981,7 +1981,20 @@ impl Checker<'_> {
                     .nth(1)
                     .is_some()
             {
-                self.table.forget_open(e.span);
+                // Through `dbg`, a wrap and a block's value, the call keeps its own span.
+                let mut at = e;
+                loop {
+                    self.table.forget_open(at.span);
+                    at = match &at.kind {
+                        tir::ExprKind::Dbg { operand, .. } | tir::ExprKind::Wrap(operand) => {
+                            operand
+                        }
+                        tir::ExprKind::Block(tir::Block {
+                            value: Some(value), ..
+                        }) => value,
+                        _ => break,
+                    };
+                }
             }
             call.slots[i] = Some(checked);
         }

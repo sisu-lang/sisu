@@ -216,6 +216,14 @@ fn keep<T>(mut x: T?) -> T? { x }
 fn opt<T>(v: T?) -> T? { v }
 fn g() {}
 fn pick<T>(a: T, b: T) -> T { a }
+// A place that names two parameters (Q28): `outer` decides `T` and `U` from its other arguments.
+struct Two<A, B> {
+    a: A
+    b: B
+}
+fn pair<A, B>(a: A, b: B) -> Two<A, B> { Two(a: a, b: b) }
+fn outer<T, U>(p: Two<T, U>, _a: T, _b: U) -> Two<T, U> { p }
+fn outer2<T, U>(p: Two<T, U>?, _a: T, _b: U) -> Two<T, U>? { p }
 // A bounded call at a part and at the whole place, a call that gives an open variable, and a
 // bound of a closed parameter that names an open one (`fk`).
 fn eo<T>() -> [T?] { [] }
@@ -754,3 +762,9 @@ let _a = pick($, ob?.none())
 let _a = pick({ $ }, $)
 let _a = pick($, { $ })
 let _a = pick($, { let _y = 1; $ })
+# A call at a place of two decided parameters stays closed through `dbg`, a wrap and a block.
+let _a = outer(dbg(pair($, $)), $, $)
+let _a = outer(dbg(dbg(pair($, $))), $, $)
+let _a = outer({ pair($, $) }, $, $)
+let _a = outer({ dbg(pair($, $)) }, $, $)
+let _a = outer2(dbg(pair($, $)), $, $)
