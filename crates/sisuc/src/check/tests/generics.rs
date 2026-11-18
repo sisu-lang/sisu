@@ -1803,6 +1803,34 @@ fn a_deep_generic_value_should_cost_linear_work_in_its_depth() {
     });
 }
 
+/// The constructor of a struct with `k` type parameters, one small argument for each. Its result
+/// type names each parameter. A join that walks the whole result type, or builds it again, for
+/// each parameter makes the work grow with the square of `k`. The second row writes the type of
+/// the result, so each join also reads its part of the written type.
+#[test]
+fn a_wide_constructor_should_cost_linear_work_in_its_parameters() {
+    let program = |k: usize, written: bool| {
+        let params: Vec<String> = (0..k).map(|i| format!("A{i}")).collect();
+        let fields: Vec<String> = (0..k).map(|i| format!("    _f{i}: A{i}\n")).collect();
+        let args: Vec<String> = (0..k).map(|i| format!("_f{i}: 1")).collect();
+        let ty = if written {
+            format!(": Tup<{}>", vec!["i64"; k].join(", "))
+        } else {
+            String::new()
+        };
+        format!(
+            "struct Tup<{}> {{\n{}}}\nfn main() {{\n    let _v{ty} = Tup({})\n}}",
+            params.join(", "),
+            fields.concat(),
+            args.join(", "),
+        )
+    };
+    for (row, written) in [("inferred: ", false), ("written: ", true)] {
+        let work = |k: usize| call_work(&program(k, written));
+        assert_near_linear_for(row, work(100), work(200), work(300));
+    }
+}
+
 /// One call with `n` literal arguments at one parameter `T: Ord`. Each literal part of the join is
 /// examined a fixed number of times, so the work grows with `n`, not with its square. A check of
 /// each literal part against all the other parts makes the work grow with the square of `n`.
