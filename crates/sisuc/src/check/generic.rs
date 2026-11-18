@@ -2259,6 +2259,9 @@ impl Checker<'_> {
         // The parameters whose join reported for its members that never finish, or holds one that
         // was reported.
         let mut quiet = Vec::new();
+        // The parameters whose join reported its own mistake, with no poisoned member: a member
+        // that never finishes is still E0043 there, as on `main`.
+        let mut loud = Vec::new();
         // Whether a member broke a bound before its join (`broken_member`).
         let mut bound_broke = false;
         // The parameters that are open for an outer join, each with its name and the arguments of
@@ -2539,6 +2542,9 @@ impl Checker<'_> {
                         self.table.poison(var);
                         failed.get_or_insert_with(|| poisoned.reported());
                         quiet.push(t);
+                        if held.is_none() {
+                            loud.push(t);
+                        }
                     }
                 }
             }
@@ -2553,7 +2559,7 @@ impl Checker<'_> {
         }
         // A member that never finishes beside one that has a value is E0043, as a value.
         let mut hushed = vec![false; sig.declared.len()];
-        for &t in &quiet {
+        for &t in quiet.iter().filter(|t| !loud.contains(t)) {
             hushed[t] = true;
         }
         for i in never_members {
