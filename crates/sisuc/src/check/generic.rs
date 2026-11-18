@@ -2428,14 +2428,16 @@ impl Checker<'_> {
                 && let Some(ty) = type_of(member.value)
             {
                 lone.push((t, member.label, ty, sig.params[*i]));
-                if matches!(member.at, Place::Whole)
-                    && let Some(ret) = sig.ret
-                {
-                    let (_, args) =
-                        (self.body.lone_args.entry(span)).or_insert_with(|| (ret, Vec::new()));
-                    args.retain(|&(k, ..)| k != t);
-                    args.push((t, member.label, ty));
+                if matches!(member.at, Place::Whole) {
+                    self.note_lone_arg(span, sig.ret, (t, member.label, ty));
                 }
+            }
+            // A lone member that leaves `T` open takes the place of the call's result.
+            if members.is_empty()
+                && let [(filled, ty, argument)] = open[..]
+                && filled == var
+            {
+                self.note_lone_arg(span, sig.ret, (t, argument, ty));
             }
             // The closed call checks a bound of `T` before its join (Q22): E0154 at a member that
             // breaks it poisons the call, and the join adds no conflict. A bound of each parameter
@@ -3059,9 +3061,15 @@ impl Checker<'_> {
     ) -> Option<Reported> {
         let binder = self.binder_origin(name, members, &vec![false; members.len()]);
         let joined = binder.and_then(|_| self.join_type(members, Some(name), None));
-        with[t] = joined.unwrap_or(var);
+        // A literal gives `T` the type that a blamed argument's place shows, as on `main`.
+        let known = joined.or_else(|| self.join_type(members, Some(name), None));
         let mut first = None;
         for &(at, ty, param, origin) in misfits {
+            with[t] = known.unwrap_or(var);
+            let known_want = self
+                .table
+                .default_open(self.table.resolve(param.subst(with)));
+            with[t] = joined.unwrap_or(var);
             let want = self
                 .table
                 .default_open(self.table.resolve(param.subst(with)));
@@ -3077,7 +3085,7 @@ impl Checker<'_> {
             // A part of the place that is known and clashes with the type that one argument of the
             // call gives alone: the report is at that argument, as on `main`.
             if inner == at
-                && let Some((arg, part, ty)) = self.blamed_part(at, ty, want)
+                && let Some((arg, part, ty)) = self.blamed_part(at, ty, known_want)
             {
                 let reported = self.mismatch(arg, None, part, ty, Origin::None);
                 first.get_or_insert_with(|| self.diagnostics.error(reported));
@@ -3113,6 +3121,17 @@ impl Checker<'_> {
         first
     }
 
+    /// Notes `arg` for the generic call at `call` that returns `ret` (see `Body::lone_args`).
+    /// `arg` is the parameter, span and type of an argument that alone decides its bare type
+    /// parameter.
+    fn note_lone_arg(&mut self, call: Span, ret: Option<Type>, arg: (usize, Span, Type)) {
+        if let Some(ret) = ret {
+            let (_, args) = (self.body.lone_args.entry(call)).or_insert_with(|| (ret, Vec::new()));
+            args.retain(|&(k, ..)| k != arg.0);
+            args.push(arg);
+        }
+    }
+
     /// The span and type of the one argument of the generic call at `call` whose bare type
     /// parameter is the call's result type (see `Body::lone_args`).
     pub(super) fn lone_arg(&self, call: Span) -> Option<(Span, Type)> {
@@ -3142,23 +3161,34 @@ impl Checker<'_> {
             (_, TypeKind::Optional(payload)) => payload,
             _ => want,
         };
+        let args: Vec<_> = (args.iter())
+            .map(|&(t, at, ty)| (t, at, self.table.resolve(ty)))
+            .collect();
         let mut seen = FxHashSet::default();
         let mut pairs = vec![(ret, want)];
         // The known part of `want` at each parameter of `args`, or `None` after two that differ.
+        // An open argument takes the first part, left to right, as its context.
         let mut parts: Vec<Option<Option<Type>>> = vec![Some(None); args.len()];
         while let Some((ret, want)) = pairs.pop() {
             if !seen.insert((ret, want)) {
                 continue;
             }
             let list = |pairs: &mut Vec<_>, ret: TypeArgs, want: TypeArgs| {
-                pairs.extend(ret.get().iter().copied().zip(want.get().iter().copied()));
+                pairs.extend(
+                    ret.get()
+                        .iter()
+                        .copied()
+                        .zip(want.get().iter().copied())
+                        .rev(),
+                );
             };
             match (ret.kind(), want.kind()) {
                 (TypeKind::Param(_, k), _) if !want.holds_infer() => {
                     if let Some(n) = args.iter().position(|&(t, ..)| t == k as usize) {
+                        let open = args[n].2.holds_infer();
                         parts[n] = match parts[n] {
                             Some(None) => Some(Some(want)),
-                            Some(Some(part)) if part != want => None,
+                            Some(Some(part)) if part != want && !open => None,
                             same => same,
                         };
                     }
@@ -3174,10 +3204,11 @@ impl Checker<'_> {
             }
         }
         for (&(_, at, ty), part) in args.iter().zip(parts) {
-            if let Some(Some(part)) = part
-                && !ty.holds_infer()
-                && !super::expr::fits(part, ty)
-                && !self.converts_to_any(ty, part)
+            let Some(Some(part)) = part else {
+                continue;
+            };
+            let ty = self.shown_against(ty, part);
+            if !ty.holds_infer() && !super::expr::fits(part, ty) && !self.converts_to_any(ty, part)
             {
                 return Some((at, part, ty));
             }
