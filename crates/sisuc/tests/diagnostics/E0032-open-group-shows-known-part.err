@@ -1,0 +1,42 @@
+error[E0032]: the arguments for `T` of this call have different types
+  --> E0032-open-group-shows-known-part.sisu:15:11
+   |
+15 |     print(pick(f(X(), 3), eb()).v ?? 0)
+   |           ^^^^ ---------  ---- `Box<i64?>`
+   |                |
+   |                this argument gives `T` the type `Box<i64>`
+
+error[E0032]: the arguments for `T` of this call have different types
+  --> E0032-open-group-shows-known-part.sisu:16:11
+   |
+16 |     print(pick(eb(), f(X(), 3)).v ?? 0)
+   |           ^^^^ ----  --------- `Box<i64>`
+   |                |
+   |                this argument gives `T` the type `Box<i64?>`
+
+error[E0032]: the arguments for `T` of this call have different types
+  --> E0032-open-group-shows-known-part.sisu:17:11
+   |
+17 |     print(pick(f(X(), 3), Box(v: None)).v ?? 0)
+   |           ^^^^ ---------  ------------ `Box<i64?>`
+   |                |
+   |                this argument gives `T` the type `Box<i64>`
+
+error[E0032]: the arguments for `T` of this call have different types
+  --> E0032-open-group-shows-known-part.sisu:18:11
+   |
+18 |     print(pick3(ep(), f3(X(), None), P2<[X?], [string?]>(a: [], b: [])).a.len())
+   |           ^^^^^       -------------  --------------------------------- `P2<[X?], [string?]>`
+   |                       |
+   |                       this argument gives `T` the type `P2<[X], [string?]>`
+
+error[E0032]: the arguments for `T` of this call have different types
+  --> E0032-open-group-shows-known-part.sisu:19:11
+   |
+19 |     print(pick3(ep(), f3(X(), 3), P2<[X], [i64]>(a: [], b: [])).a.len())
+   |           ^^^^^ ----              ---------------------------- `P2<[X], [i64]>`
+   |                 |
+   |                 this argument gives `T` the type `P2<[X?], [i64?]>`
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

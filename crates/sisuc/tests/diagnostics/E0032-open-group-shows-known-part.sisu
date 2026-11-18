@@ -1,0 +1,20 @@
+interface K<U> { fn k(self, u: U) -> i64 }
+struct X: K<i64> { fn k(self, u: i64) -> i64 { u } }
+struct Box<U> { v: U }
+struct P2<A, B> {
+    a: A
+    b: B
+}
+fn f<T: K<U>, U>(x: T, u: U) -> Box<U> { print(x.k(u)); Box(v: u) }
+fn f3<T: K<U>, U>(x: T, u: U) -> P2<[T], [U]> { print(x.k(u)); P2(a: [x], b: [u]) }
+fn eb<U>() -> Box<U?> { Box(v: None) }
+fn ep<A, B>() -> P2<[A?], [B?]> { P2(a: [], b: []) }
+fn pick<T>(a: T, _b: T) -> T { a }
+fn pick3<T>(a: T, _b: T, _c: T) -> T { a }
+fn main() {
+    print(pick(f(X(), 3), eb()).v ?? 0)
+    print(pick(eb(), f(X(), 3)).v ?? 0)
+    print(pick(f(X(), 3), Box(v: None)).v ?? 0)
+    print(pick3(ep(), f3(X(), None), P2<[X?], [string?]>(a: [], b: [])).a.len())
+    print(pick3(ep(), f3(X(), 3), P2<[X], [i64]>(a: [], b: [])).a.len())
+}
