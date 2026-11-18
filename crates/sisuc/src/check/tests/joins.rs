@@ -1998,3 +1998,39 @@ fn a_late_argument_beside_a_form_not_converted_should_give_its_interim_report() 
         ),
     ]);
 }
+
+/// The functions of the rows of `a_closed_call_whose_known_part_clashes_should_blame_its_argument`.
+const BLAME_FUNCTIONS: &str = "struct Two<A, B> {\n    a: A\n    b: B\n}\ninterface It5 {}\nfn none<T>() -> T? { None }\nfn py<X, Y>(_y: Y, _x: X) -> Two<X, Y> { panic(\"no\") }\nfn g0<T>(_a: Two<T, i64>) {}\nfn gn<T>(_a: Two<T?, i64>, _b: T) {}\nfn gb<T: It5>(_a: Two<T?, i64>, _b: T) {}\n";
+
+#[test]
+fn a_closed_call_whose_known_part_clashes_should_blame_its_argument() {
+    // GIVEN a generic call whose result type is closed. A known part of its place clashes with
+    // the type that one of its arguments gives alone
+    // WHEN each is checked
+    // THEN the report is at that argument, as on main
+    let row =
+        |line: &str| format!("{BLAME_FUNCTIONS}fn main() {{\n    let k = 2\n    {line}\n}}\n");
+    let at = |col: usize| (BLAME_FUNCTIONS.lines().count() + 3, col + 4);
+    error_rows(&[
+        (
+            "closed call at a closed place",
+            row("g0(py(true, 2))"),
+            vec![(Code::Mismatch, at(7))],
+        ),
+        (
+            "closed call beside a literal",
+            row("gn(py(true, k), 1)"),
+            vec![(Code::Mismatch, at(7))],
+        ),
+        (
+            "closed call beside a local",
+            row("gn(py(true, 2), k)"),
+            vec![(Code::Mismatch, at(7))],
+        ),
+        (
+            "closed call beside a bound that breaks",
+            row("gb(py(true, 2), 1)"),
+            vec![(Code::Mismatch, at(7)), (Code::NotConform, at(17))],
+        ),
+    ]);
+}
