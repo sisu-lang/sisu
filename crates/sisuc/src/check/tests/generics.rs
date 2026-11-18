@@ -2863,9 +2863,11 @@ fn a_context_that_fits_or_does_not_fit_alone_should_keep_its_report() {
     diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[(2, 12)]);
     let src = with_generics("fn g(ns: [string]) {\n    let x: string = first(ns)\n}");
     diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[(2, 12)]);
-    // `n` converts to the `i64?` that the context makes of `T`, so no argument is to blame.
-    let src = with_generics("fn g(n: i64) {\n    let xs: [i64?] = wrap(n)\n}");
-    diagnostic(&src, Code::Mismatch, (2, 22, "wrap(n)"), &[(2, 13)]);
+    // `n` is a whole argument at a place of `T`: when the closed form fails, the call opens at
+    // `T = i64?`, and `n` wraps once (Q19, "Open when closed fails"). Valid; `main` gave E0032.
+    clean(&with_generics(
+        "fn g(n: i64) {\n    let xs: [i64?] = wrap(n)\n}",
+    ));
 }
 
 /// A type parameter and a built-in type take no type arguments.
