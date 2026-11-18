@@ -23,7 +23,7 @@ use super::reports::Reported;
 use super::stmt::BlockSoFar;
 use super::{
     Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Origin, Poisoned,
-    built_in_type, is_kept, own_args, payload, type_of,
+    built_in_type, is_kept, own_args, payload, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, Diagnostic, MainForm, NoValueCause, Unwrap};
@@ -1952,16 +1952,19 @@ impl Checker<'_> {
             }
             let checked = match sig.params[i] {
                 None => mark(self.operand(&arg.value, Expectation::Poisoned)),
-                Some(param) if joins(param) && self.takes_member(&arg.value) => {
+                Some(param)
+                    if joins(param)
+                        && let Some(member) = self.takes_member(&arg.value) =>
+                {
                     let e = &arg.value;
-                    let checked = read_jump(self.expr(e, Expectation::Member));
+                    let checked = read_jump(self.expr(e, member));
                     // A member that never finishes waits for its join (see `never_members` below).
                     if type_of(&checked) == Some(Type::NEVER) {
                         never_members.push(i);
                         checked
                     } else {
-                        let checked = self.refuse_unwanted(e, checked, Expectation::Member, false);
-                        let checked = mark(self.settled(e, checked, Expectation::Member));
+                        let checked = self.refuse_unwanted(e, checked, member, false);
+                        let checked = mark(self.settled(e, checked, member));
                         self.refuse_valueless(read_jump(checked))
                     }
                 }
@@ -2789,19 +2792,24 @@ impl Checker<'_> {
             .is_none_or(|filled| self.unify(filled, ty))
     }
 
-    /// Whether `e` takes `Expectation::Member` as a member of a call's join. Such a value has its
+    /// The expectation that `e` takes as a member of a call's join, or `None` when it waits. It is
+    /// `Expectation::Member`, or `Expectation::None` for a method call. Such a value has its
     /// own type, or a type that stays open where the join decides it: an integer literal, a
     /// `None`, a `[]`, a generic call, a case of a generic enum (`Two.P(5, 7)`). A value that is a
     /// join of its own does not yet. That is an `if`, a `match`, a loop, a block, an array literal
     /// with elements, an operator or a `??`. It meets what the members decide (see
     /// `late_argument`). A call that has such an argument does not either, as
-    /// `Some(if c { 1 } else { 2 })`. Nor does a method call: it can pick among conformances by the
-    /// type that it meets.
-    fn takes_member(&mut self, e: &ast::Expr) -> bool {
+    /// `Some(if c { 1 } else { 2 })`. A method call with no argument does, unless it waits for
+    /// its context to pick among conformances (`Rank::Waits`). A block that is only its value
+    /// does when the value does.
+    fn takes_member(&mut self, e: &ast::Expr) -> Option<Expectation> {
         use ast::ExprKind as K;
         match &e.kind {
-            K::ArrayLit(elements) => elements.is_empty(),
-            K::Call { args, .. } => args.iter().all(|arg| self.takes_member(&arg.value)),
+            K::ArrayLit(elements) => elements.is_empty().then_some(Expectation::Member),
+            K::Call { args, .. } => (args
+                .iter()
+                .all(|arg| self.takes_member(&arg.value).is_some()))
+            .then_some(Expectation::Member),
             K::MethodCall {
                 receiver,
                 method,
@@ -2809,9 +2817,10 @@ impl Checker<'_> {
                 args,
                 safe: false,
                 ..
-            } if types.is_empty() && self.generic_variant(receiver, method).is_some() => {
-                args.iter().all(|arg| self.takes_member(&arg.value))
-            }
+            } if types.is_empty() && self.generic_variant(receiver, method).is_some() => (args
+                .iter()
+                .all(|arg| self.takes_member(&arg.value).is_some()))
+            .then_some(Expectation::Member),
             // `Option.Some(x)` is `Some(x)`, as `generic_callee` takes it.
             K::MethodCall {
                 receiver,
@@ -2825,9 +2834,24 @@ impl Checker<'_> {
                 && (option_written(receiver) == Some(false)
                     || matches!(receiver.kind, K::Name(n) if self.names_option(n))) =>
             {
-                args.iter().all(|arg| self.takes_member(&arg.value))
+                (args
+                    .iter()
+                    .all(|arg| self.takes_member(&arg.value).is_some()))
+                .then_some(Expectation::Member)
             }
-            // A method call may pick its conformance by the type that it meets.
+            // A method call with no argument is a member closed, as a local is, unless it waits
+            // for its context to pick a method. A generic method with arguments can take a part
+            // of its context from the other members: it waits (see `late_argument`).
+            K::MethodCall { args, types, .. }
+                if args.is_empty() && types.is_empty() && self.sibling_rank(e) != Rank::Waits =>
+            {
+                Some(Expectation::None)
+            }
+            // A block with statements is ranked ahead, and keeps that work (see `Ahead`).
+            K::Block(block) => match block.stmts.as_slice() {
+                [_] => tail(block).and_then(|value| self.takes_member(value)),
+                _ => None,
+            },
             K::MethodCall { .. }
             | K::Binary { .. }
             | K::Coalesce { .. }
@@ -2835,9 +2859,8 @@ impl Checker<'_> {
             | K::If { .. }
             | K::IfLet { .. }
             | K::Match { .. }
-            | K::Loop { .. }
-            | K::Block(_) => false,
-            _ => true,
+            | K::Loop { .. } => None,
+            _ => Some(Expectation::Member),
         }
     }
 

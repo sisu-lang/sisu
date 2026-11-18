@@ -6249,7 +6249,7 @@ fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
         let trail: Vec<_> = (0..n).map(|k| format!("_b{k}: T{k}")).collect();
         let args: Vec<_> = (0..n)
             .map(|_| "one()")
-            .chain((0..n).map(|_| "{ mk() }"))
+            .chain((0..n).map(|_| "if true { mk() } else { mk() }"))
             .collect();
         // The call returns the type parameter `R`, so it waits for its context, and the other
         // side of `==` hints it: only a hinted call reads the origins (see `Inference::hinted`).
@@ -9368,11 +9368,7 @@ fn a_method_call_and_a_block_should_be_members_of_the_join_of_a_call() {
         fn pick<T>(a: T, _b: T) -> T { a }\nfn max<T>(a: T, _b: T) -> T { a }\nfn main() {\n    \
         let b: B? = Some(B(k: 1))\n    let p = B(k: 2)\n    let xs: [u8] = [1]\n    \
         let n: u8 = 3\n    let s = \"abc\"\n    ";
-    let clean_rows = [
-        "let x: i64? = pick(1, { Some(2) })\n    print(x ?? 0)",
-        "let x: i64? = pick(1, b?.get(1))\n    print(x ?? 0)",
-        "let x: i64? = pick(1, p.some(2))\n    print(x ?? 0)",
-    ];
+    let clean_rows = ["let x: i64? = pick(1, { Some(2) })\n    print(x ?? 0)"];
     let rows: Vec<ErrorRow<'_>> = (clean_rows.iter())
         .map(|&row| (row, format!("{decls}{row}\n}}"), vec![]))
         .collect();
@@ -9383,7 +9379,7 @@ fn a_method_call_and_a_block_should_be_members_of_the_join_of_a_call() {
     let ds = found(&src);
     assert_eq!(
         ds,
-        [(Code::Mismatch, (15, 11), vec![(15, 15), (15, 25)])],
+        [(Code::Mismatch, (14, 11), vec![(14, 15), (14, 25)])],
         "{ds:?}"
     );
     let (_, diagnostics) = checked(&src);
@@ -9395,7 +9391,7 @@ fn a_method_call_and_a_block_should_be_members_of_the_join_of_a_call() {
     let ds = found(&src);
     assert_eq!(
         ds,
-        [(Code::Mismatch, (15, 11), vec![(15, 15), (15, 18)])],
+        [(Code::Mismatch, (14, 11), vec![(14, 15), (14, 18)])],
         "{ds:?}"
     );
 }

@@ -743,3 +743,14 @@ let _a = match k { 1 => $; _ => id([$]) }
 let _a = loop { if c { break $ }; break id([$]) }
 let _a = if let v = oi() { $ } else { id(if c { $ } else { $ }) }
 let _a = oi() ?? id(if c { $ } else { None })
+# A method call with no argument and a block that is only its value are members of a call's join.
+# In each order, through `dbg` and an inner call, as a safe call, as a generic method that waits
+# for its context, and a block with a statement, which still waits.
+let _a = pick($, "s".len())
+let _a = pick("s".len(), $)
+let _a = pick(dbg("s".len()), $)
+let _a = pick(id("s".len()), $)
+let _a = pick($, ob?.none())
+let _a = pick({ $ }, $)
+let _a = pick($, { $ })
+let _a = pick($, { let _y = 1; $ })
