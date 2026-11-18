@@ -9291,3 +9291,181 @@ fn an_open_call_should_check_each_bound_that_its_open_form_changes() {
         codes_row(row, &src, found.as_slice());
     }
 }
+
+/// GIVEN a generic call at a bare `T` whose argument is checked late
+/// AND the call is a branch beside a sibling, or the right side of a `??`
+/// WHEN the call meets the hint of its siblings
+/// THEN `T` takes the siblings' type, not that type with the `?` that the hint adds
+/// AND the value is not optional, as on `main`
+#[test]
+fn a_late_argument_under_a_hint_should_meet_the_siblings_without_the_added_optional() {
+    let decls = "fn id<T>(x: T) -> T { x }\nfn last<T>(xs: [T]) -> T { xs[0] }\nfn main() {\n    \
+        let c = [1].len() == 2\n    let k = [1].len()\n    let s = \"b\"\n    \
+        let mi: i64? = Some(3)\n    let o: [i64?]? = None\n    let oi: i64? = None\n    ";
+    let never = |line| vec![(Code::NeverNone, (line, 11))];
+    let rows: [(&str, &str, Vec<Wanted>); 8] = [
+        (
+            "if-int",
+            "let x = if c { 1 } else { id(2 * 3) }\n    print(x + 1)",
+            vec![],
+        ),
+        (
+            "if-str",
+            "let x = if c { s } else { id(\"a\" + s) }\n    print(x.len())",
+            vec![],
+        ),
+        (
+            "if-arr",
+            "let x = if c { [mi] } else { id([1]) }\n    print(x == None)",
+            never(11),
+        ),
+        (
+            "match-int",
+            "let x = match k { 1 => 1; _ => id(2 * 3) }\n    print(x + 1)",
+            vec![],
+        ),
+        (
+            "match-arr",
+            "let x = match k { 1 => [mi]; _ => id([1]) }\n    print(x == None)",
+            never(11),
+        ),
+        (
+            "coalesce",
+            "let x = o ?? id([1])\n    print(x.len())",
+            vec![],
+        ),
+        (
+            "coalesce-last",
+            "let x = oi ?? last([1, 2])\n    print(x + 1)",
+            vec![],
+        ),
+        (
+            "if-last",
+            "let x = if c { [mi] } else { last([[1], [2]]) }\n    print(x == None)",
+            never(11),
+        ),
+    ];
+    let rows: Vec<ErrorRow<'_>> = (rows.into_iter())
+        .map(|(name, row, wanted)| (name, format!("{decls}{row}\n}}"), wanted))
+        .collect();
+    error_rows(&rows);
+}
+
+/// GIVEN a generic call with a method call or a block at a place of `T`
+/// WHEN the call joins its arguments
+/// THEN the method call and the block's value are members of the join, as a local is
+/// AND a mismatch names the argument that gives `T` its type, with the conversion fix
+#[test]
+fn a_method_call_and_a_block_should_be_members_of_the_join_of_a_call() {
+    let decls = "struct B {\n    k: i64\n    fn get<T>(self, x: T) -> T { x }\n    \
+        fn some<T>(self, x: T) -> T? { print(self.k); Some(x) }\n}\n\
+        fn pick<T>(a: T, _b: T) -> T { a }\nfn max<T>(a: T, _b: T) -> T { a }\nfn main() {\n    \
+        let b: B? = Some(B(k: 1))\n    let p = B(k: 2)\n    let xs: [u8] = [1]\n    \
+        let n: u8 = 3\n    let s = \"abc\"\n    ";
+    let clean_rows = [
+        "let x: i64? = pick(1, { Some(2) })\n    print(x ?? 0)",
+        "let x: i64? = pick(1, b?.get(1))\n    print(x ?? 0)",
+        "let x: i64? = pick(1, p.some(2))\n    print(x ?? 0)",
+    ];
+    let rows: Vec<ErrorRow<'_>> = (clean_rows.iter())
+        .map(|&row| (row, format!("{decls}{row}\n}}"), vec![]))
+        .collect();
+    error_rows(&rows);
+    // The join report of two members, as for `max(k, n)` with two locals: the label names the
+    // argument that gives `T` its type, and the fix converts the other one.
+    let src = format!("{decls}print(max(xs.len(), n))\n}}");
+    let ds = found(&src);
+    assert_eq!(
+        ds,
+        [(Code::Mismatch, (15, 11), vec![(15, 15), (15, 25)])],
+        "{ds:?}"
+    );
+    let (_, diagnostics) = checked(&src);
+    assert!(
+        !diagnostics[0].fixes().is_empty(),
+        "the report should give the conversion `i64(...)`"
+    );
+    let src = format!("{decls}print(max(n, s.len()))\n}}");
+    let ds = found(&src);
+    assert_eq!(
+        ds,
+        [(Code::Mismatch, (15, 11), vec![(15, 15), (15, 18)])],
+        "{ds:?}"
+    );
+}
+
+/// GIVEN an inner call at a place of an outer call that names two of its type parameters
+/// WHEN the inner call is the argument itself, or the operand of one or two `dbg` calls
+/// THEN the inner call stays closed in each form (Q28), and each form gives the same reports
+#[test]
+fn an_inner_call_through_dbg_should_stay_closed_at_a_place_of_two_parameters() {
+    let decls = "struct Two<A, B> {\n    a: A\n    b: B\n}\n\
+        fn pair<A, B>(a: A, b: B) -> Two<A, B> { Two(a: a, b: b) }\n\
+        fn outer<T, U>(p: Two<T, U>, _a: T, _b: U) -> Two<T, U> { p }\n\
+        fn main() {\n    let a: i64? = None\n    let b: bool? = None\n    ";
+    let join = vec![(Code::Mismatch, (10, 13)), (Code::Mismatch, (10, 13))];
+    let rows: Vec<ErrorRow<'_>> = [
+        "let t = outer(pair(1, true), a, b)",
+        "let t = outer(dbg(pair(1, true)), a, b)",
+        "let t = outer(dbg(dbg(pair(1, true))), a, b)",
+    ]
+    .into_iter()
+    .map(|row| {
+        (
+            row,
+            format!("{decls}{row}\n    print(t.a ?? 0)\n}}"),
+            join.clone(),
+        )
+    })
+    .collect();
+    error_rows(&rows);
+}
+
+/// `g(mut b?.cells)`, where nothing but the place binds the `T` of `g`.
+const CHAIN_UNBOUND: &str = "struct Board {\n    cells: [i64]\n}\nfn g<T>(mut x: T) {\n    \
+    let y = x\n    x = y\n}\nfn main() {\n    let mut b: Board? = Board(cells: [1])\n    \
+    g(mut b?.cells)\n    print(b == None)\n}";
+
+/// GIVEN a generic call with a `mut` argument whose type cannot be the parameter's type
+/// WHEN the call is under a typed `let`, or nothing else binds the parameter
+/// THEN the `mut` check reports first (E0170), at the argument, as on `main`
+/// AND no report of the result or of an unbound parameter follows
+#[test]
+fn a_mut_argument_should_be_checked_before_the_result_of_its_call() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "typed let",
+            "fn first<T>(mut xs: [T]) -> T { xs = xs; xs[0] }\nfn main() {\n    \
+                let mut names = [\"a\"]\n    let x: i64 = first(mut names)\n    print(x)\n}"
+                .to_owned(),
+            vec![(Code::MutArgumentType, (4, 28))],
+        ),
+        (
+            "unbound chain",
+            CHAIN_UNBOUND.to_owned(),
+            vec![(Code::MutArgumentType, (10, 11))],
+        ),
+    ];
+    // `tests/diagnostics/E0170-chain-unbound.err` pins the text: `g` writes back `[i64]`.
+    error_rows(&rows);
+}
+
+/// GIVEN a generic call under a required type, with one argument that the type does not take
+/// and one open argument (`None`) that it takes
+/// WHEN the call checks its members against the required type
+/// THEN the report names the argument that fails, as on `main`, not the whole call
+#[test]
+fn a_required_type_should_name_the_argument_that_fails_beside_an_open_one() {
+    let decls = "fn pair<T>(a: T, b: T) -> [T] { [a, b] }\nfn main() {\n    let s = \"x\"\n    ";
+    let rows: Vec<ErrorRow<'_>> = [
+        ("let a: [i64?] = pair(s, None)", (4, 26)),
+        ("let a: [i64?] = pair(None, s)", (4, 32)),
+    ]
+    .into_iter()
+    .map(|(row, at)| {
+        let src = format!("{decls}{row}\n    print(a.len())\n}}");
+        (row, src, vec![(Code::Mismatch, at)])
+    })
+    .collect();
+    error_rows(&rows);
+}
