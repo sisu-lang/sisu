@@ -18,7 +18,7 @@ error[E0032]: expected `u8`, found `i64`
 25 |     print(o ?? first(ys))
    |                ^^^^^^^^^
 
-error[E0032]: expected `u8?`, found `i64`
+error[E0032]: expected `[u8]`, found `[i64]`
   --> E0032-hint-blames-payload.sisu:30:24
    |
 30 |     let x: u8? = first(ys)
@@ -169,7 +169,7 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
     |
     = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
-error[E0032]: expected `i64`, found `Result<u8?, bool>`
+error[E0032]: expected `i64?`, found `Result<u8?, bool>`
    --> E0032-hint-blames-payload.sisu:137:22
     |
 137 |     let x: i64? = id(rr)
