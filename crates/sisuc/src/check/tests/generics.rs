@@ -1736,11 +1736,71 @@ fn checked_work(src: &str) -> (usize, usize) {
 /// Asserts that `two` is at most two times `one`, plus a small constant. `one` is the work for an
 /// input of size `n`, and `two` the work for size `2n`. So the work grows linearly with `n`.
 fn assert_at_most_doubles(one: usize, two: usize) {
-    assert!(one > 0, "the counters should count the work");
+    assert_at_most_doubles_for("", one, two);
+}
+
+/// `assert_at_most_doubles` for a table row: a failure message starts with `row`.
+fn assert_at_most_doubles_for(row: &str, one: usize, two: usize) {
+    assert!(one > 0, "{row}the counters should count the work");
     assert!(
         two <= 2 * one + 64,
-        "{one} steps for n, {two} for 2n: more than two times"
+        "{row}{one} steps for n, {two} for 2n: more than two times"
     );
+}
+
+/// A generic value nested `depth` levels deep, whose type holds an open variable at each level:
+/// the literal `1` is an open `Int`, and `None` an open `Any`. Each level binds a variable. A table
+/// that rebuilds the whole type again after each bind makes the work grow with the square of the
+/// depth. So does an occurs check that walks the whole type at each bind. The work counts the
+/// types rebuilt and walked.
+#[test]
+fn a_deep_generic_value_should_cost_linear_work_in_its_depth() {
+    crate::on_compiler_stack(|| {
+        let nest = |depth: usize, wrap: &dyn Fn(String) -> String, core: &str| {
+            (0..depth).fold(core.to_string(), |inner, _| wrap(inner))
+        };
+        let pair = "struct Pair<A, B> {\n    a: A\n    b: B\n}\n";
+        let reads = "\n    let _a = v.a\n    print(v.b)\n}";
+        let rows: [(&str, &dyn Fn(usize) -> String); 4] = [
+            ("leaf 1: ", &|d| {
+                let v = nest(d, &|s| format!("Pair(a: {s}, b: 1)"), "1");
+                format!("{pair}fn main() {{\n    let v = {v}{reads}")
+            }),
+            ("leaf None: ", &|d| {
+                let v = nest(d, &|s| format!("Pair(a: {s}, b: 1)"), "None");
+                format!("{pair}fn main() {{\n    let v = {v}{reads}")
+            }),
+            ("W(a: ...): ", &|d| {
+                let v = nest(d, &|s| format!("W(a: {s})"), "1");
+                format!(
+                    "struct W<A> {{\n    a: A\n}}\nfn main() {{\n    let v = {v}\n    print(v.a)\n}}"
+                )
+            }),
+            ("two(..., 1): ", &|d| {
+                let v = nest(d, &|s| format!("two({s}, 1)"), "1");
+                format!(
+                    "{pair}fn two<A, B>(a: A, b: B) -> Pair<A, B> {{\n    Pair(a: a, b: b)\n}}\n\
+                     fn main() {{\n    let v = {v}{reads}"
+                )
+            }),
+        ];
+        for (row, src) in rows {
+            let work = |depth: usize| {
+                infer::WALKED.set(0);
+                let (work, reports) = checked_work(&src(depth));
+                (work + infer::WALKED.get(), reports)
+            };
+            let ((sixty, one), (hundred_twenty, two), (two_hundred_forty, three)) =
+                (work(60), work(120), work(240));
+            assert_eq!(
+                (one, two),
+                (three, three),
+                "{row}the same reports at each depth"
+            );
+            assert_at_most_doubles_for(row, sixty, hundred_twenty);
+            assert_at_most_doubles_for(row, hundred_twenty, two_hundred_forty);
+        }
+    });
 }
 
 /// One call with `n` literal arguments at one parameter `T: Ord`. Each literal part of the join is

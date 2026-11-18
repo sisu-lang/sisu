@@ -28,7 +28,7 @@ thread_local! {
     /// The obligations that a bind has looked at.
     static OBLIGATION_VISITS: Cell<usize> = const { Cell::new(0) };
     /// The types that `open_roots_in` has walked: the ones that its `seen` set did not hold.
-    static WALKED: Cell<usize> = const { Cell::new(0) };
+    pub(super) static WALKED: Cell<usize> = const { Cell::new(0) };
     /// The types that `rebuild_in` has rebuilt: the ones that its memo did not hold.
     pub(super) static REBUILDS: Cell<usize> = const { Cell::new(0) };
     /// The snapshots that were taken.
