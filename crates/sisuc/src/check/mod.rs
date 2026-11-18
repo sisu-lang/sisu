@@ -1098,6 +1098,10 @@ struct Body {
     /// parameters of its call (Q28): a method call with arguments in it waits (see
     /// `takes_member`).
     closed_place: bool,
+    /// The argument that its call checks late at a place that is not a bare type parameter. A part
+    /// of that place is still open. A result there that clashes with a known part is E0032, as on
+    /// `main` (see `Checker::known_context`).
+    late_argument: Option<Span>,
     /// The bounds of the open forms that the join being tested took, whose subject still held
     /// an open variable: the subject, the bound and the call's type arguments. The join tests
     /// each one at the end of its candidate (see `Checker::candidate_bounds_hold`).

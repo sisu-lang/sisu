@@ -3231,7 +3231,13 @@ impl Checker<'_> {
                     && !matches!(self.table.resolve(ty).kind(), TypeKind::Infer(_))
             });
         if (informed || matches!(e.kind, ast::ExprKind::MethodCall { .. })) && !filled.has_assoc() {
-            return self.known_argument(call, i, e, param);
+            let outer = self.body.late_argument;
+            if !matches!(param.kind(), TypeKind::Param(..)) {
+                self.body.late_argument = Some(e.span);
+            }
+            let checked = self.known_argument(call, i, e, param);
+            self.body.late_argument = outer;
+            return checked;
         }
         // An array literal takes the open context as its type, so that each element meets its part
         // with its own wraps (`[[None], [1]]` at `[[T?]]`). A parameter `T` or `[T]` gives the
@@ -4373,12 +4379,18 @@ impl Checker<'_> {
 
     /// Whether `want`, the context of `call`, is known enough to report a result that cannot meet
     /// it. It holds no open variable, or `call` is a safe call. No context that is not optional
-    /// meets the optional value of a safe call, whatever its open parts become.
+    /// meets the optional value of a safe call, whatever its open parts become. Or `call` is the
+    /// late argument of an outer call (`Body::late_argument`), and each open part is an `Any`:
+    /// then the result clashed with a known part, as `main` reports (`Two<_, bool>` and
+    /// `Two<_, string>`).
     fn known_context(&self, call: &Inference<'_>, want: Type) -> bool {
         let want = self.table.resolve(want);
         !want.holds_infer()
             || self.body.safe_call == Some(call.at)
                 && !matches!(want.kind(), TypeKind::Optional(_) | TypeKind::Infer(_))
+            || self.body.late_argument == Some(call.at)
+                && !matches!(want.kind(), TypeKind::Infer(_))
+                && self.table.default_open(want) == want
     }
 
     /// The failed `call`, whose result could not meet its known context and left its parameter

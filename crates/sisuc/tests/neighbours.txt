@@ -267,6 +267,9 @@ struct Wk {
     fn mkb<X>(self) -> Two<i64, X> { panic("no") }
 }
 fn wk() -> Wk { Wk() }
+// A place whose known part `string` clashes with `wk().mkb()`, beside a parameter that waits for
+// its other part: E0032 at the late method call, as on `main`.
+fn sk<T>(_p: Two<string, T>?, _a: T) {}
 fn tfst<A>(p: Two<A, u8>, _a: A) -> A { p.a }
 fn generic<U: Named, V, W: Km>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?, w: W?, st: St) {
     let mut mq: (any Pet)? = op
@@ -839,3 +842,9 @@ let _a: Cat?? = pick($, $)
 # variant `Some` at its argument, as on `main`.
 let _a: string = some($)
 let _a: string = Some($)
+# A member that never finishes beside a join that fails at a member with a value, and a join of
+# members that all never finish: E0043 at each such member, or E0138 at the first, as on `main`.
+let _a: [string] = [pick(panic("x"), $)]
+let _a = pick("a{return}b", $)
+# A late method call whose result clashes with a known part of its place.
+sk(wk().mkb(), $)
