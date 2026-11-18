@@ -26,7 +26,7 @@ error[E0032]: expected `[i64]`, found `bool`
 35 |     nested(5, id([true]))
    |                   ^^^^
 
-error[E0032]: expected `[_]?`, found `bool`
+error[E0032]: expected `[i64]?`, found `bool`
   --> E0032-callee-parameter-hole.sisu:36:17
    |
 36 |     optional(5, id(true))

@@ -3401,7 +3401,13 @@ impl Checker<'_> {
                 } else {
                     binder.unwrap_or(origin)
                 };
-                self.mismatch(at, None, want, got, origin)
+                // A literal that gives `T` its type fills the place that the report shows.
+                if want.holds_infer() && known.is_some() {
+                    let got = self.shown_against(ty, known_want);
+                    self.mismatch(at, None, known_want, got, origin)
+                } else {
+                    self.mismatch(at, None, want, got, origin)
+                }
             };
             let reported = self.diagnostics.error(d);
             first.get_or_insert(reported);
