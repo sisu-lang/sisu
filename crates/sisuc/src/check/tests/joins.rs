@@ -1937,6 +1937,7 @@ fn a_call_beside_a_hint_should_keep_the_type_that_main_gives() {
         "let x = if true { p } else { id(if true { p } else { p }) }",
         "let x = o ?? id({ let q = p; q + 1 })",
         "let x = o ?? id(loop { break p })",
+        "let x = o ?? id(loop { break 1 })",
     ];
     let red: Vec<String> = (rows.iter())
         .filter_map(|&line| {
@@ -1962,4 +1963,38 @@ fn a_call_beside_a_hint_should_keep_the_type_that_main_gives() {
         red.len(),
         red.join("\n")
     );
+}
+
+#[test]
+fn a_late_argument_beside_a_form_not_converted_should_give_its_interim_report() {
+    // GIVEN programs that main accepts, where a late argument meets a form that a later task
+    // converts
+    // WHEN each is checked
+    // THEN each gives the head's report until that task
+    let row = |line: &str| {
+        format!(
+            "{SEED_FUNCTIONS}fn main() {{\n    let o: u8? = None\n    let p: u8 = 1\n    let c = [1].len() == 1\n    {line}\n    print(x)\n}}\n"
+        )
+    };
+    let at = |col: usize| (SEED_FUNCTIONS.lines().count() + 5, col + 4);
+    error_rows(&[
+        // interim: Task 5d gives no error, and `x` is `u8`
+        (
+            "coalesce beside an optional place",
+            row("let x = pick(o ?? p, o ?? p)"),
+            vec![(Code::Mismatch, at(14))],
+        ),
+        // interim: Task 5b gives no error, and `x` is `u8`
+        (
+            "if of literals beside a coalesce",
+            row("let x = two(if true { 1 } else { 2 }, o ?? 5)"),
+            vec![(Code::Mismatch, at(39))],
+        ),
+        // interim: Task 5c gives no error, and `x` is `u8?`
+        (
+            "closed variant with an array under an if",
+            row("let x = if c { h(G<u8>.V(1, [2, 3]), 4) } else { None }"),
+            vec![(Code::Mismatch, at(18))],
+        ),
+    ]);
 }
