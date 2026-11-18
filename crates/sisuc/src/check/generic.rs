@@ -2929,6 +2929,25 @@ impl Checker<'_> {
         // Neither form takes `want`. Members that differ from the part only by its wraps take too
         // many (Q24): the call reports as a whole. Else each member that does not take the part
         // gets the directed report.
+        let wraps_only = self.wraps_only(members, name, part);
+        let first = if closed.is_none() {
+            self.first_binder(members, name, part)
+        } else {
+            None
+        };
+        // The directed report of a member names no origin, as on main (owner ruling 2).
+        if let Some(first) = first {
+            Expectation::Required(first, Origin::None)
+        } else if opens || !wraps_only {
+            Expectation::Required(part, Origin::None)
+        } else {
+            Expectation::Member
+        }
+    }
+
+    /// Whether `members` differ from `part` only by its wraps: each takes `part` without its
+    /// optionals at the place of the parameter `name`.
+    fn wraps_only(&mut self, members: &[JoinMember<'_>], name: Symbol, part: Type) -> bool {
         let mut bare = part;
         while let TypeKind::Optional(inner) = bare.kind() {
             bare = inner;
@@ -2939,12 +2958,38 @@ impl Checker<'_> {
                 type_of(m.value).is_none_or(|ty| self.unify(ty, target(m.at, Some(name), bare)))
             });
         self.table.rollback(snapshot);
-        // The directed report of a member names no origin, as on main (owner ruling 2).
-        if opens || !wraps_only {
-            Expectation::Required(part, Origin::None)
-        } else {
-            Expectation::Member
-        }
+        wraps_only
+    }
+
+    /// The type of the first of `members`, which do not agree, when it binds the parameter
+    /// `name` as on `main`: it is a closed whole argument that does not take `part`, and a later
+    /// closed member takes it. Each later member that differs then gets the directed report. A
+    /// literal has no type of its own, so it does not count.
+    fn first_binder(
+        &mut self,
+        members: &[JoinMember<'_>],
+        name: Symbol,
+        part: Type,
+    ) -> Option<Type> {
+        let (m, rest) = members.split_first()?;
+        let ty = self.table.resolve(type_of(m.value)?);
+        let takes = |this: &mut Self, m: &JoinMember<'_>| {
+            type_of(m.value).is_some_and(|got| {
+                let snapshot = this.table.snapshot();
+                let takes = this.unify(got, target(m.at, Some(name), part));
+                this.table.rollback(snapshot);
+                takes
+            })
+        };
+        let binds = matches!(m.at, Place::Whole)
+            && !ty.holds_infer()
+            && !takes(self, m)
+            && rest.iter().any(|m| {
+                let closed =
+                    type_of(m.value).is_some_and(|got| !self.table.resolve(got).holds_infer());
+                closed && takes(self, m)
+            });
+        binds.then_some(ty)
     }
 
     /// The reports of the arguments in `misfits`, which fit their place for no type of the
