@@ -4393,7 +4393,7 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
             "h(true, Two.P(\"s\", Two.P(1, \"x\")))",
-            &[(Mismatch, "Two.P(\"s\"")],
+            &[(Mismatch, S)],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
@@ -4403,12 +4403,12 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Box<U, Box<V, i64>>) {}\n",
             "h(true, Box(a: \"s\", b: Box(a: 1, b: \"x\")))",
-            &[(Mismatch, "Box(a: \"s\"")],
+            &[(Mismatch, S)],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, Two<V, i64>?>) {}\n",
             "h(true, Two.P(\"s\", Some(Two.P(1, \"x\"))))",
-            &[(Mismatch, "Two.P(\"s\"")],
+            &[(Mismatch, S)],
         ),
         (
             "fn h<T: I, U>(_a: U, _b: [Two<U, T.Item>], _c: T) {}\n",
@@ -5468,7 +5468,7 @@ const REJECT_PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: Two<T, bool>) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), mk(W(), 1))",
-            &[(NotConform, P), (Mismatch, "mk(")],
+            &[(NotConform, P), (Mismatch, "1)")],
         ),
     ]
 };

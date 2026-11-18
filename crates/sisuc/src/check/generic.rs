@@ -2658,7 +2658,7 @@ impl Checker<'_> {
                         .table
                         .default_open(self.table.resolve(param.subst(&with)));
                     if !(self.table.default_open(self.table.resolve(ty))).holds_infer()
-                        || self.blamed_part(at, ty, want).is_some()
+                        || self.blamed_part(at, want).is_some()
                     {
                         kept.push(misfit);
                     }
@@ -2677,8 +2677,12 @@ impl Checker<'_> {
                         label: m.label,
                     })
                     .collect();
-                let reported =
-                    self.report_misfits(&misfit_at, (name, t, var), &mut with, &mut whole);
+                let reported = self.report_misfits(
+                    &misfit_at,
+                    (name, t, var, broke.is_some()),
+                    &mut with,
+                    &mut whole,
+                );
                 with[t] = param_t;
                 if let Some(reported) = reported {
                     failed.get_or_insert(reported);
@@ -3321,12 +3325,13 @@ impl Checker<'_> {
     /// shows the type that they give `t`. A literal has no type of its own. When the place is
     /// then known, a label names the argument that gives it. An open part can be left, where the
     /// place clashes with the argument. Then the report names the outer shape of the place, as
-    /// "an array" or "a `Box`". Else it shows each open part as `_`, as on `main`. It changes
+    /// "an array" or "a `Box`". Else it shows each open part as `_`, as on `main`. A bound of `t`
+    /// that broke (`rejected`) leaves `t` open in the place that blames a part. It changes
     /// `with[t]`, which the caller puts back. `None` when `misfits` is empty.
     fn report_misfits(
         &mut self,
         misfits: &[(Span, Type, Type, Origin)],
-        (name, t, var): (Symbol, usize, Type),
+        (name, t, var, rejected): (Symbol, usize, Type, bool),
         with: &mut [Type],
         members: &mut [JoinMember<'_>],
     ) -> Option<Reported> {
@@ -3336,6 +3341,10 @@ impl Checker<'_> {
         let known = joined.or_else(|| self.join_type(members, Some(name), None));
         let mut first = None;
         for &(at, ty, param, origin) in misfits {
+            with[t] = var;
+            let open_want = self
+                .table
+                .default_open(self.table.resolve(param.subst(with)));
             with[t] = known.unwrap_or(var);
             let known_want = self
                 .table
@@ -3354,9 +3363,17 @@ impl Checker<'_> {
                 inner = arg;
             }
             // A part of the place that is known and clashes with the type that one argument of the
-            // call gives alone: the report is at that argument, as on `main`.
+            // call gives alone: the report is at that argument, as on `main`. A literal gives `T`
+            // its type there only for an open call, and a rejected `T` meets each type.
+            let blamed_want = if rejected {
+                open_want
+            } else if (self.table.default_open(self.table.resolve(ty))).holds_infer() {
+                known_want
+            } else {
+                want
+            };
             if inner == at
-                && let Some((arg, part, ty)) = self.blamed_part(at, ty, known_want)
+                && let Some((arg, part, ty)) = self.blamed_part(at, blamed_want)
             {
                 let reported = self.mismatch(arg, None, part, ty, Origin::None);
                 first.get_or_insert_with(|| self.diagnostics.error(reported));
@@ -3416,16 +3433,12 @@ impl Checker<'_> {
     }
 
     /// The argument of the generic call at `call` that a known part of `want` clashes with, as
-    /// `main` blames it. `want` is the call's place. The call is open: its result type `got`
-    /// holds an open part, which takes the place. The argument alone decides a type parameter.
+    /// `main` blames it. `want` is the call's place. The argument alone decides a type parameter.
     /// Each known part of `want` at that parameter is one type, and the argument's type does not
     /// convert to it. It gives the argument's span, that part and the argument's type. The result
     /// can wrap once at its top. Each pair of types is walked once, so a type with repeated parts
     /// is walked in linear time.
-    fn blamed_part(&mut self, call: Span, got: Type, want: Type) -> Option<(Span, Type, Type)> {
-        if !(self.table.default_open(self.table.resolve(got))).holds_infer() {
-            return None;
-        }
+    fn blamed_part(&mut self, call: Span, want: Type) -> Option<(Span, Type, Type)> {
         let (ret, args) = self.body.lone_args.get(&call)?.clone();
         let want = match (ret.kind(), want.kind()) {
             (TypeKind::Optional(_), _) => want,
