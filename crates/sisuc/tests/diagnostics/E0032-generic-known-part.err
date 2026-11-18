@@ -1,0 +1,24 @@
+error[E0032]: expected `Two<i64?, u8>`, found `Two<i64, u8>`
+  --> E0032-generic-known-part.sisu:25:25
+   |
+25 |     let _x: i64? = tfst(wk().mkb(), None)
+   |                         ^^^^^^^^^^
+
+error[E0032]: the arguments for `T` of this call have different types
+  --> E0032-generic-known-part.sisu:30:11
+   |
+30 |     print(pick3(Two<[i64?], [u8?]>(a: [], b: []), ep(), Two<[bool], [i64]>(a: [], b: [])).a.len())
+   |           ^^^^^ --------------------------------        -------------------------------- `Two<[bool], [i64]>`
+   |                 |
+   |                 this argument gives `T` the type `Two<[i64?], [u8?]>`
+
+error[E0032]: expected `[T]`, found `[T]?`
+  --> E0032-generic-known-part.sisu:35:5
+   |
+34 | fn from_none<T>() -> [T] {
+   |                      --- `from_none` returns `[T]`
+35 |     none()
+   |     ^^^^^^
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032
