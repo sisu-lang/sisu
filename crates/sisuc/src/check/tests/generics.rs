@@ -5472,12 +5472,12 @@ const CONTEXT_BOUND_ROWS: &[PartialRow<'static>] = {
         ("", "let _x: i64 = h(W(), Two.P(5, 7))", &[(Mismatch, "5")]),
         ("", "let _x: i64 = g(W())", &[(Mismatch, "g(W())")]),
         ("", "let _x: i64? = g2(W(), W())", &[(Mismatch, "g2(")]),
-        // The bound of `T` names `U`, which the context binds: `i64` does not conform to
-        // `K<bool>`, and the first argument is the error.
+        // The call decides `T = V` and `U` from the bound before the context, so the context
+        // meets the result at its top.
         (
             "",
             "let _x: Two<i64, bool> = hk1(V())",
-            &[(Code::NotConform, "V()")],
+            &[(Mismatch, "V()")],
         ),
         // The context leaves `U` open, so the bound waits, and the context fits as before.
         ("", "let _x: i64 = hk2(V())", &[(Mismatch, "V()")]),
@@ -5501,12 +5501,14 @@ const CONTEXT_BOUND_ROWS: &[PartialRow<'static>] = {
             "let _x: i64 = hb(W(), Two.P(5, 7))",
             &[(Mismatch, "W()")],
         ),
+        // The call decides `T` from its arguments first, so the context meets the result once.
+        ("", "let _x: Vi = g2(W(), W())", &[(Mismatch, "g2(")]),
+        // The join of `W` and `Vi` fails, and each argument is a member of it.
         (
             "",
-            "let _x: Vi = g2(W(), W())",
-            &[(Mismatch, "W()"), (Mismatch, "W())")],
+            "let _x: i64 = g2(W(), Vi())",
+            &[(Mismatch, "W()"), (Mismatch, "Vi()")],
         ),
-        ("", "let _x: i64 = g2(W(), Vi())", &[(Mismatch, "Vi()")]),
         // The bound of the receiver's class is not the context's: it binds only the method's own
         // parameters.
         (

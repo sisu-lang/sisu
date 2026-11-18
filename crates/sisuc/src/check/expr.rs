@@ -490,6 +490,17 @@ impl Checker<'_> {
         returning: bool,
     ) -> Checked {
         let checked = read_jump(self.expr(e, expected));
+        self.value_of(e, checked, expected, returning)
+    }
+
+    /// `value_in` for `e`, already checked as `checked` against `expected`.
+    pub(super) fn value_of(
+        &mut self,
+        e: &ast::Expr,
+        checked: Checked,
+        expected: Expectation,
+        returning: bool,
+    ) -> Checked {
         if type_of(&checked) == Some(Type::NEVER) {
             let at = self.never_at(e.span);
             return Err(Poisoned::untyped(self.no_value(at, NoValueCause::Never)));
@@ -535,8 +546,12 @@ impl Checker<'_> {
         if let Some((at, if_let)) = valueless_value(checked) {
             return Some((at, NoValueCause::NoElse { if_let, returning }));
         }
+        // An open `Any` variable takes the `unit`, as a type parameter does (`unit` is a value).
         let unwanted = type_of(checked) == Some(Type::UNIT)
-            && expected.ty().is_some_and(|want| !takes_unit(want));
+            && expected.ty().is_some_and(|want| {
+                let want = self.table.default_open(want);
+                !takes_unit(want) && !open_any(want)
+            });
         unwanted.then(|| {
             let value = checked.as_ref().ok();
             let cause = self.no_value_cause(e, value, (Type::UNIT, expected.ty()), returning);
@@ -1080,6 +1095,15 @@ pub(super) fn takes_unit(want: Type) -> bool {
     match want.kind() {
         TypeKind::Unit | TypeKind::Param(_, HOLE_INDEX | REJECTED_INDEX) => true,
         TypeKind::Optional(payload) => takes_unit(payload),
+        _ => false,
+    }
+}
+
+/// Whether `want`, after `default_open`, is an open `Any` variable or an optional of one.
+fn open_any(want: Type) -> bool {
+    match want.kind() {
+        TypeKind::Infer(_) => true,
+        TypeKind::Optional(payload) => open_any(payload),
         _ => false,
     }
 }

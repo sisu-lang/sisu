@@ -1082,6 +1082,10 @@ struct Body {
     /// The E0050 of each generic call whose result cannot meet its context (see `Misfit`). A
     /// report that uses the result takes its entry. Each entry left is pushed when the body ends.
     misfits: Vec<Option<Diagnostic>>,
+    /// The E0050 of each generic call that a join took as a member with a parameter left open,
+    /// by the call's span: each such parameter's variable and its report. The call around it
+    /// gives the report when it settles no type for the parameter (see `report_waiting_calls`).
+    waits: FxHashMap<Span, Vec<(Type, DiagnosticKind)>>,
     /// The bounds of the decided type parameters of the calls in the body, by `ObligationId`,
     /// each waiting for its parameter's type (see `Table::obligation`).
     obligations: Vec<generic::BoundObligation>,

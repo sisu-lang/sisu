@@ -148,7 +148,10 @@ impl Checker<'_> {
         let (iargs, types) = (TypeArgs::intern(iargs), TypeArgs::intern(types));
         let parts = self.mut_overlaps(parts);
         let failed = labeled.is_some() || checked.iter().any(mismatched);
-        let parted = labeled.is_some() || checked.iter().any(Result::is_err);
+        // A rejected label leaves the result its type, so a variable in it is reported later;
+        // a `mut` argument's binding is not done, so then the result keeps no type.
+        let parted = (labeled.is_some() && args.iter().any(|a| a.mut_keyword.is_some()))
+            || checked.iter().any(Result::is_err);
         let method =
             u32::try_from(method).expect("an interface should have fewer than 2^32 requirements");
         let call = move |args| tir::ExprKind::InterfaceCall {

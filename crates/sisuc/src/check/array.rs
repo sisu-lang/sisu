@@ -1,7 +1,7 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
 use super::any::{AnyJoin, is_target, widen};
-use super::expr::{fits, literal_type, no_member, path, takes_unit, typed};
+use super::expr::{fits, literal_type, no_member, path, read_jump, takes_unit, typed};
 use super::generic::{Rank, mark, mismatch_poison};
 use super::infer::Kind;
 use super::place::{Change, first_safe, is_struct};
@@ -77,10 +77,28 @@ impl Checker<'_> {
             };
         }
         if let Some(element) = expected_element(expected.ty()) {
-            let (checked, mismatched): (Vec<_>, Vec<_>) = elements
-                .iter()
-                .map(|e| self.operand(e, Expectation::Required(element, expected.origin())))
-                .unzip();
+            let want = Expectation::Required(element, expected.origin());
+            // An element type that is still open takes a `unit` only after the other elements,
+            // as a join does: beside another type, the `unit` is no value (E0043).
+            let open = self.table.default_open(element).holds_infer();
+            let mut units = Vec::new();
+            let mut slots: Vec<Option<(Checked, bool)>> = Vec::with_capacity(elements.len());
+            for (i, e) in elements.iter().enumerate() {
+                let checked = read_jump(self.expr(e, want));
+                if open && type_of(&checked) == Some(Type::UNIT) {
+                    units.push((i, checked));
+                    slots.push(None);
+                    continue;
+                }
+                let checked = self.value_of(e, checked, want, false);
+                slots.push(Some(self.settled(e, checked, want)));
+            }
+            for (i, checked) in units {
+                let e = &elements[i];
+                let checked = self.value_of(e, checked, want, false);
+                slots[i] = Some(self.settled(e, checked, want));
+            }
+            let (checked, mismatched): (Vec<_>, Vec<_>) = slots.into_iter().flatten().unzip();
             return self.array(span, element, checked, mismatched.contains(&true));
         }
         let quiet = expected == Expectation::Poisoned;

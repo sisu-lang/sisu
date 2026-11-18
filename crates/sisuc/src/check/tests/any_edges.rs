@@ -325,9 +325,9 @@ fn a_generic_call_in_an_any_context_should_bind_from_each_argument_of_the_any_ty
         &[(Mismatch, (8, 17))],
     );
     codes_row(
-        "an open context part gives a later argument context",
+        "a call decides its own parameters before the context part, which then reports the call",
         "interface P<A, B> {}\nclass W<T> {\n    v: T\n}\nclass Box<A, B> {\n    a: A\n    b: B\n}\nfn mk<A, B>(a: A, b: B) -> W<any P<A, B>> { panic(\"e\") }\nfn h<U, V>(a: U, b: W<any P<U, Box<V, i64>>>) {}\nfn main() {\n    h(true, mk(\"s\", Box(a: 1, b: \"x\")))\n}\n",
-        &[(Mismatch, (12, 16)), (Mismatch, (12, 34))],
+        &[(Mismatch, (12, 13))],
     );
     codes_row(
         "an `any` of another interface gives no context",

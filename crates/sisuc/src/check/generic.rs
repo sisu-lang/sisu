@@ -2062,7 +2062,8 @@ impl Checker<'_> {
                                 (ty, None),
                                 false,
                             );
-                            failed.get_or_insert_with(|| self.no_value(argument, cause));
+                            let reported = self.no_value(argument, cause);
+                            failed.get_or_insert(reported);
                             continue;
                         }
                         let got = self.table.default_open(self.table.resolve(ty));
@@ -2070,8 +2071,10 @@ impl Checker<'_> {
                         // The report shows each open parameter as `_`, as on `main`.
                         let want = self.table.resolve(param.subst(&with_var));
                         let want = self.table.default_open(want);
+                        // Each misfit is its own mistake, as on `main`.
                         let d = self.mismatch(argument, None, want, got, origin);
-                        failed.get_or_insert_with(|| self.diagnostics.error(d));
+                        let reported = self.diagnostics.error(d);
+                        failed.get_or_insert(reported);
                         continue;
                     }
                 }
@@ -2233,16 +2236,36 @@ impl Checker<'_> {
         if failed.is_none() {
             tied.dedup();
             for i in tied {
-                if let (Some(value), Some(param)) = (call.slots[i].as_ref(), sig.params[i])
-                    && let Some(ty) = type_of(value)
-                    && let Some(want) = self.known_in(&call, param)
-                {
-                    let want = self.table.resolve(want);
-                    if !self.unify(want, ty) {
-                        let origin = call.declarer.origin(i);
-                        let d = self.mismatch(args[i].value.span, None, want, ty, origin);
-                        failed.get_or_insert_with(|| self.diagnostics.error(d));
+                let (Some(ty), Some(param)) =
+                    (call.slots[i].as_ref().and_then(type_of), sig.params[i])
+                else {
+                    continue;
+                };
+                let mut want = self.known_in(&call, param);
+                // A bound whose argument is an open `Int` finds no conformance, so its associated
+                // type shows the `Int` as `i64`, as the bound takes it. This check binds nothing.
+                let defaulted = want.is_none();
+                if defaulted {
+                    for &(t, var) in &decided {
+                        call.bindings.found[t] = Some(self.table.default_open(var));
                     }
+                    want = self.known_in(&call, param);
+                    for &(t, var) in &decided {
+                        call.bindings.found[t] = Some(self.table.resolve(var));
+                    }
+                }
+                let Some(want) = want else { continue };
+                let want = self.table.resolve(want);
+                let snapshot = self.table.snapshot();
+                let fits = self.unify(want, ty);
+                if defaulted {
+                    self.table.rollback(snapshot);
+                }
+                if !fits {
+                    let origin = call.declarer.origin(i);
+                    let found = self.table.default_open(ty);
+                    let d = self.mismatch(args[i].value.span, None, want, found, origin);
+                    failed.get_or_insert_with(|| self.diagnostics.error(d));
                 }
             }
         }
@@ -2342,6 +2365,25 @@ impl Checker<'_> {
             }
         } else if bound_broke && !broken && expected != Expectation::Poisoned {
             self.report_left_open(&mut call, sig, &decided, &quiet);
+        } else if !broken && expected != Expectation::Poisoned {
+            // The call failed and settles no type. On `main`, a call that waits is checked after
+            // the other arguments, in order: each before the first failed argument reports the
+            // parameter that it leaves open, unless an argument that does not wait failed.
+            let bad: Vec<usize> = (0..args.len())
+                .filter(|&i| misfits.contains(&i) || matches!(call.slots[i], Some(Err(_))))
+                .collect();
+            if let Some(&before) = bad.first()
+                && bad
+                    .iter()
+                    .all(|&i| self.sibling_rank(&args[i].value) == Rank::Waits)
+            {
+                for &(t, var) in decided.iter().filter(|(t, _)| !quiet.contains(t)) {
+                    let ty = self.table.resolve(var);
+                    if ty.holds_infer() && !self.table.reported_open(ty) {
+                        let _ = self.report_waiting_calls(&call, sig, (t, ty, before));
+                    }
+                }
+            }
         }
         if broken {
             failed.get_or_insert_with(|| self.proof(span)); // proof: declaration
@@ -2976,6 +3018,20 @@ impl Checker<'_> {
         (expected, met): (Expectation, Option<bool>),
     ) -> Result<(), Poisoned> {
         if expected == Expectation::Member {
+            // A parameter that the result names and that is still open waits for the outer call.
+            // That call reports it when it settles no type for it.
+            let waits: Vec<(Type, DiagnosticKind)> = (decided.iter())
+                .filter(|&&(t, var)| {
+                    sig.ret.is_some_and(|ret| names_outside_assoc(ret, t))
+                        && self.table.resolve(var).holds_infer()
+                })
+                .map(|&(t, var)| (var, Self::cannot_infer_kind(sig, t)))
+                .collect();
+            if waits.is_empty() {
+                self.body.waits.remove(&call.at);
+            } else {
+                self.body.waits.insert(call.at, waits);
+            }
             // The outer join reaches a parameter only through the result: one that the result
             // does not name gets its type from no context, so it is E0050 now. The value keeps
             // its type, which does not name the parameter.
@@ -2989,7 +3045,12 @@ impl Checker<'_> {
                     let _ = self.unify(ty, closed);
                 }
                 if self.table.resolve(var).holds_infer() {
-                    self.cannot_infer(sig, t);
+                    if self
+                        .report_waiting_calls(call, sig, (t, ty, usize::MAX))
+                        .is_none()
+                    {
+                        self.cannot_infer(sig, t);
+                    }
                     // One E0050 for the call: its other parameters report nothing more.
                     for &(_, var) in decided {
                         self.table.poison(var);
@@ -3057,10 +3118,70 @@ impl Checker<'_> {
                 {
                     return Err(self.misfit(call, sig, t));
                 }
-                return Err(Poisoned::untyped(self.cannot_infer(sig, t)));
+                let reported = (self.report_waiting_calls(call, sig, (t, ty, usize::MAX)))
+                    .unwrap_or_else(|| self.cannot_infer(sig, t));
+                return Err(Poisoned::untyped(reported));
             }
         }
         Ok(())
+    }
+
+    /// E0050 at each waiting call among the first `before` arguments of `call` at places of the
+    /// parameter `t`: an argument that is a generic call or construction whose type holds `ty`,
+    /// which `call` leaves open. Each reports its own parameter, as on `main`, where such a call
+    /// waits for the others and is then checked with no context. A call at a parameter type that
+    /// is `t` alone, or one inside another value, does not wait there: `call` reports `t`. `None`
+    /// when no such call reports.
+    fn report_waiting_calls(
+        &mut self,
+        call: &Inference<'_>,
+        sig: &GenericSig<'_>,
+        (t, ty, before): (usize, Type, usize),
+    ) -> Option<Reported> {
+        let roots = self.table.open_roots(ty);
+        let holds = |table: &super::infer::Table, ty: Type| {
+            table.open_roots(ty).iter().any(|r| roots.contains(r))
+        };
+        let waiting: Vec<Span> = (call.slots.iter().zip(sig.params).take(before))
+            .filter(|(_, param)| {
+                param.is_some_and(|param| {
+                    names_outside_assoc(param, t) && !matches!(param.kind(), TypeKind::Param(..))
+                })
+            })
+            .filter_map(|(slot, _)| slot.as_ref()?.as_ref().ok())
+            // `dbg(x)` gives `x` its context, so `x` waits in its place.
+            .map(|mut e| {
+                while let tir::ExprKind::Dbg { operand, .. } = &e.kind {
+                    e = operand;
+                }
+                e
+            })
+            .filter(|e| {
+                matches!(
+                    e.kind,
+                    tir::ExprKind::Call { .. }
+                        | tir::ExprKind::Struct { .. }
+                        | tir::ExprKind::Variant { .. }
+                        | tir::ExprKind::New { .. }
+                ) && holds(&self.table, e.ty)
+            })
+            .map(|e| e.span)
+            .collect();
+        let mut first = None;
+        for span in waiting {
+            let Some(waits) = self.body.waits.remove(&span) else {
+                continue;
+            };
+            if let Some((_, kind)) = waits.into_iter().find(|&(var, _)| holds(&self.table, var)) {
+                // Each waiting call reports, as on `main`; the first is the call's report.
+                let reported = self.error(kind);
+                first.get_or_insert(reported);
+            }
+        }
+        if first.is_some() {
+            self.table.poison(ty);
+        }
+        first
     }
 
     /// After the call `call` failed: E0050 for the first parameter that no failure reached and that
