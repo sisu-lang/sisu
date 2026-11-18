@@ -4782,9 +4782,9 @@ fn array_literal_context_should_cost_one_step_for_each_element() {
     assert_near_linear(steps(100), steps(200), steps(300));
 }
 
-/// An array literal nested `d` deep, for a parameter that is `d` arrays deep. `takes_context`
-/// accepts the whole literal once, and `inferred_array` gives each level its element context
-/// with no new walk. So the work grows with the depth, not with its square.
+/// An array literal nested `d` deep, for a parameter that is `d` arrays deep. The join of the
+/// call gives each level its element context with no new walk. So the work grows with the depth,
+/// not with its square. `call_work` counts the work of the call.
 #[test]
 fn nested_array_literal_context_should_cost_one_step_for_each_level() {
     let steps = |depth: usize| {
@@ -4797,18 +4797,16 @@ fn nested_array_literal_context_should_cost_one_step_for_each_level() {
             "[".repeat(depth),
             "]".repeat(depth),
         );
-        generic::CONTEXT_STEPS.set(0);
-        clean(&src);
-        generic::CONTEXT_STEPS.get()
+        call_work(&src)
     };
-    assert!(steps(1) > 0, "the counter should count the walk");
+    assert!(steps(1) > 0, "the counters should count the work");
     assert_near_linear(steps(10), steps(20), steps(30));
 }
 
-/// As the test above, but each level also holds a local variable, which takes no context. So
-/// `takes_context` refuses each literal after a walk of the literal inside it, and
-/// `inferred_array` asks for the context of each element again. `taken` keeps the answer for
-/// each literal, so the work grows with the depth, not with its square.
+/// As the test above, but each level also holds a local variable, which takes no context. Each
+/// level is a join of its elements, and the join of a level does not make the types of the levels
+/// below it again. So the work grows with the depth, not with its square. `call_work` counts the
+/// work of the call.
 #[test]
 fn nested_array_literal_with_local_variables_should_cost_one_step_for_each_level() {
     let steps = |depth: usize| {
@@ -4828,17 +4826,15 @@ fn nested_array_literal_with_local_variables_should_cost_one_step_for_each_level
             "[".repeat(depth),
             "]".repeat(depth),
         );
-        generic::CONTEXT_STEPS.set(0);
-        clean(&src);
-        generic::CONTEXT_STEPS.get()
+        call_work(&src)
     };
-    assert!(steps(1) > 0, "the counter should count the walk");
+    assert!(steps(1) > 0, "the counters should count the work");
     assert_near_linear(steps(10), steps(20), steps(30));
 }
 
-/// A chain of `Some(...)` `d` deep, for an optional parameter that is `d` deep. `takes_context`
-/// walks the chain once, and the call of each `Some` asks again with the same context, which
-/// `taken` answers. So the work grows with the depth, not with its square.
+/// A chain of `Some(...)` `d` deep, for an optional parameter that is `d` deep. Each `Some` is a
+/// call, and the call of a level does not make the types of the levels below it again. So the
+/// work grows with the depth, not with its square. `call_work` counts the work of the call.
 #[test]
 fn nested_some_context_should_cost_one_step_for_each_level() {
     with_prelude();
@@ -4851,11 +4847,9 @@ fn nested_some_context_should_cost_one_step_for_each_level() {
             "Some(".repeat(depth),
             ")".repeat(depth),
         );
-        generic::CONTEXT_STEPS.set(0);
-        clean(&src);
-        generic::CONTEXT_STEPS.get()
+        call_work(&src)
     };
-    assert!(steps(1) > 0, "the counter should count the walk");
+    assert!(steps(1) > 0, "the counters should count the work");
     assert_near_linear(steps(10), steps(20), steps(30));
 }
 
@@ -4970,7 +4964,8 @@ fn nested_array_program(depth: usize, end: &str, bottom: &str, setup: &str) -> S
 /// with its square (#301). The depths are far below the nesting limit of the parser, and small
 /// enough for the stack of a debug test thread. The literal is refused when an element at the
 /// bottom takes no context, a local variable or a `None`. Each level then still takes its
-/// context from the level above, and does not walk the type below it.
+/// context from the level above, and does not walk the type below it. `call_work` counts the work
+/// of the call.
 #[test]
 fn a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times() {
     crate::on_compiler_stack(|| {
@@ -4980,14 +4975,10 @@ fn a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times() {
             ("Two<T, i64>", "y", "let y = mk(true)"),
             ("Two<T, i64>?", "mk(true), None", ""),
         ] {
-            let walked = |depth: usize| {
-                generic::WALKED.set(0);
-                clean(&nested_array_program(depth, end, bottom, setup));
-                generic::WALKED.get()
-            };
+            let walked = |depth: usize| call_work(&nested_array_program(depth, end, bottom, setup));
             assert!(
                 walked(1) > 0,
-                "{bottom}: the counter should count the walks"
+                "{bottom}: the counters should count the work"
             );
             assert_near_linear_for(&format!("{bottom}: "), walked(20), walked(40), walked(60));
         }
@@ -6128,7 +6119,7 @@ fn a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context() {
 ///
 /// The third is one waiting call that waits for all `k` parameters of `Tup<T0, ..., T{k-1}>`,
 /// which its context names in a shuffled order. The call is parked and woken in a linear number of
-/// steps.
+/// steps. `call_work` counts the work of each chain.
 #[test]
 fn waiting_calls_should_be_tested_a_linear_number_of_times() {
     with_prelude();
@@ -6148,11 +6139,9 @@ fn waiting_calls_should_be_tested_a_linear_number_of_times() {
             names.join(", "),
             params.join(", "),
         );
-        generic::WAIT_STEPS.set(0);
-        clean(&src);
-        generic::WAIT_STEPS.get()
+        call_work(&src)
     };
-    assert!(steps(1) > 0, "the counter should count the tests");
+    assert!(steps(1) > 0, "the counters should count the work");
     assert_near_linear(steps(20), steps(40), steps(60));
     let wide = |k: usize| {
         let list = |name: &str| (0..k).map(|i| format!("{name}{i}")).collect::<Vec<_>>();
@@ -6177,10 +6166,7 @@ fn waiting_calls_should_be_tested_a_linear_number_of_times() {
             params.join(", "),
             vec!["mk()"; k].join(", "),
         );
-        generic::WAIT_STEPS.set(0);
-        generic::WALKED.set(0);
-        clean(&src);
-        generic::WAIT_STEPS.get() + generic::WALKED.get()
+        call_work(&src)
     };
     assert_near_linear(wide(100), wide(200), wide(300));
     // `mkw()` waits for all `k` parameters, which its context names in the order `i * 7 mod k`. `k`
@@ -6203,10 +6189,7 @@ fn waiting_calls_should_be_tested_a_linear_number_of_times() {
             order.join(", "),
             list("T").join(", "),
         );
-        generic::WAIT_STEPS.set(0);
-        generic::WALKED.set(0);
-        clean(&src);
-        generic::WAIT_STEPS.get() + generic::WALKED.get()
+        call_work(&src)
     };
     assert_near_linear(shuffled(100), shuffled(200), shuffled(300));
 }
