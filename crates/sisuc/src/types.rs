@@ -87,6 +87,9 @@ struct Names {
     any: bool,
     /// An inference variable.
     infer: bool,
+    /// The least and the largest id of the inference variables, when `infer` is true.
+    infer_lo: u32,
+    infer_hi: u32,
     /// An optional, other than under an associated type.
     optional: bool,
     /// How many levels of types nest in it: 0 for a type with no part. A list holds the most of
@@ -96,6 +99,14 @@ struct Names {
 
 impl Names {
     fn or(self, other: Names) -> Names {
+        let (infer_lo, infer_hi) = match (self.infer, other.infer) {
+            (true, true) => (
+                self.infer_lo.min(other.infer_lo),
+                self.infer_hi.max(other.infer_hi),
+            ),
+            (true, false) => (self.infer_lo, self.infer_hi),
+            (false, _) => (other.infer_lo, other.infer_hi),
+        };
         Names {
             param: self.param || other.param,
             open: self.open || other.open,
@@ -103,6 +114,8 @@ impl Names {
             assoc: self.assoc || other.assoc,
             any: self.any || other.any,
             infer: self.infer || other.infer,
+            infer_lo,
+            infer_hi,
             optional: self.optional || other.optional,
             depth: self.depth.max(other.depth),
         }
@@ -127,8 +140,10 @@ impl TypeKind {
         #[cfg(test)]
         NAMED.set(NAMED.get() + 1);
         match self {
-            TypeKind::Infer(_) => Names {
+            TypeKind::Infer(id) => Names {
                 infer: true,
+                infer_lo: id.0,
+                infer_hi: id.0,
                 ..Names::default()
             },
             TypeKind::Param(_, i) => Names {
@@ -633,6 +648,13 @@ impl Type {
     /// function's table must not keep a key for which this is true: ids start at 0 in each table.
     pub(crate) fn holds_infer(self) -> bool {
         self.names().infer
+    }
+
+    /// The least and the largest id of the inference variables in the type, or `None` when it
+    /// holds none.
+    pub(crate) fn infer_range(self) -> Option<(u32, u32)> {
+        let names = self.names();
+        names.infer.then_some((names.infer_lo, names.infer_hi))
     }
 
     /// Whether the type is an optional, or holds one, other than under an associated type.

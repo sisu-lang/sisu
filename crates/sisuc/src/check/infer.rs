@@ -23,6 +23,10 @@ use crate::source::Span;
 use crate::tir::{self, ExprKind, Type, TypeArgs, TypeKind};
 use crate::types::InferId;
 
+mod sets;
+
+use sets::{Root, Sets};
+
 #[cfg(test)]
 thread_local! {
     /// The obligations that a bind has looked at.
@@ -92,22 +96,7 @@ pub(super) struct Unsettled {
     pub(super) origin: Span,
 }
 
-/// What is known of the set of variables that one root stands for.
-#[derive(Clone, Copy)]
-struct Root {
-    /// How many variables are in the set: a union puts the smaller set under the larger.
-    size: u32,
-    kind: Kind,
-    bound: Option<Type>,
-    /// A failed use reached the set: it reports nothing more.
-    poisoned: bool,
-    /// `write_back` has dealt with the set.
-    reported: bool,
-}
-
 struct Slot {
-    /// This variable's own id for a root. A cell, so that `find` halves a path through `&self`.
-    parent: Cell<u32>,
     /// The next variable of the set, in a circle: two sets join by swapping one `next` of each.
     next: u32,
     origin: Span,
@@ -116,8 +105,6 @@ struct Slot {
     /// The obligations that wait for this variable: each one waits at the one variable that it
     /// needs next. An entry that the obligation has left is stale, and `bind` skips it.
     waiting: Vec<usize>,
-    /// Read for a root only.
-    root: Root,
 }
 
 struct Obligation {
@@ -180,6 +167,8 @@ pub(super) struct Snapshot {
 
 #[derive(Default)]
 pub(super) struct Table {
+    /// The parent and the root record of each variable, which `rebuild` reads.
+    sets: Sets,
     slots: Vec<Slot>,
     obligations: Vec<Obligation>,
     log: Vec<Undo>,
@@ -194,20 +183,43 @@ pub(super) struct Table {
     open_spans: FxHashMap<Span, usize>,
     /// The span of each call node whose open form settled: its closed form's checks are stale.
     settled: FxHashSet<Span>,
-    /// How many times a union or a bind was made or undone. A rebuilt type is good while this
-    /// count does not change.
-    changes: usize,
-    /// The types that `rebuild` made while `changes` had the value in `Rebuilt`. Thus a walk at
-    /// each level of a nested type, such as `[[[x]]]`, rebuilds each level once. Without it, the
-    /// walk rebuilds a level again for each level above it.
-    rebuilt: RefCell<Rebuilt>,
+    /// The types that `rebuild` made, one memo for each `Open`. Thus a walk at each level of a
+    /// nested type, such as `[[[x]]]`, rebuilds each level once. Without it, the walk rebuilds a
+    /// level again for each level above it. An entry is good while no variable that it read has
+    /// changed (see `sets`), so a change rebuilds only the types that read the variable.
+    rebuilt: RefCell<[FxHashMap<Type, Entry>; 3]>,
 }
 
-/// The rebuilt types of `Table::rebuilt`, one memo for each `Open`, made at a count of changes.
-#[derive(Default)]
-struct Rebuilt {
-    changes: usize,
-    memos: [FxHashMap<Type, Type>; 3],
+/// A rebuilt type of `Table::rebuilt`: the ids of the variables that its rebuild read, and the
+/// count of changes when it was made.
+#[derive(Clone, Copy)]
+struct Entry {
+    done: Type,
+    reads: Reads,
+    made: usize,
+}
+
+/// The least and the largest id of the variables that a rebuild read.
+#[derive(Clone, Copy)]
+struct Reads {
+    lo: u32,
+    hi: u32,
+}
+
+impl Reads {
+    fn of(id: u32) -> Reads {
+        Reads { lo: id, hi: id }
+    }
+
+    fn or(reads: Option<Reads>, other: Option<Reads>) -> Option<Reads> {
+        match (reads, other) {
+            (Some(a), Some(b)) => Some(Reads {
+                lo: a.lo.min(b.lo),
+                hi: a.hi.max(b.hi),
+            }),
+            (one, None) | (None, one) => one,
+        }
+    }
 }
 
 /// A generic call whose open form a join can try: an index into the table's list of such calls.
@@ -275,21 +287,12 @@ impl Table {
     pub(super) fn fresh(&mut self, kind: Kind, origin: Span) -> Type {
         #[cfg(test)]
         MADE.set(MADE.get() + 1);
-        let id = u32::try_from(self.slots.len())
-            .expect("a function should make fewer than 2^32 variables");
+        let id = self.sets.push(kind);
         self.slots.push(Slot {
-            parent: Cell::new(id),
             next: id,
             origin,
             literals: Vec::new(),
             waiting: Vec::new(),
-            root: Root {
-                size: 1,
-                kind,
-                bound: None,
-                poisoned: false,
-                reported: false,
-            },
         });
         Type::intern(TypeKind::Infer(InferId(id)))
     }
@@ -302,7 +305,7 @@ impl Table {
             return;
         };
         debug_assert!(
-            self.slots[self.find(id.0) as usize].root.bound.is_none(),
+            self.sets.root(self.find(id.0)).bound.is_none(),
             "a literal check should wait for a variable with no type"
         );
         self.slots[id.0 as usize].literals.push(check);
@@ -393,16 +396,30 @@ impl Table {
                 .expect("the log should hold an entry above the mark")
             {
                 Undo::Union { child, root, was } => {
-                    self.changes += 1;
-                    self.slots[root as usize].root = was;
-                    self.slots[child as usize].parent.set(child);
+                    self.sets.set_root(root, was);
+                    self.sets.link(child, child);
                     self.swap_next(root, child);
                 }
                 Undo::Bind { root } => {
-                    self.changes += 1;
-                    self.slots[root as usize].root.bound = None;
+                    let known = self.sets.root(root);
+                    self.sets.set_root(
+                        root,
+                        Root {
+                            bound: None,
+                            ..known
+                        },
+                    );
                 }
-                Undo::Poison { root } => self.slots[root as usize].root.poisoned = false,
+                Undo::Poison { root } => {
+                    let known = self.sets.root(root);
+                    self.sets.set_root(
+                        root,
+                        Root {
+                            poisoned: false,
+                            ..known
+                        },
+                    );
+                }
                 Undo::Done { obligation } => self.obligations[obligation].done = false,
                 Undo::Literal { at } => {
                     self.slots[at as usize].literals.pop();
@@ -469,7 +486,7 @@ impl Table {
     pub(super) fn unsettled(&mut self, ty: Type) -> Vec<Unsettled> {
         let mut found = Vec::new();
         for root in self.open_roots(ty) {
-            let known = self.slots[root as usize].root;
+            let known = self.sets.root(root);
             if known.kind == Kind::Any && !known.poisoned {
                 found.push(Unsettled {
                     origin: self.first_origin(root),
@@ -485,13 +502,19 @@ impl Table {
     /// nothing more. `false` when `ty` holds none.
     pub(super) fn reported_open(&self, ty: Type) -> bool {
         let roots = self.open_roots(ty);
-        !roots.is_empty() && (roots.iter()).all(|&root| self.slots[root as usize].root.poisoned)
+        !roots.is_empty() && (roots.iter()).all(|&root| self.sets.root(root).poisoned)
     }
 
     fn poison_root(&mut self, root: u32) {
-        let slot = &mut self.slots[root as usize].root;
-        if !slot.poisoned {
-            slot.poisoned = true;
+        let known = self.sets.root(root);
+        if !known.poisoned {
+            self.sets.set_root(
+                root,
+                Root {
+                    poisoned: true,
+                    ..known
+                },
+            );
             self.record(Undo::Poison { root });
         }
     }
@@ -502,13 +525,13 @@ impl Table {
     fn find(&self, mut id: u32) -> u32 {
         let halving = self.open.get() == 0;
         loop {
-            let parent = self.slots[id as usize].parent.get();
+            let parent = self.sets.parent(id);
             if parent == id {
                 return id;
             }
             if halving {
-                let grand = self.slots[parent as usize].parent.get();
-                self.slots[id as usize].parent.set(grand);
+                let grand = self.sets.parent(parent);
+                self.sets.halve(id, grand);
                 id = grand;
             } else {
                 id = parent;
@@ -533,7 +556,7 @@ impl Table {
     fn shallow(&self, mut ty: Type) -> Type {
         while let TypeKind::Infer(id) = ty.kind() {
             let root = self.find(id.0);
-            match self.slots[root as usize].root.bound {
+            match self.sets.root(root).bound {
                 Some(bound) => ty = bound,
                 None => return Type::intern(TypeKind::Infer(InferId(root))),
             }
@@ -560,7 +583,7 @@ impl Table {
             match ty.kind() {
                 TypeKind::Infer(id) => {
                     let root = self.find(id.0);
-                    if let Some(bound) = self.slots[root as usize].root.bound {
+                    if let Some(bound) = self.sets.root(root).bound {
                         stack.push(bound);
                     } else if kept.insert(root) {
                         roots.push(root);
@@ -594,64 +617,78 @@ impl Table {
             return ty;
         }
         let mut rebuilt = self.rebuilt.borrow_mut();
-        // A new memo, not a clear of the old one: a clear walks all the buckets, which an earlier
-        // large type left.
-        if rebuilt.changes != self.changes {
-            *rebuilt = Rebuilt {
-                changes: self.changes,
-                memos: Default::default(),
-            };
-        }
-        let memo = &mut rebuilt.memos[open as usize];
-        self.rebuild_in(ty, open, memo)
+        self.rebuild_in(ty, open, &mut rebuilt[open as usize]).0
     }
 
-    /// `rebuild`, with the types it has met, so that each distinct type is rebuilt once.
-    fn rebuild_in(&self, ty: Type, open: Open, memo: &mut FxHashMap<Type, Type>) -> Type {
+    /// `rebuild`, with the types it has met, so that each distinct type is rebuilt once while the
+    /// variables that it reads do not change. It also gives the ids of the roots that it read.
+    fn rebuild_in(
+        &self,
+        ty: Type,
+        open: Open,
+        memo: &mut FxHashMap<Type, Entry>,
+    ) -> (Type, Option<Reads>) {
         if !ty.holds_infer() {
-            return ty;
+            return (ty, None);
         }
-        if let Some(&done) = memo.get(&ty) {
-            return done;
+        if let Some(&entry) = memo.get(&ty)
+            && self.sets.newest(entry.reads.lo, entry.reads.hi) <= entry.made
+        {
+            return (entry.done, Some(entry.reads));
         }
         #[cfg(test)]
         REBUILDS.set(REBUILDS.get() + 1);
-        let done = ensure_stack(|| match ty.kind() {
+        let (done, reads) = ensure_stack(|| match ty.kind() {
             TypeKind::Infer(id) => {
                 let root = self.find(id.0);
-                let known = self.slots[root as usize].root;
-                match known.bound {
+                let known = self.sets.root(root);
+                let (done, reads) = match known.bound {
                     Some(bound) => self.rebuild_in(bound, open, memo),
                     None => match (open, known.kind) {
-                        (Open::Default, Kind::Int) => Type::I64,
-                        (Open::Key, Kind::Int) => Type::intern(TypeKind::Infer(InferId(u32::MAX))),
-                        (Open::Key, Kind::Any) => {
-                            Type::intern(TypeKind::Infer(InferId(u32::MAX - 1)))
+                        (Open::Default, Kind::Int) => (Type::I64, None),
+                        (Open::Key, Kind::Int) => {
+                            (Type::intern(TypeKind::Infer(InferId(u32::MAX))), None)
                         }
-                        _ => Type::intern(TypeKind::Infer(InferId(root))),
+                        (Open::Key, Kind::Any) => {
+                            (Type::intern(TypeKind::Infer(InferId(u32::MAX - 1))), None)
+                        }
+                        _ => (Type::intern(TypeKind::Infer(InferId(root))), None),
                     },
-                }
+                };
+                (done, Reads::or(Some(Reads::of(root)), reads))
             }
-            TypeKind::Array(inner) => Type::array(self.rebuild_in(inner, open, memo)),
-            TypeKind::Optional(inner) => Type::optional(self.rebuild_in(inner, open, memo)),
+            TypeKind::Array(inner) => {
+                let (inner, reads) = self.rebuild_in(inner, open, memo);
+                (Type::array(inner), reads)
+            }
+            TypeKind::Optional(inner) => {
+                let (inner, reads) = self.rebuild_in(inner, open, memo);
+                (Type::optional(inner), reads)
+            }
             TypeKind::Class(id, args) => {
-                Type::intern(TypeKind::Class(id, self.rebuild_args(args, open, memo)))
+                let (args, reads) = self.rebuild_args(args, open, memo);
+                (Type::intern(TypeKind::Class(id, args)), reads)
             }
             TypeKind::Struct(id, args) => {
-                Type::intern(TypeKind::Struct(id, self.rebuild_args(args, open, memo)))
+                let (args, reads) = self.rebuild_args(args, open, memo);
+                (Type::intern(TypeKind::Struct(id, args)), reads)
             }
             TypeKind::Enum(id, args) => {
-                Type::intern(TypeKind::Enum(id, self.rebuild_args(args, open, memo)))
+                let (args, reads) = self.rebuild_args(args, open, memo);
+                (Type::intern(TypeKind::Enum(id, args)), reads)
             }
             TypeKind::Any(id, args) => {
-                Type::intern(TypeKind::Any(id, self.rebuild_args(args, open, memo)))
+                let (args, reads) = self.rebuild_args(args, open, memo);
+                (Type::intern(TypeKind::Any(id, args)), reads)
             }
-            TypeKind::Assoc(base, interface, args, k) => Type::intern(TypeKind::Assoc(
-                self.rebuild_in(base, open, memo),
-                interface,
-                self.rebuild_args(args, open, memo),
-                k,
-            )),
+            TypeKind::Assoc(base, interface, args, k) => {
+                let (base, base_reads) = self.rebuild_in(base, open, memo);
+                let (args, reads) = self.rebuild_args(args, open, memo);
+                (
+                    Type::intern(TypeKind::Assoc(base, interface, args, k)),
+                    Reads::or(base_reads, reads),
+                )
+            }
             TypeKind::I64
             | TypeKind::U8
             | TypeKind::F64
@@ -660,25 +697,33 @@ impl Table {
             | TypeKind::String
             | TypeKind::Unit
             | TypeKind::Never
-            | TypeKind::Param(..) => ty,
+            | TypeKind::Param(..) => (ty, None),
         });
-        memo.insert(ty, done);
-        done
+        if let Some(reads) = reads {
+            let made = self.sets.changes();
+            memo.insert(ty, Entry { done, reads, made });
+        }
+        (done, reads)
     }
 
     fn rebuild_args(
         &self,
         args: TypeArgs,
         open: Open,
-        memo: &mut FxHashMap<Type, Type>,
-    ) -> TypeArgs {
+        memo: &mut FxHashMap<Type, Entry>,
+    ) -> (TypeArgs, Option<Reads>) {
         if !args.holds_infer() {
-            return args;
+            return (args, None);
         }
+        let mut reads = None;
         let list: Vec<Type> = (args.get().iter())
-            .map(|&arg| self.rebuild_in(arg, open, memo))
+            .map(|&arg| {
+                let (done, read) = self.rebuild_in(arg, open, memo);
+                reads = Reads::or(reads, read);
+                done
+            })
             .collect();
-        TypeArgs::intern(&list)
+        (TypeArgs::intern(&list), reads)
     }
 
     /// Whether `left` and `right` unify, by the pairs of their parts. A pair is met once, and a
@@ -748,28 +793,27 @@ impl Table {
 
     /// Puts the open roots `x` and `y` in one set. A set with an `Int` variable is an `Int`.
     fn union(&mut self, x: u32, y: u32) {
-        let (big, small) = if self.slots[x as usize].root.size >= self.slots[y as usize].root.size {
+        let (big, small) = if self.sets.root(x).size >= self.sets.root(y).size {
             (x, y)
         } else {
             (y, x)
         };
-        let (was, other) = (
-            self.slots[big as usize].root,
-            self.slots[small as usize].root,
-        );
-        self.changes += 1;
-        self.slots[small as usize].parent.set(big);
-        self.slots[big as usize].root = Root {
-            size: was.size + other.size,
-            kind: if was.kind == Kind::Int || other.kind == Kind::Int {
-                Kind::Int
-            } else {
-                Kind::Any
+        let (was, other) = (self.sets.root(big), self.sets.root(small));
+        self.sets.link(small, big);
+        self.sets.set_root(
+            big,
+            Root {
+                size: was.size + other.size,
+                kind: if was.kind == Kind::Int || other.kind == Kind::Int {
+                    Kind::Int
+                } else {
+                    Kind::Any
+                },
+                bound: None,
+                poisoned: was.poisoned || other.poisoned,
+                reported: was.reported || other.reported,
             },
-            bound: None,
-            poisoned: was.poisoned || other.poisoned,
-            reported: was.reported || other.reported,
-        };
+        );
         self.swap_next(big, small);
         self.record(Undo::Union {
             child: small,
@@ -781,10 +825,10 @@ impl Table {
     /// Gives the open root `root` the type `ty`, which is no open variable. It fails when the kind
     /// of the root does not take `ty`, or `ty` holds the root. The checks that wait are ready then.
     fn bind(&mut self, root: u32, ty: Type) -> bool {
-        let known = self.slots[root as usize].root;
+        let known = self.sets.root(root);
         let fits = match known.kind {
             Kind::Int => matches!(ty.kind(), TypeKind::I64 | TypeKind::U8 | TypeKind::F64),
-            Kind::Any => !self.open_roots(ty).contains(&root),
+            Kind::Any => !self.occurs(root, ty),
         };
         if !fits {
             return false;
@@ -838,9 +882,28 @@ impl Table {
         }
     }
 
+    /// Whether the open root `root` is in `ty`: the occurs check. A resolved type names only open
+    /// roots, so a root outside the range of its variables is not in it.
+    // shortcut: a range is wider than a set. Take `let x = 1`, then `Pair(a: Pair(... a: x, b: 1),
+    // b: 1)`: the innermost leaf is an older open variable, and the other leaves are new ones. So
+    // each root is inside the range, and each bind walks the type. Keep the exact set of the
+    // variables of each type when that shape shows in a profile.
+    fn occurs(&self, root: u32, ty: Type) -> bool {
+        match self.resolve(ty).infer_range() {
+            Some((lo, hi)) if (lo..=hi).contains(&root) => self.open_roots(ty).contains(&root),
+            _ => false,
+        }
+    }
+
     fn bind_raw(&mut self, root: u32, ty: Type) {
-        self.changes += 1;
-        self.slots[root as usize].root.bound = Some(ty);
+        let known = self.sets.root(root);
+        self.sets.set_root(
+            root,
+            Root {
+                bound: Some(ty),
+                ..known
+            },
+        );
         self.record(Undo::Bind { root });
     }
 
@@ -883,8 +946,6 @@ pub(super) struct Written {
     pub(super) open: bool,
     /// The types that `settle` has walked.
     seen: FxHashSet<Type>,
-    /// The types that `put` has rebuilt.
-    memo: FxHashMap<Type, Type>,
 }
 
 impl Written {
@@ -896,11 +957,17 @@ impl Written {
             return;
         }
         for root in table.open_roots_in(ty, &mut self.seen) {
-            let known = table.slots[root as usize].root;
+            let known = table.sets.root(root);
             match known.kind {
                 Kind::Int => table.bind_raw(root, Type::I64),
                 Kind::Any => {
-                    table.slots[root as usize].root.reported = true;
+                    table.sets.set_root(
+                        root,
+                        Root {
+                            reported: true,
+                            ..known
+                        },
+                    );
                     if !known.poisoned && !known.reported {
                         self.unsettled.push(Unsettled {
                             origin: table.first_origin(root),
@@ -916,7 +983,7 @@ impl Written {
         if !ty.holds_infer() {
             return;
         }
-        *ty = table.rebuild_in(*ty, Open::Keep, &mut self.memo);
+        *ty = table.resolve(*ty);
         self.open |= ty.holds_infer();
     }
 
@@ -1529,6 +1596,74 @@ mod tests {
     /// A type of `Struct 0` that holds each of `args`.
     fn holding(args: &[Type]) -> Type {
         Type::intern(TypeKind::Struct(tir::StructId(0), TypeArgs::intern(args)))
+    }
+
+    /// A seeded random run of `fresh`, `unify`, `poison`, `snapshot`, `rollback` and `keep`. After
+    /// each step, `resolve`, `default_open` and `key` of each type made so far give what a rebuild
+    /// with an empty memo gives. So no memo entry outlives a change that it read.
+    #[test]
+    fn rebuilt_types_should_match_a_rebuild_with_an_empty_memo() {
+        for seed in 1..=100_u64 {
+            let mut state = seed;
+            let mut next = |below: usize| {
+                // xorshift64: the run is the same for each seed.
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                usize::try_from(state % below as u64).expect("the value should fit a usize")
+            };
+            let mut table = Table::default();
+            let (mut vars, mut types, mut open) = (Vec::new(), Vec::new(), Vec::new());
+            for step in 0..120 {
+                match next(8) {
+                    0 | 1 => {
+                        let kind = if next(3) == 0 { Kind::Int } else { Kind::Any };
+                        vars.push(table.fresh(kind, at(step)));
+                    }
+                    2..=4 if !vars.is_empty() => {
+                        let a = random_type(&mut next, &vars, 3);
+                        let b = random_type(&mut next, &vars, 3);
+                        types.extend([a, b]);
+                        drop(table.unify(a, b));
+                    }
+                    5 if !vars.is_empty() => table.poison(vars[next(vars.len())]),
+                    6 => open.push(table.snapshot()),
+                    _ => match open.pop() {
+                        Some(snapshot) if next(2) == 0 => table.rollback(snapshot),
+                        Some(snapshot) => {
+                            drop(table.keep(snapshot));
+                        }
+                        None => {}
+                    },
+                }
+                for &ty in types.iter().chain(&vars) {
+                    for (open, read) in [
+                        (Open::Keep, table.resolve(ty)),
+                        (Open::Default, table.default_open(ty)),
+                        (Open::Key, table.key(ty)),
+                    ] {
+                        let fresh = table.rebuild_in(ty, open, &mut FxHashMap::default()).0;
+                        assert_eq!(read, fresh, "seed {seed}, step {step}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// A random type of at most `depth` levels over the variables `vars`.
+    fn random_type(next: &mut impl FnMut(usize) -> usize, vars: &[Type], depth: u32) -> Type {
+        let pick = if depth == 0 { next(3) } else { next(7) };
+        match pick {
+            0 => vars[next(vars.len())],
+            1 => Type::I64,
+            2 => Type::BOOL,
+            3 => Type::array(random_type(next, vars, depth - 1)),
+            4 => Type::optional(random_type(next, vars, depth - 1)),
+            _ => holding(&[
+                random_type(next, vars, depth - 1),
+                random_type(next, vars, depth - 1),
+            ]),
+        }
     }
 
     #[test]
