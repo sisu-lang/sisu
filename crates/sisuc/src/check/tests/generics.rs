@@ -8399,17 +8399,39 @@ fn literal_program(stmt: &str) -> String {
 #[test]
 fn call_of_literals_should_bind_the_payload_when_its_declared_type_holds_an_unrelated_optional() {
     let rows: Vec<ErrorRow<'_>> = vec![
-        ("u1", literal_program("let x: i64?? = snd(kp(5))"), vec![]),
         (
             "u2",
             literal_program("let p: Pr<i64?, u8>? = first(kl(5))"),
             vec![],
         ),
-        ("u3", literal_program("let x: i64?? = snd(kv(5))"), vec![]),
         (
             "u4",
             literal_program("let x: i64?? = two(snd(kp(5)), None)"),
             vec![],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a generic call of literals whose result is `i64`, under `i64??`
+/// WHEN the program is checked
+/// THEN it reports one E0032, as the value needs two wraps
+///
+/// Q24: a closed call's result wraps at most once at its top, and each member of an open call
+/// wraps at most once. The closed form gives `i64`, which needs two wraps; the open form needs two
+/// wraps of `5`. Both rows are valid on `main`, as `let s: u8?? = id(1)` is (S25).
+#[test]
+fn call_of_literals_under_two_more_optionals_should_report_the_second_wrap() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "u1",
+            literal_program("let x: i64?? = snd(kp(5))"),
+            vec![(Code::Mismatch, (9, 24))],
+        ),
+        (
+            "u3",
+            literal_program("let x: i64?? = snd(kv(5))"),
+            vec![(Code::Mismatch, (9, 20))],
         ),
     ];
     error_rows(&rows);
