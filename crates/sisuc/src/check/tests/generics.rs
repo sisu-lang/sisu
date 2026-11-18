@@ -9058,3 +9058,92 @@ fn a_plain_none_after_a_broken_bound_should_add_no_report() {
     );
     codes(&src, &[(Code::NotConform, (15, 7))]);
 }
+
+/// GIVEN a parameter that is an array of an optional of `T`, or an array of arrays of it
+/// WHEN an array literal of plain values, or of arrays of `None` and values, is the argument
+/// THEN each element wraps into its part and the program checks, as on `main`
+/// AND a `[]` beside a `None` still leaves `T` with no type
+#[test]
+fn an_array_argument_should_wrap_each_element_into_its_optional_part() {
+    use Code::CannotInfer;
+    check_partial_rows(&[
+        ("fn g1<T>(xs: [T?]) {}\n", "g1([1, 2])", &[]),
+        ("fn g4<T>(xs: [[T?]]) {}\n", "g4([[None], [1]])", &[]),
+        (
+            "fn g1<T>(xs: [T?]) {}\n",
+            "g1([None, []])",
+            &[(CannotInfer, "g1(")],
+        ),
+    ]);
+}
+
+/// Two conformances of `S` that each give a method `name`.
+const TWO_NAMES: &str = "interface Label {\n    fn name(self) -> string\n}\n\
+                         interface Code {\n    fn name(self) -> i64\n}\n\
+                         struct S {\n}\n\
+                         extend S: Label {\n    fn name(self) -> string { \"a\" }\n}\n\
+                         extend S: Code {\n    fn name(self) -> i64 { 7 }\n}\n";
+
+/// GIVEN a method call that only its context can pick, from two conformances
+/// WHEN it is the argument of a bare type parameter that nothing else gives a type
+/// THEN the call reports E0050 for that parameter, as on `main`, and not the ambiguous method
+/// AND a written type on the `let` picks the method, and the program checks
+#[test]
+fn a_method_that_waits_at_a_bare_parameter_should_report_cannot_infer() {
+    use Code::CannotInfer;
+    check_rows_after(
+        TWO_NAMES,
+        &[
+            (
+                "",
+                "let s = S()\nlet x = id(s.name())",
+                &[(CannotInfer, "id(")],
+            ),
+            ("", "let s = S()\nlet x: string = id(s.name())", &[]),
+        ],
+    );
+}
+
+/// Declarations of the bounds that name another type parameter.
+const NAMED_BOUND_DECLS: &str = "interface K<X> {\n}\n\
+                                 struct V: K<i64> {\n}\n\
+                                 struct Plain {\n}\n";
+
+/// GIVEN `fn h<T: K<U>, U>`, whose bound on `T` names `U`
+/// WHEN the arguments give `U` the type `string` and `T` the type `V`, which conforms to `K<i64>`
+/// THEN the bound reports E0154 at the argument that holds the member of `T`, as on `main`,
+/// and no join conflict
+#[test]
+fn a_bound_that_names_a_later_parameter_should_be_checked_with_its_type() {
+    check_rows_after(
+        NAMED_BOUND_DECLS,
+        &[(
+            "fn h<T: K<U>, U>(_a: T, _b: U, _c: Two<T, U>) {}\n",
+            "h(5, \"s\", Two.P(V(), \"t\"))",
+            &[(Code::NotConform, "Two.P(")],
+        )],
+    );
+}
+
+/// GIVEN a bound that names a type parameter whose own bound breaks, or a second bound beside it
+/// WHEN the member of that parameter breaks its own bound
+/// THEN only that bound reports, as on `main`
+#[test]
+fn a_broken_bound_should_hide_the_bounds_that_name_its_parameter() {
+    use Code::NotConform;
+    check_rows_after(
+        NAMED_BOUND_DECLS,
+        &[
+            (
+                "fn hi<T: I, U: K<T.Item>>(_p: Two<T, U>) {}\n",
+                "hi(Two.P(Plain(), V()))",
+                &[(NotConform, "Two.P(")],
+            ),
+            (
+                "fn h2<T: I & K<U>, U>(_a: T, _b: U) {}\n",
+                "let a = 5\nlet b = \"s\"\nh2(a, b)",
+                &[(NotConform, "a, b")],
+            ),
+        ],
+    );
+}
