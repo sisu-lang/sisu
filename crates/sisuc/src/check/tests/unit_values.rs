@@ -1739,3 +1739,20 @@ fn mut_self_rows(rows: &[MutSelfRow<'_>]) {
         red.join("\n")
     );
 }
+
+/// GIVEN `fn g1<T>(xs: [T?])` and an array literal of `unit` values as its argument
+/// WHEN no element of another type is in the array
+/// THEN `T` is `unit`, as on `main`; a `unit` beside a number is E0043, in each order
+#[test]
+fn unit_elements_should_bind_an_open_optional_element_type() {
+    let decls = "fn g1<T>(xs: [T?]) {}\nfn main() {\n    ";
+    let rows: [(&str, &[Wanted]); 4] = [
+        ("g1([print(1), print(2)])", &[]),
+        ("g1([print(1), None])", &[]),
+        ("g1([print(1), 2])", &[(Code::NoValue, (3, 9))]),
+        ("g1([2, print(1)])", &[(Code::NoValue, (3, 12))]),
+    ];
+    for (call, expected) in rows {
+        codes_row(call, &format!("{decls}{call}\n}}"), expected);
+    }
+}

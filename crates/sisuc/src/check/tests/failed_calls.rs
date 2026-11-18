@@ -618,3 +618,29 @@ fn a_call_of_a_local_that_is_also_a_method_should_offer_the_method() {
         "class Num {\n    fn value(self) -> i64 {\n        1\n    }\n}\nfn f(value: i64, n: Num) {\n    n.value()\n}\nfn main() {}"
     );
 }
+
+/// GIVEN a generic call with a label that the callee does not take, and a parameter that nothing
+///     fixes
+/// WHEN the call is the argument of another generic call
+/// THEN the open parameter is E0050 beside the E0055, and a `let` with a written type fixes it
+#[test]
+fn a_labeled_generic_call_should_still_report_an_open_parameter() {
+    let decls = "fn id<T>(x: T) -> T { x }\nfn first<T>(xs: [T]) -> T? { None }\nfn main() {\n    ";
+    let rows: [(&str, &[Wanted]); 3] = [
+        (
+            "let _a = id(first(xs: []))",
+            &[(Code::CannotInfer, (4, 14)), (LabeledArgument, (4, 23))],
+        ),
+        (
+            "let _a: i64? = id(first(xs: []))",
+            &[(LabeledArgument, (4, 29))],
+        ),
+        (
+            "let _a: [i64]? = id(first(xs: []))",
+            &[(LabeledArgument, (4, 31))],
+        ),
+    ];
+    for (call, expected) in rows {
+        codes_row(call, &format!("{decls}{call}\n}}"), expected);
+    }
+}

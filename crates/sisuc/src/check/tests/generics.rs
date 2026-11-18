@@ -9147,3 +9147,69 @@ fn a_broken_bound_should_hide_the_bounds_that_name_its_parameter() {
         ],
     );
 }
+
+/// The declarations of `each_waiting_call_of_a_generic_call_should_report_its_own_mistake`: `g`
+/// names `T` in a struct and in a `Result`, and `mk` and `mk2` leave their own parameters to their
+/// context. The call is on line 9.
+const WAITING_DECLS: &str = "struct Two<A, B> {\n    a: A\n    b: B\n}\n\
+    fn mk<E>() -> Result<i64, E> { Ok(1) }\n\
+    fn mk2<X>() -> Two<X, bool> { panic(\"e\") }\n\
+    fn g<T>(_c: Two<T, bool>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn main() {\n    ";
+
+/// GIVEN a generic call whose arguments are generic calls at parameters that are not a bare `T`
+/// WHEN an argument does not fit its parameter, or a waiting call keeps its own parameter open
+/// THEN each misfit is E0032, and each waiting call reports its own open parameter (E0050), as
+///     on `main`
+#[test]
+fn each_waiting_call_of_a_generic_call_should_report_its_own_mistake() {
+    use Code::{CannotInfer, Mismatch};
+    with_prelude();
+    let rows: [(&str, &[Wanted]); 3] = [
+        (
+            "print(g(mk2(), mk2()))",
+            &[(CannotInfer, (9, 13)), (Mismatch, (9, 20))],
+        ),
+        (
+            "print(g(mk2(), Err(\"e\")))",
+            &[(CannotInfer, (9, 13)), (CannotInfer, (9, 20))],
+        ),
+        (
+            "print(g(mk(), mk2()))",
+            &[(Mismatch, (9, 13)), (Mismatch, (9, 19))],
+        ),
+    ];
+    for (call, expected) in rows {
+        codes_row(call, &format!("{WAITING_DECLS}{call}\n}}"), expected);
+    }
+}
+
+/// The declarations of `a_bound_with_an_open_number_should_check_the_associated_type_part`: the
+/// bound of `S` names `U`, and `P` conforms to `Holds<i64>` with `Item = string`. The call is on
+/// line 13.
+const OPEN_NUMBER_BOUND_DECLS: &str = "interface Holds<Y> {\n    type Item\n}\n\
+    enum Two<A, B> {\n    P(A, B)\n}\n\
+    struct P: Holds<i64> {\n    type Item = string\n}\n\
+    fn h<S: Holds<U>, U>(_s: S, _p: Two<S.Item, U>) {}\n\
+    fn k<S: Holds<U>, U>(_p: Two<S.Item, U>, _s: S) {}\n\
+    fn main() {\n    ";
+
+/// GIVEN `fn h<S: Holds<U>, U>(_s: S, _p: Two<S.Item, U>)`, with `U` from an integer literal
+/// WHEN the part of the argument at `S.Item` is not the `Item` of `S`
+/// THEN the argument is E0032, in either order of the parameters, as on `main`
+#[test]
+fn a_bound_with_an_open_number_should_check_the_associated_type_part() {
+    let rows: [(&str, &[Wanted]); 4] = [
+        ("h(P(), Two.P(5, 4))", &[(Code::Mismatch, (13, 12))]),
+        ("h(P(), Two.P(true, 4))", &[(Code::Mismatch, (13, 12))]),
+        ("k(Two.P(5, 4), P())", &[(Code::Mismatch, (13, 7))]),
+        ("h(P(), Two.P(\"s\", 4))", &[]),
+    ];
+    for (call, expected) in rows {
+        codes_row(
+            call,
+            &format!("{OPEN_NUMBER_BOUND_DECLS}{call}\n}}"),
+            expected,
+        );
+    }
+}
