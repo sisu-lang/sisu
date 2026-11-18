@@ -1,0 +1,14 @@
+error[E0032]: expected `Two<i64?, i64>`, found `Two<i64, bool>`
+ --> E0032-literal-fills-place.sisu:9:8
+  |
+9 |     gn(t, 1)
+  |        ^
+
+error[E0032]: expected `Two<i64?, i64>`, found `Two<i64, bool>`
+  --> E0032-literal-fills-place.sisu:10:8
+   |
+10 |     gn(mk(), 1)
+   |        ^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032
