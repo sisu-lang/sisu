@@ -234,6 +234,7 @@ fn both<T>(a: T, b: T) -> [T] { [a, b] }
 fn eo<T>() -> [T?] { [] }
 fn named_part<T: Named>(x: T) -> [T] { [x] }
 fn named_whole<T: Named>(x: T) -> T { x }
+fn named_two<T: Named>(x: T, _y: T) -> T { x }
 interface Kn<U> {
     fn kn(self, u: U) -> i64
 }
@@ -818,3 +819,8 @@ let _a = pick(fk(Kc(), 3), Bk(v: $))
 # gives the payload, and the call's result wraps once at the top.
 let _a: i64? = tfst(wk().mkb(), $)
 let _a: i64?? = tfst(wk().mkb(), $)
+# A bounded call under a required type that breaks the bound: with closed members the call reports
+# as a whole, and with a literal member the report is at the member that the type does not fit.
+let _a: i64 = named_whole($)
+let _a: i64 = named_two($, $)
+let _a: Rock = named_two($, Cat())

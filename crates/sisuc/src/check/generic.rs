@@ -2871,15 +2871,23 @@ impl Checker<'_> {
             return Expectation::Member;
         }
         let snapshot = self.table.snapshot();
-        let opens = self.join_type(members, Some(name), Some(part)).is_some()
-            && self.unify(ret.subst(&with_part), want)
-            && bounds.is_none_or(|bounds| {
-                (bounds.list.iter()).all(|bound| {
-                    let args = self.subst_args(bound.args, &with_part);
-                    part.holds_infer() || self.conforms(part, bound.interface, args)
-                })
-            });
+        let holds_bounds = bounds.is_none_or(|bounds| {
+            (bounds.list.iter()).all(|bound| {
+                let args = self.subst_args(bound.args, &with_part);
+                part.holds_infer() || self.conforms(part, bound.interface, args)
+            })
+        });
+        let opens = holds_bounds
+            && self.join_type(members, Some(name), Some(part)).is_some()
+            && self.unify(ret.subst(&with_part), want);
         self.table.rollback(snapshot);
+        // A part that breaks a bound of `t` is no type of `t`. When the members are closed, the
+        // closed form reports the call as a whole, as on `main`.
+        let closed_members = (members.iter())
+            .all(|m| type_of(m.value).is_some_and(|ty| !self.table.resolve(ty).holds_infer()));
+        if !holds_bounds && closed_members {
+            return Expectation::Member;
+        }
         // Neither form takes `want`. Members that differ from the part only by its wraps take too
         // many (Q24): the call reports as a whole. Else each member that does not take the part
         // gets the directed report.
@@ -3977,6 +3985,15 @@ impl Checker<'_> {
         let TypeKind::Param(_, t) = bare.kind() else {
             return None;
         };
+        // A bound of `T` takes the member's own type, so the call reports as a whole, as on
+        // `main`.
+        let bounded = (t as usize)
+            .checked_sub(sig.owner.len())
+            .and_then(|k| sig.bounds.get(k))
+            .is_some_and(|bounds| !bounds.list.is_empty());
+        if bounded {
+            return None;
+        }
         let &(_, at, got, param) = lone.iter().find(|&&(i, ..)| i == t as usize)?;
         let mut with = with.to_vec();
         with[t as usize] = wanted;
