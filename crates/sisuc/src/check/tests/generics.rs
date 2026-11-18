@@ -9308,7 +9308,9 @@ const OPEN_BOUND_DECLS: &str = "interface Seen {\n    fn seen(self) -> i64\n}\n\
 /// GIVEN a generic call whose open form can give a bounded parameter a type that breaks its bound
 /// WHEN the join around the call gives that type through an open variable
 /// AND the variable is from `eo()` or a literal, in each order, or under a required type
-/// THEN the bound reports (E0154), or the closed form reports the join (E0032), as on `main`
+/// THEN the broken bound fails the candidate: the join reports (E0032) in each order, and under
+/// a required type the member that does not convert reports, as on `main`
+/// AND a bound that no member closes reports at its call (E0154)
 /// AND the open form does not settle the call with the broken bound
 #[test]
 fn an_open_call_should_check_each_bound_that_its_open_form_changes() {
@@ -9316,14 +9318,15 @@ fn an_open_call_should_check_each_bound_that_its_open_form_changes() {
     let bound = |needle: &'static str| Some((Code::NotConform, needle));
     let join = Some((Code::Mismatch, "pick"));
     let rows: [(&str, Option<(Code, &str)>); 14] = [
-        // The bound of an open parameter at a part, with the open variable of `eo()`.
-        ("print(pick(eo(), part(Eye(v: 1))).len())", bound("Eye(")),
-        ("print(pick(part(Eye(v: 1)), eo()).len())", bound("Eye(")),
+        // The bound of an open parameter at a part, with the open variable of `eo()`: the
+        // candidate `[Eye?]` breaks `T: Seen`, so it fails, in each order.
+        ("print(pick(eo(), part(Eye(v: 1))).len())", join),
+        ("print(pick(part(Eye(v: 1)), eo()).len())", join),
         (
             "let x: [Eye?] = pick(eo(), part(Eye(v: 1)))\n    print(x.len())",
-            bound("Eye("),
+            Some((Code::Mismatch, "part(")),
         ),
-        // A bound whose subject and interface argument both reopen.
+        // A bound whose subject and interface argument both reopen, and that no member closes.
         ("print(pick(ep(), f3(X(), 3)).a.len())", bound("X()")),
         ("print(pick(f3(X(), 3), ep()).a.len())", bound("X()")),
         // The bound of a closed parameter that names an open one: the open form breaks it, and
@@ -9354,7 +9357,8 @@ fn an_open_call_should_check_each_bound_that_its_open_form_changes() {
 /// WHEN a join around the call gives `U` its type after the call
 /// THEN the bound is checked with that type: E0154 when it breaks, as on `main`
 /// AND no error when it holds, also when `U` is not `i64`
-/// AND when the open form of the call settles, only the open form's types are checked
+/// AND when the open form of the call settles, only the open form's types are checked: a broken
+/// bound of the open form fails the candidate (E0032 at the join)
 #[test]
 fn a_bound_should_wait_for_an_interface_argument_that_closes_after_its_subject() {
     with_prelude();
@@ -9383,10 +9387,11 @@ fn a_bound_should_wait_for_an_interface_argument_that_closes_after_its_subject()
         // The open form `f<Z, u8?>` settles: the closed form's `Z: K<u8>` is not checked.
         ("print(pick(f(Z(), 3), Box<u8?>(v: None)).v ?? 0)", None),
         ("print(pick(Box<u8?>(v: None), f(Z(), 3)).v ?? 0)", None),
-        // The open form `f3<X?, u8?>` breaks its bound once, at the open form's types.
+        // The open form `f3<X?, u8?>` breaks its bound: the candidate fails, and the join
+        // reports once.
         (
             "print(pick3(ep(), f3(X(), 3), P2<[X?], [u8?]>(a: [], b: [])).a.len())",
-            bound,
+            Some((Code::Mismatch, "pick3")),
         ),
     ];
     let more = "struct Y: K<u8> {\n    fn k(self, u: u8) -> i64 { 7 }\n}\n\
@@ -9577,4 +9582,176 @@ fn a_required_type_should_name_the_argument_that_fails_beside_an_open_one() {
     })
     .collect();
     error_rows(&rows);
+}
+
+/// The rows of a join test: each statement goes into `main` after `decls`, with the errors
+/// that it gives as `(code, needle)`, each found in the statement.
+fn join_rows(decls: &str, rows: &[(&str, &[(Code, &str)])]) {
+    let rows: Vec<ErrorRow<'_>> = (rows.iter())
+        .map(|&(row, wanted)| {
+            let src = format!("{decls}{row}\n}}");
+            let wanted = (wanted.iter())
+                .map(|&(code, needle)| (code, in_row(&src, row, needle)))
+                .collect();
+            (row, src, wanted)
+        })
+        .collect();
+    error_rows(&rows);
+}
+
+/// GIVEN a generic call with a `mut` argument at a place of `T`, under a required type
+/// WHEN the `mut` argument does not have the type that the required type gives `T`
+/// THEN the `mut` argument is no member of the join: `T` takes the required type, and the
+///   `mut` argument is E0170 only, as on `main`
+/// AND another argument that does not fit `T` keeps its own E0032, as on `main`
+#[test]
+fn a_mut_argument_should_not_decide_its_parameter_under_a_required_type() {
+    let decls = "fn put<T>(mut xs: [T], x: T) -> T {\n    xs = [x]\n    xs[0]\n}\n\
+        fn pick<T>(a: T, _b: T) -> T { a }\n\
+        fn main() {\n    let mut names = [\"a\"]\n    ";
+    let e170 = Code::MutArgumentType;
+    join_rows(
+        decls,
+        &[
+            (
+                "let x: i64 = put(mut names, 1)\n    print(x)",
+                &[(e170, "names")],
+            ),
+            (
+                "let x: i64 = put(mut names, \"s\")\n    print(x)",
+                &[(e170, "names"), (Code::Mismatch, "\"s\"")],
+            ),
+            (
+                "let x: i64? = put(mut names, 1)\n    print(x ?? 0)",
+                &[(e170, "names")],
+            ),
+            // The controls: the `mut` argument fits, and a call with no required type.
+            ("let x: string = put(mut names, \"s\")\n    print(x)", &[]),
+            (
+                "let x = pick(1, put(mut names, 2))\n    print(x)",
+                &[(Code::Mismatch, "2")],
+            ),
+        ],
+    );
+}
+
+/// GIVEN a generic method call with arguments, plain or after `?.`, as a member of the join of
+/// a generic call
+/// WHEN the join takes a candidate
+/// THEN the method's type parameter takes its part of the candidate, as a plain generic call
+///   does: the programs that `main` accepts are valid
+/// AND a member that does not fit keeps its E0032
+/// AND with a second method of the same name that takes `mut self`, the literal keeps its
+///   default type, as on `main`
+#[test]
+fn a_generic_method_call_with_arguments_should_take_part_in_the_join() {
+    let decls = "struct B {\n    k: i64\n    fn get<T>(self, x: T) -> T { x }\n}\n\
+        fn pick<T>(a: T, _b: T) -> T { a }\n\
+        fn main() {\n    let b: B? = Some(B(k: 1))\n    let bx = B(k: 2)\n    ";
+    join_rows(
+        decls,
+        &[
+            ("let x: i64? = pick(1, b?.get(1))\n    print(x ?? 0)", &[]),
+            ("let x: i64? = pick(b?.get(1), 1)\n    print(x ?? 0)", &[]),
+            ("let x = pick(1, b?.get(1))\n    print(x ?? 0)", &[]),
+            (
+                "let x: i64? = pick(1, bx.get(Some(2)))\n    print(x ?? 0)",
+                &[],
+            ),
+            (
+                "let x: u8? = pick(bx.get(1), 2)\n    print(x ?? 0)\n    print(b?.k ?? 0)",
+                &[],
+            ),
+            (
+                "let x: u8 = pick(bx.get(1), \"s\")\n    print(x)\n    print(b?.k ?? 0)",
+                &[(Code::Mismatch, "\"s\"")],
+            ),
+        ],
+    );
+    let decls = "struct Bx {\n    v: i64\n    fn m<U>(self, u: U) -> U { u }\n}\n\
+        struct A {\n    n: i64\n    fn m(mut self) { self.n = 1 }\n}\n\
+        fn id<T>(t: T) -> T { t }\n\
+        fn main() {\n    let b = Bx(v: 1)\n    ";
+    join_rows(
+        decls,
+        &[(
+            "let u: u8 = id(b.m(1))\n    print(u)",
+            &[(Code::Mismatch, "b.m(1)")],
+        )],
+    );
+}
+
+/// GIVEN a block with statements before its value, as a member of the join of a generic call
+/// WHEN the join takes a candidate
+/// THEN the block's value takes the candidate, as a block with no statements does: the
+///   programs that `main` accepts are valid
+/// AND a block whose value is `never` gives E0138, as on `main`
+#[test]
+fn a_block_with_statements_should_take_part_in_the_join() {
+    let decls = "fn pick<T>(a: T, _b: T) -> T { a }\nfn id<T>(x: T) -> T { x }\n\
+        fn main() {\n    let c = [1].len() == 1\n    ";
+    join_rows(
+        decls,
+        &[
+            (
+                "let x: i64? = pick(1, { let y = 2; Some(y) })\n    print(x ?? 0)\n    print(c)",
+                &[],
+            ),
+            (
+                "let x: i64? = pick({ let y = 2; Some(y) }, 1)\n    print(x ?? 0)\n    print(c)",
+                &[],
+            ),
+            (
+                "let x = pick(1, { let y = 2; Some(y) })\n    print(x ?? 0)\n    print(c)",
+                &[],
+            ),
+            (
+                "let x = id({ if c { break }; return 1 })",
+                &[
+                    (Code::TypeArgument, "{ if"),
+                    (Code::JumpOutsideLoop, "break"),
+                    (Code::UnexpectedReturnValue, "1 })"),
+                ],
+            ),
+        ],
+    );
+}
+
+/// GIVEN a generic call `f3` whose open form gives its bounded `T` a type that breaks the bound
+/// AND a member of the outer join that closes that type after `f3`, or before it
+/// WHEN the outer join tests the candidate
+/// THEN the broken bound fails the candidate, and the outer call reports its join once (E0032),
+///   in each order of the members
+/// AND no E0154 is given for the open form
+#[test]
+fn a_broken_bound_of_an_open_form_should_fail_the_candidate_in_each_order() {
+    let decls = "interface K<U> { fn k(self, u: U) -> i64 }\n\
+        struct X: K<i64> { fn k(self, u: i64) -> i64 { u } }\n\
+        struct P2<A, B> {\n    a: A\n    b: B\n}\n\
+        fn f3<T: K<U>, U>(x: T, u: U) -> P2<[T], [U]> {\n    print(x.k(u))\n    P2(a: [x], b: [u])\n}\n\
+        fn ep<A, B>() -> P2<[A?], [B?]> { P2(a: [], b: []) }\n\
+        fn pick3<T>(a: T, _b: T, _c: T) -> T { a }\n\
+        fn main() {\n    ";
+    let join: &[(Code, &str)] = &[(Code::Mismatch, "pick3")];
+    join_rows(
+        decls,
+        &[
+            (
+                "print(pick3(ep(), f3(X(), 3), P2<[X?], [u8?]>(a: [], b: [])).a.len())",
+                join,
+            ),
+            (
+                "print(pick3(f3(X(), 3), ep(), P2<[X?], [u8?]>(a: [], b: [])).a.len())",
+                join,
+            ),
+            (
+                "print(pick3(P2<[X?], [u8?]>(a: [], b: []), ep(), f3(X(), 3)).a.len())",
+                join,
+            ),
+            (
+                "print(pick3(ep(), f3(X(), None), P2<[X?], [string?]>(a: [], b: [])).a.len())",
+                join,
+            ),
+        ],
+    );
 }

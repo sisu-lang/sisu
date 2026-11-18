@@ -255,6 +255,11 @@ enum Lg {
     fn log(self) {}
 }
 fn olg() -> Lg? { None }
+// A generic method with an argument on a struct, plain and after `?.`.
+struct Sw {
+    fn wrap<T>(self, v: T) -> T { v }
+}
+fn osw() -> Sw? { Sw() }
 fn generic<U: Named, V, W: Km>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?, w: W?, st: St) {
     let mut mq: (any Pet)? = op
     let mut mu = g()
@@ -785,3 +790,20 @@ let _a: [i64?] = both($, None)
 let _a: [i64?] = both(None, $)
 let _a: i64? = pick($, None)
 let _a: i64? = pick(None, $)
+# A `mut` argument is no member of the join under a required type, with a literal and with the
+# value as the other argument.
+let _a: i64 = mput(mut $, 1)
+let _a: i64 = mput(mut ["a"], $)
+# A generic method call with an argument is a member of the join: plain and after `?.`, in each
+# order, under a required type and with none.
+let _a: i64? = pick(1, osw()?.wrap($))
+let _a = pick($, osw()?.wrap(1))
+let _a: i64? = pick(Sw().wrap($), 1)
+# A block with statements is a member of the join, in each order.
+let _a: i64? = pick(1, { let _y = 2; $ })
+let _a = pick({ let _y = 2; $ }, 1)
+# A bound of an open form fails the candidate that breaks it, in each order: the value is the
+# member that closes the bound's types.
+let _a = pick(eo(), named_part($))
+let _a = pick(named_part($), eo())
+let _a = pick(fk(Kc(), 3), Bk(v: $))
