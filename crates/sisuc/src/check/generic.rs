@@ -2905,18 +2905,21 @@ impl Checker<'_> {
         let holds_bounds = bounds.is_none_or(|bounds| {
             (bounds.list.iter()).all(|bound| {
                 let args = self.subst_args(bound.args, &with_part);
-                part.holds_infer() || self.conforms(part, bound.interface, args)
+                // A bound that names another open parameter, as `K<U>`, is not known to fail.
+                let open = (args.get().iter()).any(|&arg| arg.has_param() || arg.holds_infer());
+                part.holds_infer() || open || self.conforms(part, bound.interface, args)
             })
         });
         let opens = holds_bounds
             && self.join_type(members, Some(name), Some(part)).is_some()
             && self.unify(ret.subst(&with_part), want);
         self.table.rollback(snapshot);
-        // A part that breaks a bound of `t` is no type of `t`. When the members are closed, the
-        // closed form reports the call as a whole, as on `main`.
+        // A part that breaks a bound of `t` is no type of `t`. When the closed members agree, the
+        // closed form reports the call as a whole, as on `main`. When they do not, each member
+        // gets the directed report (S26b).
         let closed_members = (members.iter())
             .all(|m| type_of(m.value).is_some_and(|ty| !self.table.resolve(ty).holds_infer()));
-        if !holds_bounds && closed_members {
+        if !holds_bounds && closed_members && closed.is_some() {
             return Expectation::Member;
         }
         // Neither form takes `want`. Members that differ from the part only by its wraps take too
