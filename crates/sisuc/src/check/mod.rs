@@ -904,6 +904,9 @@ struct Checker<'src> {
     body: Body,
     /// The inference variables of the top-level function being checked (see `with_table`).
     table: infer::Table,
+    /// The bounds of the decided type parameters of the calls of `table`'s function, by
+    /// `ObligationId`, each waiting for the types that it names (see `Table::obligation`).
+    obligations: Vec<generic::BoundObligation>,
     /// While `signature` resolves the parameter and return types: the interface of each `any`
     /// type they write, with the span as written. `record` keeps a use here when the body has
     /// no owner, because a signature is resolved outside a body. No other body is resolved while
@@ -1086,9 +1089,6 @@ struct Body {
     /// by the call's span: each such parameter's variable and its report. The call around it
     /// gives the report when it settles no type for the parameter (see `report_waiting_calls`).
     waits: FxHashMap<Span, Vec<(Type, DiagnosticKind)>>,
-    /// The bounds of the decided type parameters of the calls in the body, by `ObligationId`,
-    /// each waiting for its parameter's type (see `Table::obligation`).
-    obligations: Vec<generic::BoundObligation>,
     /// The safe method call being checked: `receiver?.method(...)` at this span.
     safe_call: Option<Span>,
     /// The span of the expression or block being checked whose value no code uses: a statement,
@@ -1554,6 +1554,7 @@ impl<'src> Checker<'src> {
             parse_errors: Vec::new(),
             body: Body::default(),
             table: infer::Table::default(),
+            obligations: Vec::new(),
             signature_anys: None,
             extend_head: None,
             uses: Vec::new(),
@@ -1587,9 +1588,12 @@ impl<'src> Checker<'src> {
     /// call it. No other code takes the table, and each of them has its own variables.
     fn with_table<R: WriteBack>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         let outer = std::mem::take(&mut self.table);
+        let outer_obligations = std::mem::take(&mut self.obligations);
         let errors = self.diagnostics.errors();
         let mut result = f(self);
+        self.report_left_waiting();
         let mut table = std::mem::replace(&mut self.table, outer);
+        self.obligations = outer_obligations;
         if !table.is_empty() {
             let written = result.write_back_all(&mut table);
             for unsettled in written.unsettled {

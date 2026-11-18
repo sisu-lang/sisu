@@ -156,6 +156,10 @@ enum Undo {
         from: u32,
         to: u32,
     },
+    /// The open form of the call at `at` settled.
+    Settled {
+        at: Span,
+    },
     /// The open call at `at` was dropped (`added` false) or added at the end of the list (`added`
     /// true). `was` is its index before.
     Open {
@@ -186,6 +190,8 @@ pub(super) struct Table {
     opens: Vec<OpenEntry>,
     /// The index in `opens` of each such call, by the span of its call node.
     open_spans: FxHashMap<Span, usize>,
+    /// The span of each call node whose open form settled: its closed form's checks are stale.
+    settled: FxHashSet<Span>,
 }
 
 /// A generic call whose open form a join can try: an index into the table's list of such calls.
@@ -213,6 +219,18 @@ impl Table {
             was,
             added: false,
         });
+    }
+
+    /// Notes that the open form of the call at `at` settled.
+    pub(super) fn settle(&mut self, at: Span) {
+        if self.settled.insert(at) {
+            self.record(Undo::Settled { at });
+        }
+    }
+
+    /// Whether the open form of the call at `at` settled.
+    pub(super) fn settled(&self, at: Span) -> bool {
+        self.settled.contains(&at)
     }
 
     /// The open call that the call node `e` is, if it has an open form.
@@ -289,6 +307,14 @@ impl Table {
             at,
         });
         self.record(Undo::Obligation { at });
+    }
+
+    /// The obligations that still wait for a variable, in the order that they were made.
+    pub(super) fn left_waiting(&self) -> Vec<ObligationId> {
+        (self.obligations.iter())
+            .filter(|obligation| !obligation.done)
+            .map(|obligation| obligation.id)
+            .collect()
     }
 
     /// `ty` with each variable that has a type replaced by it. An open variable stays, as the
@@ -370,6 +396,9 @@ impl Table {
                 } => {
                     self.slots[to as usize].waiting.pop();
                     self.obligations[obligation].at = from;
+                }
+                Undo::Settled { at } => {
+                    self.settled.remove(&at);
                 }
                 Undo::Open { at, was, added } => {
                     if added {
@@ -940,8 +969,8 @@ impl Checker<'_> {
     pub(super) fn report_waiting(&mut self, waiting: Waiting) {
         let (check, ty) = match waiting {
             Waiting::Literal { check, ty } => (check, ty),
-            Waiting::Obligation { id, ty } => {
-                self.report_obligation(id, ty);
+            Waiting::Obligation { id, .. } => {
+                self.report_obligation(id);
                 return;
             }
         };
@@ -980,21 +1009,53 @@ impl Checker<'_> {
         }
     }
 
-    /// Checks the bound of the obligation `id` on `ty`, its parameter's type. A bound that names
-    /// another parameter whose type is still open has nothing to check yet.
-    fn report_obligation(&mut self, id: ObligationId, ty: Type) {
-        let Some(obligation) = self.body.obligations.get(id.0) else {
+    /// Checks the bound of the obligation `id`, whose parameter's type is closed now. A bound whose
+    /// arguments still hold an open variable waits for it: a join can close it after the call.
+    fn report_obligation(&mut self, id: ObligationId) {
+        let Some(obligation) = self.obligations.get(id.0) else {
             return;
         };
-        let (at, bound) = (obligation.at, obligation.bound);
-        let with: Vec<Type> = (obligation.with.iter())
-            .map(|&t| self.table.default_open(t))
-            .collect();
-        if !bound.args.get().is_empty() && with.iter().any(|t| t.holds_infer()) {
+        if obligation.call.is_some_and(|call| self.table.settled(call)) {
             return;
         }
+        let (at, bound, on) = (obligation.at, obligation.bound, obligation.on);
+        let with: Vec<Type> = (obligation.with.iter())
+            .map(|&t| self.table.resolve(t))
+            .collect();
+        let args = self.subst_args(bound.args, &with);
+        if let Some(&open) = args.get().iter().find(|t| t.holds_infer()) {
+            let snapshot = self.table.snapshot();
+            self.table.obligation(open, id);
+            self.keep_snapshot(snapshot);
+            return;
+        }
+        let ty = self.table.resolve(on);
         // A bound that fails is reported here; the call keeps its type.
         let _ = self.check_bound_of(at, ty, bound, &with, None, None);
+    }
+
+    /// Checks each obligation that still waits when the function ends, with each open `Int` as
+    /// `i64`, as `write_back` gives it. An obligation whose parameter is still open is checked
+    /// at its call (see `broken_member`), and an open `Any` reports E0050.
+    pub(super) fn report_left_waiting(&mut self) {
+        for id in self.table.left_waiting() {
+            let Some(obligation) = self.obligations.get(id.0) else {
+                continue;
+            };
+            let (at, bound) = (obligation.at, obligation.bound);
+            let stale = obligation.call.is_some_and(|call| self.table.settled(call));
+            if stale || self.table.resolve(obligation.on).holds_infer() {
+                continue;
+            }
+            let ty = self.table.default_open(obligation.on);
+            let with: Vec<Type> = (obligation.with.iter())
+                .map(|&t| self.table.default_open(t))
+                .collect();
+            if self.subst_args(bound.args, &with).holds_infer() {
+                continue;
+            }
+            let _ = self.check_bound_of(at, ty, bound, &with, None, None);
+        }
     }
 
     /// Makes `a` and `b` one type, if the table lets it, and reports each check that was waiting

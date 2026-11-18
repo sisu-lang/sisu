@@ -1170,13 +1170,17 @@ fn listed_all(call: &Inference<'_>) -> Vec<Type> {
     call.bindings.found.iter().map(|&ty| listed(ty)).collect()
 }
 
-/// A bound of a decided type parameter of a call, which waits for the parameter's type (see
-/// `Table::obligation`): where it is reported, the bound, and the call's type arguments as a bound
-/// sees them (see `listed`).
+/// A bound of a decided type parameter of a call, which waits for the parameter's type and then
+/// for the bound's arguments (see `Table::obligation`): where it is reported, the bound, the
+/// parameter's type, and the call's type arguments as a bound sees them (see `listed`). `call`
+/// is the call node of a closed form whose open form checks the bound again: once that form
+/// settles, this check is stale (see `Table::settle`).
 pub(super) struct BoundObligation {
     pub(super) at: Span,
     pub(super) bound: Bound,
+    pub(super) on: Type,
     pub(super) with: Vec<Type>,
+    pub(super) call: Option<Span>,
 }
 
 /// What the open form of a generic call needs (see `Checker::open_at`). Each type here holds each
@@ -2429,6 +2433,7 @@ impl Checker<'_> {
                 !quiet.iter().any(|&q| named[q])
             })
             .collect();
+        let first_obligation = self.obligations.len();
         if let Some(reported) = self.bound_obligations(&call, sig, &bounded, (span, failed)) {
             failed = Some(reported);
         }
@@ -2475,7 +2480,15 @@ impl Checker<'_> {
                 .flat_map(|(i, b)| b.list.iter().map(move |&bound| (owned + i, bound)))
                 .filter(|(t, bound)| open(*t) || names_open(bound))
                 .map(|(t, bound)| (t, bound, bound_site(&call, sig, t, span)))
-                .collect();
+                .collect::<Vec<_>>();
+            for obligation in &mut self.obligations[first_obligation..] {
+                let again = |&(_, b, _): &(usize, Bound, Span)| {
+                    b.at == obligation.bound.at && b.interface == obligation.bound.interface
+                };
+                if bounds.iter().any(again) {
+                    obligation.call = Some(span);
+                }
+            }
             let entry = OpenEntry {
                 ret: ret.subst(&types),
                 params: openable.iter().map(|&(t, name, _)| (name, t)).collect(),
@@ -2758,15 +2771,18 @@ impl Checker<'_> {
         let Some((with, waits)) = self.open_types(call, candidate) else {
             return Err(self.proof(e.span)); // proof: quiet reader
         };
+        self.table.settle(e.span);
         // The open form can give a bound a type with an open variable. That bound is checked once
         // the variable has its type, as `bound_obligations` does for the closed form.
         let resolved: Vec<Type> = with.iter().map(|&ty| self.table.resolve(ty)).collect();
         for (part, bound, at) in waits {
-            let id = ObligationId(self.body.obligations.len());
-            self.body.obligations.push(BoundObligation {
+            let id = ObligationId(self.obligations.len());
+            self.obligations.push(BoundObligation {
                 at,
                 bound,
+                on: part,
                 with: resolved.clone(),
+                call: None,
             });
             let snapshot = self.table.snapshot();
             self.table.obligation(part, id);
@@ -3048,11 +3064,13 @@ impl Checker<'_> {
                     }
                     continue;
                 }
-                let id = ObligationId(self.body.obligations.len());
-                self.body.obligations.push(BoundObligation {
+                let id = ObligationId(self.obligations.len());
+                self.obligations.push(BoundObligation {
                     at,
                     bound,
+                    on: var,
                     with: with.clone(),
+                    call: None,
                 });
                 let snapshot = self.table.snapshot();
                 self.table.obligation(var, id);
