@@ -8645,7 +8645,7 @@ fn waiting_variant_should_keep_its_report_when_its_alias_holds_an_unrelated_opti
     let rows: Vec<ErrorRow<'_>> = vec![(
         "g1",
         alias_variant_program("let x: i64?? = snd(BP.P(a: None, b: 5))"),
-        vec![(Code::Mismatch, (12, 24))],
+        vec![(Code::Mismatch, (12, 20))],
     )];
     error_rows(&rows);
 }
@@ -8714,7 +8714,7 @@ fn call_of_literals_under_two_more_optionals_should_report_the_second_wrap() {
         (
             "u1",
             literal_program("let x: i64?? = snd(kp(5))"),
-            vec![(Code::Mismatch, (9, 24))],
+            vec![(Code::Mismatch, (9, 20))],
         ),
         (
             "u3",

@@ -4657,6 +4657,7 @@ impl Checker<'_> {
             TypeKind::Optional(inner) => (inner, payload(want)),
             _ => (ret, want),
         };
+        let ret_bare = bare;
         let TypeKind::Param(_, t) = bare.kind() else {
             return None;
         };
@@ -4670,19 +4671,26 @@ impl Checker<'_> {
             return None;
         }
         let &(_, at, got, param) = lone.iter().find(|&&(i, ..)| i == t as usize)?;
+        let param = param?;
         let mut with = with.to_vec();
         with[t as usize] = wanted;
-        let member_want = param?.subst(&with);
+        let member_want = param.subst(&with);
         let got = self.table.resolve(got);
-        // An open member whose type differs only by its wraps, as `1` in `id(1)` under `u8??`,
-        // makes the result take too many (Q24): the call reports as a whole. A closed member, as
-        // `g: G` in `id(g)` under `G??`, gets the directed report, as on `main`.
-        let mut bare = member_want;
-        while let TypeKind::Optional(inner) = bare.kind() {
-            bare = inner;
+        // A member whose type differs only by the wraps of `wanted` makes the result take too
+        // many (Q24): the call reports as a whole. For a whole member, only an open one counts,
+        // as `1` in `id(1)` under `u8??`. A closed one, as `g: G` in `id(g)` under `G??`, gets the
+        // directed report, as on `main`. A part, as `kp(5)` in `snd(kp(5))`, counts open or
+        // closed: its wraps are inside the member's place.
+        let mut unwrapped = wanted;
+        while let TypeKind::Optional(inner) = unwrapped.kind() {
+            unwrapped = inner;
         }
+        with[t as usize] = unwrapped;
+        let bare = param.subst(&with);
         let snapshot = self.table.snapshot();
-        let wraps_only = bare != member_want && got.holds_infer() && self.unify(got, bare);
+        let wraps_only = unwrapped != wanted
+            && (param != ret_bare || got.holds_infer())
+            && self.unify(got, bare);
         self.table.rollback(snapshot);
         let got = self.table.default_open(got);
         if got == member_want || wraps_only || wanted.holds_infer() || member_want.holds_infer() {
