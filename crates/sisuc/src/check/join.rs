@@ -10,7 +10,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 mod join_report;
 
 use super::any::Conversion;
-use super::infer::Table;
+use super::infer::{Kind, Table};
 use super::operator::Operator;
 use super::reports::Reported;
 use super::{Checked, Checker, Expectation, Poisoned};
@@ -298,6 +298,8 @@ impl Checker<'_> {
                 };
                 wraps = wraps.map(|n| n + more);
             }
+            // An open candidate (a member's `None`) is kept as the members bound it.
+            let candidate = self.table.resolve(candidate);
             self.table.rollback(snapshot);
             if let Some(wraps) = wraps
                 && best.is_none_or(|(least, _)| wraps < least)
@@ -324,8 +326,8 @@ impl Checker<'_> {
         let optional =
             |c: &Self, ty: Type| matches!(c.table.resolve(ty).kind(), TypeKind::Optional(_));
         // Each member's top, then its nested members: the candidate, the candidate with `?`
-        // added, and whether the member's own type is optional.
-        let mut found: Vec<(Type, Option<Type>, bool)> = Vec::new();
+        // added, whether the member's own type is optional, and whether it is the member's top.
+        let mut found: Vec<(Type, Option<Type>, bool, bool)> = Vec::new();
         for &i in taking {
             let member = &mut members[i];
             let mut leaves = Vec::new();
@@ -354,10 +356,12 @@ impl Checker<'_> {
                 } else {
                     (leaf.ty, part(leaf.lifted))
                 };
-                found.push((around, lifted, optional(self, own)));
+                found.push((around, lifted, optional(self, own), k == 0));
             }
         }
-        let optionals = found.iter().filter(|&&(.., own)| own).count();
+        let optionals = found.iter().filter(|&&(.., own, _)| own).count();
+        // An optional top lifts a nested member's candidate once more, at its top.
+        let top_optional = found.iter().any(|&(.., own, top)| own && top);
         let mut keys = FxHashSet::default();
         let mut candidates = Vec::new();
         let mut add = |c: &Self, ty: Type| {
@@ -365,10 +369,13 @@ impl Checker<'_> {
                 candidates.push(ty);
             }
         };
-        for &(around, lifted, own) in &found {
+        for &(around, lifted, own, top) in &found {
             add(self, around);
             if let Some(lifted) = lifted.filter(|_| optionals > usize::from(own)) {
                 add(self, lifted);
+                if top_optional && !top && !optional(self, lifted) {
+                    add(self, Type::optional(lifted));
+                }
             }
         }
         candidates
@@ -403,6 +410,9 @@ impl Checker<'_> {
         if e.ty == Type::NEVER {
             return Some(0);
         }
+        if self.shape_open(e, target) {
+            return self.converts_at(e, target);
+        }
         ensure_stack(|| match self.enter(e, target) {
             Some((part, wrapped)) => {
                 let mut wraps = Some(usize::from(wrapped));
@@ -429,6 +439,28 @@ impl Checker<'_> {
                 None => self.conversion(e.ty, target).map(|steps| steps.len()),
             },
         })
+    }
+
+    /// Whether `target`, or the payload of an optional `target`, is an open variable that now has
+    /// the shape of `e`, an array or a `Some`: so the values inside `e` convert too, rather than
+    /// `e` as a whole.
+    fn shape_open(&mut self, e: &tir::Expr, target: Type) -> bool {
+        let target = self.table.resolve(target);
+        let open = match target.kind() {
+            TypeKind::Infer(_) => target,
+            TypeKind::Optional(payload) if matches!(e.kind, ExprKind::ArrayLit(_)) => payload,
+            _ => return false,
+        };
+        let shape = match e.kind {
+            ExprKind::ArrayLit(_) | ExprKind::ArrayFill { .. } => Type::array,
+            ExprKind::Wrap(_) => Type::optional,
+            _ => return false,
+        };
+        if !matches!(self.table.resolve(open).kind(), TypeKind::Infer(_)) {
+            return false;
+        }
+        let part = self.table.fresh(Kind::Any, e.span);
+        self.unify(open, shape(part))
     }
 
     /// Changes `value` to `target`, which `join` chose. A member with no value to lift becomes a
@@ -622,6 +654,7 @@ impl Checker<'_> {
             let (mut top, mut whole) = (false, false);
             match &mut *member.value {
                 Ok(e) if e.ty != Type::NEVER => {
+                    let e = given(e);
                     top = !nested_leaves(e, &mut leaves);
                     if top {
                         leaves.push(Leaf::of(e));
@@ -680,6 +713,20 @@ impl Checker<'_> {
             }
         }
         Conflict { groups, parts }
+    }
+}
+
+/// The value that `e` gives: the value of a block that has one, as a branch of an `if` or an arm
+/// of a `match` is the member itself.
+fn given(e: &mut tir::Expr) -> &mut tir::Expr {
+    if !matches!(&e.kind, ExprKind::Block(block) if block.value.is_some()) {
+        return e;
+    }
+    match &mut e.kind {
+        ExprKind::Block(tir::Block {
+            value: Some(value), ..
+        }) => given(value),
+        _ => unreachable!("`e` should be a block with a value"),
     }
 }
 

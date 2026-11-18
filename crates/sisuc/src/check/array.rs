@@ -76,6 +76,12 @@ impl Checker<'_> {
                 self.ranked(|c| c.hinted_elements(span, elements, element))
             };
         }
+        // A member's elements are members too: the join around it gives their type.
+        if expected == Expectation::Member && !elements.is_empty() {
+            let checked = elements.iter().map(|e| self.value(e, expected)).collect();
+            let element = self.table.fresh(Kind::Any, span);
+            return self.array(span, element, checked, false);
+        }
         if let Some(element) = expected_element(expected.ty()) {
             let want = Expectation::Required(element, expected.origin());
             // An element type that is still open takes a `unit` only after the other elements,

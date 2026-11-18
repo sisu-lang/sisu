@@ -16,6 +16,23 @@ use crate::lang::{self, Dispatch};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 
+/// Whether `e` is an integer literal, or an arithmetic group of them, as `-1` and `2 * 3` are.
+fn int_group(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ExprKind::Int { .. } => true,
+        ExprKind::Unary {
+            op: ast::UnaryOp::Neg,
+            operand,
+        } => matches!(operand.kind, ExprKind::Int { .. }),
+        ExprKind::Binary { op, lhs, rhs, .. } => {
+            operator(*op).is_some_and(|(_, want)| want != Type::BOOL)
+                && int_group(lhs)
+                && int_group(rhs)
+        }
+        _ => false,
+    }
+}
+
 impl Checker<'_> {
     /// The type of unary `-`, its operand, `expected` passed down, and whether it was reported. A
     /// `u8` operand is an error; an `f64` keeps its type, and an `f64?` is checked against `f64`;
@@ -89,6 +106,10 @@ impl Checker<'_> {
             let d = self.takes_mismatch(operand.span, NEGATABLE, got);
             let reported = self.diagnostics.error(d);
             return Ok((want, (Err(Poisoned::untyped(reported)), true)));
+        }
+        // An operand that rejected `expected` inside it was reported there.
+        if matches!(checked, Err(Poisoned { mismatch: true, .. })) {
+            return Ok((want, (checked, true)));
         }
         let origin = expected.origin_for(Some(want));
         let checked = self.against(operand, checked, Expectation::Required(want, origin));
@@ -206,6 +227,23 @@ impl Checker<'_> {
         } else {
             Operator::Arithmetic
         };
+        // A member's group of integer literals is a literal of an `Int` variable, as a literal
+        // is: the join gives its type.
+        if expected == Expectation::Member && int_group(lhs) && int_group(rhs) {
+            let (l, r) = (self.value(lhs, expected), self.value(rhs, expected));
+            let ty = type_of(&l)
+                .zip(type_of(&r))
+                .filter(|&(a, b)| self.unify(a, b));
+            let kind = l.and_then(|l| {
+                r.map(|r| tir::ExprKind::Binary {
+                    op: tir_op,
+                    lhs: Box::new(l),
+                    rhs: Box::new(r),
+                })
+            });
+            let (ty, _) = ty.expect("the literals of a group should check as one `Int` variable");
+            return Ok(tir::Expr::new(kind?, ty, span));
+        }
         let start = self.diagnostics.len();
         let op = |_| op.to_string();
         // The operands are not value parts of the value, so a hint does not reach them.

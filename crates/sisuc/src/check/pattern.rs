@@ -6,13 +6,16 @@ use std::iter;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::Via;
-use super::branch::{Branch, failed_join};
+use super::branch::{branch_expectation, failed_join};
 use super::exhaust::{self, Neighbours, Report, Row};
 use super::generic::{Ahead, type_meets};
+use super::join::{Heading, JoinForm};
 use super::names::{self, Position, Resolved};
 use super::reports::Reported;
 use super::stmt::BlockSoFar;
-use super::{Checked, CheckedBlock, Checker, Declared, Expectation, Origin, Poisoned, type_of};
+use super::{
+    Checked, CheckedBlock, Checker, Declared, Expectation, Origin, Poisoned, type_of, value_span,
+};
 use crate::ast;
 use crate::diagnostic::{
     BadRange, Definition, DiagnosticKind, Expected, GuardHelp, LowerName, MismatchOrigin, Plain,
@@ -196,28 +199,10 @@ fn empty_block() -> tir::Block {
 }
 
 impl Checker<'_> {
-    /// The branch for each of `arms`, ranked when no type is `expected` (see `block_branch`). The
-    /// patterns bind for the ranking in `form`.
-    fn arm_branches<'a>(
-        &mut self,
-        arms: &'a [ast::Arm],
-        form: &LetValue,
-        expected: Expectation,
-    ) -> Vec<Branch<'a>> {
-        arms.iter()
-            .map(|arm| {
-                let bind = |c: &mut Self| Some(c.bind_pattern(None, form, &arm.pattern, Some(arm)));
-                match &arm.body.kind {
-                    ast::ExprKind::Block(block) => self.block_branch(block, expected, bind),
-                    _ => self.expr_branch(arm, &arm.body, expected, bind),
-                }
-            })
-            .collect()
-    }
-
     /// `match scrutinee { arms }`, whose keyword is at `keyword` and `}` at `close`. Each arm is
     /// checked in a scope that holds its bindings, and the arms join as an `if`'s branches do
-    /// (`join`). When every pattern checked, the arms are checked for coverage and reachability.
+    /// (`join_blocks`). When every pattern checked, the arms are checked for coverage and
+    /// reachability.
     #[expect(
         clippy::too_many_lines,
         reason = "the scrutinee, the arms, the coverage and the result read in order in one place"
@@ -232,7 +217,6 @@ impl Checker<'_> {
         expected: Expectation,
     ) -> Checked {
         let dropped = self.body.dropped == Some(span);
-        let (expected, siblings) = expected.split_hint();
         let checked = self.value_kept(scrutinee);
         let mut position = type_of(&checked);
         let cannot = position.take_if(|&mut ty| !matchable(ty)).map(|ty| {
@@ -247,10 +231,11 @@ impl Checker<'_> {
         let mut patterns: Vec<_> = arms.iter().map(|_| None).collect();
         let mut guards: Vec<_> = arms.iter().map(|_| None).collect();
         let form = LetValue::Match { ty: position };
-        let (blocks, ty) = self.ranked(|c| {
-            let sources = c.arm_branches(arms, &form, expected);
-            c.join(&sources, (expected, siblings), dropped, |c, i, expected| {
-                let arm = &arms[i];
+        let binding = self.let_name(span);
+        let member = branch_expectation(expected);
+        let mut blocks = Vec::with_capacity(arms.len());
+        for (i, arm) in arms.iter().enumerate() {
+            let block = self.waiting(expected, |c| {
                 let (bound, guard, so_far) = c.bound_branch(arm_key(arm), |c| {
                     c.bind_pattern(None, &form, &arm.pattern, Some(arm))
                 });
@@ -263,18 +248,36 @@ impl Checker<'_> {
                 guards[i] = guard;
                 if let ast::ExprKind::Block(block) = &arm.body.kind {
                     c.body.dropped = dropped.then_some(block.span);
-                    return c.resume_block(block, expected, so_far);
+                    return c.resume_block(block, member, so_far);
                 }
                 c.body.dropped = dropped.then_some(arm.body.span);
-                let value = c.expr(&arm.body, expected);
+                let value = c.expr(&arm.body, member);
                 c.pop_scope();
                 value.map(|value| tir::Block {
                     stmts: Vec::new(),
                     ty: value.ty,
                     value: Some(Box::new(value)),
                 })
+            });
+            blocks.push(block);
+        }
+        let spans: Vec<Span> = (arms.iter())
+            .map(|arm| match &arm.body.kind {
+                ast::ExprKind::Block(block) => value_span(block),
+                _ => arm.body.span,
             })
-        });
+            .collect();
+        let heading = Heading {
+            head: keyword,
+            whole: span,
+            returns: None,
+        };
+        let (blocks, ty) = self.join_blocks(
+            (JoinForm::Match, heading, binding),
+            blocks,
+            &spans,
+            expected,
+        );
         // A scrutinee `match` cannot take fails the `match`, as a failed condition fails an `if`.
         // With no arms, only a scrutinee of a known type makes it `never`.
         let ty = match (ty, cannot, unmatched) {

@@ -1594,12 +1594,6 @@ impl Ranked {
         }
     }
 
-    /// Whether the type of the value comes only from the defaults of its integer literals: its
-    /// rank is `Literal`, and not only because it waited. `Branch::literal` reads it.
-    pub(super) fn of_literals(self) -> bool {
-        self.rank == Rank::Literal && !self.waited
-    }
-
     /// The rank that joins and operators order siblings by. They type a `Literal` value with
     /// `literal_type`, which knows scalars only. So a `Literal` value that is not `scalar` is
     /// `Concrete` for them. It is checked alone and takes its default type, as `[[1], [2]]` and

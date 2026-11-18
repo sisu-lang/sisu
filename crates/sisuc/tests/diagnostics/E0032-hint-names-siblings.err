@@ -1,21 +1,8 @@
-error[E0032]: expected `i64`, found `u8`
- --> E0032-hint-names-siblings.sisu:9:49
+error[E0032]: the branches of this `if` have different types
+ --> E0032-hint-names-siblings.sisu:9:13
   |
 9 |     let x = if c == 1 { q } else { loop { break v } }
-  |                         -                       ^
-  |                         |
-  |                         this branch gives the type `i64`
-  |
-help: if the types are right, convert it with `i64(...)`
-  |
-9 |     let x = if c == 1 { q } else { loop { break i64(v) } }
-  |                                                 ++++ +
-
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-names-siblings.sisu:15:21
-   |
-15 |     let x = v == id(loop { break 1 })
-   |                     ^^^^^^^^^^^^^^^^
+  |             ^^          - `i64`                 - `u8`
 
 error[E0032]: expected `i64`, found `u8`
   --> E0032-hint-names-siblings.sisu:22:31
@@ -39,48 +26,39 @@ help: if the types are right, convert it with `i64(...)`
 29 |     let x = o ?? loop { break i64(v) }
    |                               ++++ +
 
-error[E0032]: expected `i64`, found `u8`
-  --> E0032-hint-names-siblings.sisu:37:39
+error[E0032]: the branches of this `if` have different types
+  --> E0032-hint-names-siblings.sisu:37:13
    |
 37 |     let x = if c == 1 { q } else { id(v) }
-   |                                       ^
+   |             ^^          - `i64`    ----- `u8`
    |
 help: if the types are right, convert it with `i64(...)`
    |
-37 |     let x = if c == 1 { q } else { id(i64(v)) }
-   |                                       ++++ +
+37 |     let x = if c == 1 { q } else { i64(id(v)) }
+   |                                    ++++     +
 
-error[E0032]: expected `i64?`, found `u8`
-  --> E0032-hint-names-siblings.sisu:45:49
+error[E0032]: the branches of this `if` have different types
+  --> E0032-hint-names-siblings.sisu:45:13
    |
 45 |     let x = if c == 1 { o } else { loop { break v } }
-   |                         -                       ^
-   |                         |
-   |                         this branch gives the type `i64?`
-   |
-help: if the types are right, convert it with `i64(...)`
-   |
-45 |     let x = if c == 1 { o } else { loop { break i64(v) } }
-   |                                                 ++++ +
+   |             ^^          - `i64?`                - `u8`
 
-error[E0032]: expected `i64`, found `u8`
-  --> E0032-hint-names-siblings.sisu:53:49
+error[E0032]: the arms of this `match` have different types
+  --> E0032-hint-names-siblings.sisu:53:13
    |
 53 |     let x = match k { 0 => q; _ => loop { break v } }
-   |                            -                    ^
-   |                            |
-   |                            this branch gives the type `i64`
+   |             ^^^^^          - `i64`              - `u8`
+
+error[E0032]: the arms of this `match` have different types
+  --> E0032-hint-names-siblings.sisu:60:13
+   |
+60 |     let x = match k { 0 => v; 1 => v; _ => id(loop { break 1 }) }
+   |             ^^^^^          - `u8`  - `u8`  -------------------- `i64`
    |
 help: if the types are right, convert it with `i64(...)`
    |
-53 |     let x = match k { 0 => q; _ => loop { break i64(v) } }
-   |                                                 ++++ +
-
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-names-siblings.sisu:60:47
-   |
-60 |     let x = match k { 0 => v; 1 => v; _ => id(loop { break 1 }) }
-   |                                               ^^^^^^^^^^^^^^^^
+60 |     let x = match k { 0 => i64(v); 1 => i64(v); _ => id(loop { break 1 }) }
+   |                            ++++ +       ++++ +
 
 error[E0032]: expected `i64`, found `u8`
   --> E0032-hint-names-siblings.sisu:67:31
@@ -94,28 +72,23 @@ help: if the types are right, convert it with `i64(...)`
    |                               ++++ +
 
 error[E0032]: expected `i64`, found `u8`
-  --> E0032-hint-names-siblings.sisu:74:21
+  --> E0032-hint-names-siblings.sisu:74:18
    |
 74 |     let x = q == id(v)
-   |                     ^
+   |                  ^^^^^
    |
 help: if the types are right, convert it with `i64(...)`
    |
-74 |     let x = q == id(i64(v))
-   |                     ++++ +
+74 |     let x = q == i64(id(v))
+   |                  ++++     +
 
-error[E0032]: expected `i64`, found `u8`
-  --> E0032-hint-names-siblings.sisu:82:60
+error[E0032]: the branches of this `if` have different types
+  --> E0032-hint-names-siblings.sisu:82:13
    |
 82 |     let x = if c { q } else if c { q } else { loop { break v } }
-   |                    - this branch gives the type `i64`      ^
-   |
-help: if the types are right, convert it with `i64(...)`
-   |
-82 |     let x = if c { q } else if c { q } else { loop { break i64(v) } }
-   |                                                            ++++ +
+   |             ^^     - `i64`         - `i64`                 - `u8`
 
-error[E0032]: expected `i64`, found `u8`
+error[E0032]: expected `i64?`, found `u8`
   --> E0032-hint-names-siblings.sisu:88:22
    |
 88 |     let x: i64? = id(v)
@@ -161,5 +134,5 @@ error[E0032]: expected `i64?`, found `u8?`
 101 |     let x = q == loop { break o }
     |                               ^
 
-sisu: 14 errors, 2 warnings
+sisu: 13 errors, 2 warnings
 sisu: for more on a code, run `sisu explain <code>`: E0032, W0015
