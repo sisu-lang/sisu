@@ -2841,6 +2841,23 @@ impl Checker<'_> {
         }
     }
 
+    /// Whether an argument of `call` that is still to check can make an optional by itself, or
+    /// holds one (see `Ranked`). Ranking stops at a `Concrete` value, so such a value can, unless
+    /// it is an operator, whose value is never optional.
+    fn late_optional(&mut self, call: &Inference<'_>) -> bool {
+        (call.slots.iter().zip(call.args)).any(|(slot, arg)| {
+            let e = &arg.value;
+            let operator = matches!(
+                e.kind,
+                ast::ExprKind::Binary { .. } | ast::ExprKind::Unary { .. }
+            );
+            let ranked = slot.is_none().then(|| self.rank_value(e, &mut true));
+            ranked.is_some_and(|r| {
+                r.rank == Rank::Concrete && !operator || r.optional || r.holds_optional
+            })
+        })
+    }
+
     /// An argument at a parameter of type `param`, which the call knows: it meets that type.
     fn known_argument(
         &mut self,
@@ -3005,8 +3022,13 @@ impl Checker<'_> {
     /// Meets `expected`, the call's context, after the members decided what they could. At the
     /// top the return type meets the payload of an optional context first, so that the call's
     /// value is wrapped; as the guide of a late argument (`whole`) it meets the whole context
-    /// first, which takes the most values. `None` when the call is a member of an outer join, which
-    /// decides its variables, or has no context to meet; else whether it met it.
+    /// first, which takes the most values. A hint can add a `?` to the type of its siblings (see
+    /// `branch.rs`), which they did not write. A late argument that can make an optional takes
+    /// that `?` (`first(m.mkl())` for `-> [X?]`). Else the call meets the siblings' type first,
+    /// and the hint only when that fails, as for `id(None)` beside a `1`. `None` when the call is
+    /// a member
+    /// of an outer join, which decides its variables, or has no context to meet; else whether it
+    /// met it.
     fn meet_context(
         &mut self,
         call: &Inference<'_>,
@@ -3015,9 +3037,13 @@ impl Checker<'_> {
         (expected, whole): (Expectation, bool),
     ) -> Option<bool> {
         let want = match expected {
-            Expectation::Required(want, _) | Expectation::Hint { want, .. } => want,
+            Expectation::Hint { want, siblings, .. } if whole && !self.late_optional(call) => {
+                (siblings, want)
+            }
+            Expectation::Required(want, _) | Expectation::Hint { want, .. } => (want, want),
             Expectation::Member | Expectation::None | Expectation::Poisoned => return None,
         };
+        let (first, want) = want;
         let ret = sig.ret?;
         if want.holds_hole() || decided.is_empty() {
             return None;
@@ -3031,11 +3057,15 @@ impl Checker<'_> {
             .map(|&ty| self.table.resolve(listed(ty)))
             .collect();
         let ret = ret.subst(&with);
-        Some(if whole {
-            self.unify(ret, want) || optional && self.unify(ret, payload(want))
-        } else {
-            self.unify(ret, payload(want)) || optional && self.unify(ret, want)
-        })
+        let mut meets = |want: Type| {
+            let optional = matches!(want.kind(), TypeKind::Optional(_));
+            if whole {
+                self.unify(ret, want) || optional && self.unify(ret, payload(want))
+            } else {
+                self.unify(ret, payload(want)) || optional && self.unify(ret, want)
+            }
+        };
+        Some(meets(first) || first != want && meets(want))
     }
 
     /// Closes the decided parameters of `call` at the top. A member of an outer join leaves them

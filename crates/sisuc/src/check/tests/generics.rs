@@ -9303,7 +9303,13 @@ fn a_late_argument_under_a_hint_should_meet_the_siblings_without_the_added_optio
         let c = [1].len() == 2\n    let k = [1].len()\n    let s = \"b\"\n    \
         let mi: i64? = Some(3)\n    let o: [i64?]? = None\n    let oi: i64? = None\n    ";
     let never = |line| vec![(Code::NeverNone, (line, 11))];
-    let rows: [(&str, &str, Vec<Wanted>); 8] = [
+    let rows: [(&str, &str, Vec<Wanted>); 9] = [
+        // A late argument of a type of its own that can be optional takes the hint's `?`.
+        (
+            "coalesce-if-none",
+            "let x = oi ?? id(if c { k } else { None })\n    print(x ?? 0)",
+            vec![],
+        ),
         (
             "if-int",
             "let x = if c { 1 } else { id(2 * 3) }\n    print(x + 1)",

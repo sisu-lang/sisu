@@ -734,3 +734,12 @@ let _a = pick(None, named_whole($))
 let _a = pick(named_whole($), nothing())
 let _a = pick(fk(Kc(), $), Bk(v: None))
 let _a = pick(Bk(v: None), fk(Kc(), $))
+# A generic call at a bare `T` whose argument is late, beside siblings that a hint gives: it meets
+# their type, not the `?` that the hint adds. In an `if`, a `match`, a loop, an `if let` and on the
+# right side of a `??`. Then a late argument that can be optional, which takes that `?`.
+let _a = if c { $ } else { id([$]) }
+let _a = if c { [$] } else { id([$]) }
+let _a = match k { 1 => $; _ => id([$]) }
+let _a = loop { if c { break $ }; break id([$]) }
+let _a = if let v = oi() { $ } else { id(if c { $ } else { $ }) }
+let _a = oi() ?? id(if c { $ } else { None })
