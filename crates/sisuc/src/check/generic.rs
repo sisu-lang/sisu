@@ -3806,12 +3806,27 @@ impl Checker<'_> {
                 .then_some(Expectation::Member)
             }
             // Ranking checks the statements in the block's scope, where its value is seen, and
-            // keeps that work for the block's check.
+            // keeps that work for the block's check. The value is walked in that kept scope, as
+            // the walk can rank a nested block or a receiver, which reads names. With no kept
+            // scope, the block waits: its value is not walked outside its scope.
             K::Block(block) => {
                 self.rank_value(e, &mut true);
-                tail(block).map_or(Some(Expectation::Member), |value| {
-                    self.takes_member(value, closed)
-                })
+                let Some(value) = tail(block) else {
+                    return Some(Expectation::Member);
+                };
+                let index = *self.body.ahead_at.get(&(block.span, true))?;
+                let Some(Ahead::Block(scope, _)) = &mut self.body.ahead[index].1 else {
+                    return None;
+                };
+                let scope = std::mem::take(scope);
+                self.body.scopes.push(scope);
+                let found = self.takes_member(value, closed);
+                let scope = (self.body.scopes.pop())
+                    .expect("the block's scope should be open while its value is walked");
+                if let Some(Ahead::Block(kept, _)) = &mut self.body.ahead[index].1 {
+                    *kept = scope;
+                }
+                found
             }
             K::MethodCall { .. }
             | K::Binary { .. }
