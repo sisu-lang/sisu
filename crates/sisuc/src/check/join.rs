@@ -289,6 +289,7 @@ impl Checker<'_> {
             #[cfg(test)]
             CANDIDATES.set(CANDIDATES.get() + 1);
             let snapshot = self.table.snapshot();
+            let bounds = self.body.candidate_bounds.len();
             let mut wraps = Some(0);
             for &i in &taking {
                 let target = target(members[i].at, hole, candidate);
@@ -297,6 +298,11 @@ impl Checker<'_> {
                     break;
                 };
                 wraps = wraps.map(|n| n + more);
+            }
+            // A bound of an open form that the candidate closes can fail. Then the candidate
+            // fails, so the result does not depend on the order of the members.
+            if !self.candidate_bounds_hold(bounds) {
+                wraps = None;
             }
             self.table.rollback(snapshot);
             if let Some(wraps) = wraps

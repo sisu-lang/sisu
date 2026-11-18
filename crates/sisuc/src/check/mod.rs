@@ -64,7 +64,7 @@ use enums::{EnumInfo, HoldsTable, reserved_name};
 use expectation::{Expectation, Origin, Part};
 use extend::Extension;
 use infer::WriteBack;
-use interface::{Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
+use interface::{Bound, Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
 use names::{ConstantId, ItemId, NameMaps, Position, Resolved};
 use prelude::PRELUDE;
 use reports::{Diagnostics, Reported};
@@ -1095,6 +1095,10 @@ struct Body {
     /// parameters of its call (Q28): a method call with arguments in it waits (see
     /// `takes_member`).
     closed_place: bool,
+    /// The bounds of the open forms that the join being tested took, whose subject still held
+    /// an open variable: the subject, the bound and the call's type arguments. The join tests
+    /// each one at the end of its candidate (see `Checker::candidate_bounds_hold`).
+    candidate_bounds: Vec<(Type, Bound, Vec<Type>)>,
     /// The span of the expression or block being checked whose value no code uses: a statement,
     /// the body of a loop or of a `unit` function, or a branch or arm of such a value. A join
     /// there wraps a branch with no value to lift, as nothing reads it (see `Checker::join`).

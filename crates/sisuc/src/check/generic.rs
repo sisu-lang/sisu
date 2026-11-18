@@ -3001,7 +3001,11 @@ impl Checker<'_> {
         e: &mut tir::Expr,
         candidate: Type,
     ) -> Option<usize> {
-        let (with, _) = self.open_types(call, candidate)?;
+        let (with, waits) = self.open_types(call, candidate)?;
+        // A later member can close a bound that waits: the join tests it with the candidate.
+        for (part, bound, _) in waits {
+            self.body.candidate_bounds.push((part, bound, with.clone()));
+        }
         let members = self.table.open_entry(call).members.clone();
         let mut wraps = 0;
         let mut args = ArgumentsAt::of(e);
@@ -3056,6 +3060,19 @@ impl Checker<'_> {
             *types = TypeArgs::intern(&resolved);
         }
         outcome
+    }
+
+    /// Whether each bound of an open form that the candidate of a join closes holds: the bounds
+    /// in `candidate_bounds[from..]`, which it removes. A bound whose subject or arguments are
+    /// still open holds here, as it is checked when its last open part closes. The bound of a
+    /// closed form is an obligation, which reports on its own (E0154).
+    pub(super) fn candidate_bounds_hold(&mut self, from: usize) -> bool {
+        let bounds = self.body.candidate_bounds.split_off(from);
+        bounds.into_iter().all(|(on, bound, with)| {
+            let with: Vec<Type> = with.iter().map(|&t| self.table.resolve(t)).collect();
+            let (on, args) = (self.table.resolve(on), self.subst_args(bound.args, &with));
+            on.holds_infer() || args.holds_infer() || self.conforms(on, bound.interface, args)
+        })
     }
 
     /// Whether the type `ty` of a late argument meets `filled`. An associated type of an open
