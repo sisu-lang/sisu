@@ -1673,3 +1673,293 @@ fn a_call_should_keep_the_caller_type_parameter_of_the_same_name() {
         red.join("\n")
     );
 }
+
+/// The functions of the minimal programs of the seeds that `main` accepts (see
+/// `the_seeds_that_main_accepts_should_check_clean`).
+const SEED_FUNCTIONS: &str = "enum G<T> { A; V(T?, [T]) }
+fn h<T>(a: G<T>, b: T) -> T { b }
+fn h3<T>(a: G<T>, b: T, c: T) -> T { b }
+fn h4<T>(a: G<T>, b: T, d: [G<T>]) -> T { b }
+fn hn<T, U>(a: T, b: U, c: G<[T]>) -> T { a }
+fn hq<T>(a: G<T>, b: T, d: T?) -> T { b }
+fn id<T>(a: T) -> T { a }
+fn two<T>(a: T, b: T) -> T { b }
+fn pick<T>(a: T?, b: T) -> T { b }
+fn sec<T, U>(a: T?, b: U) -> U { b }
+fn fst<T, U>(a: T, b: U?) -> T { a }
+fn k<T, U>(a: [T], b: U) -> U { b }
+fn kk<T, U>(a: T, b: [U]) -> T { a }
+fn arr<T>(a: [T], b: T) -> T { b }
+fn arrs<T>(a: [T], b: T) -> [T] { a }
+";
+
+/// The type of the local `name` of `main` in `program`, as the diagnostics print it.
+fn main_local_type(program: &tir::Program, name: &str) -> String {
+    let main = (program.functions.iter())
+        .find(|f| f.name == "main")
+        .expect("the program should define `main`");
+    let local = (main.locals.iter())
+        .find(|l| l.name.as_deref() == Some(name))
+        .expect("`main` should have the local of the row");
+    program.type_name(local.ty)
+}
+
+/// A row of `own_argument_rows`: a seed, the body of `main`, and a local with its type.
+type SeedRow<'a> = (u64, &'a str, Option<(&'a str, &'a str)>);
+
+/// The red rows of `rows`: each body of `main` after `SEED_FUNCTIONS` is valid, and the local
+/// that a row names has its type. Each row is named by its seed.
+fn own_argument_rows(rows: &[SeedRow<'_>]) -> Vec<String> {
+    (rows.iter())
+        .filter_map(|&(seed, body, pin)| {
+            let body = body.replace('\n', "\n    ");
+            let src = format!("{SEED_FUNCTIONS}fn main() {{\n    {body}\n}}\n");
+            let (program, ds) = checked_with(PRELUDE_SOURCE, &src);
+            let found = errors(&src, &ds);
+            if !found.is_empty() {
+                return Some(format!("seed {seed}: found {found:?}, wanted no error"));
+            }
+            let (name, wanted) = pin?;
+            let program = program.expect("a program with no error should have a `tir`");
+            let ty = main_local_type(&program, name);
+            (ty != wanted).then(|| format!("seed {seed}: `{name}` is `{ty}`, wanted `{wanted}`"))
+        })
+        .collect()
+}
+
+#[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows, one for each seed")]
+fn a_call_beside_a_hint_should_take_its_type_from_its_own_arguments() {
+    // GIVEN a generic call beside a hint, whose arguments wait for their type
+    // AND give it themselves (the minimal program of each seed that `main` accepts)
+    // WHEN it is checked
+    // THEN it is valid: the call decides `T` from its own arguments, not from the hint
+    let rows: &[SeedRow<'_>] = &[
+        (
+            75,
+            "let n = 1\nlet xo: [i64]? = None\nlet gx: G<[i64]>? = None\nlet x = xo ?? h(gx ?? G<[i64]>.A, [n])\nprint(x.len())",
+            Some(("x", "[i64]")),
+        ),
+        (
+            85,
+            "let p: u8 = 1\nlet go: G<u8>? = None\nlet v: G<u8> = go ?? k([1.5], G<u8>.V(None, [p]))",
+            None,
+        ),
+        (
+            87,
+            "let c = true\nlet n = 1\nprint((if c { [n] } else if c { arr([], id([n])) } else { [n] }).sum())",
+            None,
+        ),
+        (
+            97,
+            "let c = true\nlet x = 1.5\nprint((if c { [x] } else { h(G.V(None, []), [x, x]) }).sum())",
+            None,
+        ),
+        (
+            118,
+            "let c = true\nlet n = 1\nlet xo: [i64]? = None\nlet x = xo ?? h3(if c { G<[i64]>.A } else { G<[i64]>.A }, [n], [n; 2])\nprint(x.len())",
+            Some(("x", "[i64]")),
+        ),
+        (
+            226,
+            "let c = true\nlet n = 1\nlet no: i64? = None\nlet x = if c { n } else { h3(dbg(if c { G<i64>.A } else { G<i64>.A }), no ?? 3, no ?? 4) }\nprint(x)",
+            Some(("x", "i64")),
+        ),
+        (
+            288,
+            "let n = 1\nlet xo: [i64]? = None\nprint((xo ?? sec(0, id([n]))).sum())",
+            None,
+        ),
+        (
+            313,
+            "let n = 1\nlet xo: [i64]? = None\nlet v: [i64] = xo ?? id(id([n]))",
+            None,
+        ),
+        (
+            314,
+            "let o: u8? = None\nlet go: G<u8>? = None\nlet x = o ?? h(go ?? G<u8>.A, { loop { break 2 } })\nprint(x)",
+            Some(("x", "u8")),
+        ),
+        (
+            356,
+            "let c = true\nlet n = 1\nlet xo: [i64]? = None\nlet x = if c { None } else if c { xo } else { pick({ [n] }, id([n])) }",
+            Some(("x", "[i64]?")),
+        ),
+        (
+            365,
+            "let c = true\nlet n = 1\nprint((if c { [n; 2] } else { two([n, 1], [n]) }).sum())",
+            None,
+        ),
+        (
+            379,
+            "let n = 1\nlet xo: [i64]? = None\nlet x = xo ?? { h(G<[i64]>.V(None, [[n]]), [n]) }\nprint(x.len())",
+            Some(("x", "[i64]")),
+        ),
+        (
+            388,
+            "let c = true\nlet x = 1.5\nlet xs: [f64]? = None\nlet fx: f64? = None\nlet y = if c { x } else { hn(fx ?? x, \"\", G.V(xs, [[x]])) }\nprint(y)",
+            Some(("y", "f64")),
+        ),
+        (
+            404,
+            "let c = true\nlet p: u8 = 1\nlet o: u8? = None\nlet go: G<u8>? = None\nlet x = if c { p } else if c { None } else { h(go ?? G<u8>.A, o ?? p) }",
+            Some(("x", "u8?")),
+        ),
+        (
+            408,
+            "let p: u8 = 1\nlet go: G<u8>? = None\nlet g = G<u8>.A\nlet x = go ?? h(G<G<u8>>.V(None, [g]), G<u8>.V(None, [p]))",
+            Some(("x", "G<u8>")),
+        ),
+        (
+            423,
+            "let p: u8 = 1\nlet o: u8? = None\nprint(p != h({ loop { break G<u8>.A } }, o ?? p))",
+            None,
+        ),
+        (
+            466,
+            "let c = true\nlet x = 1.5\nfor v in (if c { [x] } else { h(G.V([], [[]]), [x]) }) { print(v) }",
+            None,
+        ),
+        (
+            494,
+            "let c = true\nlet p: u8 = 1\nlet o: u8? = None\nlet x = if c { p } else { h(G<u8>.V(None, dbg([p])), o ?? p) }\nprint(x)",
+            Some(("x", "u8")),
+        ),
+        (
+            527,
+            "let p: u8 = 1\nlet o: u8? = None\nlet go: G<u8>? = None\nlet x = o ?? h(go ?? G<u8>.A, o ?? p)\nprint(x)",
+            Some(("x", "u8")),
+        ),
+        (
+            578,
+            "let p: u8 = 1\nlet o: u8? = None\nlet x = o ?? pick(o ?? p, o ?? p)\nprint(x)",
+            Some(("x", "u8")),
+        ),
+        (
+            580,
+            "let c = true\nlet p: u8 = 1\nlet o: u8? = None\nlet w: [u8] = id([if c { [p] } else { id(if let Some(q) = o { [q] } else { [p] }) }][0])",
+            None,
+        ),
+        (
+            596,
+            "let p: u8 = 1\nlet o: u8? = None\nlet x = o ?? h(G<u8>.V(None, [p]), o ?? p)\nprint(x)",
+            Some(("x", "u8")),
+        ),
+        (
+            667,
+            "let p: u8 = 1\nlet o: u8? = None\nlet x = o ?? h(G.V(0, [1]), o ?? p)\nprint(x)",
+            Some(("x", "u8")),
+        ),
+        (
+            735,
+            "let c = true\nlet p: u8 = 1\nlet o: u8? = None\nlet go: G<u8>? = None\nlet x = if c { p } else { h3(if let Some(q) = go { q } else { G<u8>.A }, o ?? p, if c { p } else { p }) }\nprint(x)",
+            Some(("x", "u8")),
+        ),
+        (
+            745,
+            "let c = true\nlet p: u8 = 1\nlet o: u8? = None\nlet v: u8 = [if c { p } else { h3(G.A, o ?? p, o ?? p) }][0]",
+            None,
+        ),
+        (
+            784,
+            "let c = true\nlet n = 1\nprint((if c { [n] } else { sec(if c { [1] } else { None }, [n, n]) }).sum())",
+            None,
+        ),
+        (
+            788,
+            "let c = true\nlet n = 1\nlet x = if c { [n] } else { hq(G.V([n], [[n]]), id([n]), { None }) }\nprint(x.len())",
+            Some(("x", "[i64]")),
+        ),
+        (
+            794,
+            "let c = true\nlet p: u8 = 1\nlet o: u8? = None\nlet v: u8 = o ?? fst(fst(p, if c { 0 } else { None }), o)",
+            None,
+        ),
+        (
+            903,
+            "let c = true\nlet n = 1\nprint(if c { None } else if c { if c { [n] } else { None } } else if c { h4(G<[i64]>.V(None, [[n]]), [n, n], []) } else { None })",
+            None,
+        ),
+        (
+            916,
+            "let n = 1\nlet xo: [i64]? = None\nprint((xo ?? kk([n], [n])).sum())",
+            None,
+        ),
+        (
+            995,
+            "let c = true\nlet n = 1\nfor v in arrs(if c { [[], [n]][1] } else { id(if c { [] } else { [n] }) }, id<i64>(if c { n } else { n })) { print(v) }",
+            None,
+        ),
+        (
+            1012,
+            "let o: u8? = None\nlet n = 1\nlet x = match n { 0 => [n]; _ => { loop { break h(if let Some(q) = o { G<[i64]>.A } else { G<[i64]>.A }, [n]) } } }\nprint(x.len())",
+            Some(("x", "[i64]")),
+        ),
+    ];
+    let red = own_argument_rows(rows);
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+#[test]
+fn a_call_under_a_required_optional_should_take_its_type_from_its_own_arguments() {
+    // GIVEN a generic call whose value goes into an optional (seed 128)
+    // AND whose arguments give their type themselves
+    // WHEN it is checked
+    // THEN it is valid: `T` is `[i64]`, and the call's value is wrapped once
+    let rows: &[SeedRow<'_>] = &[(
+        128,
+        "let n = 1\nlet mut x: [i64]? = None\nx = h(G<[i64]>.V(None, [[n]]), [n])\nprint(x ?? [])",
+        None,
+    )];
+    let red = own_argument_rows(rows);
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+#[test]
+fn a_call_beside_a_hint_should_keep_the_type_that_main_gives() {
+    // GIVEN a generic call beside a hint, whose arguments give it the type `u8`
+    // WHEN it is checked
+    // THEN `x` is `u8`, and its `print` gives no W0015
+    let rows = [
+        "let x = o ?? id(o ?? 4)",
+        "let x = o ?? two(o ?? 1, o ?? 4)",
+        "let x = o ?? id(if true { p } else { p })",
+        "let x = if true { p } else { id(if true { p } else { p }) }",
+        "let x = o ?? id({ let q = p; q + 1 })",
+        "let x = o ?? id(loop { break p })",
+    ];
+    let red: Vec<String> = (rows.iter())
+        .filter_map(|&line| {
+            let src = format!(
+                "{SEED_FUNCTIONS}fn main() {{\n    let o: u8? = None\n    let p: u8 = 1\n    {line}\n    print(x)\n}}\n"
+            );
+            let (program, ds) = checked_with(PRELUDE_SOURCE, &src);
+            let codes: Vec<Code> = (ds.iter())
+                .map(Diagnostic::code)
+                .filter(|&c| c == Code::PrintsOptional || c.severity() == Severity::Error)
+                .collect();
+            if !codes.is_empty() {
+                return Some(format!("row `{line}`: found {codes:?}"));
+            }
+            let program = program.expect("a program with no error should have a `tir`");
+            let ty = main_local_type(&program, "x");
+            (ty != "u8").then(|| format!("row `{line}`: `x` is `{ty}`, wanted `u8`"))
+        })
+        .collect();
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}

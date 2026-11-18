@@ -1,0 +1,36 @@
+// GIVEN a generic call beside a hint, whose arguments wait for their type and give it themselves
+// WHEN the program runs
+// THEN the call decides its type from its own arguments, and each line prints the base's value
+
+enum G<T> {
+    A
+    V(T?, [T])
+}
+
+fn h<T>(_a: G<T>, b: T) -> T { b }
+fn pick<T>(_a: T?, b: T) -> T { b }
+fn id<T>(a: T) -> T { a }
+fn two<T>(_a: T, b: T) -> T { b }
+
+fn main() {
+    let c = true
+    let n = 1
+    let p: u8 = 3
+    let o: u8? = None
+    let go: G<u8>? = None
+    let xo: [i64]? = None
+    // Seed 527: an argument of type `G<u8>` beside one that gives `u8`.
+    let x = o ?? h(go ?? G<u8>.A, o ?? p)
+    print(x + 1)
+    // Seed 578: an argument at a `T?` place beside one at `T`.
+    let y = o ?? pick(o ?? p, o ?? p)
+    print(y + 1)
+    // Seed 313: a call in a call.
+    let v: [i64] = xo ?? id(id([n]))
+    print(v.len())
+    // Seed 365: a call in a branch.
+    print((if c { [n; 2] } else { two([n, 1], [n]) }).sum())
+    if !c {
+        print(G<u8>.V(None, [p]))
+    }
+}
