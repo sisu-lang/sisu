@@ -824,7 +824,8 @@ static HOLE: LazyLock<Type> =
 /// `ty`, a type to show, with each hole that meets a known part of `want` replaced by that part.
 /// A failed call shows a parameter that nothing bound as a hole (`misfit_type`); the place it
 /// was checked against can know that part, as `u8` in `Two<i64, _>` against `Two<i64?, u8>`. An
-/// optional meets a place that is not optional through its payload, as in `meet_parts`.
+/// optional meets a place that is not optional, and a value an optional place, through the
+/// payload, as in `meet_parts`.
 fn fill_holes(ty: Type, want: Type) -> Type {
     if !ty.holds_hole() {
         return ty;
@@ -839,6 +840,7 @@ fn fill_holes(ty: Type, want: Type) -> Type {
         }
         (TypeKind::Optional(t), TypeKind::Optional(w)) => Type::optional(fill_holes(t, w)),
         (TypeKind::Optional(t), _) => Type::optional(fill_holes(t, want)),
+        (_, TypeKind::Optional(w)) => fill_holes(ty, w),
         (TypeKind::Array(t), TypeKind::Array(w)) => Type::array(fill_holes(t, w)),
         (TypeKind::Class(a, ta), TypeKind::Class(b, wa)) if a == b => {
             Type::intern(TypeKind::Class(a, fill_args(ta, wa)))
@@ -3535,8 +3537,9 @@ impl Checker<'_> {
 
     /// Binds each open part of `got` that meets a known part of `want`, as the argument takes it
     /// when it is checked against `want`. An optional meets a place that is not optional through
-    /// its payload: `X?` against `[i64]` takes `X = [i64]`. The report then shows the known part
-    /// of `got`, not `_`. The caller rolls the bindings back.
+    /// its payload: `X?` against `[i64]` takes `X = [i64]`. A value that is not optional meets an
+    /// optional place through the place's payload. The report then shows the known part of `got`,
+    /// not `_`. The caller rolls the bindings back.
     fn meet_parts(&mut self, got: Type, want: Type) {
         crate::conformance::ensure_stack(|| {
             let got = self.table.resolve(got);
@@ -3550,6 +3553,7 @@ impl Checker<'_> {
                 (TypeKind::Optional(g), TypeKind::Optional(w))
                 | (TypeKind::Array(g), TypeKind::Array(w)) => self.meet_parts(g, w),
                 (TypeKind::Optional(g), _) => self.meet_parts(g, want),
+                (_, TypeKind::Optional(w)) => self.meet_parts(got, w),
                 (TypeKind::Class(a, ga), TypeKind::Class(b, wa)) if a == b => {
                     self.meet_args(ga, wa);
                 }
