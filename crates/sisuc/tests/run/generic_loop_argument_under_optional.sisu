@@ -1,12 +1,15 @@
+// GIVEN generic calls whose arguments are loops, under an optional, `any Nm` or a `??` context
+// WHEN each call takes its type from the context, and each `break` value converts to it
+// THEN each value prints as the loops give it
 interface Nm {
     fn nm(self) -> string
 }
 
-class Cat: Nm {
+struct Cat: Nm {
     fn nm(self) -> string { "cat" }
 }
 
-class Dog: Nm {
+struct Dog: Nm {
     fn nm(self) -> string { "dog" }
 }
 
@@ -32,10 +35,10 @@ fn main() {
     let e = o ?? id(loop { break 1 })
     let f: any Nm = id(loop { if c == 0 { break Cat() }; break Dog() })
     let g = loop { if c == 0 { break v }; break id(loop { break 1 }) }
-    print(a ?? 0)
-    print((b ?? None) ?? 0)
-    print(d ?? 0)
-    print(e)
-    print(f.nm())
-    print(g)
+    print(a ?? 0) // 8
+    print((b ?? None) ?? 0) // 14
+    print(d ?? 0) // 1
+    print(e) // 7
+    print(f.nm()) // dog
+    print(g) // 1
 }
