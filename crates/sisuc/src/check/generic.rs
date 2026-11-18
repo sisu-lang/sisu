@@ -1,6 +1,8 @@
 //! Generic declarations: type parameters, the type arguments written for them or inferred at
 //! a call, and what a value of a type parameter may not do.
 
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::LazyLock;
@@ -128,6 +130,60 @@ fn mark_params(ty: Type, named: &mut [bool], seen: &mut WalkMemo<Type, ()>) {
         | TypeKind::Param(..) => unreachable!("only a kind with a child can name a parameter"),
     }
     seen.put(ty, ());
+}
+
+/// Where `params_named` looks for the type parameters that a type names.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    /// Under an associated type too.
+    Everywhere,
+    /// Only outside each associated type, as `names_outside_assoc` does.
+    OutsideAssoc,
+}
+
+/// The places of the type parameters that `ty` names where `reach` looks, each once, in order.
+/// One walk finds them all: `names_outside_assoc` for each place costs the number of places
+/// times the size of `ty`.
+fn params_named(ty: Type, reach: Reach) -> Vec<usize> {
+    fn walk(ty: Type, reach: Reach, found: &mut Vec<usize>, seen: &mut WalkMemo<Type, ()>) {
+        type_step();
+        if !ty.has_param() {
+            return;
+        }
+        if let TypeKind::Param(_, j) = ty.kind() {
+            found.push(j as usize);
+            return;
+        }
+        if seen.get(&ty).is_some() {
+            return;
+        }
+        match ty.kind() {
+            TypeKind::Array(inner) | TypeKind::Optional(inner) => walk(inner, reach, found, seen),
+            TypeKind::Class(_, args)
+            | TypeKind::Struct(_, args)
+            | TypeKind::Enum(_, args)
+            | TypeKind::Any(_, args) => {
+                for &arg in args.get() {
+                    walk(arg, reach, found, seen);
+                }
+            }
+            TypeKind::Assoc(base, _, args, _) => {
+                if reach == Reach::Everywhere {
+                    walk(base, reach, found, seen);
+                    for &arg in args.get() {
+                        walk(arg, reach, found, seen);
+                    }
+                }
+            }
+            _ => unreachable!("only a kind with a child can name a parameter"),
+        }
+        seen.put(ty, ());
+    }
+    let mut found = Vec::new();
+    walk(ty, reach, &mut found, &mut WalkMemo::default());
+    found.sort_unstable();
+    found.dedup();
+    found
 }
 
 /// Whether `ty` names the type parameter at place `param` other than under an associated type:
@@ -1206,25 +1262,162 @@ pub(super) struct OpenEntry {
 type Waits = (Type, Bound, Span);
 
 /// Where a bound of the parameter `t` of `call` reports: at the argument that bound the parameter,
-/// as `check_early` does, else at `span`, the call.
-fn bound_site(call: &Inference<'_>, sig: &GenericSig<'_>, t: usize, span: Span) -> Span {
-    (call.slots.iter().zip(sig.params).zip(call.args))
-        .find(|((slot, param), _)| {
-            slot.is_some() && param.is_some_and(|param| names_outside_assoc(param, t))
-        })
-        .map_or(span, |(_, arg)| arg.value.span)
+/// as `check_early` does, else at `span`, the call. `members` are the arguments whose parameter
+/// type names `t` (see `CallIndex`).
+fn bound_site(call: &Inference<'_>, members: &[usize], span: Span) -> Span {
+    (members.iter())
+        .find(|&&i| call.slots[i].is_some())
+        .map_or(span, |&i| call.args[i].value.span)
 }
 
-/// The argument at `at` of the call node `e`.
-fn argument_at(e: &mut tir::Expr, at: Span) -> Option<&mut tir::Expr> {
-    let (tir::ExprKind::Call { args, .. }
-    | tir::ExprKind::Struct { args, .. }
-    | tir::ExprKind::Variant { args, .. }
-    | tir::ExprKind::New { args, .. }) = &mut e.kind
-    else {
-        return None;
-    };
-    args.iter_mut().find(|arg| arg.span == at)
+/// The arguments of the call node `e`, each found by its span in one step.
+struct ArgumentsAt<'e> {
+    args: &'e mut [tir::Expr],
+    /// The place of each argument in `args`, by its span: the first, when two have one span.
+    places: FxHashMap<Span, usize>,
+}
+
+impl<'e> ArgumentsAt<'e> {
+    /// The arguments of `e`, or `None` when `e` is not a call node.
+    fn of(e: &'e mut tir::Expr) -> Option<Self> {
+        let (tir::ExprKind::Call { args, .. }
+        | tir::ExprKind::Struct { args, .. }
+        | tir::ExprKind::Variant { args, .. }
+        | tir::ExprKind::New { args, .. }) = &mut e.kind
+        else {
+            return None;
+        };
+        let mut places = FxHashMap::default();
+        for (k, arg) in args.iter().enumerate() {
+            places.entry(arg.span).or_insert(k);
+        }
+        Some(ArgumentsAt { args, places })
+    }
+
+    /// The argument at `at`.
+    fn get(&mut self, at: Span) -> Option<&mut tir::Expr> {
+        let &k = self.places.get(&at)?;
+        Some(&mut self.args[k])
+    }
+}
+
+/// The index of a generic call, made once for each call: the join of each parameter then looks
+/// only at its own arguments and bounds, not at all of them.
+struct CallIndex {
+    /// For each argument, the parameters that its parameter type names other than under an
+    /// associated type (see `names_outside_assoc`).
+    outside: Vec<Vec<usize>>,
+    /// For each argument, each parameter that its parameter type names.
+    everywhere: Vec<Vec<usize>>,
+    /// For each parameter, the arguments whose parameter type names it other than under an
+    /// associated type, in order: the members of its join.
+    members: Vec<Vec<usize>>,
+    /// For each parameter, the parameters that its bounds name.
+    bound_named: Vec<Vec<usize>>,
+    /// Whether the arguments decide each parameter.
+    decided: Vec<bool>,
+}
+
+impl CallIndex {
+    fn new(sig: &GenericSig<'_>, decided: &[(usize, Type)]) -> Self {
+        let len = sig.declared.len();
+        let named = |reach| -> Vec<Vec<usize>> {
+            (sig.params.iter())
+                .map(|param| param.map_or_else(Vec::new, |param| params_named(param, reach)))
+                .collect()
+        };
+        let (outside, everywhere) = (named(Reach::OutsideAssoc), named(Reach::Everywhere));
+        let mut members = vec![Vec::new(); len];
+        for (i, params) in outside.iter().enumerate() {
+            for &t in params {
+                members[t].push(i);
+            }
+        }
+        let bound_named = (0..len)
+            .map(|t| {
+                let bounds = t
+                    .checked_sub(sig.owner.len())
+                    .and_then(|b| sig.bounds.get(b));
+                let mut named: Vec<usize> = (bounds.into_iter())
+                    .flat_map(|bounds| bounds.list.iter())
+                    .flat_map(|bound| bound.args.get().iter())
+                    .flat_map(|&arg| params_named(arg, Reach::Everywhere))
+                    .collect();
+                named.sort_unstable();
+                named.dedup();
+                named
+            })
+            .collect();
+        let mut flags = vec![false; len];
+        for &(t, _) in decided {
+            flags[t] = true;
+        }
+        CallIndex {
+            outside,
+            everywhere,
+            members,
+            bound_named,
+            decided: flags,
+        }
+    }
+
+    /// The decided parameters that the type of the argument `i` names other than under an
+    /// associated type.
+    fn decided_at(&self, i: usize) -> impl Iterator<Item = usize> + '_ {
+        (self.outside[i].iter().copied()).filter(|&t| self.decided[t])
+    }
+
+    /// The order in which the `decided` parameters join. A parameter whose bound names another
+    /// decided one joins after it, so that the bound is closed when the members are checked
+    /// against it (Q22): `T` of `fn h<T: K<U>, U>`. The first in `decided` whose bound names no
+    /// parameter still to join goes next; when each one does, as in a cycle, the first goes.
+    fn join_order(&self, decided: &[(usize, Type)]) -> Vec<(usize, Type)> {
+        let mut at = vec![0; self.decided.len()];
+        for (p, &(t, _)) in decided.iter().enumerate() {
+            at[t] = p;
+        }
+        // For each one, how many parameters it still waits for, and which ones wait for it.
+        let mut waits = vec![0_usize; decided.len()];
+        let mut after = vec![Vec::new(); decided.len()];
+        for (p, &(t, _)) in decided.iter().enumerate() {
+            for &u in &self.bound_named[t] {
+                if u != t && self.decided[u] {
+                    waits[p] += 1;
+                    after[at[u]].push(p);
+                }
+            }
+        }
+        let mut ready: BinaryHeap<Reverse<usize>> = (0..decided.len())
+            .filter(|&p| waits[p] == 0)
+            .map(Reverse)
+            .collect();
+        let mut done = vec![false; decided.len()];
+        let mut first = 0;
+        let mut order = Vec::with_capacity(decided.len());
+        while order.len() < decided.len() {
+            let p = loop {
+                match ready.pop() {
+                    Some(Reverse(p)) if !done[p] => break p,
+                    Some(_) => {}
+                    None => {
+                        while done[first] {
+                            first += 1;
+                        }
+                        break first;
+                    }
+                }
+            };
+            done[p] = true;
+            order.push(decided[p]);
+            for &q in &after[p] {
+                waits[q] -= 1;
+                if waits[q] == 0 && !done[q] {
+                    ready.push(Reverse(q));
+                }
+            }
+        }
+        order
+    }
 }
 
 /// A generic call while its arguments bind its callee's parameters.
@@ -1948,7 +2141,11 @@ impl Checker<'_> {
         for &(i, var) in &decided {
             call.bindings.found[i] = Some(var);
         }
-        let joins = |param: Type| decided.iter().any(|&(i, _)| names_outside_assoc(param, i));
+        // The index of the call, made once: for each argument, the parameters that its parameter
+        // type names, and for each parameter, the arguments whose type names it. A join then looks
+        // only at its own members.
+        let index = CallIndex::new(sig, &decided);
+        let joins = |i: usize| index.decided_at(i).next().is_some();
         let mut never_members = Vec::new();
         for (i, arg) in args.iter().enumerate() {
             if call.slots[i].is_some() {
@@ -1956,8 +2153,8 @@ impl Checker<'_> {
             }
             let checked = match sig.params[i] {
                 None => mark(self.operand(&arg.value, Expectation::Poisoned)),
-                Some(param)
-                    if joins(param)
+                Some(_)
+                    if joins(i)
                         && let Some(member) = self.takes_member(&arg.value) =>
                 {
                     let e = &arg.value;
@@ -1973,17 +2170,14 @@ impl Checker<'_> {
                     }
                 }
                 // A join of its own meets what the members decide (see `late_argument`).
-                Some(param) if joins(param) => continue,
+                Some(_) if joins(i) => continue,
                 // An associated type of a decided parameter waits for the joins.
                 Some(param) if param.has_assoc() && !decided.is_empty() => continue,
                 Some(param) => self.known_argument(&call, i, &arg.value, param),
             };
             // A call at a place that names two or more decided parameters is closed only (Q28).
-            if let (Ok(e), Some(param)) = (&checked, sig.params[i])
-                && (decided.iter())
-                    .filter(|&&(t, _)| names_outside_assoc(param, t))
-                    .nth(1)
-                    .is_some()
+            if let Ok(e) = &checked
+                && index.decided_at(i).nth(1).is_some()
             {
                 // Through `dbg`, a wrap and a block's value, the call keeps its own span.
                 let mut at = e;
@@ -2018,36 +2212,36 @@ impl Checker<'_> {
         // its members (see `OpenEntry`).
         let mut openable = Vec::new();
         // The arguments that fit their place with no type for any parameter: each was reported.
-        let mut misfits = Vec::new();
-        // A parameter whose bound names another decided one joins after it, so that the bound is
-        // closed when the members are checked against it (Q22): `T` of `fn h<T: K<U>, U>`.
-        let bound_names = |t: usize| {
-            let args = (sig.bounds.get(t - owned).into_iter())
-                .flat_map(|bounds| bounds.list.iter())
-                .flat_map(|bound| bound.args.get().iter().map(|&ty| Some(ty)));
-            named_params(args, sig.declared.len())
-        };
-        let mut left = decided.clone();
-        let mut join_order = Vec::with_capacity(left.len());
-        while !left.is_empty() {
-            let next = (left.iter())
-                .position(|&(t, _)| {
-                    let named = bound_names(t);
-                    !left.iter().any(|&(u, _)| u != t && named[u])
-                })
-                .unwrap_or(0);
-            join_order.push(left.remove(next));
+        let mut misfits = vec![false; args.len()];
+        let join_order = index.join_order(&decided);
+        // The place of each decided parameter in `join_order`: a later one has a larger place.
+        let mut joins_at = vec![0; sig.declared.len()];
+        for (n, &(t, _)) in join_order.iter().enumerate() {
+            joins_at[t] = n;
         }
+        // The call's type arguments, made once. The join of each parameter brings up to date only
+        // the entries that it reads. `scratch` is a copy whose entries a member changes before
+        // its place is filled.
+        let mut with: Vec<Type> = (call.bindings.found.iter())
+            .map(|&ty| self.table.resolve(listed(ty)))
+            .collect();
+        let mut scratch = with.clone();
+        let ret_named = sig
+            .ret
+            .map_or_else(Vec::new, |ret| params_named(ret, Reach::Everywhere));
         for (n, &(t, var)) in join_order.iter().enumerate() {
-            let later: Vec<usize> = join_order[n + 1..].iter().map(|&(k, _)| k).collect();
             let name = sig.declared[t];
-            let mut with: Vec<Type> = (call.bindings.found.iter())
-                .map(|&ty| self.table.resolve(listed(ty)))
-                .collect();
-            let index = u32::try_from(t).expect("a callee should have fewer than 2^32 parameters");
-            with[t] = Type::intern(TypeKind::Param(name, index));
-            let mut with_var = with.clone();
-            with_var[t] = var;
+            let returns_t = sig.ret.is_some_and(|ret| names_outside_assoc(ret, t));
+            let reads = (index.members[t].iter())
+                .flat_map(|&i| &index.everywhere[i])
+                .chain(&index.bound_named[t])
+                .chain(if returns_t { &ret_named[..] } else { &[] });
+            for &k in reads {
+                with[k] = self.table.resolve(listed(call.bindings.found[k]));
+            }
+            let place = u32::try_from(t).expect("a callee should have fewer than 2^32 parameters");
+            let param_t = Type::intern(TypeKind::Param(name, place));
+            with[t] = param_t;
             let mut members = Vec::new();
             // The members that have a value, each with its place filled with `var`, its type and
             // its span, for the bounds of `T` (see `broken_member`).
@@ -2056,15 +2250,19 @@ impl Checker<'_> {
             // type that the others decide, or that the context gives.
             let mut open = Vec::new();
             let tied_from = tied.len();
-            for (i, slot) in call.slots.iter_mut().enumerate() {
+            let mut slots = call.slots.iter_mut();
+            let mut next = 0;
+            for &i in &index.members[t] {
+                let slot = slots.nth(i - next).expect("a member should have a slot");
+                next = i + 1;
                 let (Some(value), Some(param)) = (slot.as_mut(), sig.params[i]) else {
                     continue;
                 };
-                if placed[i] || !names_outside_assoc(param, t) {
+                if placed[i] {
                     continue;
                 }
                 let argument = args[i].value.span;
-                if misfits.contains(&i) {
+                if misfits[i] {
                     continue;
                 }
                 // An argument that does not fit its place, whatever type each parameter takes, is
@@ -2075,20 +2273,20 @@ impl Checker<'_> {
                     && let Some(ty) = type_of(value)
                     && ty != Type::NEVER
                 {
-                    let loose: Vec<Type> = (with.iter().enumerate())
-                        .map(|(k, &ty)| match ty.kind() {
+                    for &k in &index.everywhere[i] {
+                        scratch[k] = match with[k].kind() {
                             TypeKind::Infer(_) | TypeKind::Param(..) if k >= owned || k == t => {
                                 self.table.fresh(Kind::Any, argument)
                             }
-                            _ => ty,
-                        })
-                        .collect();
-                    let place = param.subst(&loose);
+                            _ => with[k],
+                        };
+                    }
+                    let place = param.subst(&scratch);
                     let snapshot = self.table.snapshot();
                     let fits = self.converts(value, place, false).is_some();
                     self.table.rollback(snapshot);
                     if !fits {
-                        misfits.push(i);
+                        misfits[i] = true;
                         // A `unit` that fits for no type is no value (E0043), as for a callee
                         // that is not generic.
                         if ty == Type::UNIT {
@@ -2105,7 +2303,9 @@ impl Checker<'_> {
                         let got = self.table.default_open(self.table.resolve(ty));
                         let origin = call.declarer.origin(i);
                         // The report shows each open parameter as `_`, as on `main`.
-                        let want = self.table.resolve(param.subst(&with_var));
+                        with[t] = var;
+                        let want = self.table.resolve(param.subst(&with));
+                        with[t] = param_t;
                         let want = self.table.default_open(want);
                         // Each misfit is its own mistake, as on `main`.
                         let d = self.mismatch(argument, None, want, got, origin);
@@ -2114,7 +2314,9 @@ impl Checker<'_> {
                         continue;
                     }
                 }
-                let filled = param.subst(&with_var);
+                with[t] = var;
+                let filled = param.subst(&with);
+                with[t] = param_t;
                 if let Some(ty) = type_of(value)
                     && ty != Type::NEVER
                     && self.decides_nothing(ty, filled, var)
@@ -2131,15 +2333,15 @@ impl Checker<'_> {
                 }
                 // Each member has its own part at a parameter whose join comes later: a conflict
                 // there belongs to the join of that parameter, not to the join of `T`.
-                let own: Vec<Type> = (with.iter().enumerate())
-                    .map(|(k, &ty)| match ty.kind() {
-                        TypeKind::Infer(_) if later.contains(&k) => {
+                for &k in &index.everywhere[i] {
+                    scratch[k] = match with[k].kind() {
+                        TypeKind::Infer(_) if index.decided[k] && joins_at[k] > n => {
                             self.table.fresh(Kind::Any, argument)
                         }
-                        _ => ty,
-                    })
-                    .collect();
-                let place = param.subst(&own);
+                        _ => with[k],
+                    };
+                }
+                let place = param.subst(&scratch);
                 let place = if place.has_assoc() {
                     tied.push(i);
                     let place = self.normalize(place).unwrap_or(place);
@@ -2169,9 +2371,12 @@ impl Checker<'_> {
             }
             // The closed call checks a bound of `T` before its join (Q22): E0154 at a member that
             // breaks it poisons the call, and the join adds no conflict.
-            if failed.is_none()
-                && let Some(reported) = self.broken_member(sig, (t, var), &with, &valued)
-            {
+            let broke = failed
+                .is_none()
+                .then(|| self.broken_member(sig, (t, var), &mut with, &valued))
+                .flatten();
+            with[t] = param_t;
+            if let Some(reported) = broke {
                 self.table.poison(var);
                 failed = Some(reported);
                 quiet.push(t);
@@ -2260,9 +2465,12 @@ impl Checker<'_> {
             call.bindings.found[i] = Some(self.table.resolve(var));
         }
         // A member that never finishes beside one that has a value is E0043, as a value.
+        let mut hushed = vec![false; sig.declared.len()];
+        for &t in &quiet {
+            hushed[t] = true;
+        }
         for i in never_members {
-            let param = sig.params[i].expect("a member should have a parameter type");
-            if !quiet.iter().any(|&t| names_outside_assoc(param, t)) {
+            if !index.outside[i].iter().any(|&t| hushed[t]) {
                 let at = self.never_at(args[i].value.span);
                 let reported = self.no_value(at, NoValueCause::Never);
                 failed.get_or_insert(reported);
@@ -2334,7 +2542,8 @@ impl Checker<'_> {
                 && failed.is_none()
                 && matches!(arg.value.kind, ast::ExprKind::MethodCall { .. })
                 && let TypeKind::Param(_, t) = param.kind()
-                && let Some(&(t, var)) = decided.iter().find(|&&(k, _)| k == t as usize)
+                && let Ok(found) = decided.binary_search_by_key(&(t as usize), |&(k, _)| k)
+                && let (t, var) = decided[found]
                 && let open = self.table.resolve(var)
                 && matches!(open.kind(), TypeKind::Infer(_))
                 && self.table.default_open(open) == open
@@ -2342,6 +2551,7 @@ impl Checker<'_> {
                 failed = Some(self.cannot_infer(sig, t));
                 self.table.poison(var);
                 quiet.push(t);
+                hushed[t] = true;
                 call.slots[i] = Some(mark(self.operand(&arg.value, Expectation::Poisoned)));
                 continue;
             }
@@ -2349,15 +2559,12 @@ impl Checker<'_> {
             // argument reports its own mistakes only. A part at a parameter that no failure
             // reached still meets that parameter, as on `main`.
             if expected == Expectation::Poisoned
-                || (decided.iter())
-                    .filter(|&&(t, _)| names_outside_assoc(param, t))
-                    .all(|(t, _)| quiet.contains(t))
-                    && quiet.iter().any(|&t| names_outside_assoc(param, t))
+                || index.decided_at(i).all(|t| hushed[t]) && index.decided_at(i).any(|t| hushed[t])
             {
                 call.slots[i] = Some(mark(self.operand(&arg.value, Expectation::Poisoned)));
                 continue;
             }
-            if joins(param) {
+            if joins(i) {
                 let checked = self.late_argument(&call, i, &arg.value, param);
                 // A poisoned argument decides nothing, and its report is the call's.
                 if let Err(poisoned) = &checked {
@@ -2406,14 +2613,14 @@ impl Checker<'_> {
             // the other arguments, in order: each before the first failed argument reports the
             // parameter that it leaves open, unless an argument that does not wait failed.
             let bad: Vec<usize> = (0..args.len())
-                .filter(|&i| misfits.contains(&i) || matches!(call.slots[i], Some(Err(_))))
+                .filter(|&i| misfits[i] || matches!(call.slots[i], Some(Err(_))))
                 .collect();
             if let Some(&before) = bad.first()
                 && bad
                     .iter()
                     .all(|&i| self.sibling_rank(&args[i].value) == Rank::Waits)
             {
-                for &(t, var) in decided.iter().filter(|(t, _)| !quiet.contains(t)) {
+                for &(t, var) in decided.iter().filter(|&&(t, _)| !hushed[t]) {
                     let ty = self.table.resolve(var);
                     if ty.holds_infer() && !self.table.reported_open(ty) {
                         let _ = self.report_waiting_calls(&call, sig, (t, ty, before));
@@ -2427,14 +2634,13 @@ impl Checker<'_> {
         // A parameter whose join or member reported has no bound left to check.
         // A bound that names such a parameter has no check left either: that failure is the report.
         let bounded: Vec<(usize, Type)> = (decided.iter().copied())
-            .filter(|(t, _)| !quiet.contains(t))
-            .filter(|&(t, _)| {
-                let named = bound_names(t);
-                !quiet.iter().any(|&q| named[q])
-            })
+            .filter(|&(t, _)| !hushed[t])
+            .filter(|&(t, _)| !index.bound_named[t].iter().any(|&q| hushed[q]))
             .collect();
         let first_obligation = self.obligations.len();
-        if let Some(reported) = self.bound_obligations(&call, sig, &bounded, (span, failed)) {
+        if let Some(reported) =
+            self.bound_obligations(&call, (sig, &index), &bounded, (span, failed))
+        {
             failed = Some(reported);
         }
         let list = TypeArgs::intern(
@@ -2470,7 +2676,11 @@ impl Checker<'_> {
                 .flat_map(|(_, _, of)| of.iter())
                 .filter_map(|&i| Some((args[i].value.span, sig.params[i]?.subst(&types))))
                 .collect();
-            let open = |t: usize| openable.iter().any(|&(o, ..)| o == t);
+            let mut opened = vec![false; sig.declared.len()];
+            for &(t, ..) in &openable {
+                opened[t] = true;
+            }
+            let open = |t: usize| opened[t];
             // An associated type in an argument may name an open parameter too: it is kept.
             let names_open = |bound: &Bound| {
                 (bound.args.get().iter())
@@ -2479,13 +2689,13 @@ impl Checker<'_> {
             let bounds = (sig.bounds.iter().enumerate())
                 .flat_map(|(i, b)| b.list.iter().map(move |&bound| (owned + i, bound)))
                 .filter(|(t, bound)| open(*t) || names_open(bound))
-                .map(|(t, bound)| (t, bound, bound_site(&call, sig, t, span)))
+                .map(|(t, bound)| (t, bound, bound_site(&call, &index.members[t], span)))
                 .collect::<Vec<_>>();
+            let again: FxHashSet<_> = (bounds.iter())
+                .map(|(_, b, _)| (b.at, b.interface))
+                .collect();
             for obligation in &mut self.obligations[first_obligation..] {
-                let again = |&(_, b, _): &(usize, Bound, Span)| {
-                    b.at == obligation.bound.at && b.interface == obligation.bound.interface
-                };
-                if bounds.iter().any(again) {
+                if again.contains(&(obligation.bound.at, obligation.bound.interface)) {
                     obligation.call = Some(span);
                 }
             }
@@ -2753,8 +2963,9 @@ impl Checker<'_> {
         let (with, _) = self.open_types(call, candidate)?;
         let members = self.table.open_entry(call).members.clone();
         let mut wraps = 0;
+        let mut args = ArgumentsAt::of(e);
         for (at, param) in members {
-            let arg = argument_at(e, at)?;
+            let arg = args.as_mut()?.get(at)?;
             wraps += self.converts_at(arg, param.subst(&with))?;
         }
         Some(wraps)
@@ -2791,8 +3002,9 @@ impl Checker<'_> {
         let entry = self.table.open_entry(call);
         let (ret, members) = (entry.ret, entry.members.clone());
         let mut outcome = Ok(());
+        let mut args = ArgumentsAt::of(e);
         for (at, param) in members {
-            if let Some(arg) = argument_at(e, at) {
+            if let Some(arg) = args.as_mut().and_then(|args| args.get(at)) {
                 let done = self.settle_at(arg, param.subst(&with));
                 outcome = outcome.and(done);
             }
@@ -2942,19 +3154,19 @@ impl Checker<'_> {
     /// The report of the first member in `valued` whose part at the type parameter `t` is closed
     /// and breaks a bound of `t`. The bound's arguments are closed too. Each entry of `valued` is
     /// a member's place filled with `var`, its type and its span. A closed call checks it before
-    /// its join (Q22), so that E0154, and no conflict, is the report, as `main` gives.
+    /// its join (Q22), so that E0154, and no conflict, is the report, as `main` gives. It changes
+    /// `with[t]`, which the caller puts back.
     fn broken_member(
         &mut self,
         sig: &GenericSig<'_>,
         (t, var): (usize, Type),
-        with: &[Type],
+        with: &mut [Type],
         valued: &[(Type, Type, Span)],
     ) -> Option<Reported> {
         let bounds = sig.bounds.get(t - sig.owner.len())?;
         if bounds.list.is_empty() {
             return None;
         }
-        let mut with = with.to_vec();
         let mut parts = Vec::new();
         for &(filled, ty, at) in valued {
             let snapshot = self.table.snapshot();
@@ -2975,6 +3187,22 @@ impl Checker<'_> {
                 parts.push((part, at));
             }
         }
+        // The closed parts, each once: an open part meets each of them at most once.
+        let mut closed = Vec::new();
+        let mut seen = FxHashSet::default();
+        for &(part, _) in &parts {
+            if !part.holds_infer() && seen.insert(part) {
+                closed.push(part);
+            }
+        }
+        // Whether each bound names a parameter other than `t`, found once for all the parts.
+        let names_other: Vec<bool> = (bounds.list.iter())
+            .map(|bound| {
+                (bound.args.get().iter())
+                    .flat_map(|&arg| params_named(arg, Reach::Everywhere))
+                    .any(|k| k != t)
+            })
+            .collect();
         for &(part, at) in &parts {
             // A part that is an open `Any` variable takes its type from the join, which checks the
             // bound. A part that holds an `Int` inside, as `Boxed<Int>`, breaks the bound when it
@@ -2987,9 +3215,9 @@ impl Checker<'_> {
                 continue;
             }
             if part.holds_infer()
-                && (parts.iter()).any(|&(other, _)| {
+                && (closed.iter()).any(|&other| {
                     let snapshot = self.table.snapshot();
-                    let meets = !other.holds_infer() && (bare || self.unify(part, other));
+                    let meets = bare || self.unify(part, other);
                     self.table.rollback(snapshot);
                     meets
                 })
@@ -3002,21 +3230,17 @@ impl Checker<'_> {
             // another parameter is checked only when no bound of the part alone breaks.
             for others in [false, true] {
                 let mut broken = None;
-                for &bound in &bounds.list {
-                    let named = named_params(
-                        bound.args.get().iter().map(|&ty| Some(ty)),
-                        sig.declared.len(),
-                    );
-                    if (named.iter().enumerate()).any(|(k, &n)| n && k != t) != others {
+                for (&bound, &named) in bounds.list.iter().zip(&names_other) {
+                    if named != others {
                         continue;
                     }
-                    let args = self.subst_args(bound.args, &with);
+                    let args = self.subst_args(bound.args, with);
                     if args.holds_infer() || part.holds_infer() {
                         continue;
                     }
                     if !self.conforms(part, bound.interface, args)
                         && let Err(reported) =
-                            self.check_bound_of(at, part, bound, &with, None, None)
+                            self.check_bound_of(at, part, bound, with, None, None)
                     {
                         broken.get_or_insert(reported);
                     }
@@ -3036,30 +3260,36 @@ impl Checker<'_> {
     fn bound_obligations(
         &mut self,
         call: &Inference<'_>,
-        sig: &GenericSig<'_>,
+        (sig, index): (&GenericSig<'_>, &CallIndex),
         decided: &[(usize, Type)],
         (span, failed): (Span, Option<Reported>),
     ) -> Option<Reported> {
         let owned = sig.owner.len();
         let mut broken = None;
+        // A failed call decides nothing more: each open `Int` of it is `i64`, as on main.
+        let close = |c: &Self, ty: Type| match failed {
+            Some(_) => c.table.default_open(ty),
+            None => c.table.resolve(ty),
+        };
+        // The type arguments are the same for each parameter: they are made once.
+        let mut with = None;
         for &(t, var) in decided {
             let Some(bounds) = sig.bounds.get(t - owned).filter(|b| !b.list.is_empty()) else {
                 continue;
             };
-            let at = bound_site(call, sig, t, span);
-            // A failed call decides nothing more: each open `Int` of it is `i64`, as on main.
-            let close = |c: &Self, ty: Type| match failed {
-                Some(_) => c.table.default_open(ty),
-                None => c.table.resolve(ty),
-            };
-            let with: Vec<Type> = (call.bindings.found.iter())
-                .map(|&ty| close(self, listed(ty)))
-                .collect();
+            let at = bound_site(call, &index.members[t], span);
+            let (with, open) = with.get_or_insert_with(|| {
+                let with: Vec<Type> = (call.bindings.found.iter())
+                    .map(|&ty| close(self, listed(ty)))
+                    .collect();
+                let open = with.iter().any(|t| t.holds_infer());
+                (with, open)
+            });
             let ty = close(self, var);
             for &bound in &bounds.list {
                 // A bound on a closed type is checked at the call: a failed one poisons it.
-                if !ty.holds_infer() && !with.iter().any(|t| t.holds_infer()) {
-                    if let Err(reported) = self.check_bound_of(at, ty, bound, &with, None, None) {
+                if !ty.holds_infer() && !*open {
+                    if let Err(reported) = self.check_bound_of(at, ty, bound, with, None, None) {
                         broken.get_or_insert(reported);
                     }
                     continue;
