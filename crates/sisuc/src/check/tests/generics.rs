@@ -6624,7 +6624,14 @@ fn a_clash_with_an_unbound_shape_should_report_the_argument() {
             &[(Code::Mismatch, "true")],
         ),
         ("U", "[U]", "h(5, id([true]))", &[(Code::Mismatch, "5")]),
-        ("U", "U?", "h(5, id(true))", &[(Code::Mismatch, "5")]),
+        // The literal `5` and `bool` make two groups of one join, and the report of a join has no
+        // direction (ADR 0052): the E0032 is at the call.
+        (
+            "U",
+            "U?",
+            "h(5, id(true))",
+            &[(Code::Mismatch, "h(5, id(true))")],
+        ),
         (
             "U",
             "[U]?",
@@ -8357,13 +8364,14 @@ fn waiting_variant_should_bind_the_whole_optional_when_its_alias_holds_one() {
 
 /// GIVEN a generic call with a variant through an alias that holds an optional
 /// WHEN the optional is not at the place that the call binds, or the alias holds an array of it
-/// THEN the report is the one that `main` gives
+/// THEN the report is the one that the join of the call gives: one wrap at most through the call
+///   (S25), so the literal `5` does not take the two wraps of `i64??`
 #[test]
 fn waiting_variant_should_keep_its_report_when_its_alias_holds_an_unrelated_optional() {
     let rows: Vec<ErrorRow<'_>> = vec![(
         "g1",
         alias_variant_program("let x: i64?? = snd(BP.P(a: None, b: 5))"),
-        vec![],
+        vec![(Code::Mismatch, (12, 24))],
     )];
     error_rows(&rows);
 }
