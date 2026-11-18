@@ -1,0 +1,21 @@
+error[E0170]: the `mut` argument `names` has type `[string]`, but the parameter `xs` of `put` has type `[i64]`
+ --> E0170-required-other-argument.sisu:7:26
+  |
+7 |     let x: i64 = put(mut names, "s")
+  |                          ^^^^^ has type `[string]`
+  |
+ ::: E0170-required-other-argument.sisu:1:15
+  |
+1 | fn put<T>(mut xs: [T], x: T) -> T {
+  |               -- declared `[T]` here
+  |
+  = help: a `mut` argument must have exactly the parameter's type: the callee stores a `[i64]` back into the place
+
+error[E0032]: expected `i64`, found `string`
+ --> E0170-required-other-argument.sisu:7:33
+  |
+7 |     let x: i64 = put(mut names, "s")
+  |                                 ^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0170
