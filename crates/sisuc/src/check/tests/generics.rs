@@ -1677,6 +1677,63 @@ fn waiting_bounds_should_be_looked_at_once_for_each_parameter_they_name() {
     assert_near_linear(examined(100), examined(200), examined(300));
 }
 
+/// The work of checking `src`: the steps of the type walks, the snapshots, the types rebuilt and
+/// the variables made. A guard of a generic call's cost reads it.
+fn call_work(src: &str) -> usize {
+    generic::TYPE_STEPS.set(0);
+    infer::SNAPSHOTS.set(0);
+    infer::REBUILDS.set(0);
+    infer::MADE.set(0);
+    clean(src);
+    generic::TYPE_STEPS.get() + infer::SNAPSHOTS.get() + infer::REBUILDS.get() + infer::MADE.get()
+}
+
+/// Asserts that `two` is at most two times `one`, plus a small constant. `one` is the work for an
+/// input of size `n`, and `two` the work for size `2n`. So the work grows linearly with `n`.
+fn assert_at_most_doubles(one: usize, two: usize) {
+    assert!(one > 0, "the counters should count the work");
+    assert!(
+        two <= 2 * one + 64,
+        "{one} steps for n, {two} for 2n: more than two times"
+    );
+}
+
+/// One call with `n` literal arguments at one parameter `T: Ord`. Each literal part of the join is
+/// examined a fixed number of times, so the work grows with `n`, not with its square. A check of
+/// each literal part against all the other parts makes the work grow with the square of `n`.
+#[test]
+fn a_call_with_many_literal_arguments_under_a_bound_should_cost_linear_work() {
+    let work = |n: usize| {
+        let params: Vec<_> = (0..n).map(|i| format!("_x{i}: T")).collect();
+        let args: Vec<_> = (1..=n).map(|i| i.to_string()).collect();
+        call_work(&format!(
+            "fn f<T: Ord>({}) -> T {{ _x0 }}\nfn main() {{\n    print(f({}))\n}}",
+            params.join(", "),
+            args.join(", ")
+        ))
+    };
+    assert_at_most_doubles(work(800), work(1600));
+}
+
+/// One call with `n` type parameters and one literal argument for each. The join of each
+/// parameter looks only at its own arguments. Its substitution list is not built again. So the
+/// work grows with `n`, not with its square.
+#[test]
+fn a_call_with_many_type_parameters_should_cost_linear_work() {
+    let work = |n: usize| {
+        let types: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
+        let params: Vec<_> = (0..n).map(|i| format!("_x{i}: T{i}")).collect();
+        let args: Vec<_> = (1..=n).map(|i| i.to_string()).collect();
+        call_work(&format!(
+            "fn f<{}>({}) -> T0 {{ _x0 }}\nfn main() {{\n    print(f({}))\n}}",
+            types.join(", "),
+            params.join(", "),
+            args.join(", ")
+        ))
+    };
+    assert_at_most_doubles(work(400), work(800));
+}
+
 /// An element pattern 20 arrays deep, so a walk of it for each element would show. Once the
 /// first element binds `T`, a later one adds no walk. A `P<i64, bool>` before it binds `T`,
 /// then fails at `bool` and undoes the binding: it adds no walk either.

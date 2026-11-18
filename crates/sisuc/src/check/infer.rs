@@ -30,9 +30,11 @@ thread_local! {
     /// The types that `open_roots_in` has walked: the ones that its `seen` set did not hold.
     static WALKED: Cell<usize> = const { Cell::new(0) };
     /// The types that `rebuild_in` has rebuilt: the ones that its memo did not hold.
-    static REBUILDS: Cell<usize> = const { Cell::new(0) };
+    pub(super) static REBUILDS: Cell<usize> = const { Cell::new(0) };
     /// The snapshots that were taken.
-    static SNAPSHOTS: Cell<usize> = const { Cell::new(0) };
+    pub(super) static SNAPSHOTS: Cell<usize> = const { Cell::new(0) };
+    /// The variables that `fresh` has made.
+    pub(super) static MADE: Cell<usize> = const { Cell::new(0) };
 }
 
 /// What a variable stands for.
@@ -257,6 +259,8 @@ impl Table {
 
     /// A new variable of `kind`, made at `origin`. Its type is `Infer(id)`.
     pub(super) fn fresh(&mut self, kind: Kind, origin: Span) -> Type {
+        #[cfg(test)]
+        MADE.set(MADE.get() + 1);
         let id = u32::try_from(self.slots.len())
             .expect("a function should make fewer than 2^32 variables");
         self.slots.push(Slot {
