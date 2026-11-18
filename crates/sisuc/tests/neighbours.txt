@@ -260,6 +260,13 @@ struct Sw {
     fn wrap<T>(self, v: T) -> T { v }
 }
 fn osw() -> Sw? { Sw() }
+// A method with no argument that waits for its own parameter, and whose receiver gives the
+// call's other part: `wk().mkb()` is `Two<i64, X>`, with no optional.
+struct Wk {
+    fn mkb<X>(self) -> Two<i64, X> { panic("no") }
+}
+fn wk() -> Wk { Wk() }
+fn tfst<A>(p: Two<A, u8>, _a: A) -> A { p.a }
 fn generic<U: Named, V, W: Km>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?, w: W?, st: St) {
     let mut mq: (any Pet)? = op
     let mut mu = g()
@@ -807,3 +814,7 @@ let _a = pick({ let _y = 2; $ }, 1)
 let _a = pick(eo(), named_part($))
 let _a = pick(named_part($), eo())
 let _a = pick(fk(Kc(), 3), Bk(v: $))
+# A method with no argument that waits is closed first under a required optional: its receiver
+# gives the payload, and the call's result wraps once at the top.
+let _a: i64? = tfst(wk().mkb(), $)
+let _a: i64?? = tfst(wk().mkb(), $)

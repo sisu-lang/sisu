@@ -3397,10 +3397,12 @@ impl Checker<'_> {
     /// first, which takes the most values. A hint can add a `?` to the type of its siblings (see
     /// `branch.rs`), which they did not write. A late argument that can make an optional takes
     /// that `?` (`first(m.mkl())` for `-> [X?]`). Else the call meets the siblings' type first,
-    /// and the hint only when that fails, as for `id(None)` beside a `1`. `None` when the call is
-    /// a member
-    /// of an outer join, which decides its variables, or has no context to meet; else whether it
-    /// met it.
+    /// and the hint only when that fails, as for `id(None)` beside a `1`. Under a required
+    /// optional, the late arguments are closed first (Q26). When none can make an optional, the
+    /// call meets the payload first, and its result wraps once at the top. An example is
+    /// `fst(p.mkb())` under `i64?`, where `mkb` gives `Pr<i64, X>`. `None` when the call is a
+    /// member of an outer join, which decides its variables, or has no context to meet; else
+    /// whether it met it.
     fn meet_context(
         &mut self,
         call: &Inference<'_>,
@@ -3411,6 +3413,9 @@ impl Checker<'_> {
         let want = match expected {
             Expectation::Hint { want, siblings, .. } if whole && !self.late_optional(call) => {
                 (siblings, want)
+            }
+            Expectation::Required(want, _) if whole && !self.late_optional(call) => {
+                (payload(want), want)
             }
             Expectation::Required(want, _) | Expectation::Hint { want, .. } => (want, want),
             Expectation::Member | Expectation::None | Expectation::Poisoned => return None,
