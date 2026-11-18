@@ -2770,13 +2770,14 @@ fn a_blamed_argument_should_be_the_only_error_of_its_call() {
         let src = with_generics(&format!("{pick}{body}"));
         diagnostic(&src, Code::Mismatch, at, secondary);
     }
-    // The context leaves `B` open, so `s` keeps it, and the literal `1` is checked against it.
+    // `B` has no part in the context, so the join of `s` and `1` has no direction: one E0032 at
+    // the call (ADR 0052). `n` gets the directed report from the context.
     let src = with_generics(
         "fn two_b<A, B>(a: A, b: B, c: B) -> [A] {\n    [a]\n}\nfn g(n: i64, s: string) {\n    let x: [string] = two_b(n, s, 1)\n}",
     );
     codes(
         &src,
-        &[(Code::Mismatch, (5, 29)), (Code::Mismatch, (5, 35))],
+        &[(Code::Mismatch, (5, 23)), (Code::Mismatch, (5, 29))],
     );
     // `panic` never finishes, so it has no value, and no type to blame.
     let src = with_generics(&format!(
