@@ -2213,8 +2213,9 @@ impl Checker<'_> {
                     let e = &arg.value;
                     let checked = read_jump(self.expr(e, member));
                     // A member that never finishes waits for its join (see `never_members` below).
+                    // Its part that never finishes is found now, before a later literal's.
                     if type_of(&checked) == Some(Type::NEVER) {
-                        never_members.push(i);
+                        never_members.push((i, self.never_at(e.span)));
                         checked
                     } else {
                         let checked = self.refuse_unwanted(e, checked, member, false);
@@ -2262,6 +2263,8 @@ impl Checker<'_> {
         // The parameters whose join reported its own mistake, with no poisoned member: a member
         // that never finishes is still E0043 there, as on `main`.
         let mut loud = Vec::new();
+        // The members that never finish and got the report of their join's `never` type.
+        let mut first_never = Vec::new();
         // Whether a member broke a bound before its join (`broken_member`).
         let mut bound_broke = false;
         // The parameters that are open for an outer join, each with its name and the arguments of
@@ -2508,13 +2511,17 @@ impl Checker<'_> {
                         quiet.push(t);
                     }
                     // `never` binds no type parameter: each member never finishes.
+                    // The first member gets the report, and each other member E0043, as on `main`.
                     Ok(Type::NEVER) => {
                         quiet.push(t);
-                        let at = self.never_at(first);
+                        loud.push(t);
+                        first_never.push(of[0]);
+                        let at = (never_members.iter())
+                            .find(|&&(i, _)| i == of[0])
+                            .map_or(first, |&(_, at)| at);
                         let ty = self.type_name(Type::NEVER);
-                        failed.get_or_insert_with(|| {
-                            self.error(DiagnosticKind::TypeArgument { ty, at })
-                        });
+                        let reported = self.error(DiagnosticKind::TypeArgument { ty, at });
+                        failed.get_or_insert(reported);
                     }
                     Ok(ty) => {
                         if !self.unify(var, ty) {
@@ -2562,9 +2569,8 @@ impl Checker<'_> {
         for &t in quiet.iter().filter(|t| !loud.contains(t)) {
             hushed[t] = true;
         }
-        for i in never_members {
-            if !index.outside[i].iter().any(|&t| hushed[t]) {
-                let at = self.never_at(args[i].value.span);
+        for (i, at) in never_members {
+            if !first_never.contains(&i) && !index.outside[i].iter().any(|&t| hushed[t]) {
                 let reported = self.no_value(at, NoValueCause::Never);
                 failed.get_or_insert(reported);
                 call.slots[i] = Some(Err(Poisoned::untyped(reported)));
