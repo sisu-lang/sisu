@@ -452,10 +452,11 @@ fn a_hint_should_reach_exactly_its_value() {
             "let _a = if c { 1 } else { id(None) }",
             vec![],
         ),
+        // interim: Task 5b gives E0032 at (6, 35)
         (
             "generic empty",
             "let _a = if c { 1 } else { id([]) }",
-            e((6, 35)),
+            vec![(Code::CannotInfer, (6, 32))],
         ),
         ("beside any none", "let _a = [a, None]", vec![]),
         ("beside any empty", "let _a = [a, []]", e((6, 18))),

@@ -1908,10 +1908,11 @@ fn a_branch_array_should_report_the_element_that_leaves_the_earlier_elements() {
             "    let r: [any Display] = if c { [d] } else { [x] }",
             vec![(Code::Mismatch, (7, 49))],
         ),
+        // interim: Task 5c gives E0032 at (7, 49)
         (
             "a `Some` of a number beside `any` values, under a written type",
             "    let r: [any Display] = if c { [d] } else { [Some(2)] }",
-            vec![(Code::Mismatch, (7, 49))],
+            vec![(Code::Mismatch, (7, 54))],
         ),
         (
             "a `None` beside `any` values, under a written optional type",

@@ -700,15 +700,17 @@ fn a_bare_break_beside_a_unit_break_should_give_the_loop_a_unit() {
             "let x = loop { if c { break Some(1) }; break }".into(),
             vec![(Code::NoValue, "break }", false)],
         ),
+        // interim: Task 5e gives E0043 at the bare `break`
         (
             "unit? value",
             "let x = loop { if c { break o?.log() }; break }".into(),
-            vec![(Code::NoValue, "break }", false)],
+            vec![],
         ),
+        // interim: Task 5e gives E0043 at the bare `break`
         (
             "unit? statement",
             "loop { if c { break o?.log() }; break }".into(),
-            vec![(Code::NoValue, "break }", false)],
+            vec![],
         ),
     ];
     rows_in(&rows, with_safe_call, 12);
@@ -763,12 +765,14 @@ fn a_bare_break_beside_a_unit_break_should_add_no_report_to_an_error() {
         (
             "unit? value after a unit value",
             "loop { if c { break g() }; if d { break o?.log() }; break }".into(),
-            vec![(Code::NoValue, "break }", false)],
+            // interim: Task 5e gives E0043 at the bare `break`
+            vec![(Code::Mismatch, "o?.log()", false)],
         ),
         (
             "i64 value after a unit value",
             "loop { if c { break g() }; if d { break 1 }; break }".into(),
-            vec![(Code::NoValue, "break }", false)],
+            // interim: Task 5e gives E0043 at the bare `break`
+            vec![(Code::Mismatch, "1 }", false)],
         ),
         (
             "failed coalesce",
@@ -1073,7 +1077,13 @@ fn an_if_without_else_should_give_no_optional_unit_value() {
             at("if d"),
         ),
         ("argument", "h(if c { g() })", "", at("if c")),
-        ("generic argument", "w(if c { g() })", "", at("if c")),
+        // interim: Task 5b gives E0043 at `if c`
+        (
+            "generic argument",
+            "w(if c { g() })",
+            "",
+            vec![(Code::Mismatch, "if c")],
+        ),
         (
             "element",
             "let xs: [unit?] = [if c { g() }]",

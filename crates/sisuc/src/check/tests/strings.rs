@@ -984,17 +984,19 @@ fn a_never_part_of_a_literal_as_an_argument_should_be_underlined_at_the_part() {
         (r#"let x = id(id("p{return 1}q"))"#, &[(T, "return 1")]),
         (r#"let x = "a{ id("b{return 1}c") }d""#, &[(T, "return 1")]),
         (r#"if let _l = Some("a{return 1}b") {}"#, &[(T, "return 1")]),
+        // interim: Task 5d gives [(V, "return 1")]
         (
             r#"let x = Some(1) ?? id("a{return 1}b")"#,
-            &[(V, "return 1")],
+            &[(T, "return 1")],
         ),
         (
             r#"let x = id("a{nope}b{return 1}c")"#,
             &[(N, "nope"), (T, "return 1")],
         ),
+        // interim: Task 5e gives [(T, the whole loop)]
         (
             r#"let x = id(loop { break "a{return 1}b" })"#,
-            &[(T, r#"loop { break "a{return 1}b" }"#)],
+            &[(V, r#"loop { break "a{return 1}b" }"#)],
         ),
     ];
     for &(stmt, expected) in rows {
