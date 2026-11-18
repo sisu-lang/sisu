@@ -1,0 +1,13 @@
+struct Two<A, B> {
+    a: A
+    b: B
+}
+struct Wk {
+    fn mkb<X>(self) -> Two<i64, X> { panic("no") }
+}
+fn wk() -> Wk { Wk() }
+fn sk<T>(_p: Two<string, T>?, _a: T) {}
+fn main() {
+    sk(wk().mkb(), 1)
+    sk(wk().mkb(), "s")
+}

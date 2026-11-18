@@ -1,0 +1,14 @@
+error[E0032]: expected `Two<string, i64>?`, found `Two<i64, i64>`
+  --> E0032-optional-place-shows-part.sisu:11:8
+   |
+11 |     sk(wk().mkb(), 1)
+   |        ^^^^^^^^^^
+
+error[E0032]: expected `Two<string, string>?`, found `Two<i64, string>`
+  --> E0032-optional-place-shows-part.sisu:12:8
+   |
+12 |     sk(wk().mkb(), "s")
+   |        ^^^^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032
