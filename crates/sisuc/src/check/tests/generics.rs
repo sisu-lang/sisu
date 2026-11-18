@@ -5533,7 +5533,9 @@ const CONTEXT_BOUND_ROWS: &[PartialRow<'static>] = {
         // The required type is the only candidate for `T`, so the call opens at `i64`. Each
         // member that does not convert to it gets the directed report: `W()`, not `5`.
         ("", "let _x: i64 = h(W(), Two.P(5, 7))", &[(Mismatch, "W(")]),
-        ("", "let _x: i64 = g(W())", &[(Mismatch, "W(")]),
+        // `i64` breaks the bound of `T`, and the one member is closed: the call reports as a
+        // whole, as on `main`.
+        ("", "let _x: i64 = g(W())", &[(Mismatch, "g(W())")]),
         ("", "let _x: i64? = g2(W(), W())", &[(Mismatch, "g2(")]),
         // The call decides `T = V` and `U` from the bound before the context, so the context
         // meets the result at its top.
@@ -5545,7 +5547,11 @@ const CONTEXT_BOUND_ROWS: &[PartialRow<'static>] = {
         // The context leaves `U` open, so the bound waits, and the context fits as before.
         ("", "let _x: i64 = hk2(V())", &[(Mismatch, "V()")]),
         // A method with a bound of its own parameter, by the same rule.
-        ("", "let _x: i64 = Bx().m(W())", &[(Mismatch, "W(")]),
+        (
+            "",
+            "let _x: i64 = Bx().m(W())",
+            &[(Mismatch, "Bx().m(W())")],
+        ),
         // A context that fails a bound of a parameter that it binds blames no argument, also an
         // argument whose own parameter it binds right. The call keeps `A = W` and `B = W`.
         (
