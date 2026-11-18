@@ -2130,6 +2130,11 @@ impl Checker<'_> {
                 call.slots[i] = slot;
             }
         }
+        if let Expectation::Required(want, _) | Expectation::Hint { want, .. } = expected
+            && !call.mut_shapes.is_empty()
+        {
+            self.mut_against_context(&mut call, sig, named, want);
+        }
         // The arguments that the `mut` loop checked as places, which join nothing.
         let placed: Vec<bool> = call.slots.iter().map(Option::is_some).collect();
         let broken = poison_broken_params(&mut call.bindings, sig.declared);
@@ -3435,7 +3440,16 @@ impl Checker<'_> {
                 }
                 self.table.poison(ty);
                 // A parameter's or the result type that is not found may be what would decide it.
-                if sig.params.contains(&None) || sig.ret.is_none() {
+                // So may an argument at a place of `t` that failed with no type: a `mut` argument
+                // that is no place.
+                let failed_at = |(slot, param): (&Option<Checked>, &Option<Type>)| {
+                    matches!(slot, Some(Err(p)) if p.ty.is_none())
+                        && param.is_some_and(|param| names_outside_assoc(param, t))
+                };
+                if sig.params.contains(&None)
+                    || sig.ret.is_none()
+                    || call.slots.iter().zip(sig.params).any(failed_at)
+                {
                     let reported = self.proof(call.at); // proof: declaration
                     return Err(Poisoned::untyped(reported));
                 }
@@ -3552,22 +3566,20 @@ impl Checker<'_> {
         }
     }
 
-    /// The mismatch of a result that does not meet the required type of `expected`, reported
-    /// at its cause: a `mut` place (see `mut_against_context`), or the one member of the result's
-    /// parameter (S26b, see `lone_mismatch`). A `mut` place binds its parameters with no member,
-    /// so `met` can be `None` for it. `None` when the result converts, or no such cause exists.
+    /// The mismatch of a result that does not meet the required type of `expected`. It is
+    /// reported at the one member of the result's parameter (S26b, see `lone_mismatch`). `None`
+    /// when the result converts, or no such member exists.
     fn required_mismatch(
         &mut self,
-        call: &mut Inference<'_>,
+        call: &Inference<'_>,
         sig: &GenericSig<'_>,
         lone: &[Lone],
         (expected, met): (Expectation, Option<bool>),
     ) -> Option<Poisoned> {
-        let placed = !call.mut_shapes.is_empty() && met != Some(true);
         let Expectation::Required(want, origin) = expected else {
             return None;
         };
-        if met != Some(false) && !placed {
+        if met != Some(false) {
             return None;
         }
         let with: Vec<Type> = (call.bindings.found.iter())
@@ -3584,64 +3596,110 @@ impl Checker<'_> {
         if converts {
             return None;
         }
-        let reported = (placed.then(|| self.mut_against_context(call, sig, &with, want)))
-            .flatten()
-            .or_else(|| {
-                (met == Some(false))
-                    .then(|| self.lone_mismatch(sig, (lone, &with), want, origin))
-                    .flatten()
-            });
-        reported.map(|reported| Poisoned {
+        let reported = self.lone_mismatch(sig, (lone, &with), want, origin)?;
+        Some(Poisoned {
             mismatch: true,
             ..Poisoned::typed(want, reported)
         })
     }
 
-    /// E0170 at the first `mut` argument whose place does not have the type that `want`, the
-    /// call's context, makes of its parameter. A place binds the parameters that its parameter
-    /// names before the context does (see `infer_call`). So the place can be why the result
-    /// misses `want`. `with` is the call's type arguments so far. `None` when `want`
-    /// does not decide the place's type, or each place has it.
+    /// The `mut` places of `call` against `want`, the call's required type, before the other
+    /// arguments. A place binds the parameters that its parameter names (see `infer_call`): that
+    /// is the closed form. When its result does not convert to `want`, the call is open at
+    /// `want`, and a place is no member of the open form (Q19). So each parameter that a place
+    /// binds, and that the call does not write, takes the type that `want` makes of it. The
+    /// payload of an optional comes first, as `meet_context` meets it at the top. Each place that
+    /// does not have the type of its parameter then gets E0170, and the other arguments meet the
+    /// types that `want` gave. Nothing changes when a place failed already, or when `want` does
+    /// not decide the type of each place. `named` is the count of the type arguments that the
+    /// call writes.
     fn mut_against_context(
         &mut self,
         call: &mut Inference<'_>,
         sig: &GenericSig<'_>,
-        with: &[Type],
+        named: usize,
         want: Type,
-    ) -> Option<Reported> {
-        let (site, ret) = (sig.mut_site?, sig.ret?);
+    ) {
+        let (Some(site), Some(ret)) = (sig.mut_site, sig.ret) else {
+            return;
+        };
+        let held = |i: usize| call.mut_shapes.iter().any(|&(k, _)| k == i);
+        if (0..call.slots.len())
+            .any(|i| site.muts[i] && matches!(call.slots[i], Some(Err(_))) && !held(i))
+        {
+            return;
+        }
         let snapshot = self.table.snapshot();
+        // A parameter that no place binds is open in both forms.
+        let mut with: Vec<Type> = (call.bindings.found.iter())
+            .map(|&ty| match ty.filter(|&ty| ty != *REJECTED) {
+                Some(ty) => self.table.resolve(ty),
+                None => self.table.fresh(Kind::Any, call.at),
+            })
+            .collect();
+        let closed = self.table.resolve(ret.subst(&with));
+        let closed = self.table.default_open(closed);
+        if self.conversion(closed, want).is_some() {
+            self.table.rollback(snapshot);
+            return;
+        }
         // Each parameter that a place binds is open again, for the context to decide.
-        let mut open = with.to_vec();
+        let written = sig.owner.len() + named;
+        let mut opened = vec![false; with.len()];
         for pattern in (call.mut_shapes.iter()).filter_map(|&(i, _)| sig.params[i]) {
-            for (t, ty) in open.iter_mut().enumerate() {
-                if names_outside_assoc(pattern, t) {
+            for (t, ty) in with.iter_mut().enumerate().skip(written) {
+                if !opened[t] && names_outside_assoc(pattern, t) {
+                    opened[t] = true;
                     *ty = self.table.fresh(Kind::Any, call.at);
                 }
             }
         }
-        // The payload of an optional `want` first, as `meet_context` meets it at the top.
-        let ret = ret.subst(&open);
+        let ret = ret.subst(&with);
         let payload_first = self.table.snapshot();
-        let mut decides = self.unify(ret, payload(want));
-        if !decides && matches!(want.kind(), TypeKind::Optional(_)) {
+        let mut meets = self.unify(ret, payload(want));
+        if !meets && matches!(want.kind(), TypeKind::Optional(_)) {
             self.table.rollback(payload_first);
-            decides = self.unify(ret, want);
+            meets = self.unify(ret, want);
         }
         let wants: Vec<Option<Type>> = (call.mut_shapes.iter())
             .map(|&(i, _)| {
-                let ty = self.table.resolve(sig.params[i]?.subst(&open));
-                (decides && !ty.holds_infer()).then_some(ty)
+                let ty = self.table.resolve(sig.params[i]?.subst(&with));
+                (meets && !ty.holds_infer()).then_some(ty)
+            })
+            .collect();
+        let decided: Vec<Option<Type>> = (with.iter().zip(&opened))
+            .map(|(&ty, &open)| {
+                let ty = self.table.resolve(ty);
+                (open && !ty.holds_infer()).then_some(ty)
             })
             .collect();
         self.table.rollback(snapshot);
-        let k = (call.mut_shapes.iter().zip(&wants))
-            .position(|((_, shape), want)| want.is_some_and(|want| !shape.writes(want)))?;
-        let (i, shape) = call.mut_shapes.remove(k);
-        let (pattern, fit) = (sig.params[i]?, wants[k]?);
-        let reported = self.report_mut_type(&call.args[i].value, &shape, (site, i), (fit, pattern));
-        call.slots[i] = Some(Err(mismatch_poison(reported)));
-        Some(reported)
+        if wants.contains(&None) {
+            return;
+        }
+        let mut misfit = false;
+        for ((i, shape), fit) in std::mem::take(&mut call.mut_shapes).into_iter().zip(wants) {
+            let (Some(pattern), Some(fit)) = (sig.params[i], fit) else {
+                continue;
+            };
+            if shape.writes(fit) {
+                call.mut_shapes.push((i, shape));
+                continue;
+            }
+            misfit = true;
+            let reported =
+                self.report_mut_type(&call.args[i].value, &shape, (site, i), (fit, pattern));
+            call.failed.get_or_insert(reported);
+            call.slots[i] = Some(Err(mismatch_poison(reported)));
+        }
+        // The call failed at its places: it checks no bound of these types.
+        if misfit {
+            for (t, ty) in decided.into_iter().enumerate() {
+                if ty.is_some() {
+                    call.bindings.found[t] = ty;
+                }
+            }
+        }
     }
 
     /// The E0032 of S26b: the result type `sig.ret` is a decided parameter or its optional, which
