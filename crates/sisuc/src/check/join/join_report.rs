@@ -652,6 +652,29 @@ impl Checker<'_> {
         holds
     }
 
+    /// The type of the one known group of a clash, when there is exactly one. A literal's type is
+    /// known as its default shows it, and two groups that show one type are one.
+    fn known_group(&self, conflict: &Conflict) -> Option<Type> {
+        let mut known = (conflict.groups.iter())
+            .map(|group| self.table.default_open(group.ty))
+            .filter(|ty| !ty.holds_infer());
+        known.next().filter(|&one| known.all(|ty| ty == one))
+    }
+
+    /// The type that the label of a group shows. An open group shows its type against the one
+    /// `known` group: `Box<U?>` beside `Box<i64>` shows `Box<i64?>`, not `Box<_?>`. The rule reads
+    /// no order. A shown type that is the known one would hide the clash: it keeps its `_`.
+    fn group_shown(&mut self, ty: Type, known: Option<Type>) -> Type {
+        let open = self.table.default_open(ty);
+        match known {
+            Some(known) if open.holds_infer() => {
+                Some(self.shown_against(ty, known)).filter(|&shown| shown != known)
+            }
+            _ => None,
+        }
+        .unwrap_or(open)
+    }
+
     /// The E0032 of a join that has no candidate: its groups in the order of the source, the
     /// parts of its arguments, the declared interfaces that fit each member, and the fix. It is
     /// `pub(super)` so that a test reads its fields, which the diagnostic text hides.
@@ -665,6 +688,7 @@ impl Checker<'_> {
         // holds it: it decides nothing, and its type would show `_`.
         let mut shown: Vec<Shown> = Vec::new();
         let mut index: FxHashMap<Type, usize> = FxHashMap::default();
+        let known = self.known_group(conflict);
         for group in &conflict.groups {
             let open = self.table.resolve(group.ty).holds_infer();
             if open
@@ -678,7 +702,7 @@ impl Checker<'_> {
             {
                 continue;
             }
-            let ty = self.table.default_open(group.ty);
+            let ty = self.group_shown(group.ty, known);
             let at = if let Some(&at) = index.get(&ty) {
                 at
             } else {
