@@ -1577,3 +1577,43 @@ fn bare_break_should_require_a_unit_of_each_break_value() {
         ),
     ]);
 }
+
+/// A program whose `main` sets `x` to a call of `callee` with a block argument. The block binds
+/// `v` to `inner` and its value is `value`, which reads `v` in a nested block. `outer`, if any,
+/// is a `v` of `main` before the call.
+fn nested_scope(callee: &str, outer: Option<&str>, inner: &str, value: &str) -> String {
+    let outer = outer.map_or(String::new(), |v| format!("    let v = {v}\n"));
+    format!(
+        "fn k(s: string) -> string {{ s }}\nfn id<T>(a: T) -> T {{ a }}\nenum G {{ V(string) }}\nstruct P {{ s: string }}\nfn main() {{\n{outer}    let x = {callee}({{\n        let v = {inner}\n        {value}\n    }})\n    let _ = x\n}}\n"
+    )
+}
+
+#[test]
+fn a_block_argument_should_see_its_own_names_in_a_nested_block() {
+    // GIVEN a generic call or `Some` whose block argument binds `v`
+    // AND its value reads `v` in a nested block, inside a call, a variant, a construction or `dbg`
+    // WHEN it is checked
+    // THEN the nested block sees the `v` of the block argument, and the program is valid
+    let rows: Vec<ErrorRow<'_>> = [
+        ("call", "id", "k({ let a = v; a })"),
+        ("variant", "id", "G.V({ let a = v; a })"),
+        ("construction", "id", "P(s: { let a = v; a })"),
+        ("dbg", "id", "dbg(G.V({ let a = v; a }))"),
+        ("some", "Some", "k({ let a = v; a })"),
+    ]
+    .into_iter()
+    .map(|(name, callee, value)| (name, nested_scope(callee, None, "\"ab\"", value), vec![]))
+    .collect();
+    error_rows(&rows);
+}
+
+#[test]
+fn a_block_argument_should_report_a_nested_block_in_its_own_scope() {
+    // GIVEN `v = "outer"` in `main`, and `id` of a block that binds `v = 1` and whose value is
+    //       `k({ let a = v; a })`, where `k` takes a `string`
+    // WHEN it is checked
+    // THEN the nested block reads the `i64` `v`, and E0032 is at that block
+    let src = nested_scope("id", Some("\"outer\""), "1", "k({ let a = v; a })");
+    let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+    assert_eq!(errors(&src, &ds), vec![(Code::Mismatch, (9, 11))], "{src}");
+}

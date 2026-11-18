@@ -1,0 +1,51 @@
+// GIVEN generic calls and `Some` whose block argument binds `v` over an outer `v`
+// AND the value of each block reads `v` in a nested block or as a method receiver
+// WHEN each call is checked and run
+// THEN each reads the `v` of its block argument
+fn k(s: string) -> string {
+    s
+}
+
+fn n(x: i64) -> i64 {
+    x
+}
+
+fn id<T>(a: T) -> T {
+    a
+}
+
+fn binding() {
+    let v = "outer"
+    let x = id({
+        let v = "inner"
+        k({ let a = v; a })
+    })
+    print(x)
+    let _ = v
+}
+
+fn receiver() {
+    let v = "outer"
+    let x = id({
+        let v = [1, 2, 3]
+        n(v.len())
+    })
+    print(x)
+    let _ = v
+}
+
+fn some() {
+    let v = 7
+    let x = Some({
+        let v = 3
+        n({ let a = v; a })
+    })
+    print(x ?? 0)
+    let _ = v
+}
+
+fn main() {
+    binding()
+    receiver()
+    some()
+}
