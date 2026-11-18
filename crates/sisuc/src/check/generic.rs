@@ -290,19 +290,25 @@ fn broken_param(seen: &mut FxHashSet<Symbol>, name: Symbol) -> bool {
 /// The binding of a broken type parameter, or of an unbound or rejected one as a bound sees it.
 const NO_BINDING: Type = Type::NEVER;
 
-/// Binds each of `names`, a declaration's type parameters, that is broken (see `broken_param`)
-/// and that no argument bound yet, to `NO_BINDING`, and whether any was. Such a parameter may be
-/// one no type names: it poisons the call rather than go uninferred. One pass over the names
-/// finds them, and only a call that leaves one unbound makes it.
-fn poison_broken_params(bindings: &mut Bindings, names: &[Symbol]) -> bool {
+/// Finds each of `names`, a declaration's type parameters, that is broken (see `broken_param`)
+/// and that nothing decided: `unbound` holds such a parameter. Each one gets `NO_BINDING`, and the
+/// result tells whether any did. Such a parameter may be one no type names: it poisons the call
+/// rather than go uninferred. One pass over the names finds them, and only a call that leaves a
+/// parameter open (`leaves_open`) makes it.
+fn poison_broken_params(
+    bindings: &mut Bindings,
+    names: &[Symbol],
+    leaves_open: bool,
+    unbound: &[bool],
+) -> bool {
     let mut broken = false;
-    if bindings.found.contains(&None) {
+    if leaves_open {
         let mut seen = FxHashSet::default();
         for (i, &name) in names.iter().enumerate() {
             #[cfg(test)]
             SCANNED.set(SCANNED.get() + 1);
             let broken_name = broken_param(&mut seen, name);
-            if bindings.found[i].is_none() && broken_name {
+            if unbound[i] && broken_name {
                 bindings.found[i] = Some(NO_BINDING);
                 broken = true;
             }
@@ -2177,9 +2183,8 @@ impl Checker<'_> {
         }
         // The arguments that the `mut` loop checked as places, which join nothing.
         let placed: Vec<bool> = call.slots.iter().map(Option::is_some).collect();
-        let broken = poison_broken_params(&mut call.bindings, sig.declared);
         // The parameters that the arguments decide, each a variable made at the call.
-        let decided: Vec<(usize, Type)> = (owned..sig.declared.len())
+        let mut decided: Vec<(usize, Type)> = (owned..sig.declared.len())
             .filter(|&i| call.bindings.found[i].is_none())
             .map(|i| (i, self.table.fresh(Kind::Any, span)))
             .collect();
@@ -2685,6 +2690,26 @@ impl Checker<'_> {
         }
         if failed.is_none() && met.is_none() {
             met = self.meet_context(&call, sig, &decided, (expected, false));
+        }
+        // A broken parameter that nothing decided poisons the call, as on `main`: the arguments
+        // and the context are checked first, so a call that decides each parameter does not look
+        // at the names.
+        let mut unbound = vec![false; sig.declared.len()];
+        let mut leaves_open = false;
+        for &(t, var) in &decided {
+            let ty = self.table.resolve(var);
+            leaves_open |= ty.holds_infer();
+            unbound[t] =
+                matches!(ty.kind(), TypeKind::Infer(_)) && self.table.default_open(ty) == ty;
+        }
+        let broken = poison_broken_params(&mut call.bindings, sig.declared, leaves_open, &unbound);
+        if broken {
+            // `unbound` holds an open variable, so only a poisoned parameter is `NO_BINDING`.
+            let poisoned = |t: usize| unbound[t] && call.bindings.found[t] == Some(NO_BINDING);
+            for &(_, var) in decided.iter().filter(|&&(t, _)| poisoned(t)) {
+                self.table.poison(var);
+            }
+            decided.retain(|&(t, _)| !poisoned(t));
         }
         let mut failed = failed.or(call.failed).or(call.rejected);
         // A broken parameter fails the call, but another one that nothing decides is still E0050.
