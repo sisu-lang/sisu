@@ -2034,3 +2034,40 @@ fn a_closed_call_whose_known_part_clashes_should_blame_its_argument() {
         ),
     ]);
 }
+
+#[test]
+fn a_failed_late_argument_should_add_no_report_for_its_siblings() {
+    // GIVEN a call whose late argument fails, beside a later late argument at the same type
+    // parameter that has no type of its own
+    // WHEN each is checked
+    // THEN only the failed argument reports, as on main
+    let row = |line: &str| {
+        format!(
+            "fn pick<T>(a: T, b: T) -> T {{ a }}\nfn main() {{\n    let c = [1].len() == 1\n    {line}\n}}\n"
+        )
+    };
+    let at = |col: usize| (4, col + 4);
+    let nested = "let v = pick([pick([pick([pick([1], [None])], [None])], [None])], [None])";
+    error_rows(&[
+        (
+            "array with a wrong element",
+            row("let a = pick([1, \"s\"], [None])"),
+            vec![(Code::Mismatch, at(18))],
+        ),
+        (
+            "array with an unknown function",
+            row("let b = pick([nope()], [None])"),
+            vec![(Code::FunctionNotFound, at(15))],
+        ),
+        (
+            "if with a wrong branch",
+            row("let a = pick(if c { 1 } else { \"s\" }, if c { None } else { None })"),
+            vec![(Code::Mismatch, at(32))],
+        ),
+        (
+            "nested picks of None",
+            row(nested),
+            vec![(Code::Mismatch, at(nested.find("None").map_or(0, |n| n + 1)))],
+        ),
+    ]);
+}
