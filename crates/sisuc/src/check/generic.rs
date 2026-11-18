@@ -2528,14 +2528,21 @@ impl Checker<'_> {
             let mut with_ty = with.to_vec();
             with_ty[t] = ty;
             let snapshot = self.table.snapshot();
-            let converts = self.unify(var, ty) && {
-                // A number unifies with `want`, else it is `i64`, as in `close_call`.
-                let ret = self.table.resolve(ret.subst(&with_ty));
-                self.conversion(ret, want).is_some() || {
-                    let ret = self.table.default_open(ret);
-                    self.conversion(ret, want).is_some()
-                }
-            };
+            // Each member converts to `ty`, which binds what the join left open in it: with
+            // `None` first, `pair(None, s)` joins as `T?` and `s` makes it `string?`.
+            let converts = self.unify(var, ty)
+                && (members.iter_mut()).all(|m| {
+                    let target = target(m.at, Some(name), ty);
+                    self.converts(m.value, target, false).is_some()
+                })
+                && {
+                    // A number unifies with `want`, else it is `i64`, as in `close_call`.
+                    let ret = self.table.resolve(ret.subst(&with_ty));
+                    self.conversion(ret, want).is_some() || {
+                        let ret = self.table.default_open(ret);
+                        self.conversion(ret, want).is_some()
+                    }
+                };
             self.table.rollback(snapshot);
             if converts {
                 return Expectation::Member;

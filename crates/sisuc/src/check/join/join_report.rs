@@ -138,7 +138,12 @@ impl Checker<'_> {
         let origin = self
             .inferred_origin(site, members, &fails)
             .unwrap_or(origin);
-        if let Some(reported) = self.agreed(site, (required, origin), members, taking) {
+        // Members agree only when each that takes part fails: one that takes `required`, as
+        // `None` takes `i64?`, leaves the report at those that do not.
+        let failing = fails.iter().filter(|&&failed| failed).count();
+        if failing == taking
+            && let Some(reported) = self.agreed(site, (required, origin), members, taking)
+        {
             return reported;
         }
         let mut last = None;

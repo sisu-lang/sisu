@@ -227,6 +227,8 @@ fn outer2<T, U>(p: Two<T, U>?, _a: T, _b: U) -> Two<T, U>? { p }
 // A `mut` place that binds the result's parameter, under a required type.
 fn mfirst<T>(mut xs: [T]) -> T { xs[0] }
 fn mput<T>(mut xs: [T], x: T) -> T { x }
+// A join of a call under a required type, beside a member that takes it (`None`).
+fn both<T>(a: T, b: T) -> [T] { [a, b] }
 // A bounded call at a part and at the whole place, a call that gives an open variable, and a
 // bound of a closed parameter that names an open one (`fk`).
 fn eo<T>() -> [T?] { [] }
@@ -777,3 +779,9 @@ let _a: i64 = mfirst(mut $)
 let _a: i64? = mfirst(mut $)
 let _a: i64 = mput(mut $, $)
 let _a: i64 = id(mfirst(mut $))
+# A required type picks its report from every member, an open one too, in each order: only
+# members that all fail are reported at the whole call.
+let _a: [i64?] = both($, None)
+let _a: [i64?] = both(None, $)
+let _a: i64? = pick($, None)
+let _a: i64? = pick(None, $)
