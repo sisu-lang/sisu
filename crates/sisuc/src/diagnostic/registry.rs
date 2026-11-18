@@ -2305,6 +2305,10 @@ pub(crate) struct Conversion {
 pub(crate) enum Expected {
     /// One of these types.
     Types(Vec<String>),
+    /// Any array, as the outer shape of a type that still names an unbound parameter.
+    Array,
+    /// Any class or enum with this name, as `Box`, for the same reason.
+    Named(String),
 }
 
 impl Expected {
@@ -2312,6 +2316,8 @@ impl Expected {
     fn text(&self) -> String {
         match self {
             Self::Types(types) => listed(types, "or"),
+            Self::Array => "an array".to_string(),
+            Self::Named(name) => format!("a `{name}`"),
         }
     }
 }

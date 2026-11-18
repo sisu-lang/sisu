@@ -2739,6 +2739,7 @@ impl Checker<'_> {
                     let origin = Origin::Returns {
                         function: Origin::id(id.0),
                     };
+                    let got = self.shown_against(got, want);
                     self.mismatch(value_span(&f.body), tail(&f.body), want, got, origin)
                 };
                 self.diagnostics.error(d);

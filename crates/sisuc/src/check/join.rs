@@ -612,7 +612,7 @@ impl Checker<'_> {
     /// inside the positions around it (`[i64]` for the literal `1` in `[1]`). A member that is a
     /// made part of its argument is no leaf: it is in `parts`, with the type of its part.
     fn conflict(
-        &self,
+        &mut self,
         members: &mut [JoinMember<'_>],
         taking: &[usize],
         hole: Option<Symbol>,
@@ -650,7 +650,15 @@ impl Checker<'_> {
                 let ty = self.table.resolve(leaf.around);
                 let ty = match (member.at, hole) {
                     (Place::Part { place, .. }, Some(hole)) => {
-                        part_at(self.table.resolve(place), hole, ty).unwrap_or(ty)
+                        let place = self.table.resolve(place);
+                        // An open part that meets a known part of the place shows it, as `X` of
+                        // `Two<X, Two<X, Y>>` takes `i64` from `Two<T, Two<i64, U>>`.
+                        let ty = if top && ty.holds_infer() {
+                            self.shown_against(ty, place)
+                        } else {
+                            ty
+                        };
+                        part_at(place, hole, ty).unwrap_or(ty)
                     }
                     // The left side of `??` is at its payload.
                     (Place::Part { .. }, None) => match ty.kind() {

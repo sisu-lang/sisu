@@ -784,7 +784,9 @@ impl Checker<'_> {
             if let Ok(done) = self.any_conversion(e.span, checked, want, got, origin) {
                 return done;
             }
-            let d = self.mismatch(e.span, Some(e), hint.shown(got), got, origin);
+            // The report shows each open part of `got` that `want` knows (`shown_against`).
+            let shown = self.shown_against(got, want);
+            let d = self.mismatch(e.span, Some(e), hint.shown(shown), shown, origin);
             return (Err(Poisoned::untyped(self.diagnostics.error(d))), true);
         }
         // A generic call that cannot meet `want` is reported with the type it found, as a
@@ -792,6 +794,7 @@ impl Checker<'_> {
         if let Some(want) = want
             && let Some(found) = self.misfit_type(&checked).filter(|&found| found != want)
         {
+            let found = self.shown_against(found, want);
             let d = self.mismatch(e.span, Some(e), hint.shown(found), found, origin);
             let reported = self.diagnostics.error(d);
             self.settle_misfit(&checked);

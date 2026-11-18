@@ -251,6 +251,36 @@ impl Checker<'_> {
         Some(Origin::Inferred { at, param, ty })
     }
 
+    /// The origin "this argument gives `param` the type `ty`" of a call's join of `param`. It is
+    /// the first member that does not fail (`fails`) and whose part at `param` is known. The rest
+    /// of its type can be open, unlike in `inferred_origin`.
+    pub(in crate::check) fn binder_origin(
+        &self,
+        param: Symbol,
+        members: &[JoinMember<'_>],
+        fails: &[bool],
+    ) -> Option<Origin> {
+        members.iter().zip(fails).find_map(|(member, &failed)| {
+            // A literal gives `param` no type of its own: the call gives it the required type.
+            let ty = member_type(&*member.value).filter(|&ty| ty != Type::NEVER && !failed)?;
+            let own = self.table.resolve(ty);
+            let (at, ty) = match member.at {
+                Place::Part { place, argument } => (
+                    argument,
+                    part_at(self.table.resolve(place), param, own).unwrap_or(own),
+                ),
+                Place::Whole => (member.label, own),
+            };
+            // Only the part at `param` must be known: `mk()` of `Result<i64, E>` gives `T` of
+            // `Result<T, string>` the type `i64`.
+            (!ty.holds_infer()).then(|| Origin::Inferred {
+                at,
+                param,
+                ty: self.table.default_open(ty),
+            })
+        })
+    }
+
     /// Whether `member` does not convert to `ty` as the join `site` takes it. It binds nothing.
     fn fails(&mut self, site: Site, i: usize, member: &mut JoinMember<'_>, ty: Type) -> bool {
         let target = target(member.at, site.hole, ty);
@@ -597,11 +627,12 @@ impl Checker<'_> {
         binding: Option<Span>,
         conflict: &Conflict,
     ) -> DiagnosticKind {
-        // A literal that is still open is in no group when the type of another group holds it.
+        // A literal or a call that is still open is in no group when the type of another group
+        // holds it: it decides nothing, and its type would show `_`.
         let mut shown: Vec<Shown> = Vec::new();
         let mut index: FxHashMap<Type, usize> = FxHashMap::default();
         for group in &conflict.groups {
-            let open = self.table.default_open(group.ty) != group.ty;
+            let open = self.table.resolve(group.ty).holds_infer();
             if open
                 && (conflict.groups.iter())
                     // Only a closed type holds a literal: two open literals hold each other.

@@ -345,7 +345,7 @@ impl Table {
     /// not hold it (the occurs check). The checks whose variable got a type are returned; inside a
     /// snapshot they stay queued until `keep` returns them.
     #[must_use = "a check that was waiting for a type must be reported"]
-    fn unify(&mut self, a: Type, b: Type) -> Option<Vec<Waiting>> {
+    pub(super) fn unify(&mut self, a: Type, b: Type) -> Option<Vec<Waiting>> {
         // Two types with no variable unify only when they are one type: no snapshot is needed.
         if !a.holds_infer() && !b.holds_infer() {
             return (a == b).then(Vec::new);

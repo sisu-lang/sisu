@@ -28,13 +28,13 @@ use super::{
     built_in_type, is_kept, own_args, payload, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
-use crate::diagnostic::{ArgumentsForm, Diagnostic, MainForm, NoValueCause, Unwrap};
+use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, NoValueCause, Unwrap};
 use crate::lexer::{TokenKind, lex};
 use crate::parser::is_place;
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
-use crate::types::{HOLE_INDEX, REJECTED_INDEX};
+use crate::types::{HOLE_INDEX, Head, REJECTED_INDEX};
 
 /// How many visits a walk makes before its `WalkMemo` keeps answers. The types of a normal call
 /// are small, so such a walk makes no entry and does no hashing.
@@ -721,6 +721,46 @@ fn carried_by_construction(params: impl Iterator<Item = Option<Type>>, count: us
 /// wrong type. `found` never holds it: `bind` keeps it out.
 static HOLE: LazyLock<Type> =
     LazyLock::new(|| Type::intern(TypeKind::Param(Symbol::intern("_"), HOLE_INDEX)));
+
+/// `ty`, a type to show, with each hole that meets a known part of `want` replaced by that part.
+/// A failed call shows a parameter that nothing bound as a hole (`misfit_type`); the place it
+/// was checked against can know that part, as `u8` in `Two<i64, _>` against `Two<i64?, u8>`. An
+/// optional meets a place that is not optional through its payload, as in `meet_parts`.
+fn fill_holes(ty: Type, want: Type) -> Type {
+    if !ty.holds_hole() {
+        return ty;
+    }
+    crate::conformance::ensure_stack(|| match (ty.kind(), want.kind()) {
+        _ if ty == *HOLE => {
+            if want.holds_hole() || want.holds_infer() {
+                ty
+            } else {
+                want
+            }
+        }
+        (TypeKind::Optional(t), TypeKind::Optional(w)) => Type::optional(fill_holes(t, w)),
+        (TypeKind::Optional(t), _) => Type::optional(fill_holes(t, want)),
+        (TypeKind::Array(t), TypeKind::Array(w)) => Type::array(fill_holes(t, w)),
+        (TypeKind::Class(a, ta), TypeKind::Class(b, wa)) if a == b => {
+            Type::intern(TypeKind::Class(a, fill_args(ta, wa)))
+        }
+        (TypeKind::Struct(a, ta), TypeKind::Struct(b, wa)) if a == b => {
+            Type::intern(TypeKind::Struct(a, fill_args(ta, wa)))
+        }
+        (TypeKind::Enum(a, ta), TypeKind::Enum(b, wa)) if a == b => {
+            Type::intern(TypeKind::Enum(a, fill_args(ta, wa)))
+        }
+        _ => ty,
+    })
+}
+
+/// `fill_holes` for each pair of type arguments.
+fn fill_args(ty: TypeArgs, want: TypeArgs) -> TypeArgs {
+    let filled: Vec<Type> = (ty.get().iter().zip(want.get()))
+        .map(|(&t, &w)| fill_holes(t, w))
+        .collect();
+    TypeArgs::intern(&filled)
+}
 
 /// The rejected hole, `_`: the type of a part of a context that a failed bound has rejected. It
 /// is a hole too, but it says why the part is not fixed: the outer call reported the bound, so a
@@ -2257,6 +2297,9 @@ impl Checker<'_> {
             // The members whose part at `T` is still open decide nothing of it. Each takes the
             // type that the others decide, or that the context gives.
             let mut open = Vec::new();
+            // The members that fit their place for no type of `T`: the span of each, its type,
+            // its parameter type and the origin of that type.
+            let mut misfit_at = Vec::new();
             let tied_from = tied.len();
             let mut slots = call.slots.iter_mut();
             let mut next = 0;
@@ -2308,17 +2351,8 @@ impl Checker<'_> {
                             failed.get_or_insert(reported);
                             continue;
                         }
-                        let got = self.table.default_open(self.table.resolve(ty));
-                        let origin = call.declarer.origin(i);
-                        // The report shows each open parameter as `_`, as on `main`.
-                        with[t] = var;
-                        let want = self.table.resolve(param.subst(&with));
-                        with[t] = param_t;
-                        let want = self.table.default_open(want);
-                        // Each misfit is its own mistake, as on `main`.
-                        let d = self.mismatch(argument, None, want, got, origin);
-                        let reported = self.diagnostics.error(d);
-                        failed.get_or_insert(reported);
+                        // The report waits for the other members, which can give `T` its type.
+                        misfit_at.push((argument, ty, param, call.declarer.origin(i)));
                         continue;
                     }
                 }
@@ -2378,12 +2412,34 @@ impl Checker<'_> {
                 lone.push((t, member.label, ty, sig.params[*i]));
             }
             // The closed call checks a bound of `T` before its join (Q22): E0154 at a member that
-            // breaks it poisons the call, and the join adds no conflict.
-            let broke = failed
-                .is_none()
+            // breaks it poisons the call, and the join adds no conflict. A bound of each parameter
+            // is checked, as on `main`, also after another parameter broke its own.
+            let broke = (failed.is_none() || bound_broke)
                 .then(|| self.broken_member(sig, (t, var), &mut with, &valued))
                 .flatten();
             with[t] = param_t;
+            // A misfit is reported after the bound check. After a broken bound, the rejected `T`
+            // meets each type, as on `main`: only a misfit with no open part is still wrong there.
+            if broke.is_some() {
+                misfit_at.retain(|&(_, ty, ..)| {
+                    !(self.table.default_open(self.table.resolve(ty))).holds_infer()
+                });
+            }
+            if !misfit_at.is_empty() {
+                let mut whole: Vec<JoinMember<'_>> = (members.iter_mut())
+                    .map(|(_, m)| JoinMember {
+                        value: &mut *m.value,
+                        at: m.at,
+                        label: m.label,
+                    })
+                    .collect();
+                let reported =
+                    self.report_misfits(&misfit_at, (name, t, var), &mut with, &mut whole);
+                with[t] = param_t;
+                if let Some(reported) = reported {
+                    failed.get_or_insert(reported);
+                }
+            }
             if let Some(reported) = broke {
                 self.table.poison(var);
                 failed = Some(reported);
@@ -2519,7 +2575,7 @@ impl Checker<'_> {
                 }
                 if !fits {
                     let origin = call.declarer.origin(i);
-                    let found = self.table.default_open(ty);
+                    let found = self.shown_against(ty, want);
                     let d = self.mismatch(args[i].value.span, None, want, found, origin);
                     failed.get_or_insert_with(|| self.diagnostics.error(d));
                 }
@@ -2845,6 +2901,123 @@ impl Checker<'_> {
         }
     }
 
+    /// The reports of the arguments in `misfits`, which fit their place for no type of the
+    /// parameter `t` (`name`, its variable `var`). Each is its own mistake, as on `main`. The
+    /// other members of `t` are `members`. When one of them has a type of its own, the place
+    /// shows the type that they give `t`. A literal has no type of its own. When the place is
+    /// then known, a label names the argument that gives it. An open part can be left, where the
+    /// place clashes with the argument. Then the report names the outer shape of the place, as
+    /// "an array" or "a `Box`". Else it shows each open part as `_`, as on `main`. It changes
+    /// `with[t]`, which the caller puts back. `None` when `misfits` is empty.
+    fn report_misfits(
+        &mut self,
+        misfits: &[(Span, Type, Type, Origin)],
+        (name, t, var): (Symbol, usize, Type),
+        with: &mut [Type],
+        members: &mut [JoinMember<'_>],
+    ) -> Option<Reported> {
+        let binder = self.binder_origin(name, members, &vec![false; members.len()]);
+        let joined = binder.and_then(|_| self.join_type(members, Some(name), None));
+        with[t] = joined.unwrap_or(var);
+        let mut first = None;
+        for &(at, ty, param, origin) in misfits {
+            let want = self
+                .table
+                .default_open(self.table.resolve(param.subst(with)));
+            let got = self.shown_against(ty, want);
+            let d = if let Some(shape) = self.clashing_shape(want, got) {
+                DiagnosticKind::Mismatch {
+                    want: shape,
+                    got: self.type_name(got),
+                    at,
+                    origin: None,
+                    fix: None,
+                    conversion: false,
+                    layers: false,
+                }
+                .into()
+            } else {
+                let origin = if want.holds_infer() {
+                    origin
+                } else {
+                    binder.unwrap_or(origin)
+                };
+                self.mismatch(at, None, want, got, origin)
+            };
+            let reported = self.diagnostics.error(d);
+            first.get_or_insert(reported);
+        }
+        first
+    }
+
+    /// The type `got` of an argument as its report against `want` shows it: each open part that
+    /// meets a known part of `want` takes it, as the argument would when it is checked against
+    /// `want` (`meet_parts`). It binds nothing.
+    pub(super) fn shown_against(&mut self, got: Type, want: Type) -> Type {
+        let snapshot = self.table.snapshot();
+        self.meet_parts(got, want);
+        let met = self.table.resolve(got);
+        self.table.rollback(snapshot);
+        self.table.default_open(fill_holes(met, want))
+    }
+
+    /// Binds each open part of `got` that meets a known part of `want`, as the argument takes it
+    /// when it is checked against `want`. An optional meets a place that is not optional through
+    /// its payload: `X?` against `[i64]` takes `X = [i64]`. The report then shows the known part
+    /// of `got`, not `_`. The caller rolls the bindings back.
+    fn meet_parts(&mut self, got: Type, want: Type) {
+        crate::conformance::ensure_stack(|| {
+            let got = self.table.resolve(got);
+            match (got.kind(), want.kind()) {
+                // A type parameter in `want` can be the callee's own, which no argument takes.
+                (TypeKind::Infer(_), _) if !want.holds_infer() && !want.has_param() => {
+                    // A part that does not meet stays open. Inside the caller's snapshot, the
+                    // checks that wait for the part stay queued, and its rollback drops them.
+                    let _queued = self.table.unify(got, want);
+                }
+                (TypeKind::Optional(g), TypeKind::Optional(w))
+                | (TypeKind::Array(g), TypeKind::Array(w)) => self.meet_parts(g, w),
+                (TypeKind::Optional(g), _) => self.meet_parts(g, want),
+                (TypeKind::Class(a, ga), TypeKind::Class(b, wa)) if a == b => {
+                    self.meet_args(ga, wa);
+                }
+                (TypeKind::Struct(a, ga), TypeKind::Struct(b, wa)) if a == b => {
+                    self.meet_args(ga, wa);
+                }
+                (TypeKind::Enum(a, ga), TypeKind::Enum(b, wa)) if a == b => {
+                    self.meet_args(ga, wa);
+                }
+                _ => {}
+            }
+        });
+    }
+
+    /// `meet_parts` for each pair of type arguments.
+    fn meet_args(&mut self, got: TypeArgs, want: TypeArgs) {
+        for (&g, &w) in got.get().iter().zip(want.get()) {
+            self.meet_parts(g, w);
+        }
+    }
+
+    /// The outer shape of `want`, the place of an argument of type `got`, when the two clash
+    /// and `want` still holds an open part: an array, or the class or enum. The name of the
+    /// callee's parameter would mislead there, as the arguments may give it a type. Another
+    /// clash, or a shape that `got` has, gives `None`, and the report writes the type.
+    fn clashing_shape(&self, want: Type, got: Type) -> Option<Expected> {
+        let shape = match (want.kind(), got.kind()) {
+            (TypeKind::Array(_), TypeKind::Array(_)) => return None,
+            (TypeKind::Array(_), _) => Expected::Array,
+            (TypeKind::Class(a, _), TypeKind::Class(b, _)) if a == b => return None,
+            (TypeKind::Struct(a, _), TypeKind::Struct(b, _)) if a == b => return None,
+            (TypeKind::Enum(a, _), TypeKind::Enum(b, _)) if a == b => return None,
+            (TypeKind::Class(id, _), _) => Expected::Named(self.head(Head::Class(id)).to_string()),
+            (TypeKind::Enum(id, _), _) => Expected::Named(self.head(Head::Enum(id)).to_string()),
+            _ => return None,
+        };
+        // An argument with an open part of its own shows its type, as on `main`.
+        (want.holds_infer() && !got.holds_infer()).then_some(shape)
+    }
+
     /// Whether a member of type `ty`, at a place that is `filled` with the variable `var` of its
     /// type parameter, decides nothing of it: it meets `filled`, and `var` stays an open `Any`.
     fn decides_nothing(&mut self, ty: Type, filled: Type, var: Type) -> bool {
@@ -2953,7 +3126,8 @@ impl Checker<'_> {
                 let want = self
                     .table
                     .default_open(self.normalize(want).unwrap_or(want));
-                let d = self.mismatch(e.span, None, want, ty, origin);
+                let got = self.shown_against(ty, want);
+                let d = self.mismatch(e.span, None, want, got, origin);
                 Err(mismatch_poison(self.diagnostics.error(d)))
             }
             _ => checked,
