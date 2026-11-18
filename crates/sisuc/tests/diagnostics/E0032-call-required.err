@@ -1,0 +1,8 @@
+error[E0032]: expected `string`, found `u8`
+ --> E0032-call-required.sisu:6:21
+  |
+6 |     let x: string = pick(a, b)
+  |                     ^^^^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

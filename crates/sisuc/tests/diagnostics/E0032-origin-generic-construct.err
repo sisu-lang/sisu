@@ -76,11 +76,13 @@ error[E0032]: expected `M`, found `string`
 11 |     n: M
    |        - `n` is declared as `M`
 
-error[E0032]: expected `string`, found `i64`
-  --> E0032-origin-generic-construct.sisu:66:21
+error[E0032]: the arguments for `U` of this call have different types
+  --> E0032-origin-generic-construct.sisu:66:13
    |
 66 |     let p = Same(a: 1, b: "x")
-   |                     ^     --- this argument gives `U` the type `string`
+   |             ^^^^    -     --- `string`
+   |                     |
+   |                     this argument gives `U` the type `i64`
 
 error[E0032]: expected `i64`, found `string`
   --> E0032-origin-generic-construct.sisu:70:24

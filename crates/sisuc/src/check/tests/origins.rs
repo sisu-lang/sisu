@@ -8,6 +8,8 @@ use super::*;
 enum Explained {
     /// Exactly one secondary label, at this line and column, and no note.
     Label(u32, u32),
+    /// A secondary label at each of these places, in order, and no note: a join report.
+    Labels(&'static [(u32, u32)]),
     /// Exactly one note, and no secondary label: the origin is in the prelude.
     Note,
     /// A label at the primary span, and no secondary label and no note: a language rule.
@@ -51,6 +53,7 @@ fn origin_rows(rows: &[(&str, &str, (u32, u32), Explained)]) {
         let rule = d.label().is_some();
         let (wanted, wanted_notes, wanted_rule) = match explained {
             Explained::Label(line, col) => (vec![(*line, *col)], 0, false),
+            Explained::Labels(places) => (places.to_vec(), 0, false),
             Explained::Note => (Vec::new(), 1, false),
             Explained::Rule => (Vec::new(), 0, true),
             Explained::Nothing => (Vec::new(), 0, false),
@@ -370,8 +373,8 @@ fn an_earlier_value_should_explain_the_type() {
         (
             "type parameter",
             "fn g<T>(a: T, b: T) -> T { a }\nfn main() {\n    g(1, \"x\")\n}\n",
-            (3, 7),
-            Explained::Label(3, 10),
+            (3, 5),
+            Explained::Labels(&[(3, 7), (3, 10)]),
         ),
         (
             "an inner `if` against the outer first branch (fable-9)",
@@ -772,8 +775,8 @@ fn a_generic_constructor_should_give_the_origin_of_each_field() {
         (
             "a field of the type parameter",
             "struct P<U> {\n    a: U\n    b: U\n}\nfn main() {\n    let p = P(a: 1, b: \"x\")\n    print(p.a)\n}\n",
-            (6, 18),
-            Explained::Label(6, 24),
+            (6, 13),
+            Explained::Labels(&[(6, 18), (6, 24)]),
         ),
         (
             "an optional of another type",

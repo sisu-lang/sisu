@@ -1941,10 +1941,10 @@ fn a_concrete_argument_should_bind_before_a_literal_under_a_transparent_form() {
     }
     let src = format!("{TRANSPARENT_DECLS}fn main() {{\n    let r = pick(1, \"s\")\n}}");
     let line = TRANSPARENT_DECLS.lines().count() + 2;
-    codes(&src, &[(Code::Mismatch, (line, 18))]);
-    // The concrete `"s"` binds first, so the literal under `dbg` is the one reported.
+    codes(&src, &[(Code::Mismatch, (line, 13))]);
+    // The literal under `dbg` is a member of the join too, so the call reports the conflict.
     let src = format!("{TRANSPARENT_DECLS}fn main() {{\n    let r = pick(dbg(1), \"s\")\n}}");
-    codes(&src, &[(Code::Mismatch, (line, 18))]);
+    codes(&src, &[(Code::Mismatch, (line, 13))]);
 }
 
 /// A call whose declared return type names none of its own type parameters has a type that its
@@ -2554,9 +2554,10 @@ fn a_generic_call_that_does_not_check_should_report_once() {
             "fn g() {\n    let x = first(5)\n}",
             vec![(Code::Mismatch, (2, 19))],
         ),
+        // Arguments that conflict for one parameter are the call's error.
         (
             "fn g() {\n    let x = pair(1, \"a\")\n}",
-            vec![(Code::Mismatch, (2, 18))],
+            vec![(Code::Mismatch, (2, 13))],
         ),
         (
             "fn g() {\n    let x = id(Leaf)\n}",
@@ -3653,18 +3654,18 @@ fn an_associated_type_argument_should_wait_for_the_argument_that_binds_its_base(
     }
 }
 
-/// A variant built from integer literals ranks as a literal does, so it takes its type from a
-/// concrete argument beside it: the mismatch is at the `5`, as for a bare `5`, and not a failed
-/// bound of the `i64` that the pair would bind alone.
+/// A variant built from integer literals ranks as a literal does, so it joins with a concrete
+/// argument beside it. The conflict is one report at the call, as for a bare `5`. It is not a
+/// failed bound of the `i64` that the pair would bind alone.
 #[test]
 fn a_variant_of_literals_should_take_its_type_from_a_concrete_argument() {
     for (decls, call, col) in [
         (
             "fn h<T: I>(_p: Two<T, T.Item>, _a: T) {}\n",
             "h(Two.P(5, 7), W())",
-            13,
+            5,
         ),
-        ("fn h<T: I>(_a: T, _b: T) {}\n", "h(5, W())", 7),
+        ("fn h<T: I>(_a: T, _b: T) {}\n", "h(5, W())", 5),
     ] {
         let (src, line) = assoc_program(decls, call);
         codes_row(
@@ -3772,8 +3773,9 @@ fn an_associated_type_argument_should_report_its_own_mistake() {
         ),
         (
             "fn h<T: I>(_p: [Two<T, T.Item>?]) {}\n",
+            // The elements are members of the join of `T`, so their conflict is the report.
             "h([Two.P(5, 7), Two.P(W(), 8)])",
-            &[(Code::NotConform, 8)],
+            &[(Code::Mismatch, 21)],
         ),
         (
             "fn h<T: I>(_p: Two<T, T.Item>, _q: Two<T, T.Item>) {}\n",
@@ -3788,22 +3790,22 @@ fn an_associated_type_argument_should_report_its_own_mistake() {
             &[(Code::NotConform, 7)],
         ),
         // A parameter that is not bound yet when the bound fails is still bound by the next
-        // argument, so a later mismatch is reported at it.
+        // arguments. The conflict of its arguments is reported at the call.
         (
             "fn h<T: I, U>(_p: Two<T, T.Item>, _a: U, _b: U) {}\n",
             "h(Two.P(five(), 7), 1, \"s\")",
-            &[(Code::NotConform, 7), (Code::Mismatch, 25)],
+            &[(Code::Mismatch, 5), (Code::NotConform, 7)],
         ),
         // A pattern that names no parameter with a failed bound still reports its mismatch.
         (
             "fn h<T: I, S: I, U, V>(_p: Two<T, T.Item>, _s: S, _a: U, _b: Two<Two<U, V>, i64>) {}\n",
             "h(Two.P(five(), 7), W(), true, Two.P(Two.P(\"s\", 1), 2))",
-            &[(Code::NotConform, 7), (Code::Mismatch, 48)],
+            &[(Code::Mismatch, 5), (Code::NotConform, 7)],
         ),
         (
             "fn h<T: I, U>(_p: Two<T, T.Item>, _a: Wrap<U>, _b: Wrap<U>) {}\n",
             "h(Two.P(five(), 7), Wrap.X(five()), Wrap.X(\"s\"))",
-            &[(Code::NotConform, 7), (Code::Mismatch, 48)],
+            &[(Code::Mismatch, 5), (Code::NotConform, 7)],
         ),
     ];
     for &(decls, call, expected) in rows {
@@ -3897,22 +3899,22 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, Two.P(\"s\", 1))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Box<U, V>) {}\n",
             "h(true, Box(a: \"s\", b: 1))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, mk(\"s\", 1))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, Two.P(\"s\", 1))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
@@ -3927,17 +3929,17 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, Some(Two.P(\"s\", 1)))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
             "h(true, Two.P(Two.P(\"s\", 1), 2))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
             "h(true, mk(mk(\"s\", 1), 2))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>?]) {}\n",
@@ -3947,12 +3949,12 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Result<U, V>) {}\n",
             "h(true, okr(\"s\"))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, pr(\"s\"))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
@@ -3962,7 +3964,7 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, Option.Some(Two.P(\"s\", 1)))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h2<U, V>(a: U, b: Two<U, V>, c: Two<U, V>) {}\n",
@@ -3972,17 +3974,17 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, id(Two.P(\"s\", 1)))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, id(Some(Two.P(\"s\", 1))))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, Some(id(Two.P(\"s\", 1))))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [[Two<U, V>]]) {}\n",
@@ -3997,12 +3999,12 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>??) {}\n",
             "h(true, Some(Some(Two.P(\"s\", 1))))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>??) {}\n",
             "h(true, id(Some(Some(Two.P(\"s\", 1)))))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [[Two<U, V>?]]) {}\n",
@@ -4017,37 +4019,37 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn fix<A>(x: A) -> Two<i64, A> { Two.P(1, x) }\nfn h<U, V>(c: V, b: Two<U, V>) {}\n",
             "h(true, fix(\"s\"))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn fix<A>(x: A) -> [Two<i64, A>] { [] }\nfn h<U, V>(c: V, b: [Two<U, V>]) {}\n",
             "h(true, fix(\"s\"))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn fix<A>(x: A) -> Two<i64, A>? { None }\nfn h<U, V>(c: V, b: Two<U, V>?) {}\n",
             "h(true, fix(\"s\"))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn fix<A>(x: A) -> Box<i64, A> { Box(a: 1, b: x) }\nfn h<U, V>(c: V, b: Box<U, V>) {}\n",
             "h(true, fix(\"s\"))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "struct Sb<A, B> {\n    a: A\n    b: B\n}\nfn fix<A>(x: A) -> Sb<i64, A> { Sb(a: 1, b: x) }\nfn h<U, V>(c: V, b: Sb<U, V>) {}\n",
             "h(true, fix(\"s\"))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn mk_array<A, B>(a: A, b: B) -> [Two<A, B>] { [] }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "h(true, mk_array(\"s\", 1))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn mk_some<A, B>(a: A, b: B) -> Two<A, B>? { None }\nfn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, mk_some(\"s\", 1))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
@@ -4077,12 +4079,12 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I, U>(_a: U, _b: Two<U, T.Item>?, _c: T) {}\n",
             "h(true, Some(Two.P(\"s\", 7)), W())",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<T: I, U, V>(_a: U, _b: Two<U, Two<V, T.Item>>, _c: T) {}\n",
             "h(true, Two.P(\"s\", Two.P(1, 7)), W())",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<T: I, U, V>(_a: Two<T, T.Item>, _b: U, _c: [Two<U, V>]) {}\n",
@@ -4117,22 +4119,22 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, dbg(Two.P(\"s\", 1)))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, dbg(dbg(Two.P(\"s\", 1))))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, Some(dbg(Two.P(\"s\", 1))))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, dbg(Some(Two.P(\"s\", 1))))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
@@ -4286,7 +4288,7 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
         (
             "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "let d: D? = D()\nh(true, d?.m2(\"s\"))",
-            &[(Mismatch, "d?.m2(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
@@ -4343,7 +4345,7 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "let c: C? = C()\nh(true, c?.m(\"s\", 1))",
-            &[(Mismatch, "c?.m(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
@@ -4353,22 +4355,22 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
         (
             "fn hn<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
             "let c: C? = C()\nhn(true, Two.P(c?.m(\"s\", 1), 2))",
-            &[(Mismatch, "Two.P(c")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "let c: C? = C()\nh(true, Some(c?.m(\"s\", 1)))",
-            &[(Mismatch, "Some(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let c: C? = C()\nh(true, [c?.m(\"s\", 1)])",
-            &[(Mismatch, "c?.m(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "let c: C? = C()\nh(true, id(c?.m(\"s\", 1)))",
-            &[(Mismatch, "id(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
@@ -4381,8 +4383,10 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
 /// An argument that gets no context is reported as a whole, as it was before. Its shape may be
 /// wrong, as in an optional for a plain parameter. Its kind may get no context: an `if`, an
 /// array literal for an optional parameter. The call may return another
-/// class or enum than the context. A receiver may fix a part of the type. A safe call, waiting
-/// or not, may be for a plain parameter. The reported mistake is then the shape, not a part.
+/// class or enum than the context. A receiver may fix a part of the type. The reported mistake
+/// is then the shape, not a part. A safe call for a plain parameter is the exception: it reports
+/// the part that is wrong (`"s"`) in each position, as the rows of
+/// `a_safe_call_that_waits_for_a_plain_context_should_get_no_context` do.
 #[test]
 fn a_partly_bound_parameter_should_report_the_whole_argument_without_context() {
     check_partial_rows(WHOLE_ROWS);
@@ -5098,28 +5102,31 @@ fn a_failed_bound_should_not_check_a_later_argument_against_the_rejected_type() 
 const REJECT_PART_ROWS: &[PartialRow<'static>] = {
     use Code::{Mismatch, NotConform};
     const P: &str = "Two.P(n";
-    const S: &str = "\"s\"";
     &[
-        // `U` is not rejected: the first argument that binds it fixes it.
+        // `U` is not rejected: the arguments that bind it join, and their conflict is reported
+        // at the call.
         (
             "fn h<T: I, U>(_p: Two<T, T.Item>, _a: U, _b: Two<U, T.Item>) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), true, Two.P(\"s\", 3))",
-            &[(NotConform, P), (Mismatch, S)],
+            &[(Mismatch, "h("), (NotConform, P)],
         ),
         (
             "fn h<T: I, S: I, U>(_p: Two<T, T.Item>, _s: S, _a: U, _b: Two<U, S.Item>) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), W(), true, Two.P(\"s\", 2))",
-            &[(NotConform, P), (Mismatch, S)],
+            &[(Mismatch, "h("), (NotConform, P)],
         ),
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: Two<T, U>, _b: U) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), Two.P(W(), 1), \"s\")",
-            &[(NotConform, P), (Mismatch, S)],
+            &[(Mismatch, "h("), (NotConform, P)],
         ),
+        // Parked (progress.md, "After the merge (Task 5 calls)": U row 3). The array literal
+        // waits, so `"s"` decides `U` and each element reports. The nested join rule would give
+        // one report that names `1`, `2` and `"s"`.
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: [Two<T, U>], _b: U) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), [Two.P(W(), 1), Two.P(W(), 2)], \"s\")",
-            &[(NotConform, P), (Mismatch, S)],
+            &[(NotConform, P), (Mismatch, "1)"), (Mismatch, "2)")],
         ),
         // The part that is not the rejected parameter must still meet the parameter's type.
         (
@@ -5130,7 +5137,7 @@ const REJECT_PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: Two<T, bool>) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), mk(W(), 1))",
-            &[(NotConform, P), (Mismatch, "1))")],
+            &[(NotConform, P), (Mismatch, "mk(")],
         ),
     ]
 };
@@ -5183,7 +5190,7 @@ const OTHER_WAIT_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: U?) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), none())",
-            &[(NotConform, "Two.P(n"), (CannotInfer, "h(")],
+            &[(CannotInfer, "h("), (NotConform, "Two.P(n")],
         ),
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: [U?]) {}\n",
@@ -5345,12 +5352,12 @@ const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
              fn two_p<B>() -> Two<P, B> { panic(\"e\") }\n\
              fn h<T: I, U>(_a: T, _b: Two<T, U>) {}\n",
             "h(P(), two_p())",
-            &[(NotConform, "P()"), (CannotInfer, "h(")],
+            &[(CannotInfer, "h("), (NotConform, "P()")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: Two<T, U>?) {}\n",
             "h(5, dbg(none()))",
-            &[(NotConform, "5"), (CannotInfer, "h(")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         (
             "fn g<A, B>(_x: B?) -> A? { None }\n\
@@ -5361,24 +5368,24 @@ const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I, U>(_p: T, _a: U?) {}\n",
             "h(5, id(none()))",
-            &[(NotConform, "5"), (CannotInfer, "h(")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: U?) {}\n",
             "h(5, none())",
-            &[(NotConform, "5"), (CannotInfer, "h(")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         // One call has a rejected parameter and an unbound one, in both orders: `A` is rejected
         // and `B` is not, or the reverse.
         (
             "fn h<T: I, U>(_p: T, _a: Two<T, U>) {}\n",
             "h(5, two())",
-            &[(NotConform, "5"), (CannotInfer, "h(")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: Two<U, T>) {}\n",
             "h(5, two())",
-            &[(NotConform, "5"), (CannotInfer, "h(")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: [Two<T, U>]) {}\n",
@@ -5388,7 +5395,7 @@ const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I, U>(_p: T, _a: Two<T, U>) {}\n",
             "h(5, id(two()))",
-            &[(NotConform, "5"), (CannotInfer, "h(")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         // `A` of `two` sits in `[T]`, a part that holds `REJECTED` and no `HOLE`; `B` sits at `U`.
         // The call keeps the E0050 of the parameter that is not rejected-only, whichever comes
@@ -5396,23 +5403,23 @@ const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I, U>(_p: T, _a: Two<[T], U>) {}\n",
             "h(5, two())",
-            &[(NotConform, "5"), (CannotInfer, "h(")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: Two<U, [T]>) {}\n",
             "h(5, two())",
-            &[(NotConform, "5"), (CannotInfer, "h(")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         // A part that holds both holes is not rejected-only.
         (
             "fn h<T: I, U>(_p: T, _a: Two<[T], U>?) {}\n",
             "h(5, none())",
-            &[(NotConform, "5"), (CannotInfer, "h(")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         (
             "fn any<X>() -> X { panic(\"e\") }\nfn h<T: I, U>(_p: T, _a: [T], _b: U?) {}\n",
             "h(5, any(), none())",
-            &[(NotConform, "5"), (CannotInfer, "h(")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
     ]
 };
@@ -5466,11 +5473,10 @@ const CONTEXT_BOUND_DECLS: &str = "class Vi: I {\n    type Item = bool\n}\n\
 const CONTEXT_BOUND_ROWS: &[PartialRow<'static>] = {
     use Code::Mismatch;
     &[
-        // The context makes `T` an `i64`, which `I` has no conformance for. The call keeps the
-        // `T = W` of its first argument, as a call with no context does. The parameter rejects
-        // `5`, so the call has a failed part and is untyped (the call row of S14).
-        ("", "let _x: i64 = h(W(), Two.P(5, 7))", &[(Mismatch, "5")]),
-        ("", "let _x: i64 = g(W())", &[(Mismatch, "g(W())")]),
+        // The required type is the only candidate for `T`, so the call opens at `i64`. Each
+        // member that does not convert to it gets the directed report: `W()`, not `5`.
+        ("", "let _x: i64 = h(W(), Two.P(5, 7))", &[(Mismatch, "W(")]),
+        ("", "let _x: i64 = g(W())", &[(Mismatch, "W(")]),
         ("", "let _x: i64? = g2(W(), W())", &[(Mismatch, "g2(")]),
         // The call decides `T = V` and `U` from the bound before the context, so the context
         // meets the result at its top.
@@ -5481,12 +5487,8 @@ const CONTEXT_BOUND_ROWS: &[PartialRow<'static>] = {
         ),
         // The context leaves `U` open, so the bound waits, and the context fits as before.
         ("", "let _x: i64 = hk2(V())", &[(Mismatch, "V()")]),
-        // A method with a bound of its own parameter.
-        (
-            "",
-            "let _x: i64 = Bx().m(W())",
-            &[(Mismatch, "Bx().m(W())")],
-        ),
+        // A method with a bound of its own parameter, by the same rule.
+        ("", "let _x: i64 = Bx().m(W())", &[(Mismatch, "W(")]),
         // A context that fails a bound of a parameter that it binds blames no argument, also an
         // argument whose own parameter it binds right. The call keeps `A = W` and `B = W`.
         (
@@ -5664,7 +5666,7 @@ const HELD_BOUND_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I>(_a: T, _p: Two<T, i64>) {}\n",
             "h(W(), Two.P(5, 7))",
-            &[(Mismatch, "5")],
+            &[(Mismatch, "h(")],
         ),
         // The receiver binds `T`, and no bound of the method is there to fail. The associated
         // type is still replaced.
@@ -5676,7 +5678,7 @@ const HELD_BOUND_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: T) {}\n",
             "h(Two.P(W(), 7), W())\nh(Two.P(W(), 7), 5)",
-            &[(Mismatch, "5)")],
+            &[(Mismatch, "h(")],
         ),
     ]
 };
@@ -5861,9 +5863,10 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
         ("print(fc2(mkdv(), mk2(), mk()))", &[]),
         // A call that nothing wakes is checked when the sweep ends, with what the later
         // arguments bound. `mkv()` has `X` under `T`, and `mks()` binds `U`: the call checks.
-        // `mkt()` has `i64` under `U`, which `mks()` binds to `string`: the mismatch is true.
+        // `mkt()` has `i64` under `U`, which `mks()` binds to `string`: the conflict of `U` is
+        // true, and the call reports it.
         ("print(gtu(mkv(), mks()))", &[]),
-        ("print(gtu(mkt(), mks()))", &[(Mismatch, "mkt()")]),
+        ("print(gtu(mkt(), mks()))", &[(Mismatch, "gtu(")]),
         // A part of the call's type is a parameter that its own argument binds (`Y`), not an open
         // one. It waits for `T` only. At an associated type of the outer call, the same
         // part names no open parameter.
@@ -5878,8 +5881,9 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
             "print(gb(BX(a: 1, c: 2), mk()))",
             &[(Code::TooManyArguments, "c: 2")],
         ),
-        // A woken call that disagrees with the argument that woke it is blamed.
-        ("print(gn(mkr(), mks()))", &[(Mismatch, "mkr()")]),
+        // A woken call that disagrees with the argument that woke it is a conflict of the join,
+        // and the call reports it.
+        ("print(gn(mkr(), mks()))", &[(Mismatch, "gn(")]),
         // A call under another call takes the type argument that another member gives too.
         ("print(g(id(mk2()), mk()))", &[]),
         // A call that is wrong for its parameter reports the mismatch, as it did.
@@ -6054,7 +6058,7 @@ const FAILED_ARGUMENT_ROWS: &[PartialRow<'static>] = {
         (
             DECLS,
             "print(h3(nope, 1, \"s\"))",
-            &[(BindingNotFound, "nope"), (Mismatch, "1,")],
+            &[(Mismatch, "h3("), (BindingNotFound, "nope")],
         ),
         (
             DECLS,
@@ -6131,13 +6135,13 @@ const KNOWN_CONTEXT_ROWS: &[PartialRow<'static>] = {
         class O {\n    fn m<X>(self) -> Box<X, bool> { panic(\"no\") }\n}\n\
         fn mko() -> O? { None }\n";
     &[
-        (DECLS, "print(g(mkp(), mkr()))", &[(Mismatch, "mkp()")]),
+        (DECLS, "print(g(mkp(), mkr()))", &[(Mismatch, "g(")]),
         (DECLS, "let x: i64? = mkp()", &[(Mismatch, "mkp()")]),
         (DECLS, "let x: i64 = mkp()", &[(Mismatch, "mkp()")]),
         (DECLS, "print(fi(mkp()))", &[(Mismatch, "mkp()")]),
-        (DECLS, "print(g2(mkp(), 1))", &[(Mismatch, "mkp()")]),
+        (DECLS, "print(g2(mkp(), 1))", &[(Mismatch, "g2(")]),
         (DECLS, "let x: i64 = mk2()", &[(Mismatch, "mk2()")]),
-        (DECLS, "print(g2(1, mk2()))", &[(Mismatch, "mk2()")]),
+        (DECLS, "print(g2(1, mk2()))", &[(Mismatch, "g2(")]),
         (DECLS, "let x: [i64] = mk2()", &[(Mismatch, "mk2()")]),
         // No context: the call has nothing to meet, and E0050 is the fault.
         (DECLS, "let x = mkp()", &[(CannotInfer, "mkp()")]),

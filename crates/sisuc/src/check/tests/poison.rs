@@ -1645,7 +1645,7 @@ fn the_form_should_decide_the_type() {
         (
             "both(1, \"x\")",
             "let a = both(1, \"x\") and print(a + true)".into(),
-            vec![(Mismatch, (41, 18))],
+            vec![(Mismatch, (41, 13))],
         ),
         (
             "bd(Rock(), 1)",
@@ -1993,7 +1993,7 @@ fn a_typed_poisoned_part_should_fail_only_a_call() {
         (
             "both",
             "let a = both(h(), true)".into(),
-            vec![(ArgumentCount, (41, 18)), (Mismatch, (41, 23))],
+            vec![(Mismatch, (41, 13)), (ArgumentCount, (41, 18))],
         ),
         (
             "bd",

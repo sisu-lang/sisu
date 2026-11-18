@@ -183,25 +183,25 @@ The examples use `fn pick<T>(a: T, b: T) -> T`, `fn h<T>(a: T, b: T?) -> T` and 
 - An argument that holds an optional also comes first. `pick([1], [Some(2)])` is a `[i64?]`.
 - So does a call that wraps an optional. For `fn wrap<T>(x: T) -> [T]`, `pick([1], wrap(Some(2)))` is a `[i64?]`. A call wraps an optional when its parameter and its return type name one type parameter.
 - An optional at a `T?` place fills that `?`, so the call does not hold an optional. `pick(h(1, Some(2)), Some(3))` is an `i64?`, and `let v: i64?? = h(1, Some(2))` is valid.
-- A call that waits never makes the outer call hold an optional. For `fn okv<T>(r: Result<T, string>) -> T`, `pick(1, okv(Ok(Some(2))))` is an error: `1` fixes `T` as `i64` first. Write `pick(Some(1), ...)`, or give the result a type. [E0032](../diagnostics/E0032.md)
+- A call that waits can also make the outer call hold an optional: the arguments of `T` join. For `fn okv<T>(r: Result<T, string>) -> T`, `pick(1, okv(Ok(Some(2))))` is an `i64?`.
 - A call that returns `T` can bind `T` to the whole optional context. It does so when an argument at a `T` or `[T]` place makes or holds an optional. For `first<T>(xs: [T]) -> T`, `let v: i64?? = first([None, Some(1)])` binds `T` to `i64??`, so `v` is the outer `None`.
 - A call that returns `T?` does the same when the context has no more optionals than the call makes. `let w: i64?? = opt(Some(2))` binds `T` to `i64?`.
 - When the context has more optionals, its payload meets `T?`. `let w: i64??? = opt(Some(2))` also binds `T` to `i64?`.
 - `Some(Some(2))` at a `T?` place fills the `?` and leaves one optional, so `T` is an optional. `let v: i64? = h(1, Some(Some(2)))` is valid, and a context `i64??` also binds `T` to `i64?`.
-- Inference counts only the optionals that the arguments show. A later argument with more optionals does not widen `T`, so the order can change the result. `pick(Some(Some(1)), Some(2))` is an `i64??`, but `pick(Some(2), Some(Some(1)))` is an error. [E0032](../diagnostics/E0032.md)
+- The arguments of `T` join, so their order does not change the result. `pick(Some(Some(1)), Some(2))` and `pick(Some(2), Some(Some(1)))` are each an `i64??`.
 - A `None` at a `T?` place shows no optional. `let w: i64?? = h(1, None)` is an error: expected `i64??`, found `i64`.
-- A call that returns `T?` does the same with more optionals. For `fn opt2<T>(x: T, _y: T) -> T?`, `let w: i64??? = opt2(Some(2), Some(Some(3)))` is an error: expected `i64`, found `i64?`.
-- In each of these cases, write the type argument. `pick<i64??>(Some(2), Some(Some(1)))`, `h<i64?>(1, None)` and `opt2<i64??>(Some(2), Some(Some(3)))` are valid.
+- A call that returns `T?` joins its arguments too. For `fn opt2<T>(x: T, _y: T) -> T?`, `let w: i64??? = opt2(Some(2), Some(Some(3)))` is valid: `T` is `i64??`.
+- To give `T` more optionals than the arguments show, write the type argument. `h<i64?>(1, None)` is valid.
 
 **Where the error is**
 
 - When an argument does not agree with the expected type, the error is at the argument. `let r: Result<i64, string> = Ok("x")` reports `"x"`: expected `i64`, found `string`. [E0032](../diagnostics/E0032.md)
 - With written type arguments, as in `id<i64>(n)`, the error is at the call.
-- An argument also meets the parts that an earlier argument fixed. For `f<A, B>(a: A, p: Two<A, B>)`, `f("s", Two(a: 1, b: true))` reports `1`: expected `string`, found `i64`. This is also true inside `Some(...)`, an array literal or another generic call.
+- When the arguments of one type parameter do not agree, the error is at the call, and it names each argument and its type. For `f<A, B>(a: A, p: Two<A, B>)`, `f("s", Two(a: 1, b: true))` reports `f`: the arguments for `A` of this call have different types, with `"s"` and `Two(a: 1, b: true)` as the two arguments.
 - When the argument has the wrong shape, the error is at the whole argument. While the parameter type names a type parameter that the call has not fixed, the error gives the shape in words. For `take<T>(xs: [T])`, `take(5)` reports `5`: expected an array, found `i64`. For a `Box<U>` parameter, it reports expected a `Box`.
 - An optional parameter type keeps the type in the message. For `fn topt<T>(xs: [T]?)`, `topt(5)` reports expected `[_]?`, found `i64`.
 - A call that waits also keeps the type. `take(Ok(1))` reports `Ok(1)`: expected `[_]`, found `Result<i64, _>`.
-- When a call that waited does not agree with the argument that fixed its type, the error is at the call that waited. For `fn mks<E>() -> Result<string, E>`, `fn mkr<X>() -> Two<i64, Two<X, bool>>` and `gn<T>(c: Two<T, Two<T, bool>>, d: Result<T, string>)`, `gn(mkr(), mks())` reports `mkr()`: expected `Two<string, Two<string, bool>>`, found `Two<i64, Two<string, bool>>`.
+- A call that waited is an argument of the join too. For `fn mks<E>() -> Result<string, E>`, `fn mkr<X>() -> Two<i64, Two<X, bool>>` and `gn<T>(c: Two<T, Two<T, bool>>, d: Result<T, string>)`, `gn(mkr(), mks())` reports `gn`: the arguments for `T` of this call have different types.
 - A result that cannot fit the expected type gives the error of a call that is not generic, also when a type parameter stays open. `let y: i64 = mk2()` reports expected `i64`, found `Two<_, bool>`. [E0032](../diagnostics/E0032.md)
 - `1 == mk2()` reports cannot compare `i64` with `Two<_, bool>`. [E0047](../diagnostics/E0047.md)
 

@@ -322,7 +322,7 @@ fn a_generic_call_in_an_any_context_should_bind_from_each_argument_of_the_any_ty
     codes_row(
         "a fixed argument meets a context part that is open",
         "interface P<A, B> {}\nclass W<T> {\n    v: T\n}\nfn fix<A>(x: A) -> W<any P<i64, A>> { panic(\"e\") }\nfn h<U, V>(c: V, b: W<any P<U, V>>) {}\nfn main() {\n    h(true, fix(\"s\"))\n}\n",
-        &[(Mismatch, (8, 17))],
+        &[(Mismatch, (8, 5))],
     );
     codes_row(
         "a call decides its own parameters before the context part, which then reports the call",
