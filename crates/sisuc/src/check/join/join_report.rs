@@ -245,6 +245,7 @@ impl Checker<'_> {
                     part_at(self.table.resolve(place), param, own).unwrap_or(own),
                 )
             }
+            Place::Split { part, argument } => (argument, self.table.resolve(part)),
             Place::Whole => (members[i].label, ty),
         };
         let ty = self.table.default_open(ty);
@@ -269,6 +270,7 @@ impl Checker<'_> {
                     argument,
                     part_at(self.table.resolve(place), param, own).unwrap_or(own),
                 ),
+                Place::Split { part, argument } => (argument, self.table.resolve(part)),
                 Place::Whole => (member.label, own),
             };
             // Only the part at `param` must be known: `mk()` of `Result<i64, E>` gives `T` of
@@ -285,7 +287,7 @@ impl Checker<'_> {
     fn fails(&mut self, site: Site, i: usize, member: &mut JoinMember<'_>, ty: Type) -> bool {
         let target = target(member.at, site.hole, ty);
         let snapshot = self.table.snapshot();
-        let wraps = self.converts(member.value, target, site.fixed == Some(i));
+        let wraps = self.member_converts(member, target, site.fixed == Some(i));
         self.table.rollback(snapshot);
         wraps.is_none()
     }

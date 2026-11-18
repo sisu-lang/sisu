@@ -55,6 +55,22 @@ pub(super) enum Place {
     /// `T?`, `Box<T>`). The member is the part of the argument at `T`, and `argument` is the
     /// argument's span.
     Part { place: Type, argument: Span },
+    /// An argument at a place that names two or more parameters of the call, whose type unified
+    /// with that place once, before its first join. The member is `part`, its part at `T`, which
+    /// converts to a type of `T` only by unification. So a join of each parameter does not walk
+    /// the whole argument again.
+    Split { part: Type, argument: Span },
+}
+
+impl JoinMember<'_> {
+    /// The type that the member takes part with: its part when it is split, else the type of its
+    /// value.
+    pub(super) fn ty(&self) -> Option<Type> {
+        match self.at {
+            Place::Split { part, .. } => Some(part),
+            Place::Whole | Place::Part { .. } => member_type(self.value),
+        }
+    }
 }
 
 /// The form of a join, which its report names.
@@ -231,7 +247,7 @@ impl Checker<'_> {
             Ok(Joined::Typed(ty)) => {
                 for (i, member) in members.iter_mut().enumerate() {
                     let target = target(member.at, hole, ty);
-                    self.settle_member(member.value, target, fixed == Some(i));
+                    self.settle_member(member, target, fixed == Some(i));
                 }
                 let ty = self.table.resolve(ty);
                 match left_out {
@@ -315,7 +331,8 @@ impl Checker<'_> {
             let mut wraps = Some(0);
             for &i in &taking {
                 let target = target(members[i].at, hole, candidate);
-                let Some(more) = self.converts(members[i].value, target, fixed == Some(i)) else {
+                let Some(more) = self.member_converts(&mut members[i], target, fixed == Some(i))
+                else {
                     wraps = None;
                     break;
                 };
@@ -356,6 +373,12 @@ impl Checker<'_> {
         let mut found: Vec<(Type, Option<Type>, bool)> = Vec::new();
         for &i in taking {
             let member = &mut members[i];
+            // A split member is one top: its part, which has no nested member.
+            if let Place::Split { part, .. } = member.at {
+                let part = self.table.resolve(part);
+                found.push((part, Some(Type::optional(part)), optional(self, part)));
+                continue;
+            }
             let mut leaves = Vec::new();
             match &mut *member.value {
                 Ok(e) => {
@@ -371,6 +394,7 @@ impl Checker<'_> {
                         let (place, ty) = (self.table.resolve(place), self.table.resolve(ty));
                         hole.and_then(|hole| part_at(place, hole, ty))
                     }
+                    Place::Split { part, .. } => Some(part),
                 };
                 let Some(around) = part(leaf.around) else {
                     continue;
@@ -400,6 +424,26 @@ impl Checker<'_> {
             }
         }
         candidates
+    }
+
+    /// `converts` for `member`, whose target is `target`. A split member only unifies its part.
+    pub(super) fn member_converts(
+        &mut self,
+        member: &mut JoinMember<'_>,
+        target: Type,
+        fixed: bool,
+    ) -> Option<usize> {
+        match member.at {
+            Place::Split { part, .. } => self.unify(part, target).then_some(0),
+            Place::Whole | Place::Part { .. } => self.converts(member.value, target, fixed),
+        }
+    }
+
+    /// Whether `e` converts to `target` only at its top: it has no value position.
+    pub(super) fn converts_at_top(&self, e: &mut tir::Expr, target: Type) -> bool {
+        let mut inner = false;
+        value_positions(e, &mut |_| inner = true);
+        !inner && self.enter(e, target).is_none()
     }
 
     /// The wraps that `value` takes to convert to `target`, or `None`. It binds what it unifies:
@@ -459,9 +503,15 @@ impl Checker<'_> {
         })
     }
 
-    /// Changes `value` to `target`, which `join` chose. A member with no value to lift becomes a
-    /// value poisoned by its E0043, of the type `target`.
-    fn settle_member(&mut self, value: &mut Checked, target: Type, fixed: bool) {
+    /// Changes the value of `member` to `target`, which `join` chose. A member with no value to
+    /// lift becomes a value poisoned by its E0043, of the type `target`. A split member only
+    /// unifies its part.
+    fn settle_member(&mut self, member: &mut JoinMember<'_>, target: Type, fixed: bool) {
+        if let Place::Split { part, .. } = member.at {
+            self.unify(part, target);
+            return;
+        }
+        let value = &mut *member.value;
         match value {
             Ok(e) if fixed => {
                 self.unify(e.ty, target);
@@ -645,6 +695,13 @@ impl Checker<'_> {
         let mut index: FxHashMap<Type, usize> = FxHashMap::default();
         for &i in taking {
             let member = &mut members[i];
+            // A split member is a made part of its argument, as a `Place::Part` top.
+            if let Place::Split { part, argument } = member.at {
+                if hole.is_some() {
+                    parts.push((argument, self.table.resolve(part)));
+                }
+                continue;
+            }
             let mut leaves = Vec::new();
             // Whether the one leaf is the member's own value, and a conversion can wrap it.
             let (mut top, mut whole) = (false, false);
@@ -683,7 +740,7 @@ impl Checker<'_> {
                         part_at(place, hole, ty).unwrap_or(ty)
                     }
                     // The left side of `??` is at its payload.
-                    (Place::Part { .. }, None) => match ty.kind() {
+                    (Place::Part { .. } | Place::Split { .. }, None) => match ty.kind() {
                         TypeKind::Optional(payload) => payload,
                         _ => ty,
                     },
@@ -728,12 +785,12 @@ fn member_type(value: &Checked) -> Option<Type> {
 }
 
 /// The type that a member at `at` converts to when the join is `ty`: `ty` itself, or the type of
-/// its parameter with `hole` replaced by `ty`.
+/// its parameter with `hole` replaced by `ty`. A split member is its part, so it converts to `ty`.
 pub(super) fn target(at: Place, hole: Option<Symbol>, ty: Type) -> Type {
     match (at, hole) {
         (Place::Part { place, .. }, Some(hole)) => fill(place, hole, ty),
         (Place::Part { place, .. }, None) => place,
-        (Place::Whole, _) => ty,
+        (Place::Whole | Place::Split { .. }, _) => ty,
     }
 }
 

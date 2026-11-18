@@ -186,6 +186,19 @@ fn params_named(ty: Type, reach: Reach) -> Vec<usize> {
     found
 }
 
+/// Whether the result type of `sig` names each of its type parameters other than under an
+/// associated type, found in one walk.
+fn result_names(sig: &GenericSig<'_>) -> Vec<bool> {
+    let mut named = vec![false; sig.declared.len()];
+    for k in sig
+        .ret
+        .map_or_else(Vec::new, |ret| params_named(ret, Reach::OutsideAssoc))
+    {
+        named[k] = true;
+    }
+    named
+}
+
 /// Whether `ty` names the type parameter at place `param` other than under an associated type:
 /// only such a name lets the type that a result is annotated with bind the parameter.
 fn names_outside_assoc(ty: Type, param: usize) -> bool {
@@ -2291,13 +2304,24 @@ impl Checker<'_> {
         let ret_named = sig
             .ret
             .map_or_else(Vec::new, |ret| params_named(ret, Reach::Everywhere));
-        // Whether the result type names each parameter outside an associated type.
-        let mut ret_outside = vec![false; sig.declared.len()];
-        if let Some(ret) = sig.ret {
-            for k in params_named(ret, Reach::OutsideAssoc) {
-                ret_outside[k] = true;
-            }
-        }
+        let ret_outside = result_names(sig);
+        // The members that are split (see `Place::Split`), and the part of each at each decided
+        // parameter that its place names. The first join of a member tries the split once.
+        let mut split = vec![false; args.len()];
+        let mut split_tried = vec![false; args.len()];
+        let mut parts: FxHashMap<(usize, usize), Type> = FxHashMap::default();
+        // For each split member, the parameters whose join did not unify its part with their
+        // variable. A member that is not split meets that variable in its place at each later
+        // join. So a split member takes such a join as a member that is not split, and then is
+        // split again.
+        let mut pending: Vec<Vec<usize>> = vec![Vec::new(); args.len()];
+        // Whether a split member was open at a join: then it unified each part with the variable
+        // of its parameter, as the place of a member that is not split does.
+        let mut linked_all = vec![false; args.len()];
+        // An open member gave the variable of a later parameter a type. A member that is not
+        // split meets that type in its trial at each later join, and can be a misfit there. So no
+        // member is split after that.
+        let mut bound_early = false;
         for (n, &(t, var)) in join_order.iter().enumerate() {
             let name = sig.declared[t];
             // The join before this one left its `Param` in `with`. Its variable goes back, so that
@@ -2307,7 +2331,9 @@ impl Checker<'_> {
             if let Some(&(before, its_var)) = n.checked_sub(1).and_then(|n| join_order.get(n)) {
                 with[before] = its_var;
             }
+            // A split member reads no entry of `with`.
             let reads = (index.members[t].iter())
+                .filter(|&&i| !split[i] || !pending[i].is_empty() || bound_early)
                 .flat_map(|&i| &index.everywhere[i])
                 .chain(&index.bound_named[t]);
             for &k in reads {
@@ -2316,6 +2342,31 @@ impl Checker<'_> {
             let place = u32::try_from(t).expect("a callee should have fewer than 2^32 parameters");
             let param_t = Type::intern(TypeKind::Param(name, place));
             with[t] = param_t;
+            let found = &call.bindings.found;
+            // A split member goes back to the place that it has when it is not split: a join
+            // that fails reports each member as on `main`.
+            let unsplit = |c: &mut Self, scratch: &mut [Type], i: usize, at: &mut Place| {
+                let (Place::Split { argument, .. }, Some(param)) = (*at, sig.params[i]) else {
+                    return;
+                };
+                for &k in &index.everywhere[i] {
+                    let now = if k == t {
+                        param_t
+                    } else {
+                        c.table.resolve(listed(found[k]))
+                    };
+                    scratch[k] = match now.kind() {
+                        TypeKind::Infer(_) if index.decided[k] && joins_at[k] > n => {
+                            c.table.fresh(Kind::Any, argument)
+                        }
+                        _ => now,
+                    };
+                }
+                *at = Place::Part {
+                    place: param.subst(scratch),
+                    argument,
+                };
+            };
             let mut members = Vec::new();
             // The members that have a value, each with its place filled with `var`, its type and
             // its span, for the bounds of `T` (see `broken_member`).
@@ -2345,7 +2396,8 @@ impl Checker<'_> {
                 // An argument that does not fit its place, whatever type each parameter takes, is
                 // a mistake of its shape: it gets the directed report, as on main, and joins
                 // nothing.
-                if value.is_ok()
+                if !(split[i] && pending[i].is_empty() && !bound_early)
+                    && value.is_ok()
                     && !param.has_assoc()
                     && let Some(ty) = type_of(value)
                     && ty != Type::NEVER
@@ -2359,9 +2411,32 @@ impl Checker<'_> {
                         };
                     }
                     let place = param.subst(&scratch);
+                    // A member at a place that names two or more decided parameters is split at
+                    // its first join, when it converts there only by unification. Its type then
+                    // keeps each part that it unified with the place: a fresh variable of each
+                    // parameter that is open, as later joins take it.
+                    let wide = !std::mem::replace(&mut split_tried[i], true)
+                        && index.decided_at(i).nth(1).is_some();
                     let snapshot = self.table.snapshot();
-                    let fits = self.converts(value, place, false).is_some();
-                    self.table.rollback(snapshot);
+                    let steps = match value {
+                        Ok(e) if wide && self.table.open_call(e).is_none() => self
+                            .converts_at_top(e, place)
+                            .then(|| self.conversion(e.ty, place).map(|steps| steps.len())),
+                        _ => None,
+                    };
+                    let fits = match steps {
+                        Some(steps) => steps.is_some(),
+                        None => self.converts(value, place, false).is_some(),
+                    };
+                    if steps == Some(Some(0)) {
+                        self.keep_snapshot(snapshot);
+                        split[i] = true;
+                        for &k in index.everywhere[i].iter().filter(|&&k| index.decided[k]) {
+                            parts.insert((i, k), scratch[k]);
+                        }
+                    } else {
+                        self.table.rollback(snapshot);
+                    }
                     if !fits {
                         misfits[i] = true;
                         // A `unit` that fits for no type is no value (E0043), as for a callee
@@ -2382,6 +2457,21 @@ impl Checker<'_> {
                         continue;
                     }
                 }
+                // A split member at its first join was split above, and has nothing pending.
+                if split[i] && pending[i].is_empty() && !bound_early {
+                    let part = *parts
+                        .get(&(i, t))
+                        .expect("a split member should have its part");
+                    if self.decides_nothing(part, var, var) {
+                        open.push((var, part, argument, i, true));
+                    } else {
+                        valued.push((var, part, argument));
+                        let at = Place::Split { part, argument };
+                        let label = argument;
+                        members.push((i, JoinMember { value, at, label }));
+                    }
+                    continue;
+                }
                 with[t] = var;
                 let filled = param.subst(&with);
                 with[t] = param_t;
@@ -2389,7 +2479,7 @@ impl Checker<'_> {
                     && ty != Type::NEVER
                     && self.decides_nothing(ty, filled, var)
                 {
-                    open.push((filled, ty, argument));
+                    open.push((filled, ty, argument, i, false));
                     continue;
                 }
                 if value.is_ok()
@@ -2446,11 +2536,24 @@ impl Checker<'_> {
             }
             // A lone member that leaves `T` open takes the place of the call's result.
             if members.is_empty()
-                && let [(filled, ty, argument)] = open[..]
+                && let [(filled, ty, argument, _, false)] = open[..]
                 && filled == var
             {
                 self.note_lone_arg(span, sig.ret, (t, argument, ty));
             }
+            // Unifies the parts of the split member `i` with the variables of the parameters in
+            // `ks`. A place that is not split does this at its next join.
+            let link = |c: &mut Self, i: usize, ks: &[usize]| {
+                let mut linked = true;
+                for &k in ks {
+                    let part = *parts
+                        .get(&(i, k))
+                        .expect("a split member should have its part");
+                    let now = c.table.resolve(listed(found[k]));
+                    linked &= c.unify(now, part);
+                }
+                linked
+            };
             // The closed call checks a bound of `T` before its join (Q22): E0154 at a member that
             // breaks it poisons the call, and the join adds no conflict. A bound of each parameter
             // is checked, as on `main`, also after another parameter broke its own.
@@ -2478,6 +2581,9 @@ impl Checker<'_> {
                 with[t] = param_t;
             }
             if !misfit_at.is_empty() {
+                for (i, m) in &mut members {
+                    unsplit(self, &mut scratch, *i, &mut m.at);
+                }
                 let mut whole: Vec<JoinMember<'_>> = (members.iter_mut())
                     .map(|(_, m)| JoinMember {
                         value: &mut *m.value,
@@ -2497,6 +2603,12 @@ impl Checker<'_> {
                 failed = Some(reported);
                 quiet.push(t);
                 bound_broke = true;
+                let open_members = open.iter().map(|&(.., i, _)| i);
+                for i in members.iter().map(|&(i, _)| i).chain(open_members) {
+                    if split[i] {
+                        pending[i].push(t);
+                    }
+                }
                 continue;
             }
             let of: Vec<usize> = members.iter().map(|&(i, _)| i).collect();
@@ -2505,7 +2617,6 @@ impl Checker<'_> {
             // ties: the open form takes `T` from it.
             let ret_t = (sig.ret).filter(|_| tied.len() == tied_from && ret_outside[t]);
             if let Some(first) = members.first().map(|member| member.label) {
-                let found = &call.bindings.found;
                 let returns = |c: &mut Self| {
                     let ret = (sig.ret).filter(|&ret| ret != with[t] && ret_outside[t])?;
                     let mut now = with.clone();
@@ -2529,15 +2640,38 @@ impl Checker<'_> {
                 });
                 let form = JoinForm::Call { param: name };
                 // A call that failed already reports nothing more against `want`.
-                let joined = match (expected, ret_t) {
+                let joined = |c: &mut Self, members: &mut [JoinMember<'_>]| match (expected, ret_t)
+                {
                     (Expectation::Required(want, _), Some(ret)) if failed.is_none() => {
                         let at = (t, var, sig.bounds.get(t - owned));
-                        self.required_join(&mut members, at, (ret, &with), want)
+                        c.required_join(members, at, (ret, &with), want)
                     }
                     _ => Expectation::Member,
                 };
-                let before: Vec<Option<Type>> = members.iter().map(|m| type_of(m.value)).collect();
-                match self.join_form_with(form, (heading, returns), &mut members, joined, None) {
+                let mut expected_here = joined(self, &mut members);
+                if members.iter().any(|m| matches!(m.at, Place::Split { .. })) {
+                    let required = match expected_here {
+                        Expectation::Required(ty, _) => Some(ty),
+                        _ => None,
+                    };
+                    if self.join_type(&mut members, Some(name), required).is_none() {
+                        for (m, &i) in members.iter_mut().zip(&of) {
+                            unsplit(self, &mut scratch, i, &mut m.at);
+                        }
+                        expected_here = joined(self, &mut members);
+                    }
+                }
+                let before: Vec<Option<Type>> = members.iter().map(JoinMember::ty).collect();
+                let joined = expected_here;
+                let result =
+                    self.join_form_with(form, (heading, returns), &mut members, joined, None);
+                // A join that settled no member unified no part of a split member.
+                if !matches!(result, Ok(ty) if ty != Type::NEVER) {
+                    for &i in of.iter().filter(|&&i| split[i]) {
+                        pending[i].push(t);
+                    }
+                }
+                match result {
                     Ok(Type::NEVER) if let Some(reported) = held => {
                         self.table.poison(var);
                         failed.get_or_insert(reported);
@@ -2560,6 +2694,13 @@ impl Checker<'_> {
                         if !self.unify(var, ty) {
                             // The join of an earlier parameter bound it through a shared argument.
                             failed.get_or_insert_with(|| self.proof(first)); // proof: quiet reader
+                        }
+                        // A member that went back to its place unified each part there.
+                        for (m, &i) in members.iter().zip(&of).filter(|&(_, &i)| split[i]) {
+                            let ks = std::mem::take(&mut pending[i]);
+                            if matches!(m.at, Place::Split { .. }) {
+                                link(self, i, &ks);
+                            }
                         }
                         // shortcut: a parameter whose closed join wraps a member is closed only,
                         // so that no member takes two wraps; keep each member's own type in the
@@ -2588,9 +2729,32 @@ impl Checker<'_> {
                     }
                 }
             }
-            for (filled, ty, at) in open {
-                if !self.unify(filled, ty) {
+            // A split member that took this join as one that is not split unified each part.
+            for (filled, ty, at, i, split_here) in open {
+                let pending = std::mem::take(&mut pending[i]);
+                // The first time, a split member links each part, which can bind a later one.
+                let all = split_here && !std::mem::replace(&mut linked_all[i], true);
+                let linked = match (split_here, all) {
+                    (false, _) => true,
+                    (true, false) => link(self, i, &pending),
+                    (true, true) => {
+                        let decided = (index.everywhere[i].iter()).filter(|&&k| index.decided[k]);
+                        link(self, i, &decided.copied().collect::<Vec<_>>())
+                    }
+                };
+                let unified = self.unify(filled, ty);
+                if !(linked && unified) {
                     failed.get_or_insert_with(|| self.proof(at)); // proof: quiet reader
+                }
+                if !split_here || all {
+                    bound_early |= (index.everywhere[i].iter()).any(|&k| {
+                        index.decided[k]
+                            && joins_at[k] > n
+                            && !matches!(
+                                self.table.resolve(listed(call.bindings.found[k])).kind(),
+                                TypeKind::Infer(_)
+                            )
+                    });
                 }
             }
         }
@@ -2939,7 +3103,7 @@ impl Checker<'_> {
             let converts = self.unify(var, ty)
                 && (members.iter_mut()).all(|m| {
                     let target = target(m.at, Some(name), ty);
-                    self.converts(m.value, target, false).is_some()
+                    self.member_converts(m, target, false).is_some()
                 })
                 && {
                     // A number unifies with `want`, else it is `i64`, as in `close_call`.
@@ -3028,7 +3192,8 @@ impl Checker<'_> {
         let snapshot = self.table.snapshot();
         let wraps_only = bare != part
             && (members.iter()).all(|m| {
-                type_of(m.value).is_none_or(|ty| self.unify(ty, target(m.at, Some(name), bare)))
+                m.ty()
+                    .is_none_or(|ty| self.unify(ty, target(m.at, Some(name), bare)))
             });
         self.table.rollback(snapshot);
         wraps_only
@@ -3047,7 +3212,7 @@ impl Checker<'_> {
         let (m, rest) = members.split_first()?;
         let ty = self.table.resolve(type_of(m.value)?);
         let takes = |this: &mut Self, m: &JoinMember<'_>| {
-            type_of(m.value).is_some_and(|got| {
+            m.ty().is_some_and(|got| {
                 let snapshot = this.table.snapshot();
                 let takes = this.unify(got, target(m.at, Some(name), part));
                 this.table.rollback(snapshot);
@@ -3929,14 +4094,12 @@ impl Checker<'_> {
         (expected, met): (Expectation, Option<bool>),
     ) -> Result<(), Poisoned> {
         if expected == Expectation::Member {
+            let in_result = result_names(sig);
             // A parameter that the result names and that is still open waits for the outer call.
             // That call reports it when it settles no type for it.
             let waits: Vec<(Type, DiagnosticKind)> = (decided.iter())
-                .filter(|&&(t, var)| {
-                    sig.ret.is_some_and(|ret| names_outside_assoc(ret, t))
-                        && self.table.resolve(var).holds_infer()
-                })
-                .map(|&(t, var)| (var, Self::cannot_infer_kind(sig, t)))
+                .filter(|&&(t, var)| in_result[t] && self.table.resolve(var).holds_infer())
+                .map(|&(t, var)| (var, Self::cannot_infer_kind(sig, t, true)))
                 .collect();
             if waits.is_empty() {
                 self.body.waits.remove(&call.at);
@@ -3955,7 +4118,7 @@ impl Checker<'_> {
             // its type, which does not name the parameter.
             for &(t, var) in decided {
                 let ty = self.table.resolve(var);
-                if sig.ret.is_none_or(|ret| names_outside_assoc(ret, t)) || !ty.holds_infer() {
+                if sig.ret.is_none() || in_result[t] || !ty.holds_infer() {
                     continue;
                 }
                 let closed = self.table.default_open(ty);
@@ -4558,7 +4721,8 @@ impl Checker<'_> {
             ret
         };
         let entry = self.body.misfits.len();
-        let d = Self::cannot_infer_kind(sig, param).into();
+        let in_result = sig.ret.is_some_and(|ret| names_outside_assoc(ret, param));
+        let d = Self::cannot_infer_kind(sig, param, in_result).into();
         self.body.misfits.push(Some(d));
         let reported = self.proof(call.at); // proof: held misfit
         Poisoned {
@@ -4569,12 +4733,14 @@ impl Checker<'_> {
 
     /// Reports the call of `sig` that binds nothing to its parameter at `param`.
     fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: usize) -> Reported {
-        let kind = Self::cannot_infer_kind(sig, param);
+        let in_result = sig.ret.is_some_and(|ret| names_outside_assoc(ret, param));
+        let kind = Self::cannot_infer_kind(sig, param, in_result);
         self.error(kind)
     }
 
-    /// The E0050 of `cannot_infer`.
-    fn cannot_infer_kind(sig: &GenericSig<'_>, param: usize) -> DiagnosticKind {
+    /// The E0050 of `cannot_infer`. `in_result` tells whether the result type names the parameter
+    /// other than under an associated type.
+    fn cannot_infer_kind(sig: &GenericSig<'_>, param: usize, in_result: bool) -> DiagnosticKind {
         let name = sig.name;
         // `Some(...)`, or `Option.Some(...)`. A user variant `Some`, which E0026 reports, is
         // neither.
@@ -4619,7 +4785,7 @@ impl Checker<'_> {
             callee,
             example,
             at,
-            in_result: sig.ret.is_some_and(|ret| names_outside_assoc(ret, param)),
+            in_result,
         }
     }
 
