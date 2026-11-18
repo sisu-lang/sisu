@@ -3016,6 +3016,19 @@ impl Checker<'_> {
                 .table
                 .default_open(self.table.resolve(param.subst(with)));
             let got = self.shown_against(ty, want);
+            // A generic call that gives its one argument's type, as `id(true)`, takes a known
+            // place on to that argument: the report is at `true`, with no label, as on `main`.
+            let mut inner = at;
+            while !want.holds_infer()
+                && let Some(&(arg, _)) = self.body.lone_args.get(&inner)
+            {
+                inner = arg;
+            }
+            let (at, binder) = if inner == at {
+                (at, binder)
+            } else {
+                (inner, Some(Origin::None))
+            };
             let d = if let Some(shape) = self.clashing_shape(want, got) {
                 DiagnosticKind::Mismatch {
                     want: shape,
