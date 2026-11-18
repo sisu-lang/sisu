@@ -3159,26 +3159,8 @@ impl Checker<'_> {
             }
             return Ok(());
         }
-        if let (Some(false), Expectation::Required(want, origin)) = (met, expected) {
-            let with: Vec<Type> = (call.bindings.found.iter())
-                .map(|&ty| self.table.resolve(listed(ty)))
-                .collect();
-            // A result that converts to `want` at the top, as `Circle` to `any Shape`, fits.
-            let ret = sig.ret.map(|ret| self.table.resolve(ret.subst(&with)));
-            let snapshot = self.table.snapshot();
-            let converts = ret.is_some_and(|ret| {
-                let ret = self.table.default_open(ret);
-                self.conversion(ret, want).is_some()
-            });
-            self.table.rollback(snapshot);
-            if !converts
-                && let Some(reported) = self.lone_mismatch(sig, (lone, &with), want, origin)
-            {
-                return Err(Poisoned {
-                    mismatch: true,
-                    ..Poisoned::typed(want, reported)
-                });
-            }
+        if let Some(poisoned) = self.required_mismatch(call, sig, lone, (expected, met)) {
+            return Err(poisoned);
         }
         for &(_, var) in decided {
             let ty = self.table.resolve(var);
@@ -3313,6 +3295,98 @@ impl Checker<'_> {
                 return;
             }
         }
+    }
+
+    /// The mismatch of a result that does not meet the required type of `expected`, reported
+    /// at its cause: a `mut` place (see `mut_against_context`), or the one member of the result's
+    /// parameter (S26b, see `lone_mismatch`). A `mut` place binds its parameters with no member,
+    /// so `met` can be `None` for it. `None` when the result converts, or no such cause exists.
+    fn required_mismatch(
+        &mut self,
+        call: &mut Inference<'_>,
+        sig: &GenericSig<'_>,
+        lone: &[Lone],
+        (expected, met): (Expectation, Option<bool>),
+    ) -> Option<Poisoned> {
+        let placed = !call.mut_shapes.is_empty() && met != Some(true);
+        let Expectation::Required(want, origin) = expected else {
+            return None;
+        };
+        if met != Some(false) && !placed {
+            return None;
+        }
+        let with: Vec<Type> = (call.bindings.found.iter())
+            .map(|&ty| self.table.resolve(listed(ty)))
+            .collect();
+        // A result that converts to `want` at the top, as `Circle` to `any Shape`, fits.
+        let ret = sig.ret.map(|ret| self.table.resolve(ret.subst(&with)));
+        let snapshot = self.table.snapshot();
+        let converts = ret.is_some_and(|ret| {
+            let ret = self.table.default_open(ret);
+            self.conversion(ret, want).is_some()
+        });
+        self.table.rollback(snapshot);
+        if converts {
+            return None;
+        }
+        let reported = (placed.then(|| self.mut_against_context(call, sig, &with, want)))
+            .flatten()
+            .or_else(|| {
+                (met == Some(false))
+                    .then(|| self.lone_mismatch(sig, (lone, &with), want, origin))
+                    .flatten()
+            });
+        reported.map(|reported| Poisoned {
+            mismatch: true,
+            ..Poisoned::typed(want, reported)
+        })
+    }
+
+    /// E0170 at the first `mut` argument whose place does not have the type that `want`, the
+    /// call's context, makes of its parameter. A place binds the parameters that its parameter
+    /// names before the context does (see `infer_call`). So the place can be why the result
+    /// misses `want`. `with` is the call's type arguments so far. `None` when `want`
+    /// does not decide the place's type, or each place has it.
+    fn mut_against_context(
+        &mut self,
+        call: &mut Inference<'_>,
+        sig: &GenericSig<'_>,
+        with: &[Type],
+        want: Type,
+    ) -> Option<Reported> {
+        let (site, ret) = (sig.mut_site?, sig.ret?);
+        let snapshot = self.table.snapshot();
+        // Each parameter that a place binds is open again, for the context to decide.
+        let mut open = with.to_vec();
+        for pattern in (call.mut_shapes.iter()).filter_map(|&(i, _)| sig.params[i]) {
+            for (t, ty) in open.iter_mut().enumerate() {
+                if names_outside_assoc(pattern, t) {
+                    *ty = self.table.fresh(Kind::Any, call.at);
+                }
+            }
+        }
+        // The payload of an optional `want` first, as `meet_context` meets it at the top.
+        let ret = ret.subst(&open);
+        let payload_first = self.table.snapshot();
+        let mut decides = self.unify(ret, payload(want));
+        if !decides && matches!(want.kind(), TypeKind::Optional(_)) {
+            self.table.rollback(payload_first);
+            decides = self.unify(ret, want);
+        }
+        let wants: Vec<Option<Type>> = (call.mut_shapes.iter())
+            .map(|&(i, _)| {
+                let ty = self.table.resolve(sig.params[i]?.subst(&open));
+                (decides && !ty.holds_infer()).then_some(ty)
+            })
+            .collect();
+        self.table.rollback(snapshot);
+        let k = (call.mut_shapes.iter().zip(&wants))
+            .position(|((_, shape), want)| want.is_some_and(|want| !shape.writes(want)))?;
+        let (i, shape) = call.mut_shapes.remove(k);
+        let (pattern, fit) = (sig.params[i]?, wants[k]?);
+        let reported = self.report_mut_type(&call.args[i].value, &shape, (site, i), (fit, pattern));
+        call.slots[i] = Some(Err(mismatch_poison(reported)));
+        Some(reported)
     }
 
     /// The E0032 of S26b: the result type `sig.ret` is a decided parameter or its optional, which
