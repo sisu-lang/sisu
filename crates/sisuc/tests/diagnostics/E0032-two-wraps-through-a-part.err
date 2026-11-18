@@ -1,0 +1,32 @@
+error[E0032]: expected `i64??`, found `i64`
+ --> E0032-two-wraps-through-a-part.sisu:7:20
+  |
+7 |     let x: i64?? = snd(kp(5))
+  |            -----   ^^^^^^^^^^
+  |            |
+  |            declared as `i64??` here
+  |
+  = help: a value converts through one `?` only: wrap it in `Some(...)` for each further layer
+
+error[E0032]: expected `i64??`, found `i64`
+ --> E0032-two-wraps-through-a-part.sisu:8:20
+  |
+8 |     let y: i64?? = snd(kv(5))
+  |            -----   ^^^^^^^^^^
+  |            |
+  |            declared as `i64??` here
+  |
+  = help: a value converts through one `?` only: wrap it in `Some(...)` for each further layer
+
+error[E0032]: expected `i64??`, found `i64`
+ --> E0032-two-wraps-through-a-part.sisu:9:20
+  |
+9 |     let z: i64?? = snd(kp(k))
+  |            -----   ^^^^^^^^^^
+  |            |
+  |            declared as `i64??` here
+  |
+  = help: a value converts through one `?` only: wrap it in `Some(...)` for each further layer
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

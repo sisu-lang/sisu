@@ -2071,3 +2071,32 @@ fn a_failed_late_argument_should_add_no_report_for_its_siblings() {
         ),
     ]);
 }
+
+/// The functions of the rows of `two_wraps_through_a_part_should_report_at_the_call`.
+const WRAP_FUNCTIONS: &str = "enum Pr<A, B> { P(a: A, b: B) }\nfn kp<Y>(y: Y) -> Pr<i64?, Y> { Pr.P(a: None, b: y) }\nfn kv<X>(x: X) -> Pr<X?, X> { Pr.P(a: None, b: x) }\nfn snd<A, B>(p: Pr<A, B>) -> B { match p { Pr.P(a, b) => b } }\n";
+
+#[test]
+fn two_wraps_through_a_part_should_report_at_the_call() {
+    // GIVEN a generic call under a type with two wraps, whose result is a part of its one argument
+    // WHEN each is checked
+    // THEN the report is at the call, in one form for an open and a closed argument (Q24)
+    let row = |line: &str| format!("{WRAP_FUNCTIONS}fn main() {{\n    let k = 5\n    {line}\n}}\n");
+    let at = |col: usize| (WRAP_FUNCTIONS.lines().count() + 3, col + 4);
+    error_rows(&[
+        (
+            "closed part from a literal",
+            row("let x: i64?? = snd(kp(5))"),
+            vec![(Code::Mismatch, at(16))],
+        ),
+        (
+            "open part",
+            row("let y: i64?? = snd(kv(5))"),
+            vec![(Code::Mismatch, at(16))],
+        ),
+        (
+            "closed part from a local",
+            row("let z: i64?? = snd(kp(k))"),
+            vec![(Code::Mismatch, at(16))],
+        ),
+    ]);
+}
