@@ -9292,6 +9292,46 @@ fn an_open_call_should_check_each_bound_that_its_open_form_changes() {
     }
 }
 
+/// GIVEN a generic call whose bound `T: K<U>` has a closed subject `T`
+/// AND an argument of `U` that is still open: an integer literal, a `None` or an empty array
+/// WHEN a join around the call gives `U` its type after the call
+/// THEN the bound is checked with that type: E0154 when it breaks, as on `main`
+/// AND no error when it holds, also when `U` is not `i64`
+#[test]
+fn a_bound_should_wait_for_an_interface_argument_that_closes_after_its_subject() {
+    with_prelude();
+    let bound = Some((Code::NotConform, "X()"));
+    let rows: [(&str, Option<(Code, &str)>); 8] = [
+        // The literal `3` is `u8` only after the join: `X` is no `K<u8>`.
+        ("print(pick(f(X(), 3), Box<u8>(v: 1)).v)", bound),
+        ("print(pick(Box<u8>(v: 1), f(X(), 3)).v)", bound),
+        ("print(pick(g(3, X()), Box<u8>(v: 1)).v)", bound),
+        // A `None` and an empty array get their type from the join too.
+        (
+            "print(pick(f(X(), None), Box<string?>(v: None)).v ?? \"\")",
+            bound,
+        ),
+        (
+            "print(pick(Box<string?>(v: None), f(X(), None)).v ?? \"\")",
+            bound,
+        ),
+        (
+            "print(pick(f(X(), []), Box<[string]>(v: [])).v.len())",
+            bound,
+        ),
+        // The controls: the bound holds with the type that the join gives.
+        ("print(pick(f(Y(), 3), Box<u8>(v: 1)).v)", None),
+        ("print(pick(f(X(), 3), Box<i64>(v: 1)).v)", None),
+    ];
+    for (row, expected) in rows {
+        let src = format!(
+            "struct Y: K<u8> {{\n    fn k(self, u: u8) -> i64 {{ 7 }}\n}}\n{OPEN_BOUND_DECLS}{row}\n}}"
+        );
+        let found = expected.map(|(code, needle)| (code, in_row(&src, row, needle)));
+        codes_row(row, &src, found.as_slice());
+    }
+}
+
 /// GIVEN a generic call at a bare `T` whose argument is checked late
 /// AND the call is a branch beside a sibling, or the right side of a `??`
 /// WHEN the call meets the hint of its siblings
