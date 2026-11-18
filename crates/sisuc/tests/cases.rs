@@ -22,7 +22,10 @@
 //!
 //! `SISU_BLESS=1` rewrites the `.out`, `.err`, `.json` and `.mir` files of passing cases. It never
 //! creates one.
+//!
+//! A case that `tests/parked.txt` names for its test is parked: it must fail until its task.
 
+use std::panic::{self, AssertUnwindSafe};
 use std::path::Path;
 use std::process::Command;
 
@@ -35,6 +38,31 @@ fn bless() -> bool {
     std::env::var("SISU_BLESS").as_deref() == Ok("1")
 }
 
+/// The task of `path` in `tests/parked.txt` for `test`, when the case is parked there.
+fn parked(test: &str, path: &Path) -> Option<&'static str> {
+    (include_str!("parked.txt").lines())
+        .filter(|line| !line.starts_with('#'))
+        .find_map(|line| {
+            let mut words = line.splitn(3, ' ');
+            let (name, case, task) = (words.next()?, words.next()?, words.next()?);
+            (name == test && path.ends_with(case)).then_some(task)
+        })
+}
+
+/// Runs `case`, which takes whether to bless. A parked case runs with no bless, and it must fail.
+fn unless_parked(test: &str, path: &Path, case: impl FnOnce(bool)) {
+    let Some(task) = parked(test, path) else {
+        case(bless());
+        return;
+    };
+    let passed = panic::catch_unwind(AssertUnwindSafe(|| case(false))).is_ok();
+    assert!(
+        !passed,
+        "{} passes, but tests/parked.txt parks it ({task}): remove its line",
+        path.display()
+    );
+}
+
 // datatest-stable names each test `<function>::<path under root>`, so these function names are
 // the `run::`, `memory::` and `run_fail::` prefixes that nextest filters match.
 
@@ -43,7 +71,7 @@ fn bless() -> bool {
     reason = "datatest-stable accepts only test functions that return a `Result`"
 )]
 fn run(path: &Path) -> datatest_stable::Result<()> {
-    support::run(path, bless());
+    unless_parked("run", path, |bless| support::run(path, bless));
     Ok(())
 }
 
@@ -52,7 +80,10 @@ fn run(path: &Path) -> datatest_stable::Result<()> {
     reason = "datatest-stable accepts only test functions that return a `Result`"
 )]
 fn memory(path: &Path) -> datatest_stable::Result<()> {
-    support::memory(path);
+    // The `run` test of a parked case is its guard.
+    if parked("run", path).is_none() {
+        support::memory(path);
+    }
     Ok(())
 }
 
@@ -70,7 +101,9 @@ fn run_fail(path: &Path) -> datatest_stable::Result<()> {
     reason = "datatest-stable accepts only test functions that return a `Result`"
 )]
 fn diagnostics(path: &Path) -> datatest_stable::Result<()> {
-    support::diagnostics(path, bless());
+    unless_parked("diagnostics", path, |bless| {
+        support::diagnostics(path, bless);
+    });
     Ok(())
 }
 
@@ -142,7 +175,7 @@ fn explanation(path: &Path) -> datatest_stable::Result<()> {
     reason = "datatest-stable accepts only test functions that return a `Result`"
 )]
 fn every_program_certifies(path: &Path) -> datatest_stable::Result<()> {
-    certifies(path);
+    unless_parked("every_program_certifies", path, |_| certifies(path));
     Ok(())
 }
 
