@@ -2844,7 +2844,11 @@ impl Checker<'_> {
                         !matches!(ty.kind(), TypeKind::Optional(_) | TypeKind::Infer(_))
                     })
             });
-        let part = if wraps_top {
+        // An optional result never converts to a `want` that is not optional: no part of it
+        // opens the call, and the closed form reports at the call, as on `main`.
+        let unwrapped = matches!(shown.kind(), TypeKind::Optional(_))
+            && !matches!(want.kind(), TypeKind::Optional(_) | TypeKind::Infer(_));
+        let part = if wraps_top || unwrapped {
             None
         } else {
             part_at(shown, name, want)
@@ -4028,6 +4032,9 @@ impl Checker<'_> {
     ) -> Option<Reported> {
         let ret = sig.ret?;
         let (bare, wanted) = match ret.kind() {
+            // An optional result never converts to a `want` that is not optional: the call
+            // reports as a whole, as on `main`.
+            TypeKind::Optional(_) if !matches!(want.kind(), TypeKind::Optional(_)) => return None,
             TypeKind::Optional(inner) => (inner, payload(want)),
             _ => (ret, want),
         };
