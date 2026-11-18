@@ -943,32 +943,48 @@ fn fill_in(place: Type, hole: Symbol, with: Type, memo: &mut FxHashMap<Type, Typ
 /// that is not optional against a `place` of `T?` converts at its top, so its part is its own
 /// type. `None` when `ty` does not have the shape of `place`.
 pub(super) fn part_at(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
+    let mut misses = FxHashSet::default();
     match (place.kind(), ty.kind()) {
         (TypeKind::Optional(inner), kind) if !matches!(kind, TypeKind::Optional(_)) => {
-            part_in(inner, hole, ty)
+            part_in(inner, hole, ty, &mut misses)
         }
-        _ => part_in(place, hole, ty),
+        _ => part_in(place, hole, ty, &mut misses),
     }
 }
 
-/// `part_at` below the top.
-fn part_in(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
+/// `part_at` below the top. `misses` holds each pair of a place and a type that gave `None`. So a
+/// type with shared parts is walked once for each distinct pair, not for each path.
+fn part_in(
+    place: Type,
+    hole: Symbol,
+    ty: Type,
+    misses: &mut FxHashSet<(Type, Type)>,
+) -> Option<Type> {
     #[cfg(test)]
     PART_STEPS.set(PART_STEPS.get() + 1);
-    let args = |ours: TypeArgs, theirs: TypeArgs| {
-        (ours.get().iter().zip(theirs.get()))
-            .find_map(|(&ours, &theirs)| part_in(ours, hole, theirs))
-    };
-    ensure_stack(|| match (place.kind(), ty.kind()) {
-        (TypeKind::Param(name, _), _) if name == hole => Some(ty),
-        (TypeKind::Array(ours), TypeKind::Array(theirs))
-        | (TypeKind::Optional(ours), TypeKind::Optional(theirs)) => part_in(ours, hole, theirs),
-        (TypeKind::Class(a, ours), TypeKind::Class(b, theirs)) if a == b => args(ours, theirs),
-        (TypeKind::Struct(a, ours), TypeKind::Struct(b, theirs)) if a == b => args(ours, theirs),
-        (TypeKind::Enum(a, ours), TypeKind::Enum(b, theirs)) if a == b => args(ours, theirs),
-        (TypeKind::Any(a, ours), TypeKind::Any(b, theirs)) if a == b => args(ours, theirs),
-        _ => None,
-    })
+    if !place.has_param() || misses.contains(&(place, ty)) {
+        return None;
+    }
+    let found = ensure_stack(|| {
+        let lists = match (place.kind(), ty.kind()) {
+            (TypeKind::Param(name, _), _) if name == hole => return Some(ty),
+            (TypeKind::Array(ours), TypeKind::Array(theirs))
+            | (TypeKind::Optional(ours), TypeKind::Optional(theirs)) => {
+                return part_in(ours, hole, theirs, misses);
+            }
+            (TypeKind::Class(a, ours), TypeKind::Class(b, theirs)) if a == b => (ours, theirs),
+            (TypeKind::Struct(a, ours), TypeKind::Struct(b, theirs)) if a == b => (ours, theirs),
+            (TypeKind::Enum(a, ours), TypeKind::Enum(b, theirs)) if a == b => (ours, theirs),
+            (TypeKind::Any(a, ours), TypeKind::Any(b, theirs)) if a == b => (ours, theirs),
+            _ => return None,
+        };
+        (lists.0.get().iter().zip(lists.1.get()))
+            .find_map(|(&ours, &theirs)| part_in(ours, hole, theirs, misses))
+    });
+    if found.is_none() {
+        misses.insert((place, ty));
+    }
+    found
 }
 
 #[cfg(test)]
