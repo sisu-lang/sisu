@@ -373,8 +373,14 @@ impl Checker<'_> {
                 required,
                 ..
             }) => {
-                let part = part_at(self.table.resolve(place), hole, self.table.resolve(got));
-                (required, part.unwrap_or(got))
+                // The whole place, when it is known, as on `main`; else the part at `hole`.
+                let whole = self.table.default_open(self.table.resolve(target));
+                if whole.holds_infer() {
+                    let part = part_at(self.table.resolve(place), hole, self.table.resolve(got));
+                    (required, part.unwrap_or(got))
+                } else {
+                    (whole, got)
+                }
             }
             _ => (target, got),
         };

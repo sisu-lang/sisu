@@ -2884,17 +2884,17 @@ impl Checker<'_> {
         // A result that is not optional meets the payload of an optional `want`, and the call's
         // value is wrapped (see `meet_context`).
         let shown = self.table.resolve(ret.subst(with));
-        // A member at a bare `T` whose type has a head that is not optional cannot make an
-        // optional. So the result wraps once at the top (Q24): its report names the payload, as on
-        // `main`.
+        // A member whose type holds no optional, and has a head that is known, cannot make an
+        // optional. So the result wraps once at the top (Q24), and its report names the payload,
+        // as on `main`. A member that holds an optional, as `Result<u8?, bool>`, gets the whole
+        // `want` in its report, as on `main`.
         let wraps_top = matches!(want.kind(), TypeKind::Optional(_))
             && !members.is_empty()
             && (members.iter()).all(|m| {
-                matches!(m.at, Place::Whole)
-                    && type_of(m.value).is_some_and(|ty| {
-                        let ty = self.table.resolve(ty);
-                        !matches!(ty.kind(), TypeKind::Optional(_) | TypeKind::Infer(_))
-                    })
+                type_of(m.value).is_some_and(|ty| {
+                    let ty = self.table.resolve(ty);
+                    !matches!(ty.kind(), TypeKind::Infer(_)) && !ty.holds_optional()
+                })
             });
         // An optional result never converts to a `want` that is not optional: no part of it
         // opens the call, and the closed form reports at the call, as on `main`.
