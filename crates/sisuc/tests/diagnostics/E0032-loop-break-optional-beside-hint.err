@@ -4,11 +4,5 @@ error[E0032]: expected `f64`, found `f64?`
 5 |     let x: f64? = o ?? id(loop { break p })
   |                                        ^
 
-error[E0032]: expected `f64`, found `None`
- --> E0032-loop-break-optional-beside-hint.sisu:6:59
-  |
-6 |     let y = o ?? id(loop { break (if false { 1.5 } else { None }) })
-  |                                                           ^^^^
-
-sisu: 2 errors
+sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

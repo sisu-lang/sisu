@@ -84,6 +84,86 @@ impl<K: Eq + Hash, V: Copy> WalkMemo<K, V> {
     }
 }
 
+/// Whether a `break` of a loop gives a value that is an optional by its form (see
+/// `optional_form`). The loop is `e`, or the value of a block or a branch of `e`. It reads the
+/// form only: to rank a `break` value before the loop is checked would read its names outside
+/// their scope.
+/// shortcut: these do not count: a `break` of a name, a labelled `break`, and a `break` under a
+/// form that is not a block, a branch or a statement. Task 5e makes the loop a member.
+fn breaks_optional(e: &ast::Expr) -> bool {
+    fn block(b: &ast::Block) -> bool {
+        (b.stmts.iter()).any(|stmt| match &stmt.kind {
+            StmtKind::Expr(e) => expr(e),
+            _ => false,
+        })
+    }
+    fn expr(e: &ast::Expr) -> bool {
+        match &e.kind {
+            ast::ExprKind::Break {
+                label: None,
+                value: Some(value),
+                ..
+            } => optional_form(value),
+            ast::ExprKind::If {
+                then_block,
+                else_block,
+                ..
+            }
+            | ast::ExprKind::IfLet {
+                then_block,
+                else_block,
+                ..
+            } => block(then_block) || else_block.as_ref().is_some_and(block),
+            ast::ExprKind::Match { arms, .. } => arms.iter().any(|arm| expr(&arm.body)),
+            ast::ExprKind::Block(b) => block(b),
+            _ => false,
+        }
+    }
+    let value = |b: &ast::Block| tail(b).is_some_and(breaks_optional);
+    match &e.kind {
+        ast::ExprKind::Loop { body, .. } => block(body),
+        ast::ExprKind::Block(b) => value(b),
+        ast::ExprKind::If {
+            then_block,
+            else_block,
+            ..
+        }
+        | ast::ExprKind::IfLet {
+            then_block,
+            else_block,
+            ..
+        } => value(then_block) || else_block.as_ref().is_some_and(value),
+        ast::ExprKind::Match { arms, .. } => arms.iter().any(|arm| breaks_optional(&arm.body)),
+        _ => false,
+    }
+}
+
+/// Whether `e` is an optional by its form: `None`, a loop with a `break` of one, or a branch, a
+/// block or a `dbg` whose value is one.
+fn optional_form(e: &ast::Expr) -> bool {
+    let value = |b: &ast::Block| tail(b).is_some_and(optional_form);
+    match &e.kind {
+        ast::ExprKind::NoneLit => true,
+        ast::ExprKind::Loop { .. } => breaks_optional(e),
+        ast::ExprKind::If {
+            then_block,
+            else_block: Some(else_block),
+            ..
+        }
+        | ast::ExprKind::IfLet {
+            then_block,
+            else_block: Some(else_block),
+            ..
+        } => value(then_block) || value(else_block),
+        ast::ExprKind::Match { arms, .. } => arms.iter().any(|arm| optional_form(&arm.body)),
+        ast::ExprKind::Block(b) => value(b),
+        ast::ExprKind::Call { callee, args, .. } if callee.name.as_str() == "dbg" => {
+            matches!(args.as_slice(), [arg] if optional_form(&arg.value))
+        }
+        _ => false,
+    }
+}
+
 /// Marks in `named` each type parameter that `ty` names, by its place; `named` has a place for
 /// each type parameter in scope. `seen` holds each type already visited, so each distinct type of
 /// `ty` is visited once, whatever the number of paths to it. It can be shared by several types.
@@ -3905,7 +3985,8 @@ impl Checker<'_> {
     /// holds one (see `Ranked`). Ranking stops at a `Concrete` value, so such a value can, unless
     /// it is an operator, whose value is never optional. Under a hint (`hint`), a value that
     /// holds a loop does not count by its rank: the loop meets the hint's payload, and the call
-    /// takes the type of its own arguments.
+    /// takes the type of its own arguments. It counts when a `break` of the loop gives an optional
+    /// by its form (see `breaks_optional`).
     fn late_optional(&mut self, call: &Inference<'_>, hint: bool) -> bool {
         (call.slots.iter().zip(call.args)).any(|(slot, arg)| {
             let e = &arg.value;
@@ -3915,7 +3996,9 @@ impl Checker<'_> {
             );
             let ranked = slot.is_none().then(|| self.rank_value(e, &mut true));
             ranked.is_some_and(|r| {
-                r.rank == Rank::Concrete && !operator && !(hint && r.holds_loop)
+                r.rank == Rank::Concrete
+                    && !operator
+                    && !(hint && r.holds_loop && !breaks_optional(e))
                     || r.optional
                     || r.holds_optional
             })
