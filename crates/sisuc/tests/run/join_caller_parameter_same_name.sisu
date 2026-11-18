@@ -1,0 +1,31 @@
+// GIVEN generic functions with a type parameter `U`
+// AND each calls a callee whose own `U` the call decides as `i64`
+// WHEN each call is checked and run
+// THEN each call keeps the caller's `U`, and prints the value that the callee gives
+struct Two<T, U> {
+    a: T
+    b: U
+}
+
+fn sw<T, U>(p: Two<T, U>) -> Two<U, T> {
+    Two(a: p.b, b: p.a)
+}
+
+fn fst<T, U>(p: Two<T, U>) -> T {
+    p.a
+}
+
+fn swapped<U>(x: U) -> Two<i64, U> {
+    sw(Two(a: x, b: 1))
+}
+
+fn first<U>(x: U) -> U {
+    fst(Two(a: x, b: 1))
+}
+
+fn main() {
+    let p = swapped(2)
+    print(p.a)
+    print(p.b)
+    print(first("s"))
+}

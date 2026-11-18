@@ -1617,3 +1617,59 @@ fn a_block_argument_should_report_a_nested_block_in_its_own_scope() {
     let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
     assert_eq!(errors(&src, &ds), vec![(Code::Mismatch, (9, 11))], "{src}");
 }
+
+#[test]
+fn a_call_should_keep_the_caller_type_parameter_of_the_same_name() {
+    // GIVEN a generic function whose type parameter has the name of a parameter of its callee
+    // AND it calls the callee with that parameter in a type that the call decides
+    // WHEN it is checked
+    // THEN it is valid, and the call takes the caller's parameter and `i64` as its types
+    let two = "struct Two<T, U> { a: T; b: U }\n";
+    let g = "enum G<T, U> { A; B(T, U) }\nfn h<T, U>(a: G<T, U>) -> i64 { 1 }\n";
+    let rows = [
+        (
+            "variant",
+            format!("{g}fn k<U>(x: U) -> i64 {{ h(G<U, i64>.A) }}\n"),
+            "(call h<U, i64> (variant G.A))",
+        ),
+        (
+            "same index",
+            format!("{g}fn k<T, U>(x: U) -> i64 {{ h(G<U, i64>.A) }}\n"),
+            "(call h<U, i64> (variant G.A))",
+        ),
+        (
+            "swap",
+            format!(
+                "{two}fn sw<T, U>(p: Two<T, U>) -> Two<U, T> {{ Two(a: p.b, b: p.a) }}\nfn k<U>(x: U) -> Two<i64, U> {{ sw(Two(a: x, b: 1)) }}\n"
+            ),
+            "(call sw<U, i64>",
+        ),
+        (
+            "first",
+            format!(
+                "{two}fn fst<T, U>(p: Two<T, U>) -> T {{ p.a }}\nfn k<U>(x: U) -> U {{ fst(Two(a: x, b: 1)) }}\n"
+            ),
+            "(call fst<U, i64>",
+        ),
+        (
+            "method",
+            "enum G<T, U> { A; B(T, U) }\nstruct C<U> {\n    u: U\n    fn m<T>(self, a: G<U, T>) -> T? { None }\n}\nfn k<T>(x: T) -> i64? { C(u: x).m(G<T, i64>.A) }\n".to_string(),
+            "(call C.m<T, i64> (struct C x#0) (variant G.A))",
+        ),
+    ];
+    let red: Vec<String> = (rows.iter())
+        .filter_map(|(name, src, part)| {
+            let src = format!("{src}fn main() {{}}\n");
+            let (program, ds) = checked(&src);
+            let printed = program.map(|p| p.to_string()).unwrap_or_default();
+            (!ds.is_empty() || !printed.contains(part))
+                .then(|| format!("row `{name}`: {ds:?}, `{part}` in {printed}"))
+        })
+        .collect();
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
