@@ -4090,9 +4090,14 @@ impl Checker<'_> {
     ) -> Option<Reported> {
         let ret = sig.ret?;
         let (bare, wanted) = match ret.kind() {
-            // An optional result never converts to a `want` that is not optional: the call
-            // reports as a whole, as on `main`.
-            TypeKind::Optional(_) if !matches!(want.kind(), TypeKind::Optional(_)) => return None,
+            // An optional result of a function never converts to a `want` that is not optional:
+            // the call reports as a whole, as on `main`. `Some(1)` under `string` reports at `1`.
+            TypeKind::Optional(_)
+                if matches!(sig.declarer, Declarer::Function(_))
+                    && !matches!(want.kind(), TypeKind::Optional(_)) =>
+            {
+                return None;
+            }
             TypeKind::Optional(inner) => (inner, payload(want)),
             _ => (ret, want),
         };

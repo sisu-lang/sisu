@@ -835,3 +835,7 @@ let _a: i64?? = id($)
 let _a: Rock? = named_whole($)
 let _a: Cat?? = named_whole($)
 let _a: Cat?? = pick($, $)
+# An optional result under a type that is not optional: a function reports at the call, and the
+# variant `Some` at its argument, as on `main`.
+let _a: string = some($)
+let _a: string = Some($)
