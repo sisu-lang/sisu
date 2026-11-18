@@ -9297,11 +9297,12 @@ fn an_open_call_should_check_each_bound_that_its_open_form_changes() {
 /// WHEN a join around the call gives `U` its type after the call
 /// THEN the bound is checked with that type: E0154 when it breaks, as on `main`
 /// AND no error when it holds, also when `U` is not `i64`
+/// AND when the open form of the call settles, only the open form's types are checked
 #[test]
 fn a_bound_should_wait_for_an_interface_argument_that_closes_after_its_subject() {
     with_prelude();
     let bound = Some((Code::NotConform, "X()"));
-    let rows: [(&str, Option<(Code, &str)>); 8] = [
+    let rows: [(&str, Option<(Code, &str)>); 11] = [
         // The literal `3` is `u8` only after the join: `X` is no `K<u8>`.
         ("print(pick(f(X(), 3), Box<u8>(v: 1)).v)", bound),
         ("print(pick(Box<u8>(v: 1), f(X(), 3)).v)", bound),
@@ -9322,11 +9323,20 @@ fn a_bound_should_wait_for_an_interface_argument_that_closes_after_its_subject()
         // The controls: the bound holds with the type that the join gives.
         ("print(pick(f(Y(), 3), Box<u8>(v: 1)).v)", None),
         ("print(pick(f(X(), 3), Box<i64>(v: 1)).v)", None),
+        // The open form `f<Z, u8?>` settles: the closed form's `Z: K<u8>` is not checked.
+        ("print(pick(f(Z(), 3), Box<u8?>(v: None)).v ?? 0)", None),
+        ("print(pick(Box<u8?>(v: None), f(Z(), 3)).v ?? 0)", None),
+        // The open form `f3<X?, u8?>` breaks its bound once, at the open form's types.
+        (
+            "print(pick3(ep(), f3(X(), 3), P2<[X?], [u8?]>(a: [], b: [])).a.len())",
+            bound,
+        ),
     ];
+    let more = "struct Y: K<u8> {\n    fn k(self, u: u8) -> i64 { 7 }\n}\n\
+        struct Z: K<u8?> {\n    fn k(self, u: u8?) -> i64 { 5 }\n}\n\
+        fn pick3<T>(_a: T, _b: T, c: T) -> T { c }\n";
     for (row, expected) in rows {
-        let src = format!(
-            "struct Y: K<u8> {{\n    fn k(self, u: u8) -> i64 {{ 7 }}\n}}\n{OPEN_BOUND_DECLS}{row}\n}}"
-        );
+        let src = format!("{more}{OPEN_BOUND_DECLS}{row}\n}}");
         let found = expected.map(|(code, needle)| (code, in_row(&src, row, needle)));
         codes_row(row, &src, found.as_slice());
     }
