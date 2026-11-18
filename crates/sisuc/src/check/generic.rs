@@ -1188,11 +1188,27 @@ pub(super) struct OpenEntry {
     types: Vec<Type>,
     /// The name and the index of each open parameter.
     params: Vec<(Symbol, usize)>,
-    /// Each bound of an open parameter, with the parameter's index.
-    bounds: Vec<(usize, Bound)>,
+    /// Each bound that an open parameter can change, with the index of its parameter and the
+    /// place that it reports at: each bound of an open parameter, and each bound of another
+    /// parameter whose interface arguments name an open one.
+    bounds: Vec<(usize, Bound, Span)>,
     /// Each member at a place of an open parameter: the span of its argument and the type of its
     /// parameter.
     members: Vec<(Span, Type)>,
+}
+
+/// A bound of an open form whose subject holds an open variable: the subject, the bound, and the
+/// place that it reports at.
+type Waits = (Type, Bound, Span);
+
+/// Where a bound of the parameter `t` of `call` reports: at the argument that bound the parameter,
+/// as `check_early` does, else at `span`, the call.
+fn bound_site(call: &Inference<'_>, sig: &GenericSig<'_>, t: usize, span: Span) -> Span {
+    (call.slots.iter().zip(sig.params).zip(call.args))
+        .find(|((slot, param), _)| {
+            slot.is_some() && param.is_some_and(|param| names_outside_assoc(param, t))
+        })
+        .map_or(span, |(_, arg)| arg.value.span)
 }
 
 /// The argument at `at` of the call node `e`.
@@ -2433,11 +2449,16 @@ impl Checker<'_> {
                 .flat_map(|(_, _, of)| of.iter())
                 .filter_map(|&i| Some((args[i].value.span, sig.params[i]?.subst(&types))))
                 .collect();
-            let bounds = (openable.iter())
-                .flat_map(|&(t, ..)| {
-                    let list = sig.bounds.get(t - owned).map_or(&[][..], |b| &b.list[..]);
-                    list.iter().map(move |&bound| (t, bound))
-                })
+            let open = |t: usize| openable.iter().any(|&(o, ..)| o == t);
+            // An associated type in an argument may name an open parameter too: it is kept.
+            let names_open = |bound: &Bound| {
+                (bound.args.get().iter())
+                    .any(|&arg| arg.has_assoc() || names_marked(arg, open, true))
+            };
+            let bounds = (sig.bounds.iter().enumerate())
+                .flat_map(|(i, b)| b.list.iter().map(move |&bound| (owned + i, bound)))
+                .filter(|(t, bound)| open(*t) || names_open(bound))
+                .map(|(t, bound)| (t, bound, bound_site(&call, sig, t, span)))
                 .collect();
             let entry = OpenEntry {
                 ret: ret.subst(&types),
@@ -2655,8 +2676,9 @@ impl Checker<'_> {
     /// The type arguments of the open form of `call` at `candidate`: each open parameter takes the
     /// part of `candidate` at its place in the result type. `None` when the result does not meet
     /// `candidate` then (two places that give two parts), or a bound of an open parameter fails.
-    /// It binds what the result meets: the caller holds a snapshot.
-    fn open_types(&mut self, call: OpenCall, candidate: Type) -> Option<Vec<Type>> {
+    /// It binds what the result meets: the caller holds a snapshot. With the types, it gives each
+    /// bound whose subject still holds an open variable, which settling must keep as an obligation.
+    fn open_types(&mut self, call: OpenCall, candidate: Type) -> Option<(Vec<Type>, Vec<Waits>)> {
         let entry = self.table.open_entry(call);
         let (ret, mut with) = (entry.ret, entry.types.clone());
         let candidate = self.table.resolve(candidate);
@@ -2667,9 +2689,11 @@ impl Checker<'_> {
         if !self.unify(ret.subst(&with), candidate) {
             return None;
         }
-        for (t, bound) in bounds {
+        let mut waits = Vec::new();
+        for (t, bound, at) in bounds {
             let part = self.table.resolve(with[t]);
             if part.holds_infer() {
+                waits.push((part, bound, at));
                 continue;
             }
             let args = self.subst_args(bound.args, &with);
@@ -2677,7 +2701,7 @@ impl Checker<'_> {
                 return None;
             }
         }
-        Some(with)
+        Some((with, waits))
     }
 
     /// The wraps that the open form of `call`, the call node `e`, takes at `candidate`, or `None`.
@@ -2690,7 +2714,7 @@ impl Checker<'_> {
         e: &mut tir::Expr,
         candidate: Type,
     ) -> Option<usize> {
-        let with = self.open_types(call, candidate)?;
+        let (with, _) = self.open_types(call, candidate)?;
         let members = self.table.open_entry(call).members.clone();
         let mut wraps = 0;
         for (at, param) in members {
@@ -2708,9 +2732,23 @@ impl Checker<'_> {
         e: &mut tir::Expr,
         candidate: Type,
     ) -> Result<(), Reported> {
-        let Some(with) = self.open_types(call, candidate) else {
+        let Some((with, waits)) = self.open_types(call, candidate) else {
             return Err(self.proof(e.span)); // proof: quiet reader
         };
+        // The open form can give a bound a type with an open variable. That bound is checked once
+        // the variable has its type, as `bound_obligations` does for the closed form.
+        let resolved: Vec<Type> = with.iter().map(|&ty| self.table.resolve(ty)).collect();
+        for (part, bound, at) in waits {
+            let id = ObligationId(self.body.obligations.len());
+            self.body.obligations.push(BoundObligation {
+                at,
+                bound,
+                with: resolved.clone(),
+            });
+            let snapshot = self.table.snapshot();
+            self.table.obligation(part, id);
+            self.keep_snapshot(snapshot);
+        }
         let entry = self.table.open_entry(call);
         let (ret, members) = (entry.ret, entry.members.clone());
         let mut outcome = Ok(());
@@ -2932,12 +2970,7 @@ impl Checker<'_> {
             let Some(bounds) = sig.bounds.get(t - owned).filter(|b| !b.list.is_empty()) else {
                 continue;
             };
-            // The bound names the argument that bound its parameter, as `check_early` does.
-            let at = (call.slots.iter().zip(sig.params).zip(call.args))
-                .find(|((slot, param), _)| {
-                    slot.is_some() && param.is_some_and(|param| names_outside_assoc(param, t))
-                })
-                .map_or(span, |(_, arg)| arg.value.span);
+            let at = bound_site(call, sig, t, span);
             // A failed call decides nothing more: each open `Int` of it is `i64`, as on main.
             let close = |c: &Self, ty: Type| match failed {
                 Some(_) => c.table.default_open(ty),

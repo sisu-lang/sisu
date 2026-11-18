@@ -216,6 +216,21 @@ fn keep<T>(mut x: T?) -> T? { x }
 fn opt<T>(v: T?) -> T? { v }
 fn g() {}
 fn pick<T>(a: T, b: T) -> T { a }
+// A bounded call at a part and at the whole place, a call that gives an open variable, and a
+// bound of a closed parameter that names an open one (`fk`).
+fn eo<T>() -> [T?] { [] }
+fn named_part<T: Named>(x: T) -> [T] { [x] }
+fn named_whole<T: Named>(x: T) -> T { x }
+interface Kn<U> {
+    fn kn(self, u: U) -> i64
+}
+struct Kc: Kn<i64> {
+    fn kn(self, u: i64) -> i64 { u }
+}
+struct Bk<U> {
+    v: U
+}
+fn fk<T: Kn<U>, U>(_x: T, u: U) -> Bk<U> { Bk(v: u) }
 fn oi() -> i64? { None }
 fn setu(mut x: unit) { x = {} }
 struct Su {
@@ -707,3 +722,15 @@ let _a: u8 = pick($, g())
 let _a: u8 = loop { break $ }
 # A loop with a bare `break` beside a value, as the arguments for one `T` of a generic call.
 let _a = pick(loop { if c { break }; break $ }, $)
+# A bounded call beside a call or a literal that gives an open variable: the open form must check
+# the bound of the type that the join gives. At a part and at the whole place, in each order, from
+# `eo()`, `[None]` and `None`, and under a required type. Then a bound of a closed parameter that
+# names an open one, beside a `Box` of `None` and in each order.
+let _a = pick(eo(), named_part($))
+let _a = pick(named_part($), eo())
+let _a = pick([None], named_part($))
+let _a: [Cat?] = pick(eo(), named_part($))
+let _a = pick(None, named_whole($))
+let _a = pick(named_whole($), nothing())
+let _a = pick(fk(Kc(), $), Bk(v: None))
+let _a = pick(Bk(v: None), fk(Kc(), $))
