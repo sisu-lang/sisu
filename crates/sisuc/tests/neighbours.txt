@@ -830,3 +830,8 @@ let _a: Rock = named_two($, Cat())
 let _a: i64 = id(id($))
 let _a: i64? = id(id($))
 let _a: i64?? = id($)
+# The bound of a parameter that the context decides, because each member leaves it open, reports at
+# the call. A closed member that needs two wraps gets the directed report.
+let _a: Rock? = named_whole($)
+let _a: Cat?? = named_whole($)
+let _a: Cat?? = pick($, $)

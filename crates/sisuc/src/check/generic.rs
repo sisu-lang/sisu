@@ -2261,6 +2261,9 @@ impl Checker<'_> {
         let mut openable = Vec::new();
         // The arguments that fit their place with no type for any parameter: each was reported.
         let mut misfits = vec![false; args.len()];
+        // The parameters whose members all leave a part open, as `[]` and `[None]` do: the
+        // context gives each its type, so a bound of it reports at the call, as on `main`.
+        let mut by_context = vec![false; sig.declared.len()];
         let join_order = index.join_order(&decided);
         // The place of each decided parameter in `join_order`: a later one has a larger place.
         let mut joins_at = vec![0; sig.declared.len()];
@@ -2405,6 +2408,10 @@ impl Checker<'_> {
                     },
                 ));
             }
+            by_context[t] = (!open.is_empty() || !members.is_empty())
+                && (members.iter()).all(|(_, m)| {
+                    type_of(m.value).is_some_and(|ty| self.table.resolve(ty).holds_infer())
+                });
             if let [(i, member)] = members.as_slice()
                 && open.is_empty()
                 && let Some(ty) = type_of(member.value)
@@ -2724,7 +2731,7 @@ impl Checker<'_> {
             .collect();
         let first_obligation = self.obligations.len();
         if let Some(reported) =
-            self.bound_obligations(&call, (sig, &index), &bounded, (span, failed))
+            self.bound_obligations(&call, (sig, &index, &by_context), &bounded, (span, failed))
         {
             failed = Some(reported);
         }
@@ -3543,11 +3550,11 @@ impl Checker<'_> {
     /// Checks each bound of a decided parameter of `call` whose type is closed, and gives the
     /// first failure, which poisons the call. Each other bound becomes an obligation on its
     /// variable, which runs once the variable's type holds no open variable (see
-    /// `Checker::report_waiting`).
+    /// `Checker::report_waiting`). A bound of a parameter in `by_context` reports at the call.
     fn bound_obligations(
         &mut self,
         call: &Inference<'_>,
-        (sig, index): (&GenericSig<'_>, &CallIndex),
+        (sig, index, by_context): (&GenericSig<'_>, &CallIndex, &[bool]),
         decided: &[(usize, Type)],
         (span, failed): (Span, Option<Reported>),
     ) -> Option<Reported> {
@@ -3564,7 +3571,11 @@ impl Checker<'_> {
             let Some(bounds) = sig.bounds.get(t - owned).filter(|b| !b.list.is_empty()) else {
                 continue;
             };
-            let at = bound_site(call, &index.members[t], span);
+            let at = if by_context[t] {
+                span
+            } else {
+                bound_site(call, &index.members[t], span)
+            };
             let (with, open) = with.get_or_insert_with(|| {
                 let with: Vec<Type> = (call.bindings.found.iter())
                     .map(|&ty| close(self, listed(ty)))
@@ -4023,14 +4034,15 @@ impl Checker<'_> {
         with[t as usize] = wanted;
         let member_want = param?.subst(&with);
         let got = self.table.resolve(got);
-        // A member whose type differs only by its wraps: the result takes too many (Q24), and the
-        // call reports as a whole.
+        // An open member whose type differs only by its wraps, as `1` in `id(1)` under `u8??`,
+        // makes the result take too many (Q24): the call reports as a whole. A closed member, as
+        // `g: G` in `id(g)` under `G??`, gets the directed report, as on `main`.
         let mut bare = member_want;
         while let TypeKind::Optional(inner) = bare.kind() {
             bare = inner;
         }
         let snapshot = self.table.snapshot();
-        let wraps_only = bare != member_want && self.unify(got, bare);
+        let wraps_only = bare != member_want && got.holds_infer() && self.unify(got, bare);
         self.table.rollback(snapshot);
         let got = self.table.default_open(got);
         if got == member_want || wraps_only || wanted.holds_infer() || member_want.holds_infer() {
