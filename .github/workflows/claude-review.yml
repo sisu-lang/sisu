@@ -2,7 +2,7 @@ name: Claude review
 
 # On request only: a PR comment that holds "@claude review" starts a review.
 # The run uses the Claude subscription of the CLAUDE_CODE_OAUTH_TOKEN secret
-# (`claude setup-token`). CodeRabbit gives the first review; CI stays the only
+# (`claude setup-token`). Its findings are advice; CI stays the only
 # merge gate. GitHub runs issue_comment workflows from the default branch only.
 on:
   issue_comment:
