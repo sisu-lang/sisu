@@ -3677,11 +3677,7 @@ impl Checker<'_> {
         (decided, lone): (&[(usize, Type)], &[Lone]),
         (expected, met): (Expectation, Option<bool>),
     ) -> Result<(), Poisoned> {
-        // A function call with a labeled argument failed (E0055): it is checked as alone, and
-        // reports its own parameters, as on `main`.
-        let labeled = matches!(call.declarer, Declarer::Function(_))
-            && call.args.iter().any(|arg| arg.label.is_some());
-        if expected == Expectation::Member && !labeled {
+        if expected == Expectation::Member {
             // A parameter that the result names and that is still open waits for the outer call.
             // That call reports it when it settles no type for it.
             let waits: Vec<(Type, DiagnosticKind)> = (decided.iter())
@@ -3695,6 +3691,13 @@ impl Checker<'_> {
                 self.body.waits.remove(&call.at);
             } else {
                 self.body.waits.insert(call.at, waits);
+                // A function call with a labeled argument failed (E0055). On `main` it is then
+                // checked as alone, so it reports its own parameter at any place.
+                if matches!(call.declarer, Declarer::Function(_))
+                    && call.args.iter().any(|arg| arg.label.is_some())
+                {
+                    self.body.labeled_waits.insert(call.at);
+                }
             }
             // The outer join reaches a parameter only through the result: one that the result
             // does not name gets its type from no context, so it is E0050 now. The value keeps
@@ -3822,6 +3825,10 @@ impl Checker<'_> {
             })
             .map(|e| e.span)
             .collect();
+        let labeled = (call.args.iter().take(before))
+            .map(|arg| arg.value.span)
+            .filter(|span| self.body.labeled_waits.contains(span));
+        let waiting: Vec<Span> = labeled.chain(waiting).collect();
         let mut first = None;
         for span in waiting {
             let Some(waits) = self.body.waits.remove(&span) else {

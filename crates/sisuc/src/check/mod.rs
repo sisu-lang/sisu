@@ -1089,6 +1089,9 @@ struct Body {
     /// by the call's span: each such parameter's variable and its report. The call around it
     /// gives the report when it settles no type for the parameter (see `report_waiting_calls`).
     waits: FxHashMap<Span, Vec<(Type, DiagnosticKind)>>,
+    /// The spans of the calls in `waits` with a labeled argument: each reports its wait at any
+    /// place of the call around it, as on `main`.
+    labeled_waits: FxHashSet<Span>,
     /// The safe method call being checked: `receiver?.method(...)` at this span.
     safe_call: Option<Span>,
     /// Whether the argument being checked late is at a place that names two or more decided
