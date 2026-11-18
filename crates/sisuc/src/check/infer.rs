@@ -10,7 +10,7 @@
 //! The ids start at 0 in each table, so a type that holds a variable means something only in the
 //! table that made it: no check-wide cache keeps a key that holds one (`Type::holds_infer`).
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -194,6 +194,20 @@ pub(super) struct Table {
     open_spans: FxHashMap<Span, usize>,
     /// The span of each call node whose open form settled: its closed form's checks are stale.
     settled: FxHashSet<Span>,
+    /// How many times a union or a bind was made or undone. A rebuilt type is good while this
+    /// count does not change.
+    changes: usize,
+    /// The types that `rebuild` made while `changes` had the value in `Rebuilt`. Thus a walk at
+    /// each level of a nested type, such as `[[[x]]]`, rebuilds each level once. Without it, the
+    /// walk rebuilds a level again for each level above it.
+    rebuilt: RefCell<Rebuilt>,
+}
+
+/// The rebuilt types of `Table::rebuilt`, one memo for each `Open`, made at a count of changes.
+#[derive(Default)]
+struct Rebuilt {
+    changes: usize,
+    memos: [FxHashMap<Type, Type>; 3],
 }
 
 /// A generic call whose open form a join can try: an index into the table's list of such calls.
@@ -379,11 +393,15 @@ impl Table {
                 .expect("the log should hold an entry above the mark")
             {
                 Undo::Union { child, root, was } => {
+                    self.changes += 1;
                     self.slots[root as usize].root = was;
                     self.slots[child as usize].parent.set(child);
                     self.swap_next(root, child);
                 }
-                Undo::Bind { root } => self.slots[root as usize].root.bound = None,
+                Undo::Bind { root } => {
+                    self.changes += 1;
+                    self.slots[root as usize].root.bound = None;
+                }
                 Undo::Poison { root } => self.slots[root as usize].root.poisoned = false,
                 Undo::Done { obligation } => self.obligations[obligation].done = false,
                 Undo::Literal { at } => {
@@ -575,7 +593,17 @@ impl Table {
         if !ty.holds_infer() {
             return ty;
         }
-        self.rebuild_in(ty, open, &mut FxHashMap::default())
+        let mut rebuilt = self.rebuilt.borrow_mut();
+        // A new memo, not a clear of the old one: a clear walks all the buckets, which an earlier
+        // large type left.
+        if rebuilt.changes != self.changes {
+            *rebuilt = Rebuilt {
+                changes: self.changes,
+                memos: Default::default(),
+            };
+        }
+        let memo = &mut rebuilt.memos[open as usize];
+        self.rebuild_in(ty, open, memo)
     }
 
     /// `rebuild`, with the types it has met, so that each distinct type is rebuilt once.
@@ -729,6 +757,7 @@ impl Table {
             self.slots[big as usize].root,
             self.slots[small as usize].root,
         );
+        self.changes += 1;
         self.slots[small as usize].parent.set(big);
         self.slots[big as usize].root = Root {
             size: was.size + other.size,
@@ -810,6 +839,7 @@ impl Table {
     }
 
     fn bind_raw(&mut self, root: u32, ty: Type) {
+        self.changes += 1;
         self.slots[root as usize].root.bound = Some(ty);
         self.record(Undo::Bind { root });
     }
