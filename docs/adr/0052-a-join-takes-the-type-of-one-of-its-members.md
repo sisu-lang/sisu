@@ -20,7 +20,9 @@ stages and later specs cite them.
   (#755). So a new interface cannot make valid code an error.
 - **Unify before wrap.** A member that converts to a candidate by unification
   gets no `Wrap` and no `ToAny`. Of two candidates that each take all members,
-  the join is the one that needs the fewer wraps.
+  the join is the one that needs the fewer wraps. This holds for the result of
+  a generic call too: a type parameter that its arguments do not decide takes
+  its type from the context, and the result takes no `Wrap`.
 - **A nested join has no type of its own.** An `if` or a `match` at a value
   position inside a member of a join decides no type. Its members convert to
   the part of the outer candidate at their position, and a conflict names each

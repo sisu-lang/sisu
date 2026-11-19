@@ -3,7 +3,7 @@
 // WHEN the program runs
 // THEN the result unifies with the required type and takes no wrap
 // AND the value is the outer `None`, as on `main`, also in a branch of an `if` under that type
-// AND a parameter that only an open call such as `none()` gives meets the payload and wraps
+// AND a parameter that only an open call such as `none()` gives unifies too: no wrap (`main` wraps)
 fn id<T>(x: T) -> T { x }
 fn pair<T>(a: T, _b: T) -> T { a }
 fn none<T>() -> T? { None }
@@ -34,7 +34,7 @@ fn main() {
     let q: i64?? = pair(None, none())
     print(q == None) // true
     let r: i64?? = id(none())
-    print(r == None) // false
+    print(r == None) // true
     let t: i64?? = id(id(none()))
-    print(t == None) // false
+    print(t == None) // true
 }

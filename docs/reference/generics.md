@@ -192,6 +192,7 @@ The examples use `fn pick<T>(a: T, b: T) -> T`, `fn h<T>(a: T, b: T?) -> T` and 
 - A `None` at a `T?` place shows no optional. `let w: i64?? = h(1, None)` is an error: expected `i64??`, found `i64`.
 - A call that returns `T?` joins its arguments too. For `fn opt2<T>(x: T, _y: T) -> T?`, `let w: i64??? = opt2(Some(2), Some(Some(3)))` is valid: `T` is `i64??`.
 - To give `T` more optionals than the arguments show, write the type argument. `h<i64?>(1, None)` is valid.
+- A type parameter that no argument decides takes its type from the context before the result wraps. For `fn none<T>() -> T?`, `let d: i64?? = none()` binds `T` to `i64?`, so `d` is the outer `None`.
 
 **Where the error is**
 
