@@ -4017,9 +4017,16 @@ impl Checker<'_> {
         let bounds = self.body.candidate_bounds.split_off(from);
         bounds.into_iter().all(|(on, bound, with)| {
             let with: Vec<Type> = with.iter().map(|&t| self.table.resolve(t)).collect();
-            let (on, args) = (self.table.resolve(on), self.subst_args(bound.args, &with));
-            on.holds_infer() || args.holds_infer() || self.conforms(on, bound.interface, args)
+            !self.bound_breaks(on, bound, &with)
         })
+    }
+
+    /// Whether the bound `bound` on `on`, with the type arguments `with`, is known to fail: `on`
+    /// and the bound's arguments hold no open variable, and `on` does not conform. It reports
+    /// nothing.
+    pub(super) fn bound_breaks(&mut self, on: Type, bound: Bound, with: &[Type]) -> bool {
+        let (on, args) = (self.table.resolve(on), self.subst_args(bound.args, with));
+        !on.holds_infer() && !args.holds_infer() && !self.conforms(on, bound.interface, args)
     }
 
     /// Whether the type `ty` of a late argument meets `filled`. An associated type of an open
@@ -4431,19 +4438,20 @@ impl Checker<'_> {
         broken
     }
 
-    /// Meets `expected`, the call's context, after the members decided what they could. At the
-    /// top the return type meets the payload of an optional context first, so that the call's
-    /// value is wrapped. Under a required type whose parameters the arguments decide, it meets the
-    /// whole type first (unify before wrap). As the guide of a late argument (`whole`) it meets
-    /// the whole context first, which takes the most values. A hint can add a `?` to the type of
-    /// its siblings (see `branch.rs`), which they did not write. A late argument that can make an
-    /// optional takes that `?` (`first(m.mkl())` for `-> [X?]`). Else the call meets the siblings'
-    /// type first, and the hint only when that fails, as for `id(None)` beside a `1`. Under a
-    /// required optional, the late arguments are closed first (Q26). When none can make an
-    /// optional, the call meets the payload first, and its result wraps once at the top. An
-    /// example is `fst(p.mkb())` under `i64?`, where `mkb` gives `Pr<i64, X>`. `None` when the
-    /// call is a member of an outer join, which decides its variables, or has no context to meet;
-    /// else whether it met it.
+    /// Meets `expected`, the call's context, after the members decided what they could. Under a
+    /// required type the return type meets the whole type first (unify before wrap), also for a
+    /// parameter that no argument decides. A unification that breaks a bound gives way to the wrap.
+    /// Under a hint it meets the payload of an optional first, so that the call's value is wrapped.
+    /// As the guide of a late argument (`whole`) it meets the whole context first, which takes the
+    /// most values, and checks no bound: the late arguments decide more, and the bounds are checked
+    /// when the call is closed. A hint can add a `?` to the type of its siblings (see `branch.rs`),
+    /// which they did not write. A late argument that can make an optional takes that `?`
+    /// (`first(m.mkl())` for `-> [X?]`). Else the call meets the siblings' type first, and the hint
+    /// only when that fails, as for `id(None)` beside a `1`. Under a required optional, the late
+    /// arguments are closed first (Q26). When none can make an optional, the call meets the payload
+    /// first, and its result wraps once at the top. An example is `fst(p.mkb())` under `i64?`,
+    /// where `mkb` gives `Pr<i64, X>`. `None` when the call is a member of an outer join, which
+    /// decides its variables, or has no context to meet; else whether it met it.
     fn meet_context(
         &mut self,
         call: &Inference<'_>,
@@ -4477,54 +4485,61 @@ impl Checker<'_> {
             .map(|&ty| self.table.resolve(listed(ty)))
             .collect();
         let ret = ret.subst(&with);
-        // Unify before wrap. The arguments can decide each parameter that the result names, as
-        // `X?` for `id(None)`. Then the result meets a required type whole first: no wrap. A
-        // parameter that no argument decides meets the payload first, as on `main`. Examples are
-        // the `T` of `none()` and of `id(none())`.
-        let unifies_first = matches!(expected, Expectation::Required(..)) && {
-            let in_result = result_names(sig);
-            (decided.iter()).all(|&(t, var)| {
-                !in_result[t]
-                    || !self.table.resolve(var).holds_infer()
-                    || self.decided_by_arguments(call, sig, t, var)
-            })
-        };
+        // Unify before wrap: under a required type, the result meets the whole type first, also
+        // for a parameter that no argument decides, as the `T` of `none()`. A unification that
+        // breaks a bound gives way to the wrap. A hint meets the payload first (Task 5c). As a
+        // guide (`whole`), the call is no conversion point yet: its late arguments decide more, and
+        // a bound is checked when the call is closed.
+        let whole_first = whole || matches!(expected, Expectation::Required(..));
+        let open_before: Vec<bool> = (decided.iter())
+            .map(|&(_, var)| self.table.resolve(var).holds_infer())
+            .collect();
         let mut meets = |want: Type| {
             let optional = matches!(want.kind(), TypeKind::Optional(_));
-            if whole || unifies_first {
-                self.unify(ret, want) || optional && self.unify(ret, payload(want))
-            } else {
-                self.unify(ret, payload(want)) || optional && self.unify(ret, want)
+            if !whole_first {
+                return self.unify(ret, payload(want)) || optional && self.unify(ret, want);
             }
+            if whole || !optional {
+                return self.unify(ret, want) || optional && self.unify(ret, payload(want));
+            }
+            let snapshot = self.table.snapshot();
+            if self.unify(ret, want)
+                && self.ready_bounds_hold(snapshot)
+                && self.closed_bounds_hold(call, sig, decided, &open_before)
+            {
+                self.keep_snapshot(snapshot);
+                return true;
+            }
+            self.table.rollback(snapshot);
+            // The wrap, else the unification that breaks a bound: the bound reports (E0154).
+            self.unify(ret, payload(want)) || self.unify(ret, want)
         };
         Some(meets(first) || first != want && meets(want))
     }
 
-    /// Whether the arguments of `call` decide a part of its parameter `t`, whose variable is
-    /// `var`. Then `var` is not open as a whole. Also, an argument at a place of `t` is not a call
-    /// that waits with a parameter that no argument decides (`Body::undecided_waits`). So
-    /// `id(None)` and `id(id(None))` decide `T`, and `none()` and `id(none())` do not.
-    fn decided_by_arguments(
-        &self,
+    /// Whether each bound of a parameter in `decided` holds, for each parameter that was open
+    /// before (`open_before`) and that the result's unification closed. Such a bound is checked
+    /// after the context is met (`bound_obligations`), so the unification tests it first.
+    fn closed_bounds_hold(
+        &mut self,
         call: &Inference<'_>,
         sig: &GenericSig<'_>,
-        t: usize,
-        var: Type,
+        decided: &[(usize, Type)],
+        open_before: &[bool],
     ) -> bool {
-        if matches!(self.table.resolve(var).kind(), TypeKind::Infer(_)) {
-            return false;
-        }
-        (call.slots.iter().zip(sig.params)).any(|(slot, param)| {
-            param.is_some_and(|param| names_outside_assoc(param, t))
-                && slot.as_ref().is_some_and(|slot| {
-                    slot.as_ref().is_ok_and(|mut e| {
-                        // `dbg(x)` waits in the place of `x`.
-                        while let tir::ExprKind::Dbg { operand, .. } = &e.kind {
-                            e = operand;
-                        }
-                        !self.body.undecided_waits.contains(&e.span)
-                    })
-                })
+        let owned = sig.owner.len();
+        let mut with = None;
+        (decided.iter().zip(open_before)).all(|(&(t, var), &open)| {
+            let bounds = sig.bounds.get(t - owned).map_or(&[][..], |b| &b.list[..]);
+            if !open || bounds.is_empty() {
+                return true;
+            }
+            let with: &Vec<Type> = with.get_or_insert_with(|| {
+                (call.bindings.found.iter())
+                    .map(|&ty| self.table.resolve(listed(ty)))
+                    .collect()
+            });
+            (bounds.iter()).all(|&bound| !self.bound_breaks(var, bound, with))
         })
     }
 
@@ -4548,16 +4563,6 @@ impl Checker<'_> {
                 .filter(|&&(t, var)| in_result[t] && self.table.resolve(var).holds_infer())
                 .map(|&(t, var)| (var, OpenParam::of(sig, t)))
                 .collect();
-            let undecided = (decided.iter()).any(|&(t, var)| {
-                in_result[t]
-                    && self.table.resolve(var).holds_infer()
-                    && !self.decided_by_arguments(call, sig, t, var)
-            });
-            if undecided {
-                self.body.undecided_waits.insert(call.at);
-            } else {
-                self.body.undecided_waits.remove(&call.at);
-            }
             if waits.is_empty() {
                 self.body.waits.remove(&call.at);
             } else {

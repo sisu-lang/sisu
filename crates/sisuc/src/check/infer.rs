@@ -409,6 +409,11 @@ impl Table {
         }
     }
 
+    /// The checks that became ready since `from`, which is still open.
+    pub(super) fn ready_since(&self, from: Snapshot) -> Vec<Waiting> {
+        self.ready[from.ready..].to_vec()
+    }
+
     /// A mark to `rollback` to, or to `keep`. Each snapshot ends with one of the two.
     pub(super) fn snapshot(&self) -> Snapshot {
         #[cfg(test)]
@@ -1214,6 +1219,43 @@ impl Checker<'_> {
             self.report_waiting(waiting);
         }
         true
+    }
+
+    /// `unify`, unless a bound that waited for a type that this gives fails: then it binds nothing.
+    /// The value that converts then wraps (unify before wrap, within the bounds).
+    pub(super) fn unify_within_bounds(&mut self, a: Type, b: Type) -> bool {
+        let snapshot = self.table.snapshot();
+        if self.table.unify(a, b).is_none() || !self.ready_bounds_hold(snapshot) {
+            self.table.rollback(snapshot);
+            return false;
+        }
+        self.keep_snapshot(snapshot);
+        true
+    }
+
+    /// Whether each bound that became ready since `snapshot`, which is open, holds. It reports
+    /// nothing: the bound reports when the snapshot is kept.
+    pub(super) fn ready_bounds_hold(&mut self, snapshot: Snapshot) -> bool {
+        (self.table.ready_since(snapshot).into_iter()).all(|waiting| match waiting {
+            Waiting::Obligation { id, .. } => !self.obligation_breaks(id),
+            Waiting::Literal { .. } => true,
+        })
+    }
+
+    /// Whether the bound of the obligation `id` is known to fail now, as `report_obligation` would
+    /// report it. A bound of a call whose open form settled is stale: it holds.
+    fn obligation_breaks(&mut self, id: ObligationId) -> bool {
+        let Some(obligation) = self.obligations.get(id.0) else {
+            return false;
+        };
+        if obligation.call.is_some_and(|call| self.table.settled(call)) {
+            return false;
+        }
+        let with: Vec<Type> = (obligation.with.iter())
+            .map(|&t| self.table.resolve(t))
+            .collect();
+        let (on, bound) = (obligation.on, obligation.bound);
+        self.bound_breaks(on, bound, &with)
     }
 
     /// Ends the snapshot `to`, keeps what happened since, and reports each check that became ready

@@ -1097,9 +1097,6 @@ struct Body {
     /// The spans of the calls in `waits` with a labeled argument: each reports its wait at any
     /// place of the call around it, as on `main`.
     labeled_waits: FxHashSet<Span>,
-    /// The spans of the calls in `waits` that wait with a parameter that no argument decides, as
-    /// `none()` and `id(none())` do (see `Checker::decides`).
-    undecided_waits: FxHashSet<Span>,
     /// The safe method call being checked: `receiver?.method(...)` at this span.
     safe_call: Option<Span>,
     /// Whether the argument being checked late is at a place that names two or more decided

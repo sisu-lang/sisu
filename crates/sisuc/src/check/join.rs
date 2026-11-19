@@ -425,6 +425,9 @@ impl Checker<'_> {
             None => self.candidates(members, &taking, hole),
         };
         let mut best: Option<(usize, Type)> = None;
+        // The best candidate that breaks only a bound of a closed call: when no candidate holds,
+        // the join takes it, and the bound reports (E0154).
+        let mut broken: Option<(usize, Type)> = None;
         for candidate in candidates {
             #[cfg(test)]
             CANDIDATES.set(CANDIDATES.get() + 1);
@@ -441,18 +444,23 @@ impl Checker<'_> {
                 wraps = wraps.map(|n| n + more);
             }
             // A bound of an open form that the candidate closes can fail. Then the candidate
-            // fails, so the result does not depend on the order of the members.
+            // fails, so the result does not depend on the order of the members. A bound of a
+            // closed call that the candidate breaks makes the candidate the last choice. So the
+            // call's result wraps at another candidate if one holds. Under a required type the
+            // bound reports (E0154).
             if !self.candidate_bounds_hold(bounds) {
                 wraps = None;
             }
+            let holds = required.is_some() || self.ready_bounds_hold(snapshot);
             self.table.rollback(snapshot);
+            let choice = if holds { &mut best } else { &mut broken };
             if let Some(wraps) = wraps
-                && best.is_none_or(|(least, _)| wraps < least)
+                && choice.is_none_or(|(least, _)| wraps < least)
             {
-                best = Some((wraps, candidate));
+                *choice = Some((wraps, candidate));
             }
         }
-        match best {
+        match best.or(broken) {
             Some((_, ty)) => Ok(Joined::Typed(ty)),
             None => Err(self.conflict(members, &taking, hole, fixed)),
         }

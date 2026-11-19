@@ -51,8 +51,22 @@ impl Checker<'_> {
         } else {
             expected.plain()
         };
+        // The value of `-` is never optional. So an operand that takes its type from the context
+        // gets the payload of an optional context, as the operands of `+` do: `mk()` is `i64`. An
+        // operand that can make an optional by itself, as `None`, keeps the optional.
+        let given = match expected {
+            Expectation::Required(ty, origin)
+                if matches!(
+                    self.sibling_ranked(operand),
+                    (Rank::Literal | Rank::Waits, false)
+                ) =>
+            {
+                Expectation::Required(payload(ty), origin)
+            }
+            other => other,
+        };
         let before = self.diagnostics.mark();
-        let checked = self.value(operand, expected);
+        let checked = self.value(operand, given);
         // No `-` takes a `unit`, and the operand may have no expected type.
         let checked = self.refuse_unit(operand, checked);
         if let Some(ty) = type_of(&checked).filter(|ty| ty.has_param()) {
