@@ -34,7 +34,7 @@ Neighbours: <the table of neighbouring cases, with today's output and the wanted
 
 ## Tests
 
-<The test list. One row for each case of the "Neighbours" tables, in both orders and at each depth, with its wanted output, and the fixture or unit test that holds it. One unit test that pins each cause. The docs to update.>
+<The test list. One row for each case of the "Neighbours" tables, in both orders and at each depth, with its wanted output, and the fixture or unit test that holds it. One unit test that pins each cause. The docs to update. A fuzz input that panicked is a row of `front_end_should_pass_on_an_input_it_failed_on`, not a new test (`docs/development.md`, Fuzz the front end).>
 
 The wanted outputs come from this list. Do not change one to fit the code. A task that changes only docs or the text of a diagnostic has no test commit: its fixture diff is the test. When a test in a behaviour task wants new diagnostic text, a bless at the base writes the old text, and the fixture is green. So bless, then edit each wanted line of the `.err` and the `.json` by hand, and check that the fixture fails at the base on those lines only. The test commit of a performance fix can add the `cfg(test)` counter and its ticks.
 

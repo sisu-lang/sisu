@@ -618,6 +618,13 @@ does not export when the input passes here. A later run on the same commit
 uses the same export. It takes `--target program` too, and the replay of the
 export writes its dump to `<input name>.dump.against/`.
 
+When you fix the cause of an input that panics, add the input as a row of
+`front_end_should_pass_on_an_input_it_failed_on` in
+`crates/sisuc/src/fuzz.rs`. The test runs the fuzz target on each row and
+names each row that panics, so do not write a new test for the input. A
+timeout or an out-of-memory input cannot be a row, because it stops the
+whole test.
+
 Three limits of fork mode:
 
 - The log keeps no detail of a timeout or an out-of-memory failure, because
