@@ -1354,3 +1354,43 @@ fn the_head_of_a_join_in_parentheses_should_be_its_bracket_or_keyword() {
         .collect();
     assert_eq!(heads, [(Code::Mismatch, (5, 9)), (Code::Mismatch, (8, 10))]);
 }
+
+/// Each order of an array of `depth` layers with a `None` beside the array in each layer. The
+/// innermost layer holds `1` and `None`: for two layers, `[[1, None], None]`, `[None, [None, 1]]`
+/// and the two others.
+fn none_beside_each_layer(depth: usize) -> Vec<String> {
+    let mut rows = vec!["1".to_string()];
+    for _ in 0..depth {
+        rows = (rows.iter())
+            .flat_map(|row| [format!("[{row}, None]"), format!("[None, {row}]")])
+            .collect();
+    }
+    rows
+}
+
+/// GIVEN an array of three layers or of four, with a `None` beside the array in each layer
+/// AND each order of the members of each layer, as `[[[1, None], None], None]` and
+///   `[[[None, 1], None], None]`
+/// WHEN each is the value of a `let` with no type
+/// THEN each has the type that `main` gives it, `[[[i64?]?]?]` or `[[[[i64?]?]?]?]`, in each order
+#[test]
+fn a_none_beside_each_layer_of_a_nested_array_should_give_one_type_in_each_order() {
+    let mut red = Vec::new();
+    for (depth, ty) in [(3, "[[[i64?]?]?]"), (4, "[[[[i64?]?]?]?]")] {
+        for row in none_beside_each_layer(depth) {
+            let src = format!(
+                "fn main() {{\n    let a = {row}\n    let t: {ty} = a\n    print(t.len())\n}}\n"
+            );
+            let found = found(&src);
+            if !found.is_empty() {
+                red.push(format!("row `{row}`: found {found:?}"));
+            }
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
