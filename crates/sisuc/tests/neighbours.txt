@@ -96,6 +96,9 @@ fn unbv<T>(b: Bv<T>) -> T { unbv(b) }
 fn nothing<T>() -> T? { None }
 fn nn<T>() -> T?? { None }
 fn n3<T>() -> T??? { None }
+// A call whose arguments do not decide its bounded type parameter: a unification that breaks the
+// bound makes it wrap.
+fn named_none<T: Named>() -> T? { None }
 class Oa {
     oa: [i64]?
 }
@@ -444,6 +447,8 @@ id(nothing())
 id(id(None))
 pick(None, None)
 pick(None, nothing())
+named_none()
+id(named_none())
 # Values that fail to give a range to a string's `get`, with a mistake of their own or none.
 id(None)
 id([])

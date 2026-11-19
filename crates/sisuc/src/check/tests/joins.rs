@@ -2284,3 +2284,159 @@ fn closed_call_with_an_open_result_should_unify_before_it_wraps() {
         assert!(printed.contains(call), "{line}: {call} in {printed}");
     }
 }
+
+/// The helpers and locals of the rows of "Unify before wrap" at each conversion point: `none`,
+/// whose `T` no argument decides, and `ns`, which has a bound on it.
+const UNDECIDED: &str = "\
+fn none<T>() -> T? { None }\n\
+fn id<T>(x: T) -> T { x }\n\
+fn second<T>(_a: T, b: T) -> T { b }\n\
+fn pick<T>(a: T, _b: T) -> T { a }\n\
+fn opt<T>(x: T) -> T? { Some(x) }\n\
+fn h<T>(a: T, _b: T?) -> T { a }\n\
+fn empty<T>() -> [T] { [] }\n\
+interface Seen {\n\
+    fn seen(self) -> i64\n\
+}\n\
+struct Eye: Seen {\n\
+    v: i64\n\
+    fn seen(self) -> i64 { self.v }\n\
+}\n\
+fn ns<T: Seen>() -> T? { None }\n\
+fn idb<T: Seen>(x: T) -> T { x }\n\
+fn main() {\n\
+    let o1: i64? = Some(1)\n\
+    let o2: i64?? = Some(Some(2))\n\
+    let n2: i64?? = None\n\
+    let e2: Eye?? = Some(Some(Eye(v: 1)))\n\
+    let c = [1].len() == 2\n\
+    let k = [1].len() == 1\n";
+
+/// The red rows of `rows`. Each body goes in `main`, after the locals of `UNDECIDED`. It checks
+/// with the error codes of its row. With no error, its `tir` holds the text of its row.
+fn undecided_rows(rows: &[(&str, Result<&str, &[Code]>)]) -> Vec<String> {
+    (rows.iter())
+        .filter_map(|&(body, wanted)| {
+            let src = format!("{UNDECIDED}    {body}\n}}\n");
+            let (program, ds) = checked_with(PRELUDE_SOURCE, &src);
+            let codes: Vec<Code> = errors(&src, &ds).into_iter().map(|(c, _)| c).collect();
+            match wanted {
+                Err(want) => {
+                    (codes != want).then(|| format!("`{body}`: {codes:?}, wanted {want:?}"))
+                }
+                Ok(_) if !codes.is_empty() => Some(format!("`{body}`: {codes:?}, wanted no error")),
+                Ok(text) => {
+                    let printed = program.expect("no errors").to_string();
+                    (!printed.contains(text)).then(|| format!("`{body}`: no `{text}` in {printed}"))
+                }
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn an_open_call_under_a_nested_optional_should_unify_before_it_wraps() {
+    // GIVEN a generic call whose arguments do not decide its type parameter, as `none()`
+    // WHEN it converts to a nested optional, under a required type or in a join, in each order
+    // THEN its type parameter takes the payload of the target, and the result takes no `Wrap`
+    // AND so the value is the outer `None`, as `None` is (S21 rows 11 to 16)
+    // AND a bound that the unification breaks makes the result wrap
+    let red = undecided_rows(&[
+        ("let x: i64?? = none()", Ok("(call none<i64?>)")),
+        (
+            "let x = if c { o2 } else { none() }",
+            Ok("(call none<i64?>)"),
+        ),
+        (
+            "let x = if k { none() } else { o2 }",
+            Ok("(call none<i64?>)"),
+        ),
+        (
+            "let x: i64?? = if c { o2 } else { none() }",
+            Ok("(call none<i64?>)"),
+        ),
+        (
+            "let x: i64?? = if k { none() } else { o2 }",
+            Ok("(call none<i64?>)"),
+        ),
+        ("let x = second(o2, none())", Ok("(call none<i64?>)")),
+        ("let x = pick(none(), o2)", Ok("(call none<i64?>)")),
+        (
+            "let x: i64?? = id(id(none()))",
+            Ok("(call id<i64??> (call id<i64??> (call none<i64?>)))"),
+        ),
+        (
+            "let x: i64?? = id(none())",
+            Ok("(call id<i64??> (call none<i64?>))"),
+        ),
+        ("let x: i64??? = none()", Ok("(call none<i64??>)")),
+        (
+            "let x: i64?? = if c { None } else { none() }",
+            Ok("(call none<i64?>)"),
+        ),
+        (
+            "let x: i64?? = if k { none() } else { None }",
+            Ok("(call none<i64?>)"),
+        ),
+        (
+            "let x = if c { e2 } else { ns() }",
+            Ok("(wrap (call ns<Eye>))"),
+        ),
+        (
+            "let x = if k { ns() } else { e2 }",
+            Ok("(wrap (call ns<Eye>))"),
+        ),
+        ("let x = second(e2, ns())", Ok("(wrap (call ns<Eye>))")),
+    ]);
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+#[test]
+fn a_decided_or_bounded_call_under_a_nested_optional_should_keep_its_wrap() {
+    // GIVEN a generic call whose arguments decide its type parameter, or whose bound the
+    //       unification with the target breaks
+    // WHEN it converts to a nested optional
+    // THEN its result wraps as on `main`, and a call that no type makes valid stays an error
+    let mismatch: &[Code] = &[Code::Mismatch];
+    let bound: &[Code] = &[Code::NotConform];
+    let red = undecided_rows(&[
+        (
+            "let x = if c { o2 } else { pick(None, o1) }",
+            Ok("(wrap (call pick<i64?>"),
+        ),
+        (
+            "let x = if k { pick(None, o1) } else { o2 }",
+            Ok("(wrap (call pick<i64?>"),
+        ),
+        (
+            "let x = if c { o2 } else { pick(none(), o1) }",
+            Ok("(wrap (call pick<i64?>"),
+        ),
+        ("let x: i64?? = Some(none())", Ok("(wrap (call none<i64>))")),
+        (
+            "let x: i64?? = opt(none())",
+            Ok("(call opt<i64?> (call none<i64>))"),
+        ),
+        (
+            "let x = n2 ?? none()\n    let y: i64? = x",
+            Ok("(call none<i64>)"),
+        ),
+        ("let x: Eye?? = ns()", Ok("(wrap (call ns<Eye>))")),
+        ("let x: i64?? = h(1, Some(2))", Err(mismatch)),
+        ("let x: u8?? = id(1)", Err(mismatch)),
+        ("let x: [i64?]?? = empty()", Err(mismatch)),
+        ("let x: Eye?? = idb(none())", Err(bound)),
+        ("let x: Eye??? = ns()", Err(bound)),
+    ]);
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}

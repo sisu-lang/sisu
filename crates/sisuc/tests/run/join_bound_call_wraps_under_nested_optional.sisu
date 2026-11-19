@@ -1,0 +1,19 @@
+// GIVEN a call `ns()` whose arguments do not decide its type parameter, which has a bound
+// AND a branch of a nested optional `Eye??` beside it in an `if`
+// WHEN the program runs
+// THEN the unification with `Eye??` breaks the bound, so the result wraps: `T` is `Eye`
+// AND the program is valid, and the value is `Some(None)`, as on `main`
+interface Seen {
+    fn v(self) -> i64
+}
+struct Eye: Seen {
+    n: i64
+    fn v(self) -> i64 { self.n }
+}
+fn ns<T: Seen>() -> T? { None }
+fn main() {
+    let c = [1].len() == 2
+    let e2: Eye?? = Some(Some(Eye(n: 1)))
+    let bj = if c { e2 } else { ns() }
+    print(bj == None) // false
+}
