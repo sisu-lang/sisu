@@ -3193,10 +3193,14 @@ impl Checker<'_> {
             let bad: Vec<usize> = (0..args.len())
                 .filter(|&i| misfits[i] || matches!(call.slots[i], Some(Err(_))))
                 .collect();
+            // A member argument is checked with no rank first, so its rank walks it again: that
+            // walk checks its scrutinee once more. It must not report or bind a second time.
+            let (snapshot, reports) = (self.table.snapshot(), self.diagnostics.mark());
+            let wait = (bad.iter()).all(|&i| self.sibling_rank(&args[i].value) == Rank::Waits);
+            self.table.rollback(snapshot);
+            self.diagnostics.drop_since(reports);
             if let Some(&before) = bad.first()
-                && bad
-                    .iter()
-                    .all(|&i| self.sibling_rank(&args[i].value) == Rank::Waits)
+                && wait
             {
                 for &(t, var) in decided.iter().filter(|&&(t, _)| !hushed[t]) {
                     let ty = self.table.resolve(var);
