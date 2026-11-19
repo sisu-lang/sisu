@@ -283,7 +283,7 @@ impl Checker<'_> {
                 let candidates: Vec<Type> = (conflict.groups.iter().map(|group| group.ty))
                     .chain(required.map(|(ty, _)| ty))
                     .collect();
-                if let Some(reported) = self.held_conflicts(members, &candidates) {
+                if let Some(reported) = self.held_conflicts(members, &candidates, hole) {
                     let poisoned = match required {
                         Some((ty, _)) => Poisoned::typed(ty, reported),
                         None => Poisoned::untyped(reported),
@@ -322,15 +322,20 @@ impl Checker<'_> {
 
     /// Reports the held conflict of each call in `members` that waits with one (see
     /// `OpenEntry`), and gives the first report. A call that one of `candidates`, the types of the
-    /// failed join, opens is no mistake: its held conflict is dropped, and the join reports.
+    /// failed join, opens is no mistake: its held conflict is dropped, and the join reports. A
+    /// member at a part of its parameter takes a candidate at its place (`hole`).
     fn held_conflicts(
         &mut self,
         members: &mut [JoinMember<'_>],
         candidates: &[Type],
+        hole: Option<Symbol>,
     ) -> Option<Reported> {
         for member in members.iter_mut() {
+            let at: Vec<Type> = (candidates.iter())
+                .map(|&ty| target(member.at, hole, ty))
+                .collect();
             if let Ok(e) = &mut *member.value {
-                self.drop_opened(e, candidates);
+                self.drop_opened(e, &at);
             }
         }
         let mut first = None;
@@ -365,6 +370,19 @@ impl Checker<'_> {
         {
             self.drop_held_if_opened(call, e, candidates);
         }
+        // An element converts to the element type of a candidate, not to the candidate.
+        let elements: Vec<Type>;
+        let candidates = if matches!(e.kind, ExprKind::ArrayLit(_) | ExprKind::ArrayFill { .. }) {
+            elements = (candidates.iter())
+                .filter_map(|&ty| match self.table.resolve(ty).kind() {
+                    TypeKind::Array(element) => Some(element),
+                    _ => None,
+                })
+                .collect();
+            &elements
+        } else {
+            candidates
+        };
         ensure_stack(|| value_positions(e, &mut |child| self.drop_opened(child, candidates)));
     }
 
