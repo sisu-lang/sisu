@@ -1,0 +1,14 @@
+// GIVEN `put(mut names, 1)`, where `names` is a `[string]`, under the type `i64?`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument: the parameter has type `[i64]`, as the `1` decides `T`
+// and the result wraps
+fn put<T>(mut xs: [T], x: T) -> T {
+    xs = [x]
+    xs[0]
+}
+
+fn main() {
+    let mut names = ["a"]
+    let x: i64? = put(mut names, 1)
+    print(x ?? 0)
+}
