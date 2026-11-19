@@ -691,6 +691,8 @@ class ScalingTest(unittest.TestCase):
             ("struct writes", 100),
             ("struct ==", 50),
             ("never built", 16),
+            ("array literal depth beside []", 24),
+            ("array fill depth", 24),
         ]
         self.assertEqual([(name, n) for name, (n, _) in sc.SHAPES.items()], sizes)
 
@@ -764,6 +766,8 @@ class ScalingTest(unittest.TestCase):
             "struct writes": (lambda t: t.count("t.i.xs.push"), 1),
             "struct ==": (lambda t: t.count("\n    f"), 0),
             "never built": (lambda t: t.count("class C"), 0),
+            "array literal depth beside []": (lambda t: depth(t, "[", "]"), 1),
+            "array fill depth": (lambda t: depth(t, "[", "]"), 1),
         }
         self.assertEqual(list(parts), list(sc.SHAPES))
         for name, (_, make) in sc.SHAPES.items():

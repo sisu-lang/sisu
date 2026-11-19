@@ -39,6 +39,9 @@ thread_local! {
     pub(super) static CONVERTS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// The candidate of a join that took the fewest wraps so far, with that number.
+type Fewest = Option<(usize, Type)>;
+
 /// A member of a join: a checked value, where it stands, and the span of the label of an E0043
 /// `BareBreak` (the `break` of a loop's member, else the value). A poisoned member takes part with
 /// its type, or is left out when it has none.
@@ -479,49 +482,105 @@ impl Checker<'_> {
         if required.is_none() && left_out && !taking.iter().any(|&i| stated(self, i)) {
             return Ok(Joined::Untyped);
         }
-        let candidates = match required {
-            Some(ty) => vec![ty],
-            None => self.candidates(members, &taking, hole),
+        // The first candidate is the top of the first member. When it holds with no wrap, no
+        // later candidate is chosen, so the join tests it before it finds the others: the leaves
+        // of a nested array cost one step for each layer above them.
+        let first = match required {
+            Some(ty) => Some(ty),
+            None => self.first_candidate(members, &taking, hole),
         };
-        let mut best: Option<(usize, Type)> = None;
+        let mut best: Fewest = None;
         // The best candidate that breaks only a bound of a closed call: when no candidate holds,
         // the join takes it, and the bound reports (E0154).
-        let mut broken: Option<(usize, Type)> = None;
-        for candidate in candidates {
-            #[cfg(test)]
-            CANDIDATES.set(CANDIDATES.get() + 1);
-            let snapshot = self.table.snapshot();
-            let bounds = self.body.candidate_bounds.len();
-            let mut wraps = Some(0);
-            for &i in &taking {
-                let target = target(members[i].at, hole, candidate);
-                let Some(more) = self.member_converts(&mut members[i], target, fixed == Some(i))
-                else {
-                    wraps = None;
+        let mut broken: Fewest = None;
+        if let Some(first) = first {
+            self.test_candidate(
+                members,
+                (&taking, hole, fixed, required),
+                first,
+                (&mut best, &mut broken),
+            );
+        }
+        if required.is_none() && !matches!(best, Some((0, _))) {
+            let candidates = self.candidates(members, &taking, hole);
+            debug_assert!(
+                first.is_none_or(|first| candidates.first() == Some(&first)),
+                "the first candidate should be the top of the first member"
+            );
+            for candidate in candidates.into_iter().skip(usize::from(first.is_some())) {
+                self.test_candidate(
+                    members,
+                    (&taking, hole, fixed, required),
+                    candidate,
+                    (&mut best, &mut broken),
+                );
+                // No later candidate takes fewer wraps.
+                if matches!(best, Some((0, _))) {
                     break;
-                };
-                wraps = wraps.map(|n| n + more);
-            }
-            // A bound of an open form that the candidate closes can fail. Then the candidate
-            // fails, so the result does not depend on the order of the members. A bound of a
-            // closed call that the candidate breaks makes the candidate the last choice. So the
-            // call's result wraps at another candidate if one holds. Under a required type the
-            // bound reports (E0154).
-            if !self.candidate_bounds_hold(bounds) {
-                wraps = None;
-            }
-            let holds = required.is_some() || self.ready_bounds_hold(snapshot);
-            self.table.rollback(snapshot);
-            let choice = if holds { &mut best } else { &mut broken };
-            if let Some(wraps) = wraps
-                && choice.is_none_or(|(least, _)| wraps < least)
-            {
-                *choice = Some((wraps, candidate));
+                }
             }
         }
         match best.or(broken) {
             Some((_, ty)) => Ok(Joined::Typed(ty)),
             None => Err(self.conflict(members, &taking, hole, fixed)),
+        }
+    }
+
+    /// The first candidate of `candidates`: the top of the first member that takes part, found
+    /// without the leaves inside it. `None` when that top gives no candidate.
+    fn first_candidate(
+        &self,
+        members: &[JoinMember<'_>],
+        taking: &[usize],
+        hole: Option<Symbol>,
+    ) -> Option<Type> {
+        let member = &members[*taking.first()?];
+        match member.at {
+            Place::Split { part, .. } => Some(self.table.resolve(part)),
+            Place::Whole => member_type(member.value),
+            Place::Part { place, .. } => {
+                let ty = self.table.resolve(member_type(member.value)?);
+                hole.and_then(|hole| part_at(self.table.resolve(place), hole, ty))
+            }
+        }
+    }
+
+    /// Tests `candidate` for the join of `members`, and keeps it in `best` or `broken` when it
+    /// takes fewer wraps. `taking`, `hole`, `fixed` and `required` are as in `join_members`.
+    fn test_candidate(
+        &mut self,
+        members: &mut [JoinMember<'_>],
+        (taking, hole, fixed, required): (&[usize], Option<Symbol>, Option<usize>, Option<Type>),
+        candidate: Type,
+        (best, broken): (&mut Fewest, &mut Fewest),
+    ) {
+        #[cfg(test)]
+        CANDIDATES.set(CANDIDATES.get() + 1);
+        let snapshot = self.table.snapshot();
+        let bounds = self.body.candidate_bounds.len();
+        let mut wraps = Some(0);
+        for &i in taking {
+            let target = target(members[i].at, hole, candidate);
+            let Some(more) = self.member_converts(&mut members[i], target, fixed == Some(i)) else {
+                wraps = None;
+                break;
+            };
+            wraps = wraps.map(|n| n + more);
+        }
+        // A bound of an open form that the candidate closes can fail. Then the candidate fails,
+        // so the result does not depend on the order of the members. A bound of a closed call that
+        // the candidate breaks makes the candidate the last choice. So the call's result wraps at
+        // another candidate if one holds. Under a required type the bound reports (E0154).
+        if !self.candidate_bounds_hold(bounds) {
+            wraps = None;
+        }
+        let holds = required.is_some() || self.ready_bounds_hold(snapshot);
+        self.table.rollback(snapshot);
+        let choice = if holds { best } else { broken };
+        if let Some(wraps) = wraps
+            && choice.is_none_or(|(least, _)| wraps < least)
+        {
+            *choice = Some((wraps, candidate));
         }
     }
 
@@ -806,11 +865,12 @@ impl Checker<'_> {
     /// settle to it. An array takes the variable under the optionals of `target` too, as it is no
     /// optional itself: `[X]` meets `V?` as `V = [X]`, with one wrap.
     fn open_target(&mut self, e: &tir::Expr, target: Type) {
-        let mut open = self.table.resolve(target);
+        // Only the head of `target` counts, so each layer of a nested array reads one layer.
+        let mut open = self.table.shallow(target);
         match e.kind {
             ExprKind::ArrayLit(_) | ExprKind::ArrayFill { .. } => {
                 while let TypeKind::Optional(payload) = open.kind() {
-                    open = payload;
+                    open = self.table.shallow(payload);
                 }
             }
             ExprKind::Wrap(_) => {}
@@ -851,7 +911,8 @@ impl Checker<'_> {
     /// `None` when `e` converts at its top: a made value, or an array or a `Some` whose `target`
     /// has another shape.
     fn enter(&self, e: &tir::Expr, target: Type) -> Option<(Type, bool)> {
-        let target = self.table.resolve(target);
+        // Only the head of `target` counts: the part is the rest, as it stands.
+        let target = self.table.shallow(target);
         match &e.kind {
             ExprKind::If {
                 else_block: Some(_),
@@ -869,7 +930,7 @@ impl Checker<'_> {
             }
             ExprKind::ArrayLit(_) | ExprKind::ArrayFill { .. } => match target.kind() {
                 TypeKind::Array(element) => Some((element, false)),
-                TypeKind::Optional(payload) => match payload.kind() {
+                TypeKind::Optional(payload) => match self.table.shallow(payload).kind() {
                     TypeKind::Array(element) => Some((element, true)),
                     _ => None,
                 },
@@ -2050,19 +2111,20 @@ mod tests {
             }
             let mut values = vec![
                 Ok(array(vec![chain], Type::I64, n)),
-                Ok(local(Type::array(Type::I64), n + 1)),
+                Ok(local(Type::optional(Type::array(Type::I64)), n + 1)),
             ];
             LEAF_STEPS.set(0);
             VALUE_STEPS.set(0);
             let ty = join_all(c, JoinForm::Array, &mut values);
-            assert_eq!(ty.ok(), Some(Type::array(Type::I64)));
+            assert_eq!(ty.ok(), Some(Type::optional(Type::array(Type::I64))));
             LEAF_STEPS.get() + VALUE_STEPS.get()
         })
     }
 
     #[test]
     fn leaves_of_an_else_if_chain_should_cost_linear_steps() {
-        // GIVEN an `else if` chain of n, 2n and 3n branches in an array, beside `xs: [i64]`
+        // GIVEN an `else if` chain of n, 2n and 3n branches in an array, beside `xs: [i64]?`
+        // AND so the first top does not hold, and the join finds each candidate
         // WHEN each joins
         let steps = [else_if_chain(100), else_if_chain(200), else_if_chain(300)];
         // THEN the leaves cost one step per array around them, so the steps grow linearly

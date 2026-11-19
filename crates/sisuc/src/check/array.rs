@@ -308,10 +308,15 @@ impl Checker<'_> {
         let ty = type_of(&checked).map(Type::array);
         match (checked, len, ty) {
             (Ok(value), Ok(len), Some(ty)) if !failed => {
-                Ok(self.spilled(span, ty, vec![value, len], |operands| {
+                let fill = self.spilled(span, ty, vec![value, len], |operands| {
                     let (value, len) = pair(operands);
                     tir::ExprKind::ArrayFill { value, len }
-                }))
+                });
+                // As for an array literal: the walk of `without_value` does not enter it again.
+                if branch_free(&fill, &self.body.branch_free) {
+                    self.body.branch_free.insert(span);
+                }
+                Ok(fill)
             }
             (Err(part), _, ty) | (_, Err(part), ty) => {
                 Err(Poisoned::new(ty.filter(|_| !failed), part.reported()))

@@ -220,6 +220,22 @@ def array_literal_depth(k: int) -> str:
     )
 
 
+def array_literal_depth_beside_empty(k: int) -> str:
+    """Return a program with an array literal of `k + 1` nested layers, each beside a `[]`."""
+    return (
+        f"fn main() {{\n    let a = {nest(k, lambda s: f'[{s}, []]', '[1]')}\n"
+        '    print("{a.len()}")\n}\n'
+    )
+
+
+def array_fill_depth(k: int) -> str:
+    """Return a program with an array fill of `k + 1` nested layers."""
+    return (
+        f"fn main() {{\n    let a = {nest(k, lambda s: f'[{s}; 1]', '[1; 1]')}\n"
+        '    print("{a.len()}")\n}\n'
+    )
+
+
 def array_literal_width(k: int) -> str:
     """Return a program with an array literal of `k` elements."""
     return (
@@ -721,6 +737,8 @@ SHAPES = {
     "struct writes": (100, struct_writes),
     "struct ==": (50, struct_equality),
     "never built": (16, never_built),
+    "array literal depth beside []": (24, array_literal_depth_beside_empty),
+    "array fill depth": (24, array_fill_depth),
 }
 
 

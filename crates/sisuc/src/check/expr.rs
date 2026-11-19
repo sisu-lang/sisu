@@ -1272,7 +1272,11 @@ fn without_value(e: &tir::Expr, lifted: bool, checker: &Checker<'_>) -> Option<(
     // An element is a value of its own: the join of a nested array settles it late. So the walk
     // looks into the elements of an array of any type, unless no `if` is there to find.
     match &e.kind {
-        tir::ExprKind::ArrayLit(_) if checker.body.branch_free.contains(&e.span) => return None,
+        tir::ExprKind::ArrayLit(_) | tir::ExprKind::ArrayFill { .. }
+            if checker.body.branch_free.contains(&e.span) =>
+        {
+            return None;
+        }
         tir::ExprKind::ArrayLit(elements) => {
             return (elements.iter()).find_map(|element| without_value(element, lifted, checker));
         }
@@ -1369,16 +1373,17 @@ fn without_value(e: &tir::Expr, lifted: bool, checker: &Checker<'_>) -> Option<(
 }
 
 /// Whether no `if` and no `match` can give the value of `e` through the nodes that
-/// `without_value` walks, whatever their types are. An array literal in `known` holds none, so
-/// the walk of a nested array reads each layer once.
+/// `without_value` walks, whatever their types are. An array literal or array fill in `known`
+/// holds none, so the walk of a nested array reads each layer once.
 pub(super) fn branch_free(e: &tir::Expr, known: &FxHashSet<Span>) -> bool {
     match &e.kind {
         tir::ExprKind::ArrayLit(elements) => {
             known.contains(&e.span) || elements.iter().all(|element| branch_free(element, known))
         }
-        tir::ExprKind::ArrayFill { value, .. } | tir::ExprKind::Wrap(value) => {
-            branch_free(value, known)
+        tir::ExprKind::ArrayFill { value, .. } => {
+            known.contains(&e.span) || branch_free(value, known)
         }
+        tir::ExprKind::Wrap(value) => branch_free(value, known),
         tir::ExprKind::Block(block) => {
             (block.value.as_deref()).is_none_or(|value| branch_free(value, known))
         }

@@ -601,7 +601,7 @@ impl Table {
 
     /// The type of `ty` when it is a variable with a type. Else `ty` as it stands, where an open
     /// variable is the variable of its root.
-    fn shallow(&self, mut ty: Type) -> Type {
+    pub(super) fn shallow(&self, mut ty: Type) -> Type {
         while let TypeKind::Infer(id) = ty.kind() {
             let root = self.find(id.0);
             match self.sets.root(root).bound {

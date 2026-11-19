@@ -1213,8 +1213,8 @@ struct Body {
     /// inside it gives a made value (see `gives_made_value`). Then that literal does not walk its
     /// elements again: each layer of a nested array asks this once.
     made_free: Option<Span>,
-    /// The span of each array literal whose value no `if` and no `match` gives through its
-    /// elements (see `branch_free`). The walk of `without_value` does not enter it.
+    /// The span of each array literal and array fill whose value no `if` and no `match` gives
+    /// through its elements (see `branch_free`). The walk of `without_value` does not enter it.
     branch_free: FxHashSet<Span>,
     /// The return type of a generic call, by the call's span. With it, the parameter, span and
     /// type of each argument that alone decides its bare type parameter. The directed report of
