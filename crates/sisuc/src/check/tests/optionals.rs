@@ -809,15 +809,9 @@ fn a_none_beside_an_exit_should_act_as_a_plain_none() {
             with_exit_body(&position.replace('$', &value))
         };
         let plain = error_codes(&place("None"));
-        // interim: Task 5b gives the codes of `plain` at the two positions in a call
-        let wanted = if position.contains("pick") {
-            vec![Code::Mismatch]
-        } else {
-            plain.clone()
-        };
         for exit in EXITS {
             let beside = error_codes(&place(&format!("if c {{ None }} else {{ {exit} }}")));
-            if beside != wanted {
+            if beside != plain {
                 unequal.push(format!(
                     "position `{position}`, exit `{exit}`: {beside:?}, but a plain `None` gives {plain:?}"
                 ));
@@ -847,12 +841,7 @@ fn a_value_beside_an_exit_should_act_as_the_value_alone() {
             "let _ = pick(Some(Some(1)), u)",
         ),
     ] {
-        // interim: Task 5b gives no error, as the plain form gives
-        assert_eq!(
-            error_codes(&with_exit_body(with_exit)),
-            [Code::Mismatch],
-            "{with_exit}"
-        );
+        assert_eq!(error_codes(&with_exit_body(with_exit)), [], "{with_exit}");
         assert_eq!(error_codes(&with_exit_body(plain)), [], "{plain}");
     }
 }

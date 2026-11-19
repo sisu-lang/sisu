@@ -1578,18 +1578,15 @@ fn a_waiting_branch_of_a_failed_call_should_report_its_own_mistakes() {
     for (body, expected) in [
         (
             "fn g() {\n    let xs = id(match 1.0 { _ => [] })\n}",
-            // interim: Task 5b gives [(CannotInfer, (2, 14)), (CannotMatch, (2, 23))]
-            vec![(Code::CannotMatch, (2, 23)), (Code::CannotInfer, (2, 34))],
+            vec![(Code::CannotMatch, (2, 23))],
         ),
         (
             "fn g() {\n    let ys = id(match true { true => [] })\n}",
-            // interim: Task 5b gives [(CannotInfer, (2, 14)), (NonExhaustive, (2, 17))]
-            vec![(Code::NonExhaustive, (2, 17)), (Code::CannotInfer, (2, 38))],
+            vec![(Code::NonExhaustive, (2, 17))],
         ),
         (
             "fn g() {\n    let xs = id(if 1.0 { [] } else { [] })\n}",
-            // interim: Task 5b gives [(CannotInfer, (2, 14)), (Mismatch, (2, 20))]
-            vec![(Code::Mismatch, (2, 20)), (Code::CannotInfer, (2, 26))],
+            vec![(Code::CannotInfer, (2, 14)), (Code::Mismatch, (2, 20))],
         ),
         // What fails inside the branch for the call's failure is not reported again.
         (
@@ -2399,21 +2396,12 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
         clean_row(row, &src);
     }
     for (row, wanted) in [
-        // interim: Task 5b gives no error
-        (
-            "let v = pick(1, if c { 2 } else { None })",
-            vec![(Code::Mismatch, "None")],
-        ),
-        // interim: Task 5b gives no error
+        ("let v = pick(1, if c { 2 } else { None })", vec![]),
         (
             "let v = pick(1, match c {\n true => Some(2)\n false => None\n })",
-            vec![(Code::Mismatch, "None")],
+            vec![],
         ),
-        // interim: Task 5b gives no error
-        (
-            "let v = pick(if c { 2 } else { None }, 1)",
-            vec![(Code::Mismatch, "None")],
-        ),
+        ("let v = pick(if c { 2 } else { None }, 1)", vec![]),
         // interim: Task 5c gives no error
         (
             "let v = pick([1], [Some(2)])",
@@ -2436,11 +2424,7 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
         ),
         // interim: Task 5c gives no error
         ("let v = k(1, [Some(2)])", vec![(Code::Mismatch, "Some")]),
-        // interim: Task 5b gives no error
-        (
-            "let v = pick([1], wrap(if c { 2 } else { None }))",
-            vec![(Code::Mismatch, "None")],
-        ),
+        ("let v = pick([1], wrap(if c { 2 } else { None }))", vec![]),
         // interim: Task 5c gives no error
         (
             "let v = pick([[1]], wrap([Some(2)]))",
@@ -2614,10 +2598,9 @@ fn a_nested_optional_at_a_lifted_place_should_make_the_call_an_optional() {
     let src = places_main(row);
     codes(&src, &[(Code::Mismatch, in_row(&src, row, "Some(2)"))]);
     for (row, wanted) in [
-        // interim: Task 5b gives no error
         (
             "let v: i64? = h(1, Some(if x > 0 { Some(2) } else { None }))\n    print(v ?? 0)",
-            vec![(Code::Mismatch, "None")],
+            vec![],
         ),
         // S25 in the spec: one E0032, as the closed result needs two wraps
         (
@@ -3804,8 +3787,7 @@ fn waiting_branch_should_keep_waiting_when_a_parameter_is_partly_bound() {
     let src = format!(
         "{PARTLY_BOUND}fn main() {{\n    let c = true\n    let x = f(if c {{ Ok(1) }} else {{ Ok(2) }})\n    print(x)\n}}"
     );
-    // interim: Task 5b gives E0050 at (4, 13)
-    codes(&src, &[(Code::CannotInfer, (4, 22))]);
+    codes(&src, &[(Code::CannotInfer, (4, 13))]);
 }
 
 /// The context for an inner call has a hole where the outer call binds nothing yet. A part of
@@ -4700,11 +4682,10 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
         ),
         // The `else` branch fails, so the `if` is untyped (the spec row `if`, `match`: a branch),
         // and the mismatch of the whole argument waits.
-        // interim: Task 5b gives E0032 at `true, 2)`
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, if true { Two.P(\"s\", 1) } else { Two.P(true, 2) })",
-            &[(Mismatch, "Two.P(true")],
+            &[(Mismatch, "true, 2)")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
@@ -8907,11 +8888,10 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
             blame_program("let x = first(ys) == v"),
             vec![(Mismatch, (8, 26))],
         ),
-        // interim: Task 5b gives [(Mismatch, (8, 37))]
         (
             "n499_10",
             blame_program("let x = if c { v } else { first(ys) }"),
-            vec![(Mismatch, (8, 31))],
+            vec![(Mismatch, (8, 37))],
         ),
         // valid: the spec gives `pick(a, loop { break 1 })` no error (Generic calls in a join)
         (
@@ -8946,11 +8926,10 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
             blame_program("let x = if c { v } else { first([None]) }"),
             vec![],
         ),
-        // interim: Task 5b gives [(Mismatch, (8, 37))]
         (
             "n499_17",
             blame_program("let x = if c { o } else { first(ys) }"),
-            vec![(Mismatch, (8, 31))],
+            vec![(Mismatch, (8, 37))],
         ),
         (
             "b2",
@@ -8985,8 +8964,7 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
         ),
         // interim: Task 5d gives [(Mismatch, (7, 22))]
         ("499", REPRO_499.to_string(), vec![(Mismatch, (7, 16))]),
-        // interim: Task 5b gives [(Mismatch, (6, 35))]
-        ("499if", REPRO_499_IF.to_string(), vec![(Mismatch, (6, 29))]),
+        ("499if", REPRO_499_IF.to_string(), vec![(Mismatch, (6, 35))]),
         // interim: Task 5d gives [(Mismatch, (5, 22))]
         ("499q", REPRO_499_Q.to_string(), vec![(Mismatch, (5, 16))]),
         (
@@ -9062,11 +9040,10 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
             report_program("let x = if c == 1 { o } else { loop { break v } }"),
             vec![(Mismatch, (7, 49))],
         ),
-        // interim: Task 5b gives [(Mismatch, (7, 39))]
         (
             "n538_12",
             report_program("let x = if c == 1 { q } else { id(v) }"),
-            vec![(Mismatch, (7, 36))],
+            vec![(Mismatch, (7, 39))],
         ),
         (
             "b10",

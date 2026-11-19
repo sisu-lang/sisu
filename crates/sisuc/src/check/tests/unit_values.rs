@@ -1077,13 +1077,7 @@ fn an_if_without_else_should_give_no_optional_unit_value() {
             at("if d"),
         ),
         ("argument", "h(if c { g() })", "", at("if c")),
-        // interim: Task 5b gives E0043 at `if c`
-        (
-            "generic argument",
-            "w(if c { g() })",
-            "",
-            vec![(Code::Mismatch, "if c")],
-        ),
+        ("generic argument", "w(if c { g() })", "", at("if c")),
         (
             "element",
             "let xs: [unit?] = [if c { g() }]",

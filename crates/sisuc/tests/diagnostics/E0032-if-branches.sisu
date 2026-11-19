@@ -5,5 +5,3 @@ fn main() {
     let x = if c { a } else { b }
     print(x)
 }
-
-// interim: Task 5b gives the join report of S13

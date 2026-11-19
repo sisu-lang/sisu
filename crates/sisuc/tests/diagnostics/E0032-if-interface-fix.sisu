@@ -17,5 +17,3 @@ fn main() {
     let x = if c { Eye(v: 1) } else { Lid(v: 2) }
     print(x.seen())
 }
-
-// interim: Task 5b gives the join report with the interface fix (S6)

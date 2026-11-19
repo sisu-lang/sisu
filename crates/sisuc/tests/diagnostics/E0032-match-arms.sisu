@@ -8,5 +8,3 @@ fn main() {
     }
     print(x)
 }
-
-// interim: Task 5b gives the join report of ADR 0052 at the match

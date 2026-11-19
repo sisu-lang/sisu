@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::check::infer::{Kind, Written};
+use crate::check::join::{SETTLED, VALUE_STEPS};
 
 /// A result that holds no type, so that `with_table` has nothing to write back in the test.
 struct Nothing<R>(R);
@@ -1143,10 +1144,6 @@ fn shared_none_under_a_failed_parameter_type_should_report_only_the_type() {
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one row for each order of each join; the interim rows go when Task 5b ends"
-)]
 fn if_and_match_should_join_in_each_order() {
     // GIVEN `if` and `match` joins whose members need a call, a wrap or a nested join, in each
     //       order
@@ -1178,6 +1175,48 @@ fn if_and_match_should_join_in_each_order() {
             "let x = if c { Some(e) } else { Some(if d { Eye(v: 1) } else { Lid(v: 2) }) }",
             "(any Seen)?",
         ),
+        ("let x = if c { Some(id(1)) } else { m }", "u8?"),
+        ("let x = if c { Some(0) } else { first(xs) }", "u8?"),
+        (
+            "let x = if c { Tree.Node(v: 1) } else { Tree.Node(v: a) }",
+            "Tree<u8>",
+        ),
+        (
+            "let x = if c { e } else { pick(Eye(v: 1), Lid(v: 2)) }",
+            "any Seen",
+        ),
+        (
+            "let x = if c { pick(Eye(v: 1), Lid(v: 2)) } else { e }",
+            "any Seen",
+        ),
+        (
+            "let x = if c { Boxed(v: 1) } else { Boxed(v: a) }",
+            "Boxed<u8>",
+        ),
+        (
+            "let x = if c { Ok(1) } else { Err(\"s\") }",
+            "Result<i64, string>",
+        ),
+        (
+            "let x = if c { Err(\"s\") } else { Ok(1) }",
+            "Result<i64, string>",
+        ),
+        (
+            "let tt: Two<u8?, u8?> = Two(a: None, b: None)\nlet x = if c { dup(1) } else { tt }",
+            "Two<u8?, u8?>",
+        ),
+        (
+            "let tt: Two<u8?, u8?> = Two(a: None, b: None)\nlet x = if c { tt } else { dup(1) }",
+            "Two<u8?, u8?>",
+        ),
+        (
+            "let x = match c { true => if d { Eye(v: 1) } else { Lid(v: 2) }; false => e }",
+            "any Seen",
+        ),
+        (
+            "let x = if c { Some(if d { Eye(v: 1) } else { Lid(v: 2) }) } else { Some(e) }",
+            "(any Seen)?",
+        ),
     ]);
     body_rows(&[
         // interim: Task 5c gives no error, and `x` is `[u8]`
@@ -1185,55 +1224,15 @@ fn if_and_match_should_join_in_each_order() {
             "let x = if c { [id(1)] } else { [a] }",
             &[(Code::Mismatch, (1, 34))],
         ),
-        // interim: Task 5b gives no error, and `x` is `u8?`
-        (
-            "let x = if c { Some(id(1)) } else { m }",
-            &[(Code::Mismatch, (1, 37))],
-        ),
         // interim: Task 5d gives no error, and `x` is `u8`
         (
             "let x = if c { id(1) + 0 } else { a }",
             &[(Code::Mismatch, (1, 35))],
         ),
-        // interim: Task 5b gives no error, and `x` is `u8?`
-        (
-            "let x = if c { Some(0) } else { first(xs) }",
-            &[(Code::Mismatch, (1, 33))],
-        ),
-        // interim: Task 5b gives no error, and `x` is `Tree<u8>`
-        (
-            "let x = if c { Tree.Node(v: 1) } else { Tree.Node(v: a) }",
-            &[(Code::Mismatch, (1, 41))],
-        ),
         // interim: Task 5c gives no error, and `x` is `[u8?]`
         (
             "let x = if c { id([1]) } else { [m] }",
             &[(Code::Mismatch, (1, 34))],
-        ),
-        // interim: Task 5b gives no error, and `x` is `any Seen`
-        (
-            "let x = if c { e } else { pick(Eye(v: 1), Lid(v: 2)) }",
-            &[(Code::Mismatch, (1, 27))],
-        ),
-        // interim: Task 5b gives no error, and `x` is `any Seen`
-        (
-            "let x = if c { pick(Eye(v: 1), Lid(v: 2)) } else { e }",
-            &[(Code::Mismatch, (1, 16))],
-        ),
-        // interim: Task 5b gives no error, and `x` is `Boxed<u8>`
-        (
-            "let x = if c { Boxed(v: 1) } else { Boxed(v: a) }",
-            &[(Code::Mismatch, (1, 37))],
-        ),
-        // interim: Task 5b gives no error, and `x` is `Result<i64, string>`
-        (
-            "let x = if c { Ok(1) } else { Err(\"s\") }",
-            &[(Code::CannotInfer, (1, 16))],
-        ),
-        // interim: Task 5b gives no error, and `x` is `Result<i64, string>`
-        (
-            "let x = if c { Err(\"s\") } else { Ok(1) }",
-            &[(Code::CannotInfer, (1, 16))],
         ),
         // interim: Task 5c gives no error, and `x` is `[u8?]`
         (
@@ -1245,30 +1244,10 @@ fn if_and_match_should_join_in_each_order() {
             "let x = if c { [last(xs)] } else { [None] }",
             &[(Code::Mismatch, (1, 37))],
         ),
-        // interim: Task 5b gives no error, and `x` is `Two<u8?, u8?>`
-        (
-            "let tt: Two<u8?, u8?> = Two(a: None, b: None)\nlet x = if c { dup(1) } else { tt }",
-            &[(Code::Mismatch, (2, 32))],
-        ),
-        // interim: Task 5b gives no error, and `x` is `Two<u8?, u8?>`
-        (
-            "let tt: Two<u8?, u8?> = Two(a: None, b: None)\nlet x = if c { tt } else { dup(1) }",
-            &[(Code::Mismatch, (2, 28))],
-        ),
         // interim: Task 5c gives no error, and `x` is `[u8?]`
         (
             "let ys: [u8?] = [Some(1)]\nlet x = if c { [1; 3] } else { ys }",
             &[(Code::Mismatch, (2, 32))],
-        ),
-        // interim: Task 5b gives no error, and `x` is `any Seen`
-        (
-            "let x = match c { true => if d { Eye(v: 1) } else { Lid(v: 2) }; false => e }",
-            &[(Code::Mismatch, (1, 53))],
-        ),
-        // interim: Task 5b gives no error, and `x` is `(any Seen)?`
-        (
-            "let x = if c { Some(if d { Eye(v: 1) } else { Lid(v: 2) }) } else { Some(e) }",
-            &[(Code::Mismatch, (1, 47))],
         ),
     ]);
 }
@@ -1279,40 +1258,44 @@ fn conflict_should_name_each_member() {
     // WHEN each is checked
     // THEN each reports one E0032 at the `if`, with a label at each member
     one_conflict_rows(&[
-        // interim: Task 5b gives E0032 at (1, 9), labels at (1, 16) and (1, 35)
         (
             "let x = if c { Eye(v: 1) } else { Lid(v: 2) }",
-            (1, 35),
-            &[(1, 16)],
+            (1, 9),
+            &[(1, 16), (1, 35)],
         ),
-        // interim: Task 5b gives E0032 at (1, 9), labels at (1, 16) and (1, 35)
         (
             "let x = if c { Lid(v: 2) } else { Eye(v: 1) }",
-            (1, 35),
-            &[(1, 16)],
+            (1, 9),
+            &[(1, 16), (1, 35)],
         ),
-        // interim: Task 5b gives E0032 at (2, 9), labels at (2, 16) and (2, 27)
         (
             "let bi: i64 = 4\nlet x = if c { a } else { bi }",
-            (2, 27),
-            &[(2, 16)],
+            (2, 9),
+            &[(2, 16), (2, 27)],
         ),
-        // interim: Task 5b gives E0032 at (2, 9), labels at (2, 16) and (2, 28)
         (
             "let bi: i64 = 4\nlet x = if c { bi } else { a }",
-            (2, 28),
-            &[(2, 16)],
+            (2, 9),
+            &[(2, 16), (2, 28)],
         ),
-        // interim: Task 5b gives E0032 at (1, 9), labels at (1, 16) and (1, 27)
-        ("let x = if c { 1 } else { \"s\" }", (1, 27), &[(1, 16)]),
-        // interim: Task 5b gives E0032 at (1, 9), labels at (1, 16) and (1, 29)
-        ("let x = if c { \"s\" } else { 1 }", (1, 29), &[(1, 16)]),
+        (
+            "let x = if c { 1 } else { \"s\" }",
+            (1, 9),
+            &[(1, 16), (1, 27)],
+        ),
+        (
+            "let x = if c { \"s\" } else { 1 }",
+            (1, 9),
+            &[(1, 16), (1, 29)],
+        ),
     ]);
     // AND the conflict of a `u8` and an `i64` converts the `u8`
-    // interim: Task 5b gives the one fix `i64(a)` at (2, 16)
     assert_eq!(
         fixes_of("let bi: i64 = 4\nlet x = if c { a } else { bi }"),
-        Vec::<Vec<_>>::new()
+        vec![vec![
+            (2, 16, String::new(), "i64(".to_owned()),
+            (2, 17, String::new(), ")".to_owned()),
+        ]]
     );
 }
 
@@ -1321,11 +1304,172 @@ fn one_interface_should_give_the_fix() {
     // GIVEN `let x = if c { Eye(v: 1) } else { Lid(v: 2) }`, whose members both fit `Seen`
     // WHEN it is checked
     // THEN the one fix writes `: any Seen` after `x`
-    // interim: Task 5b gives the one fix `: any Seen` at (1, 6)
     assert_eq!(
         fixes_of("let x = if c { Eye(v: 1) } else { Lid(v: 2) }"),
-        Vec::<Vec<_>>::new()
+        vec![vec![(1, 6, String::new(), ": any Seen".to_owned())]]
     );
+}
+
+#[test]
+fn call_whose_own_join_fails_should_wait_for_the_outer_join() {
+    // GIVEN `pick(Eye(v: 1), Lid(v: 2))`, whose arguments have no shared type, as an argument
+    //       of a call beside `e: any Seen`, in each order
+    // WHEN each is checked
+    // THEN the inner call takes `any Seen` from the outer join, and each is valid
+    type_rows(&[
+        ("let x = pick(e, pick(Eye(v: 1), Lid(v: 2)))", "any Seen"),
+        ("let x = pick(pick(Eye(v: 1), Lid(v: 2)), e)", "any Seen"),
+    ]);
+}
+
+#[test]
+fn call_whose_own_join_fails_should_report_once_when_no_candidate_opens_it() {
+    // GIVEN `pick(a, "s")`, whose arguments have no shared type, as a branch, under a type that
+    //       is not found, in a statement and as an argument
+    // WHEN each is checked
+    // THEN each reports one E0032 at `pick`, and nothing around it reports more
+    body_rows(&[
+        (
+            "let x = if c { 1 } else { pick(a, \"s\") }",
+            &[(Code::Mismatch, (1, 27))],
+        ),
+        (
+            "let x: Nope = if c { 1 } else { pick(a, \"s\") }",
+            &[(Code::UnknownType, (1, 8)), (Code::Mismatch, (1, 33))],
+        ),
+        (
+            "if c { 1 } else { pick(a, \"s\") }",
+            &[(Code::Mismatch, (1, 19))],
+        ),
+        ("let x = id(pick(a, \"s\"))", &[(Code::Mismatch, (1, 12))]),
+    ]);
+}
+
+/// A struct with generic methods: `mk` gives its argument and `none` gives `None`.
+const METHODS: &str = "struct K {\n    v: i64\n    fn mk<T>(self, x: T) -> T { x }\n    fn none<T>(self) -> T? { None }\n}\n";
+
+#[test]
+fn method_call_branch_should_take_the_type_of_the_other_branch() {
+    // GIVEN an `if` whose branches are `a: u8` and a generic method call that waits for its
+    //       context, in each order
+    // WHEN each is checked
+    // THEN the call takes the type that `a` gives
+    for (body, wanted) in [
+        ("let x = if c { a } else { k.mk(1) }", "u8"),
+        ("let x = if c { k.none() } else { a }", "u8?"),
+    ] {
+        let src = format!(
+            "{METHODS}fn main() {{\n    let c = [1].len() == 1\n    let a: u8 = 3\n    let k = K(v: 1)\n    {body}\n}}\n"
+        );
+        assert_eq!(join_type(&src), wanted, "{body}");
+    }
+}
+
+#[test]
+fn dropped_if_should_wrap_a_branch_with_no_value() {
+    // GIVEN `if` statements whose first branch is `None`, beside an `if` with no `else` and
+    //       beside a loop
+    // WHEN each is checked
+    // THEN the `if` with no `else` is no error
+    body_rows(&[("if c { None } else { if c { u() } }", &[])]);
+    // AND each value of the other `if` warns, as the fixture W0004-branch-own-type shows with
+    //     the type of its own branch
+    let src = program("if c { None } else { loop { break 1 } }");
+    let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+    let unused: Vec<_> = (ds.iter())
+        .filter(|d| d.code() == Code::UnusedValue)
+        .map(|d| at(&src, d.span()))
+        .collect();
+    assert_eq!(unused, [in_program((1, 8)), in_program((1, 22))]);
+}
+
+#[test]
+fn if_in_a_failed_context_should_keep_its_literal_and_stay_silent() {
+    // GIVEN an `if` under `let x: Nope`, a type that is not found
+    // WHEN each is checked
+    // THEN a literal takes the type of its sibling, and an open value gives no E0050
+    // AND only a conflict of the branches adds an E0032, at the `if`
+    body_rows(&[
+        (
+            "let x: Nope = if c { a } else { \"s\" }",
+            &[(Code::UnknownType, (1, 8)), (Code::Mismatch, (1, 15))],
+        ),
+        (
+            "let x: Nope = if c { None } else { 1 }",
+            &[(Code::UnknownType, (1, 8))],
+        ),
+        (
+            "let x: Nope = if c { None } else { None }",
+            &[(Code::UnknownType, (1, 8))],
+        ),
+        (
+            "let x: Nope = if c { 300 } else { a }",
+            &[
+                (Code::UnknownType, (1, 8)),
+                (Code::IntegerDoesNotFit, (1, 22)),
+            ],
+        ),
+        (
+            "let x: Nope = if c { [] } else { loop { break [] } }",
+            &[(Code::UnknownType, (1, 8))],
+        ),
+    ]);
+}
+
+#[test]
+fn if_under_a_hint_should_join_to_the_sibling_any_type() {
+    // GIVEN an `if` of an `Eye` and a `Lid` as an element beside `e: any Seen`
+    // WHEN it is checked
+    // THEN the array is `[any Seen]`
+    type_rows(&[(
+        "let x = [e, if d { Eye(v: 1) } else { Lid(v: 2) }]",
+        "[any Seen]",
+    )]);
+}
+
+#[test]
+fn if_with_an_open_result_should_close_at_the_if() {
+    // GIVEN an `if` of literals as an operand, and an `if` of two `None`
+    // WHEN each is checked
+    // THEN the literals close to `i64`
+    type_rows(&[("let x = 1 + if c { 1 } else { 2 }", "i64")]);
+    // AND the `None`s give one E0050, at the first `None`
+    body_rows(&[(
+        "let x = if c { None } else { None }",
+        &[(Code::CannotInfer, (1, 16))],
+    )]);
+}
+
+/// The value positions that the joins visit and settle when `fn f(c: bool, a: u8) -> u8` is
+/// checked, whose body is an `else if` chain of `n` branches of `a`.
+fn required_chain_steps(n: usize) -> usize {
+    let chain = format!(
+        "if c {{ a }}{} else {{ a }}",
+        " else if c { a }".repeat(n - 1)
+    );
+    let src = format!(
+        "fn f(c: bool, a: u8) -> u8 {{\n    {chain}\n}}\nfn main() {{\n    print(f(true, 1))\n}}\n"
+    );
+    VALUE_STEPS.set(0);
+    SETTLED.set(0);
+    let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+    assert!(errors(&src, &ds).is_empty(), "{n} branches");
+    VALUE_STEPS.get() + SETTLED.get()
+}
+
+#[test]
+fn else_if_chain_under_a_required_type_should_cost_linear_value_steps() {
+    // GIVEN a function with the result type `u8` whose body is an `else if` chain of 64, 128 and
+    //       192 branches
+    // WHEN each is checked
+    let steps = [
+        required_chain_steps(64),
+        required_chain_steps(128),
+        required_chain_steps(192),
+    ];
+    // THEN each branch is a value position of a join, and the steps grow linearly
+    assert!(steps[1] - steps[0] >= 64, "{steps:?}");
+    assert_near_linear(steps[0], steps[1], steps[2]);
 }
 
 #[test]
@@ -1984,12 +2128,6 @@ fn a_late_argument_beside_a_form_not_converted_should_give_its_interim_report() 
             row("let x = pick(o ?? p, o ?? p)"),
             vec![(Code::Mismatch, at(14))],
         ),
-        // interim: Task 5b gives no error, and `x` is `u8`
-        (
-            "if of literals beside a coalesce",
-            row("let x = two(if true { 1 } else { 2 }, o ?? 5)"),
-            vec![(Code::Mismatch, at(39))],
-        ),
         // interim: Task 5c gives no error, and `x` is `u8?`
         (
             "closed variant with an array under an if",
@@ -1997,6 +2135,11 @@ fn a_late_argument_beside_a_form_not_converted_should_give_its_interim_report() 
             vec![(Code::Mismatch, at(18))],
         ),
     ]);
+    // AND an `if` of literals beside a coalesce takes the `u8` of the coalesce
+    assert_eq!(
+        join_type(&row("let x = two(if true { 1 } else { 2 }, o ?? 5)")),
+        "u8"
+    );
 }
 
 /// The functions of the rows of `a_closed_call_whose_known_part_clashes_should_blame_its_argument`.

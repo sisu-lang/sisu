@@ -1,10 +1,10 @@
-error[E0032]: expected `u8`, found `i64`
- --> E0032-else-if-chain.sisu:6:36
+error[E0032]: the branches of this `if` have different types
+ --> E0032-else-if-chain.sisu:6:13
   |
 6 |     let x = if c { a } else if d { b } else { "s" }
-  |                    -               ^
-  |                    |
-  |                    this branch gives the type `u8`
+  |             ^^     -               -          --- `string`
+  |                    |               |
+  |                    `u8`            `i64`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

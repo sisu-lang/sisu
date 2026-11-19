@@ -442,7 +442,7 @@ fn a_hint_should_reach_exactly_its_value() {
         (
             "loop value",
             "let _a = if c { 1 } else { loop { break \"a\" } }",
-            e((6, 32)),
+            e((6, 14)),
         ),
         ("coalesce none", "let _a = o ?? None", vec![]),
         ("coalesce empty", "let _a = o ?? []", e((6, 19))),
@@ -452,11 +452,10 @@ fn a_hint_should_reach_exactly_its_value() {
             "let _a = if c { 1 } else { id(None) }",
             vec![],
         ),
-        // interim: Task 5b gives E0032 at (6, 35)
         (
             "generic empty",
             "let _a = if c { 1 } else { id([]) }",
-            vec![(Code::CannotInfer, (6, 32))],
+            e((6, 14)),
         ),
         ("beside any none", "let _a = [a, None]", vec![]),
         ("beside any empty", "let _a = [a, []]", e((6, 18))),
