@@ -157,6 +157,8 @@ struct Leaf {
     ty: Type,
     around: Type,
     lifted: Type,
+    /// Whether a `Some` stands around the leaf: then a nested member above it is optional.
+    wrapped: bool,
     /// The value of an integer literal that the leaf is.
     literal: Option<i64>,
 }
@@ -168,6 +170,7 @@ impl Leaf {
             ty,
             around: ty,
             lifted: Type::optional(ty),
+            wrapped: false,
             literal: None,
         }
     }
@@ -396,14 +399,15 @@ impl Checker<'_> {
                 let Some(around) = part(leaf.around) else {
                     continue;
                 };
-                // A top is optional by its part at `hole`, a nested member by its own type. The
-                // `?` of a top goes on its part, as `?` added at `[T]` has no part at `T`.
+                // A top is optional by its part at `hole`. A nested member is optional by its own
+                // type or by a `Some` around it, as the leaf `x` of a branch `Some(x)`. The `?` of
+                // a top goes on its part, as `?` added at `[T]` has no part at `T`.
                 let (own, lifted) = if k == 0 {
-                    (around, Some(Type::optional(around)))
+                    (optional(self, around), Some(Type::optional(around)))
                 } else {
-                    (leaf.ty, part(leaf.lifted))
+                    (leaf.wrapped || optional(self, leaf.ty), part(leaf.lifted))
                 };
-                found.push((around, lifted, optional(self, own)));
+                found.push((around, lifted, own));
             }
         }
         let optionals = found.iter().filter(|&&(.., own)| own).count();
@@ -825,9 +829,9 @@ fn nested_leaves(e: &mut tir::Expr, out: &mut Vec<Leaf>) -> bool {
             collect_leaves(child, out);
         });
     });
-    let around: fn(Type) -> Type = match e.kind {
-        ExprKind::ArrayLit(_) | ExprKind::ArrayFill { .. } => Type::array,
-        ExprKind::Wrap(_) => Type::optional,
+    let (around, wrapped): (fn(Type) -> Type, bool) = match e.kind {
+        ExprKind::ArrayLit(_) | ExprKind::ArrayFill { .. } => (Type::array, false),
+        ExprKind::Wrap(_) => (Type::optional, true),
         _ => return inner,
     };
     for leaf in &mut out[start..] {
@@ -835,6 +839,7 @@ fn nested_leaves(e: &mut tir::Expr, out: &mut Vec<Leaf>) -> bool {
         LEAF_STEPS.set(LEAF_STEPS.get() + 1);
         leaf.around = around(leaf.around);
         leaf.lifted = around(leaf.lifted);
+        leaf.wrapped |= wrapped;
     }
     inner
 }
