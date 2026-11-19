@@ -1708,15 +1708,21 @@ fn the_part_at_a_parameter_should_be_found_in_linear_work_on_an_alias_chain() {
     assert_at_most_doubles(sixteen, steps(32));
 }
 
-/// The work of checking `src`: the steps of the type walks, the snapshots, the types rebuilt and
-/// the variables made. A guard of a generic call's cost reads it.
+/// The work of checking `src`: the steps of the type walks, the snapshots, the types rebuilt, the
+/// variables made and the `...` written in the examples of E0050. A guard of a generic call's cost
+/// reads it.
 fn call_work(src: &str) -> usize {
     generic::TYPE_STEPS.set(0);
+    generic::EXAMPLE_DOTS.set(0);
     infer::SNAPSHOTS.set(0);
     infer::REBUILDS.set(0);
     infer::MADE.set(0);
     clean(src);
-    generic::TYPE_STEPS.get() + infer::SNAPSHOTS.get() + infer::REBUILDS.get() + infer::MADE.get()
+    generic::TYPE_STEPS.get()
+        + generic::EXAMPLE_DOTS.get()
+        + infer::SNAPSHOTS.get()
+        + infer::REBUILDS.get()
+        + infer::MADE.get()
 }
 
 /// `call_work` for a program that may have diagnostics: the work, and the count of diagnostics.
@@ -1869,6 +1875,54 @@ fn a_wide_member_should_cost_linear_work_in_its_parameters() {
     for (row, open) in [("closed: ", false), ("open: ", true)] {
         let work = |k: usize| call_work(&program(k, open));
         assert_near_linear_for(row, work(100), work(200), work(300));
+    }
+}
+
+/// A call with `k` type parameters as the argument of an outer call: `id(mk(1, ...))` and
+/// `g(mk(1, ...), 1, ...)`. Each parameter of `mk` stays open until the outer call decides it, and
+/// the program has no error. A call can make the text of an E0050 for each open parameter before
+/// a report needs it. Each text writes one `...` for each parameter, so the work then grows with
+/// the square of `k`.
+#[test]
+fn an_inner_call_with_open_parameters_should_cost_linear_work_in_its_parameters() {
+    let program = |k: usize, outer: &str| {
+        let list = |name: &str| (0..k).map(|i| format!("{name}{i}")).collect::<Vec<_>>();
+        let fields: Vec<String> = (0..k).map(|i| format!("    _f{i}: A{i}\n")).collect();
+        let tup = |name: &str| format!("Tup<{}>", list(name).join(", "));
+        let params: Vec<String> = (0..k).map(|i| format!("_x{i}: T{i}")).collect();
+        let ones = vec!["1"; k].join(", ");
+        let (callee, call) = if outer == "id" {
+            (
+                "fn id<T>(x: T) -> T { x }\n".to_string(),
+                format!("id(mk({ones}))"),
+            )
+        } else {
+            let more: Vec<String> = (0..k).map(|i| format!("_y{i}: T{i}")).collect();
+            (
+                format!(
+                    "fn g<{}>(_t: {}, {}) -> i64 {{ 0 }}\n",
+                    list("T").join(", "),
+                    tup("T"),
+                    more.join(", ")
+                ),
+                format!("g(mk({ones}), {ones})"),
+            )
+        };
+        format!(
+            "struct {} {{\n{}}}\n\
+             fn mk<{}>({}) -> {} {{ panic(\"e\") }}\n\
+             {callee}\
+             fn main() {{\n    let _t = {call}\n}}",
+            tup("A"),
+            fields.concat(),
+            list("T").join(", "),
+            params.join(", "),
+            tup("T"),
+        )
+    };
+    for row in ["id", "g"] {
+        let work = |k: usize| call_work(&program(k, row));
+        assert_near_linear_for(&format!("{row}: "), work(100), work(200), work(300));
     }
 }
 

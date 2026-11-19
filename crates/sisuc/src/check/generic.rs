@@ -1255,6 +1255,9 @@ thread_local! {
     /// answers too: `Bindings::bind`, `resolve` and `unknown_param`, `holds_param`,
     /// `mark_params`, `mark_by_assoc`, `names_marked` and `names_outside_assoc`.
     pub(super) static TYPE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many `...` the example of an E0050 has written on this thread: one for each type
+    /// parameter of the callee, each time the report is made.
+    pub(super) static EXAMPLE_DOTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A generic callee as a call sees it: a function or method, a class's constructor, or an
@@ -4976,7 +4979,10 @@ impl Checker<'_> {
                 at: name.span,
             };
         }
-        let dots = vec!["..."; sig.declared.len() - sig.owner.len()].join(", ");
+        let count = sig.declared.len() - sig.owner.len();
+        #[cfg(test)]
+        EXAMPLE_DOTS.set(EXAMPLE_DOTS.get() + count);
+        let dots = vec!["..."; count].join(", ");
         let (callee, example, at) = match sig.variant {
             Some(variant) => {
                 let payload = if sig.params.is_empty() { "" } else { "(...)" };
