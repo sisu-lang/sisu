@@ -4319,16 +4319,17 @@ impl Checker<'_> {
 
     /// Meets `expected`, the call's context, after the members decided what they could. At the
     /// top the return type meets the payload of an optional context first, so that the call's
-    /// value is wrapped; as the guide of a late argument (`whole`) it meets the whole context
-    /// first, which takes the most values. A hint can add a `?` to the type of its siblings (see
-    /// `branch.rs`), which they did not write. A late argument that can make an optional takes
-    /// that `?` (`first(m.mkl())` for `-> [X?]`). Else the call meets the siblings' type first,
-    /// and the hint only when that fails, as for `id(None)` beside a `1`. Under a required
-    /// optional, the late arguments are closed first (Q26). When none can make an optional, the
-    /// call meets the payload first, and its result wraps once at the top. An example is
-    /// `fst(p.mkb())` under `i64?`, where `mkb` gives `Pr<i64, X>`. `None` when the call is a
-    /// member of an outer join, which decides its variables, or has no context to meet; else
-    /// whether it met it.
+    /// value is wrapped. Under a required type whose parameters the arguments decide, it meets the
+    /// whole type first (unify before wrap). As the guide of a late argument (`whole`) it meets
+    /// the whole context first, which takes the most values. A hint can add a `?` to the type of
+    /// its siblings (see `branch.rs`), which they did not write. A late argument that can make an
+    /// optional takes that `?` (`first(m.mkl())` for `-> [X?]`). Else the call meets the siblings'
+    /// type first, and the hint only when that fails, as for `id(None)` beside a `1`. Under a
+    /// required optional, the late arguments are closed first (Q26). When none can make an
+    /// optional, the call meets the payload first, and its result wraps once at the top. An
+    /// example is `fst(p.mkb())` under `i64?`, where `mkb` gives `Pr<i64, X>`. `None` when the
+    /// call is a member of an outer join, which decides its variables, or has no context to meet;
+    /// else whether it met it.
     fn meet_context(
         &mut self,
         call: &Inference<'_>,
@@ -4362,9 +4363,18 @@ impl Checker<'_> {
             .map(|&ty| self.table.resolve(listed(ty)))
             .collect();
         let ret = ret.subst(&with);
+        // Unify before wrap. The arguments can decide each parameter that the result names, as
+        // `X?` for `id(None)`. Then the result meets a required type whole first: no wrap.
+        // A parameter that no argument decides, as the `T` of `none()`, meets the payload first.
+        let unifies_first = matches!(expected, Expectation::Required(..)) && {
+            let in_result = result_names(sig);
+            (decided.iter()).all(|&(t, var)| {
+                !in_result[t] || !matches!(self.table.resolve(var).kind(), TypeKind::Infer(_))
+            })
+        };
         let mut meets = |want: Type| {
             let optional = matches!(want.kind(), TypeKind::Optional(_));
-            if whole {
+            if whole || unifies_first {
                 self.unify(ret, want) || optional && self.unify(ret, payload(want))
             } else {
                 self.unify(ret, payload(want)) || optional && self.unify(ret, want)
