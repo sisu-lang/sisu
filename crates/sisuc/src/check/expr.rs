@@ -636,9 +636,10 @@ impl Checker<'_> {
     }
 
     /// `e`, a `T`, wrapped to `want`, its optional. A `unit` whose value an `if` without an
-    /// `else` gives has no value to wrap: E0043 at that `if` (see `unlifted`).
+    /// `else` gives has no value to wrap: E0043 at that `if` (see `unlifted`), unless no code uses
+    /// the value of the join being settled (see `Body::dropped_join`).
     pub(super) fn lift(&mut self, e: tir::Expr, want: Type) -> Checked {
-        match unlifted(&e) {
+        match unlifted(&e).filter(|_| !self.body.dropped_join) {
             Some((at, if_let)) => Err(Poisoned::typed(want, self.no_value(at, no_else(if_let)))),
             None => Ok(wrap(e, want)),
         }
@@ -981,9 +982,17 @@ impl Checker<'_> {
     /// What the `let` whose whole initializer is the literal at `span` writes before its type,
     /// if any: its name, after `mut` when it has it.
     pub(super) fn let_binding(&self, span: Span) -> Option<String> {
-        let (init, name, mutable) = self.body.let_init?;
+        let (init, name, mutable, _) = self.body.let_init?;
         (init == span && name.as_str() != "_")
             .then(|| format!("{}{name}", if mutable { "mut " } else { "" }))
+    }
+
+    /// The name of the `let` whose whole initializer is at `span`, if any: the fix of a join
+    /// writes its type after it.
+    #[expect(dead_code, reason = "the join of an `if` uses it from the next commit")]
+    pub(super) fn let_name(&self, span: Span) -> Option<Span> {
+        let (init, name, _, at) = self.body.let_init?;
+        (init == span && name.as_str() != "_").then_some(at)
     }
 
     /// Whether a comment starts in one of the byte ranges `deleted`. The comment starts are in

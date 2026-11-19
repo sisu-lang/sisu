@@ -708,6 +708,7 @@ impl Checker<'_> {
             let (mut top, mut whole) = (false, false);
             match &mut *member.value {
                 Ok(e) if e.ty != Type::NEVER => {
+                    let e = given(e);
                     top = !nested_leaves(e, &mut leaves);
                     if top {
                         leaves.push(Leaf::of(e));
@@ -774,6 +775,20 @@ impl Checker<'_> {
             }
         }
         Conflict { groups, parts }
+    }
+}
+
+/// The value that `e` gives: the value of a block that has one, as a branch of an `if` or an arm
+/// of a `match` is the member itself.
+fn given(e: &mut tir::Expr) -> &mut tir::Expr {
+    if !matches!(&e.kind, ExprKind::Block(block) if block.value.is_some()) {
+        return e;
+    }
+    match &mut e.kind {
+        ExprKind::Block(tir::Block {
+            value: Some(value), ..
+        }) => given(value),
+        _ => unreachable!("`e` should be a block with a value"),
     }
 }
 
