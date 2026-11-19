@@ -2456,8 +2456,8 @@ impl Checker<'_> {
         let mut openable = Vec::new();
         // The arguments that fit their place with no type for any parameter: each was reported.
         let mut misfits = vec![false; args.len()];
-        // The parameters whose members all leave a part open, as `[]` and `[None]` do: the
-        // context gives each its type, so a bound of it reports at the call, as on `main`.
+        // The parameters with a bound whose members all leave a part open, as `[]` and `[None]`
+        // do: the context gives each its type, so a bound of it reports at the call, as on `main`.
         let mut by_context = vec![false; sig.declared.len()];
         let join_order = index.join_order(&decided);
         // The place of each decided parameter in `join_order`: a later one has a larger place.
@@ -2693,7 +2693,11 @@ impl Checker<'_> {
                     },
                 ));
             }
-            by_context[t] = (!open.is_empty() || !members.is_empty())
+            // Only a bound reads it. The resolve walks each member's whole type, which can name
+            // each parameter of the call.
+            let bounded = (sig.bounds.get(t - sig.owner.len())).is_some_and(|b| !b.list.is_empty());
+            by_context[t] = bounded
+                && (!open.is_empty() || !members.is_empty())
                 && (members.iter()).all(|(_, m)| {
                     type_of(m.value).is_some_and(|ty| self.table.resolve(ty).holds_infer())
                 });
