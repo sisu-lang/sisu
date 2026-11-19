@@ -229,9 +229,9 @@ Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 | optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
-## fields
+## else-if chain with a result type
 
-Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
+Sizes: 0, 30, 60, 120, 240. Growth is the count less the count at size 0.
 
 | stage | g(n) | g(2n) | g(4n) | g(8n) | r1 | r2 | r3 | verdict |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -244,7 +244,7 @@ Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 | optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
-## conformers
+## fields
 
 Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 
@@ -259,9 +259,9 @@ Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 | optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
-## type depth
+## conformers
 
-Sizes: 0, 24, 48, 96, 192. Growth is the count less the count at size 0.
+Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 
 | stage | g(n) | g(2n) | g(4n) | g(8n) | r1 | r2 | r3 | verdict |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -658,6 +658,7 @@ class ScalingTest(unittest.TestCase):
             ("array literal width", 250),
             ("string literal width", 100),
             ("match arms", 50),
+            ("else-if chain with a result type", 30),
             ("fields", 50),
             ("conformers", 50),
             ("type depth", 24),
@@ -730,6 +731,7 @@ class ScalingTest(unittest.TestCase):
             "array literal width": (lambda t: t.count("7"), 0),
             "string literal width": (lambda t: t.count('"w'), 0),
             "match arms": (lambda t: t.count("=>"), 1),
+            "else-if chain with a result type": (lambda t: t.count("else if"), 0),
             "fields": (lambda t: t.count(": i64"), 1),
             "conformers": (lambda t: t.count("class "), 1),
             "type depth": (lambda t: depth(line(t, "let v"), "(", ")"), 1),

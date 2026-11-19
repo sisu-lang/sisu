@@ -244,6 +244,15 @@ def match_arms(k: int) -> str:
     )
 
 
+def else_if_chain(k: int) -> str:
+    """Return a program with a `u8` function whose body is an `else if` chain of `k + 2` arms."""
+    chain = " else if c { a }" * k
+    return (
+        f"fn pick(c: bool, a: u8) -> u8 {{\n    if c {{ a }}{chain} else {{ a }}\n}}\n\n"
+        'fn main() {\n    let a: u8 = 7\n    print("{pick(true, a)}")\n}\n'
+    )
+
+
 def fields(k: int) -> str:
     """Return a program with a class of `k + 1` fields."""
     declared = "".join(f"    f{tag(i)}: i64\n" for i in range(k))
@@ -672,6 +681,8 @@ SHAPES = {
     # the bound 2.3, so the verdict does not rest on the fall rule.
     "string literal width": (100, string_literal_width),
     "match arms": (50, match_arms),
+    # n = 30: each `else if` is one level deeper, and 8n levels stay under the limit of 256 (E0071).
+    "else-if chain with a result type": (30, else_if_chain),
     "fields": (50, fields),
     "conformers": (50, conformers),
     "type depth": (24, type_depth),

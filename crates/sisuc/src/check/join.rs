@@ -547,7 +547,7 @@ impl Checker<'_> {
     /// has value positions converts at each of them. It unifies what `settle_at` unifies, in the
     /// same order, so that `settle_at` takes the steps that this counts.
     pub(super) fn converts_at(&mut self, e: &mut tir::Expr, target: Type) -> Option<usize> {
-        if e.ty == Type::NEVER {
+        if e.ty == Type::NEVER || self.settled_as(e, target) {
             return Some(0);
         }
         ensure_stack(|| match self.enter(e, target) {
@@ -621,7 +621,7 @@ impl Checker<'_> {
     pub(super) fn settle_at(&mut self, e: &mut tir::Expr, target: Type) -> Result<(), Reported> {
         #[cfg(test)]
         SETTLED.set(SETTLED.get() + 1);
-        if e.ty == Type::NEVER {
+        if e.ty == Type::NEVER || self.settled_as(e, target) {
             return Ok(());
         }
         ensure_stack(|| match self.enter(e, target) {
@@ -662,6 +662,14 @@ impl Checker<'_> {
                 },
             },
         })
+    }
+
+    /// Whether `e` has the type `target` already, with no variable in it: the join of `e` has
+    /// settled its members to it, so a walk into `e` finds nothing to do. This keeps an `else if`
+    /// chain under a required type linear, as each level settles the chain under it. A variable
+    /// that the outer join bound does not count: the members under it are not settled yet.
+    fn settled_as(&self, e: &tir::Expr, target: Type) -> bool {
+        !e.ty.holds_infer() && e.ty == self.table.resolve(target)
     }
 
     /// Applies `steps` to `e` in place.
