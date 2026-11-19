@@ -2451,6 +2451,10 @@ impl Checker<'_> {
             call.slots[i] = Some(checked);
         }
         let mut failed = None;
+        // The part of a required type at the place of each parameter in the result. One walk
+        // finds them, at the first join that needs them: a walk of the whole result for each
+        // parameter, as in `required_join`, makes a call quadratic in its parameters.
+        let mut want_parts: Option<FxHashMap<Symbol, Type>> = None;
         // The one member of a parameter's join, when it has one, which a mismatch of the result
         // names (see `close_call`): its parameter, its span, its type, and its parameter type.
         let mut lone = Vec::new();
@@ -2845,14 +2849,27 @@ impl Checker<'_> {
                 });
                 let form = JoinForm::Call { param: name };
                 // A call that failed already reports nothing more against `want`.
-                let joined = |c: &mut Self, members: &mut [JoinMember<'_>]| match (expected, ret_t)
-                {
-                    (Expectation::Required(want, _), Some(ret)) if failed.is_none() => {
-                        let at = (t, var, sig.bounds.get(t - owned));
-                        c.required_join(members, at, (ret, &with), want)
-                    }
-                    _ => Expectation::Member,
-                };
+                let mut joined =
+                    |c: &mut Self, members: &mut [JoinMember<'_>]| match (expected, ret_t) {
+                        (Expectation::Required(want, _), Some(ret)) if failed.is_none() => {
+                            // A closed form that takes the part of `want` converts, as
+                            // `required_join` finds by a walk of the whole result. The
+                            // declared result has each parameter at the place of `with`.
+                            let parts = want_parts.get_or_insert_with(|| {
+                                let mut parts = FxHashMap::default();
+                                parts_at(ret, c.table.resolve(want), &mut parts);
+                                parts
+                            });
+                            if let Some(&part) = parts.get(&name)
+                                && c.closed_takes(members, name, part)
+                            {
+                                return Expectation::Member;
+                            }
+                            let at = (t, var, sig.bounds.get(t - owned));
+                            c.required_join(members, at, (ret, &with), want)
+                        }
+                        _ => Expectation::Member,
+                    };
                 let mut expected_here = joined(self, &mut members);
                 if members.iter().any(|m| matches!(m.at, Place::Split { .. })) {
                     let required = match expected_here {
@@ -3438,6 +3455,22 @@ impl Checker<'_> {
         } else {
             Expectation::Member
         }
+    }
+
+    /// Whether the closed form of the join of `members`, the members of the parameter `name`,
+    /// takes `part` as it is. Each member must also convert to it, as in `required_join`.
+    fn closed_takes(&mut self, members: &mut [JoinMember<'_>], name: Symbol, part: Type) -> bool {
+        let Some(ty) = self.join_type(members, Some(name), None) else {
+            return false;
+        };
+        let snapshot = self.table.snapshot();
+        let takes = self.unify(ty, part)
+            && (members.iter_mut()).all(|m| {
+                let target = target(m.at, Some(name), part);
+                self.member_converts(m, target, false).is_some()
+            });
+        self.table.rollback(snapshot);
+        takes
     }
 
     /// Whether `members` differ from `part` only by its wraps: each takes `part` without its
@@ -6514,6 +6547,48 @@ impl Checker<'_> {
             form: ArgumentsForm::Variant { instead },
         })
     }
+}
+
+/// The part of `ty` at the first place of each type parameter in `place`, as `part_at` finds it
+/// for one parameter. A place that is optional where `ty` is not adds nothing: there
+/// the call's value wraps, and `required_join` decides.
+fn parts_at(place: Type, ty: Type, parts: &mut FxHashMap<Symbol, Type>) {
+    let mut seen = FxHashSet::default();
+    walk_parts(place, ty, parts, &mut seen);
+}
+
+/// `parts_at` below the top. `seen` holds each pair walked, so shared parts are walked once.
+fn walk_parts(
+    place: Type,
+    ty: Type,
+    parts: &mut FxHashMap<Symbol, Type>,
+    seen: &mut FxHashSet<(Type, Type)>,
+) {
+    #[cfg(test)]
+    super::join::PART_STEPS.set(super::join::PART_STEPS.get() + 1);
+    if !place.has_param() || !seen.insert((place, ty)) {
+        return;
+    }
+    crate::conformance::ensure_stack(|| {
+        let lists = match (place.kind(), ty.kind()) {
+            (TypeKind::Param(name, _), _) => {
+                parts.entry(name).or_insert(ty);
+                return;
+            }
+            (TypeKind::Array(ours), TypeKind::Array(theirs))
+            | (TypeKind::Optional(ours), TypeKind::Optional(theirs)) => {
+                return walk_parts(ours, theirs, parts, seen);
+            }
+            (TypeKind::Class(a, ours), TypeKind::Class(b, theirs)) if a == b => (ours, theirs),
+            (TypeKind::Struct(a, ours), TypeKind::Struct(b, theirs)) if a == b => (ours, theirs),
+            (TypeKind::Enum(a, ours), TypeKind::Enum(b, theirs)) if a == b => (ours, theirs),
+            (TypeKind::Any(a, ours), TypeKind::Any(b, theirs)) if a == b => (ours, theirs),
+            _ => return,
+        };
+        for (&ours, &theirs) in lists.0.get().iter().zip(lists.1.get()) {
+            walk_parts(ours, theirs, parts, seen);
+        }
+    });
 }
 
 #[cfg(test)]
