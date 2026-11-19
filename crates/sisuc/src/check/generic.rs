@@ -4844,9 +4844,18 @@ impl Checker<'_> {
         }
         let ret = ret.subst(&with);
         // Unify before wrap, as `meet_context` does: under a required type the places take the
-        // whole type first. A hint meets its payload first (Task 5c).
+        // whole type first, when no other argument can decide their parameters. The other
+        // arguments are not checked yet: in `put(mut names, 1)` the `1` decides `T`, so the
+        // result wraps. A hint meets its payload first (Task 5c).
+        let decided_elsewhere = (0..call.args.len()).any(|i| {
+            !site.muts[i]
+                && sig.params[i].is_some_and(|param| {
+                    (opened.iter().enumerate())
+                        .any(|(t, &open)| open && names_outside_assoc(param, t))
+                })
+        });
         let (first, then) = match expected {
-            Expectation::Required(..) => (want, payload(want)),
+            Expectation::Required(..) if !decided_elsewhere => (want, payload(want)),
             _ => (payload(want), want),
         };
         let snapshot_first = self.table.snapshot();
