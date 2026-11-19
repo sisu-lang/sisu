@@ -1387,8 +1387,10 @@ pub(crate) enum DiagnosticKind {
     /// `guarded` is whether a guarded arm may not match it, and `gap` whether it is a gap in an
     /// integer, `char` or `string` type, which only `_ =>` closes for good.
     /// The fix writes an arm for `missing`, indented by `indent`, in place of `insert`: an empty
-    /// span, or the space between the last arm and a `}` on its line. The arm is `_ =>` when
-    /// `gap`, or when `missing` is `_`, an empty `match`: neither has a pattern of its own.
+    /// span, or the space between the last arm and a `}` on its line. `insert` is `None`, and
+    /// the report has no fix, when the last arm ends in an open range: a line break after it
+    /// does not end the arm. The arm is `_ =>` when `gap`, or when `missing` is `_`, an empty
+    /// `match`: neither has a pattern of its own.
     /// `close` is the indentation of that `}`, which the fix moves to a line of its own.
     NonExhaustive {
         missing: String,
@@ -1396,7 +1398,7 @@ pub(crate) enum DiagnosticKind {
         guarded: bool,
         gap: bool,
         at: Span,
-        insert: Span,
+        insert: Option<Span>,
         indent: String,
         close: Option<String>,
     },
@@ -6817,6 +6819,7 @@ impl From<DiagnosticKind> for Diagnostic {
                     }
                     None => d,
                 };
+                let Some(insert) = insert else { return d };
                 let (pattern, message) = if gap || missing == "_" {
                     ("_", "add a `_ =>` arm".to_string())
                 } else {
