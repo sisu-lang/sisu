@@ -35,6 +35,8 @@ thread_local! {
     pub(super) static WALKED: Cell<usize> = const { Cell::new(0) };
     /// The types that `rebuild_in` has rebuilt: the ones that its memo did not hold.
     pub(super) static REBUILDS: Cell<usize> = const { Cell::new(0) };
+    /// The types that `rebuild_in` has visited, the ones that its memo held too.
+    pub(super) static VISITS: Cell<usize> = const { Cell::new(0) };
     /// The snapshots that were taken.
     pub(super) static SNAPSHOTS: Cell<usize> = const { Cell::new(0) };
     /// The variables that `fresh` has made.
@@ -649,6 +651,8 @@ impl Table {
         if !ty.holds_infer() {
             return (ty, None);
         }
+        #[cfg(test)]
+        VISITS.set(VISITS.get() + 1);
         if let Some(&entry) = memo.maps[open as usize].get(&ty)
             && self.sets.newest(entry.reads.lo, entry.reads.hi) <= entry.made
         {

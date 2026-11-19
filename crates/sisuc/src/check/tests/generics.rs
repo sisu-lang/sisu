@@ -1882,7 +1882,7 @@ fn a_wide_member_should_cost_linear_work_in_its_parameters() {
 /// `g(mk(1, ...), 1, ...)`. Each parameter of `mk` stays open until the outer call decides it, and
 /// the program has no error. A call can make the text of an E0050 for each open parameter before
 /// a report needs it. Each text writes one `...` for each parameter, so the work then grows with
-/// the square of `k`.
+/// the square of `k`. So does a join that resolves the type of `mk(...)` for each parameter.
 #[test]
 fn an_inner_call_with_open_parameters_should_cost_linear_work_in_its_parameters() {
     let program = |k: usize, outer: &str| {
@@ -1921,7 +1921,12 @@ fn an_inner_call_with_open_parameters_should_cost_linear_work_in_its_parameters(
         )
     };
     for row in ["id", "g"] {
-        let work = |k: usize| call_work(&program(k, row));
+        // The visits that the memo of `resolve` answers count too: a resolve of the whole result
+        // for each parameter visits each of its `k` parts.
+        let work = |k: usize| {
+            infer::VISITS.set(0);
+            call_work(&program(k, row)) + infer::VISITS.get()
+        };
         assert_near_linear_for(&format!("{row}: "), work(100), work(200), work(300));
     }
 }
