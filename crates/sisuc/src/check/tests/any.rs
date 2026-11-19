@@ -804,8 +804,8 @@ fn a_join_should_report_the_member_that_leaves_its_any_type() {
             );
             // An `if`, a `match` or an array literal reports at its head, as its join has no
             // direction (ADR 0052).
-            // interim: Task 5d gives E0032 at the `??`. Its default joins under a hint, so the
-            // `if` whose own join holds the `Cube` reports.
+            // deferred (Task 5d report): the plan gives E0032 at the `??`. Its default joins under
+            // a hint, so the `if` whose own join holds the `Cube` reports.
             let (code, at) = match site {
                 "a `loop`" => (Code::NotConform, src.find("Cube")),
                 "the default of `??`" if x != "Cube(s: 1.0)" => (Code::Mismatch, src.rfind("if ")),

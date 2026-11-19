@@ -1394,3 +1394,43 @@ fn a_none_beside_each_layer_of_a_nested_array_should_give_one_type_in_each_order
         red.join("\n")
     );
 }
+
+/// GIVEN a nested array of a generic struct or enum leaf, a `Some` of the leaf beside it, and a
+///   `None` one layer up.
+/// AND each order of the first layer. An example is `[[[P(a: 1), Some(P(a: 1))]], [[P(a: 1)],
+///   None]]`, and its other order is `[[[Some(P(a: 1)), P(a: 1)]], [[P(a: 1)], None]]`
+/// WHEN each is the value of a `let` with no type
+/// THEN each has one type in each order, `[[[P<i64>?]?]]` or `[[[E<i64>?]?]]`
+#[test]
+fn a_generic_leaf_beside_each_layer_of_a_nested_array_should_give_one_type_in_each_order() {
+    let rows = [
+        (
+            "[[[P(a: 1), Some(P(a: 1))]], [[P(a: 1)], None]]",
+            "[[[P<i64>?]?]]",
+        ),
+        (
+            "[[[Some(P(a: 1)), P(a: 1)]], [[P(a: 1)], None]]",
+            "[[[P<i64>?]?]]",
+        ),
+        ("[[[E.X(1), None]], [[E.X(1)], None]]", "[[[E<i64>?]?]]"),
+        ("[[[None, E.X(1)]], [[E.X(1)], None]]", "[[[E<i64>?]?]]"),
+        ("[[[E.Y, None]], [[E.X(1)], None]]", "[[[E<i64>?]?]]"),
+        ("[[[None, E.Y]], [[E.X(1)], None]]", "[[[E<i64>?]?]]"),
+    ];
+    let mut red = Vec::new();
+    for (row, ty) in rows {
+        let src = format!(
+            "struct P<A> {{\n    a: A\n}}\nenum E<A> {{\n    X(A)\n    Y\n}}\nfn main() {{\n    let a = {row}\n    let t: {ty} = a\n    print(t.len())\n}}\n"
+        );
+        let found = found(&src);
+        if !found.is_empty() {
+            red.push(format!("row `{row}`: found {found:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}

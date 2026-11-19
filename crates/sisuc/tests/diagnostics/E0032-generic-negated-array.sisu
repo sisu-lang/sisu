@@ -3,4 +3,4 @@ fn main() {
     print(r)
 }
 
-// interim: Task 5d gives "found `[u8]`" at 2:36, as main does
+// deferred (Task 5d report): the plan gives "found `[u8]`" at 2:36, as main does

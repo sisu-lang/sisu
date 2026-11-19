@@ -107,7 +107,13 @@ fn a_value_should_convert_through_one_layer_only() {
     let rows: [Row; 8] = [
         ("let r: i64?? = 5", (2, 20, "5"), &[(2, 12)], true),
         ("let r: i64??? = 5", (2, 21, "5"), &[(2, 12)], true),
-        ("let r = x ?? \"a\"", (2, 18, "\"a\""), &[], false),
+        // A `??` of two closed sides reports at its head, as a join does (ADR 0052).
+        (
+            "let r = x ?? \"a\"",
+            (2, 15, "??"),
+            &[(2, 13), (2, 18)],
+            false,
+        ),
         ("let r = x == 5", (2, 18, "5"), &[], true),
         // A join of three depths: the `i64` is two layers below the join, in either order. An
         // array reports at its head, with a label at each element and no help, as a `match`

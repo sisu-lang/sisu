@@ -541,7 +541,6 @@ crates/sisuc/src/check/tests/u8.rs::literal_argument_is_optional
 crates/sisuc/src/check/tests/u8.rs::literal_does_not_fit
 crates/sisuc/src/check/tests/u8.rs::literal_from_each_source
 crates/sisuc/src/check/tests/u8.rs::literal_typed_by_sibling
-crates/sisuc/src/check/tests/u8.rs::no_mixing
 crates/sisuc/src/check/tests/u8.rs::optional_literal
 crates/sisuc/src/check/tests/u8.rs::print_takes_u8
 crates/sisuc/src/check/tests/u8.rs::u8_cannot_be_negative

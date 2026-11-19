@@ -1,14 +1,18 @@
-error[E0032]: expected `u8`, found `i64`
- --> E0032-compound-sides.sisu:4:10
+error[E0032]: the two sides of `+=` have different types
+ --> E0032-compound-sides.sisu:4:7
   |
 4 |     s += b
-  |          ^
+  |     - ^^ - `i64`
+  |     |
+  |     `u8`
 
-error[E0032]: expected `i64`, found `u8`
- --> E0032-compound-sides.sisu:8:10
+error[E0032]: the two sides of `+=` have different types
+ --> E0032-compound-sides.sisu:8:7
   |
 8 |     t += a
-  |          ^
+  |     - ^^ - `u8`
+  |     |
+  |     `i64`
   |
 help: if the types are right, convert it with `i64(...)`
   |

@@ -176,9 +176,10 @@ fn a_conversion_fix_should_be_offered_only_where_an_optional_fits() {
             None => assert_eq!(fixes(&src, &d), [], "{src}"),
         }
     }
-    // The right of `??` wants the payload, which a conversion does not give.
+    // The sides of `??` join at its head. The left side gives its payload, which a conversion
+    // does not change, so there is no fix.
     let src = "fn f(o: u8?, n: i64) {\n    print(o ?? n)\n}\nfn main() {}";
-    let d = diagnostic(src, Code::Mismatch, (2, 16, "n"), &[]);
+    let d = diagnostic(src, Code::Mismatch, (2, 13, "??"), &[(2, 11), (2, 16)]);
     assert_eq!(fixes(src, &d), []);
 }
 
@@ -232,15 +233,15 @@ fn u8_cannot_be_negative() {
 }
 
 #[test]
-fn no_mixing() {
+fn integer_operands_of_two_types_should_report_at_the_operator() {
     let src = "fn f(b: u8, x: i64) {\n    print(b + x)\n    print(x + b)\n    print(b == x)\n    print(b < x)\n}\nfn main() {}";
     codes(
         src,
         &[
-            (Code::Mismatch, (2, 15)),
-            (Code::Mismatch, (3, 15)),
-            (Code::Mismatch, (4, 16)),
-            (Code::Mismatch, (5, 15)),
+            (Code::Mismatch, (2, 13)),
+            (Code::Mismatch, (3, 13)),
+            (Code::Mismatch, (4, 13)),
+            (Code::Mismatch, (5, 13)),
         ],
     );
 }

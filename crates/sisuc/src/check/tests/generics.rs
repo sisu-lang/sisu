@@ -6898,11 +6898,11 @@ fn a_misfit_under_an_outer_generic_call_should_give_a_true_diagnostic() {
     with_prelude();
     // (the statement, the code that the one diagnostic has, the text at its place)
     let rows: &[(&str, Code, &str)] = &[
-        // interim: Task 5d gives the place of `mk2()`
+        // deferred (Task 5d report): the plan gives the place of `mk2()`
         ("print(1 == id(mk2()))", Code::CannotInfer, "id("),
-        // interim: Task 5d gives the place of `mk2()`
+        // deferred (Task 5d report): the plan gives the place of `mk2()`
         ("print(id(mk2()) == 1)", Code::CannotInfer, "id("),
-        // interim: Task 5d gives the place of `mk2()`
+        // deferred (Task 5d report): the plan gives the place of `mk2()`
         ("print(1 == id(id(mk2())))", Code::CannotInfer, "id(id("),
         ("let y: i64? = id(mk2())", Code::Mismatch, "mk2()"),
         ("let y: i64 = id(mk2())", Code::Mismatch, "mk2()"),
@@ -7171,7 +7171,7 @@ const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
             "",
             "let a: any Display = 1\nprint(1 == if true { a } else { mk2() })",
         ),
-        // interim: Task 5d gives [(CannotInfer, (3, 37))]
+        // deferred (Task 5d report): the plan gives [(CannotInfer, (3, 37))]
         &[(Code::Mismatch, (3, 16))],
     ),
 ];
@@ -7976,7 +7976,7 @@ fn fill_or_sum_argument_should_take_the_written_context() {
 fn negated_or_later_argument_should_give_the_error_of_its_twin() {
     use Code::{IntegerDoesNotFit, Mismatch, NegatedU8};
     let rows: Vec<ErrorRow<'_>> = vec![
-        // interim: Task 5d gives [(NegatedU8, (7, 33))]
+        // deferred (Task 5d report): the plan gives [(NegatedU8, (7, 33))]
         (
             "n557_6",
             fill_program("let r: Result<u8, i64> = Ok(-loop { break 2 })"),
@@ -7987,13 +7987,13 @@ fn negated_or_later_argument_should_give_the_error_of_its_twin() {
             fill_program("let r: Result<[u8], i64> = Ok([k, loop { break 2 }])"),
             vec![(Mismatch, (7, 36))],
         ),
-        // interim: Task 5d gives [(NegatedU8, (8, 33))]
+        // deferred (Task 5d report): the plan gives [(NegatedU8, (8, 33))]
         (
             "a6",
             fill_e_program("let r: Result<u8, i64> = Ok(-id(2))"),
             vec![(Mismatch, (8, 33))],
         ),
-        // interim: Task 5d gives [(NegatedU8, (8, 34))]
+        // deferred (Task 5d report): the plan gives [(NegatedU8, (8, 34))]
         (
             "a7",
             fill_e_program("let r: Result<i64, u8> = Err(-loop { break 2 })"),
@@ -8019,7 +8019,7 @@ fn negated_or_later_argument_should_give_the_error_of_its_twin() {
             fill_e_program("let r: Result<u8, i64> = Ok(1 + loop { break k })"),
             vec![(Mismatch, (8, 50))],
         ),
-        // interim: Task 5d gives [(NegatedU8, (7, 20))]
+        // deferred (Task 5d report): the plan gives [(NegatedU8, (7, 20))]
         (
             "d17",
             fill_mk_program("let r: u8 = id(-mk())"),
@@ -8309,30 +8309,32 @@ fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
 
 /// GIVEN a generic call whose arguments are an integer and a `==`, a `!=` or a `&&` of literals
 /// WHEN the program is checked
-/// THEN the operator is a `bool` value, as `true` is. It binds the parameter before the integer
-///   does, so the error is at the integer, as it is with `true`. Only an arithmetic operator
-///   takes its type from its operands.
+/// THEN the operator is a `bool` member, as `true` is, so the arguments for the parameter join
+///   at the call, as they do with `true`. Only an arithmetic operator takes its type from its
+///   operands.
 #[test]
-fn comparison_argument_should_bind_the_parameter_before_an_integer() {
+fn comparison_argument_should_join_as_a_bool_does() {
     use Code::Mismatch;
     let rows: Vec<ErrorRow<'_>> = vec![
-        // interim: Task 5d gives [(Mismatch, (4, 18))]
         (
             "integer, then `==`",
             pick_program("let r = pick(5, 1 == 2)"),
-            vec![(Mismatch, (4, 21))],
+            vec![(Mismatch, (4, 13))],
         ),
-        // interim: Task 5d gives [(Mismatch, (4, 18))]
         (
             "integer, then `!=`",
             pick_program("let r = pick(5, 1 != 2)"),
-            vec![(Mismatch, (4, 21))],
+            vec![(Mismatch, (4, 13))],
         ),
-        // interim: Task 5d gives [(Mismatch, (4, 26))]
         (
             "`==`, then a `u8`",
             pick_program("let r = pick(1 == 2, v)"),
-            vec![(Mismatch, (4, 18))],
+            vec![(Mismatch, (4, 13))],
+        ),
+        (
+            "integer, then `true`",
+            pick_program("let r = pick(5, true)"),
+            vec![(Mismatch, (4, 13))],
         ),
     ];
     error_rows(&rows);
@@ -8377,7 +8379,7 @@ fn each_ranking_cause_should_take_the_written_context() {
             fill_program("let r: Result<u8, i64> = Ok(1 + loop { break 2 })"),
             vec![],
         ),
-        // interim: Task 5d gives [(NegatedU8, (7, 33))]
+        // deferred (Task 5d report): the plan gives [(NegatedU8, (7, 33))]
         (
             "n557_6",
             fill_program("let r: Result<u8, i64> = Ok(-loop { break 2 })"),
@@ -8839,7 +8841,8 @@ fn waiting_argument_should_keep_its_report_before_and_after() {
         (
             "n428_11",
             wait_program("let x: i64?? = k"),
-            vec![(Mismatch, (16, 20)), (Mismatch, (17, 16))],
+            // The sides of `??` are closed, so they join at its head (ADR 0052).
+            vec![(Mismatch, (16, 20)), (Mismatch, (17, 13))],
         ),
         (
             "n428_12",
@@ -8928,7 +8931,7 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
             blame_program("let x: u8 = first(ys)"),
             vec![(Mismatch, (8, 23))],
         ),
-        // interim: Task 5d gives [(Mismatch, (8, 24))]
+        // deferred (Task 5d report): the plan gives [(Mismatch, (8, 24))]
         (
             "n499_8",
             blame_program("let x = v == first(ys)"),
@@ -8950,7 +8953,7 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
             blame_program("let x = if c { v } else { id(loop { break 1 }) }"),
             vec![],
         ),
-        // interim: Task 5d gives [(Mismatch, (8, 24))]
+        // deferred (Task 5d report): the plan gives [(Mismatch, (8, 24))]
         (
             "n499_12",
             blame_program("let x = o ?? first(ys)"),
@@ -9015,10 +9018,10 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
             blame_b_program("let x = q == id(v) ?? q"),
             vec![(CoalesceNotOptional, (10, 18))],
         ),
-        // interim: Task 5d gives [(Mismatch, (7, 22))]
+        // deferred (Task 5d report): the plan gives [(Mismatch, (7, 22))]
         ("499", REPRO_499.to_string(), vec![(Mismatch, (7, 16))]),
         ("499if", REPRO_499_IF.to_string(), vec![(Mismatch, (6, 11))]),
-        // interim: Task 5d gives [(Mismatch, (5, 22))]
+        // deferred (Task 5d report): the plan gives [(Mismatch, (5, 22))]
         ("499q", REPRO_499_Q.to_string(), vec![(Mismatch, (5, 16))]),
         (
             "499mut",

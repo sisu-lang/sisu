@@ -1223,11 +1223,15 @@ fn if_and_match_should_join_in_each_order() {
         ),
     ]);
     body_rows(&[
-        // interim: Task 5d gives no error, and `x` is `u8`
+        // deferred (Task 5d report): the plan gives no error, and `x` is `u8`
         (
             "let x = if c { id(1) + 0 } else { a }",
             &[(Code::Mismatch, (1, 35))],
         ),
+    ]);
+    type_rows(&[
+        ("let x: u8 = if c { a } else { 1 + 2 }", "u8"),
+        ("let x: u8 = if c { 1 + 2 } else { a }", "u8"),
     ]);
 }
 
@@ -1544,18 +1548,15 @@ fn operator_operands_should_join_in_each_order() {
         ("let x = o ?? Some(1)", "u8?"),
     ]);
     // AND `??` with a right side that is not the payload of its left side reports one E0032
-    body_rows(&[
-        // interim: Task 5d gives [(Mismatch, (1, 11))]
-        ("let x = o ?? \"s\"", &[(Code::Mismatch, (1, 14))]),
-    ]);
+    body_rows(&[("let x = o ?? \"s\"", &[(Code::Mismatch, (1, 11))])]);
     body_rows(&[
         // interim: Task 5e gives no error, and `x` is `u8`
         ("let x = loop { break 1 } + a", &[(Code::Mismatch, (1, 28))]),
-        // interim: Task 5d gives no error, and `x` is `bool`
+        // deferred (Task 5d report): the plan gives no error, and `x` is `bool`
         ("let x = Some(1) == o", &[(Code::Mismatch, (1, 20))]),
-        // interim: Task 5d gives no error, and `x` is `bool`
+        // deferred (Task 5d report): the plan gives no error, and `x` is `bool`
         ("let x = [1] == [a]", &[(Code::Mismatch, (1, 17))]),
-        // interim: Task 5d gives no error, and `x` is `u8?`
+        // deferred (Task 5d report): the plan gives no error, and `x` is `u8?`
         ("let x = Some(1) ?? o", &[(Code::Mismatch, (1, 20))]),
     ]);
 }
@@ -1565,24 +1566,20 @@ fn compound_fix_should_convert_only_the_right_side() {
     // GIVEN `+=` and `??` whose two sides have different types
     // WHEN each is checked
     // THEN each reports one E0032, and only a whole right side gets a fix
-    one_conflict_rows(&[
-        // interim: Task 5d gives E0032 at (3, 3), labels at (3, 1) and (3, 6)
-        (
-            "let mut s: u8 = 0\nlet bi: i64 = 300\ns += bi\nprint(s)",
-            (3, 6),
-            &[],
-        ),
-    ]);
+    one_conflict_rows(&[(
+        "let mut s: u8 = 0\nlet bi: i64 = 300\ns += bi\nprint(s)",
+        (3, 3),
+        &[(3, 1), (3, 6)],
+    )]);
     assert_eq!(
         fixes_of("let mut s: u8 = 0\nlet bi: i64 = 300\ns += bi\nprint(s)"),
         Vec::<Vec<_>>::new()
     );
-    // interim: Task 5d gives one edit that writes `i64(a)` over `a` at (2, 6)
     assert_eq!(
         fixes_of("let mut s: i64 = 0\ns += a\nprint(s)"),
         vec![vec![
             (2, 6, String::new(), "i64(".to_owned()),
-            (2, 7, String::new(), ")".to_owned()),
+            (2, 7, String::new(), ")".to_owned())
         ]]
     );
     assert_eq!(
@@ -2080,11 +2077,11 @@ fn a_call_beside_a_hint_should_keep_the_type_that_main_gives() {
 }
 
 #[test]
-fn a_late_argument_beside_a_form_not_converted_should_give_its_interim_report() {
+fn a_late_argument_beside_a_coalesce_should_give_its_deferred_report() {
     // GIVEN programs that main accepts, where a late argument meets a form that a later task
     // converts
     // WHEN each is checked
-    // THEN each gives the head's report until that task
+    // THEN each gives the report that Task 5d leaves (see its report)
     let row = |line: &str| {
         format!(
             "{SEED_FUNCTIONS}fn main() {{\n    let o: u8? = None\n    let p: u8 = 1\n    let c = [1].len() == 1\n    {line}\n    print(x)\n}}\n"
@@ -2092,7 +2089,7 @@ fn a_late_argument_beside_a_form_not_converted_should_give_its_interim_report() 
     };
     let at = |col: usize| (SEED_FUNCTIONS.lines().count() + 5, col + 4);
     error_rows(&[
-        // interim: Task 5d gives no error, and `x` is `u8`
+        // deferred (Task 5d report): the plan gives no error, and `x` is `u8`
         (
             "coalesce beside an optional place",
             row("let x = pick(o ?? p, o ?? p)"),
@@ -2100,7 +2097,7 @@ fn a_late_argument_beside_a_form_not_converted_should_give_its_interim_report() 
         ),
         // An `if` of literals is a join of literals, so it meets the coalesce as `1` does in
         // `two(1, o ?? 5)`.
-        // interim: Task 5d gives no error, and `x` is `u8`
+        // deferred (Task 5d report): the plan gives no error, and `x` is `u8`
         (
             "if of literals beside a coalesce",
             row("let x = two(if true { 1 } else { 2 }, o ?? 5)"),

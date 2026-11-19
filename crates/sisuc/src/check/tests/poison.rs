@@ -1827,7 +1827,8 @@ fn a_failed_generic_call_should_keep_its_message() {
         (
             "s18",
             "class Two<A, B> {\n    a: A\n    b: B\n}\nfn mk2<X>() -> Two<X, bool> { panic(\"e\") }\nfn id<V>(v: V) -> V { v }\nfn r() -> i64 { return id(mk2()) }\nfn main() {\n    let z = id(mk2()) + id(mk2())\n}\n".into(),
-            // interim: Task 5d gives E0032 at (7, 27) and E0050 at (9, 16) and (9, 28)
+            // deferred (Task 5d report): the plan gives E0032 at (7, 27) and E0050 at (9, 16) and
+            // (9, 28)
             vec![(Mismatch, (7, 27)), (CannotInfer, (9, 13))],
         ),
     ]);
