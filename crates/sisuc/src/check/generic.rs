@@ -12,7 +12,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::{Through, Via};
 use super::array::innermost;
-use super::expr::{literal_type, option_written, read_jump};
+use super::expr::{branch_join, gives_made_value, literal_type, option_written, read_jump};
 use super::infer::{Kind, ObligationId, OpenCall};
 use super::interface::{Bound, Bounds, Required};
 use super::join::{Heading, JoinForm, JoinMember, Place, part_at, target};
@@ -2567,9 +2567,10 @@ impl Checker<'_> {
                 }
                 // An argument that does not fit its place, whatever type each parameter takes, is
                 // a mistake of its shape: it gets the directed report, as on main, and joins
-                // nothing.
+                // nothing. A nested join is tested by the join, leaf by leaf.
+                let tested = value.is_ok() && !branch_join(&args[i].value);
                 if !(split[i] && pending[i].is_empty() && !bound_early)
-                    && value.is_ok()
+                    && tested
                     && !param.has_assoc()
                     && let Some(ty) = type_of(value)
                     && ty != Type::NEVER
@@ -2647,8 +2648,10 @@ impl Checker<'_> {
                 with[t] = var;
                 let filled = param.subst(&with);
                 with[t] = param_t;
+                // A nested join decides by its leaves, which the join walks.
                 if let Some(ty) = type_of(value)
                     && ty != Type::NEVER
+                    && !branch_join(&args[i].value)
                     && self.decides_nothing(ty, filled, var)
                 {
                     open.push((filled, ty, argument, i, false));
@@ -2874,6 +2877,14 @@ impl Checker<'_> {
                         if !self.unify(var, ty) {
                             // The join of an earlier parameter bound it through a shared argument.
                             failed.get_or_insert_with(|| self.proof(first)); // proof: quiet reader
+                        }
+                        // A nested join knows only now whether its value is a valueless `if`.
+                        for (m, &i) in members.iter_mut().zip(&of) {
+                            if branch_join(&args[i].value)
+                                && let Some(reported) = self.refuse_settled_valueless(m.value)
+                            {
+                                failed.get_or_insert(reported);
+                            }
                         }
                         // A member that went back to its place unified each part there.
                         for (m, &i) in members.iter().zip(&of).filter(|&(_, &i)| split[i]) {
@@ -3946,10 +3957,11 @@ impl Checker<'_> {
     /// `Expectation::Member`, or `Expectation::None` for a method call that is closed. Such a
     /// value has its own type, or a type that stays open where the join decides it: an integer
     /// literal, a `None`, a `[]`, a generic call or method call, a case of a generic enum
-    /// (`Two.P(5, 7)`). A value that is a join of its own does not yet. That is an `if`, a
-    /// `match`, a loop, an array literal with elements, an operator or a `??`. It meets what the
-    /// members decide (see `late_argument`). A call that has such an argument does not either, as
-    /// `Some(if c { 1 } else { 2 })`. A block does when its value does.
+    /// (`Two.P(5, 7)`). An `if` or a `match` whose branches join is a nested join: its branches
+    /// are members. A value that is a join of its own does not yet. That is a loop, an array
+    /// literal with elements, an operator, a `??`, or an `if` or `match` whose branch gives one
+    /// (`gives_made_value`). It meets what the members decide (see `late_argument`). A call that
+    /// has such an argument does not either, as `Some(1 + 2)`. A block does when its value does.
     ///
     /// A method call with no argument is closed, unless it waits for its context to pick among
     /// conformances (`Rank::Waits`). A method call that checks its receiver as a place is closed.
@@ -4040,13 +4052,22 @@ impl Checker<'_> {
                 }
                 found
             }
+            // A branch join is a nested join, unless a branch gives a form that waits.
+            K::If {
+                else_block: Some(_),
+                ..
+            }
+            | K::IfLet {
+                else_block: Some(_),
+                ..
+            }
+            | K::Match { .. } => (!gives_made_value(e)).then_some(Expectation::Member),
             K::MethodCall { .. }
             | K::Binary { .. }
             | K::Coalesce { .. }
             | K::ArrayFill { .. }
             | K::If { .. }
             | K::IfLet { .. }
-            | K::Match { .. }
             | K::Loop { .. } => None,
             _ => Some(Expectation::Member),
         }

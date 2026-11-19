@@ -16,18 +16,6 @@ use crate::diagnostic::{Diagnostic, DiagnosticKind, NoValueCause, Unwrap};
 use crate::source::Span;
 use crate::tir::{self, Type, TypeKind};
 
-/// The failed `if` or `match` whose join is `ty`: as typed as the join is. A join with a type
-/// fails by a failed part, whose proof is `part`.
-pub(super) fn failed_join(ty: Result<Type, Poisoned>, part: Option<Reported>) -> Checked {
-    Err(match ty {
-        Err(poisoned) => poisoned,
-        Ok(ty) => Poisoned::typed(
-            ty,
-            part.expect("a join with a type should fail by a failed part"),
-        ),
-    })
-}
-
 /// `span`, the span of an `if` with no `else`, when its `then` block has a value: such an `if` has
 /// none (see `Poisoned::valueless`). `if_let` says that it is an `if let`, and goes with it.
 fn valueless_join(
@@ -47,6 +35,26 @@ fn failed_branch(blocks: &[CheckedBlock]) -> Reported {
 }
 
 impl Checker<'_> {
+    /// The failed `if` or `match` whose join is `ty`: as typed as the join is. A join with a type
+    /// fails by a failed part, whose proof is `part`. The open variables of that type report
+    /// nothing more, as a nested join leaves its type open.
+    pub(super) fn failed_join(
+        &mut self,
+        ty: Result<Type, Poisoned>,
+        part: Option<Reported>,
+    ) -> Checked {
+        Err(match ty {
+            Err(poisoned) => poisoned,
+            Ok(ty) => {
+                self.table.poison(ty);
+                Poisoned::typed(
+                    ty,
+                    part.expect("a join with a type should fail by a failed part"),
+                )
+            }
+        })
+    }
+
     /// Without an `else`, `unit`. With one, the branches joined (see `branches`), also when the
     /// condition failed.
     pub(super) fn if_expr(
@@ -81,7 +89,7 @@ impl Checker<'_> {
                 ty,
                 span,
             )),
-            (.., ty) => failed_join(ty, part).map_err(|failed| Poisoned {
+            (.., ty) => self.failed_join(ty, part).map_err(|failed| Poisoned {
                 valueless,
                 ..failed
             }),
@@ -155,6 +163,7 @@ impl Checker<'_> {
                     .or_else(|| other.err().map(|p| p.reported()))
                     .or(pattern)
                     .expect("a failed `if let` should have a failed part");
+                self.table.poison(ty);
                 return Err(Poisoned {
                     valueless,
                     ..Poisoned::typed(ty, part)

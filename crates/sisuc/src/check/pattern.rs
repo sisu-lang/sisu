@@ -6,7 +6,7 @@ use std::iter;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::Via;
-use super::branch::{Branch, branch_expectation, failed_join};
+use super::branch::{Branch, branch_expectation};
 use super::exhaust::{self, Neighbours, Report, Row};
 use super::expr::gives_made_value;
 use super::generic::{Ahead, type_meets};
@@ -382,7 +382,7 @@ impl Checker<'_> {
                 ty,
                 span,
             )),
-            (checked, arms, ty) => failed_join(
+            (checked, arms, ty) => self.failed_join(
                 ty,
                 checked.err().map(|p| p.reported()).or_else(|| arms.err()),
             ),

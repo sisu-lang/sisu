@@ -565,6 +565,16 @@ impl Checker<'_> {
         })
     }
 
+    /// E0043 at the valueless `if` that gives the value of `checked`, a nested join whose type its
+    /// outer join has settled (see `valueless`). Then `checked` is poisoned.
+    pub(super) fn refuse_settled_valueless(&mut self, checked: &mut Checked) -> Option<Reported> {
+        let e = checked.as_ref().ok()?;
+        let (at, if_let) = without_value(e, false, &|ty| self.table.resolve(ty))?;
+        let reported = self.no_value(at, no_else(if_let));
+        *checked = Err(Poisoned::untyped(reported));
+        Some(reported)
+    }
+
     /// `checked`, or E0043 at the valueless `if` that gives its value (see `valueless`).
     pub(super) fn refuse_valueless(&mut self, checked: Checked) -> Checked {
         match valueless_value(&checked) {
@@ -1119,6 +1129,24 @@ pub(super) fn made_value(e: &ast::Expr) -> bool {
     }
 }
 
+/// Whether `e` holds a join of branches whose leaves the join around it settles: an `if` or an
+/// `if let` with an `else`, or a `match`, as `e` or as the value of a block, a `dbg` or a `Some`.
+pub(super) fn branch_join(e: &ast::Expr) -> bool {
+    ensure_stack(|| match &e.kind {
+        ExprKind::If { else_block, .. } | ExprKind::IfLet { else_block, .. } => {
+            else_block.is_some()
+        }
+        ExprKind::Match { .. } => true,
+        ExprKind::Block(block) => super::tail(block).is_some_and(branch_join),
+        ExprKind::Call { callee, args, .. }
+            if callee.name.as_str() == "dbg" || callee.name == Symbol::SOME =>
+        {
+            matches!(args.as_slice(), [arg] if branch_join(&arg.value))
+        }
+        _ => false,
+    })
+}
+
 /// Whether `e` gives a made value (see `made_value`) at its value. Its value is that of its block,
 /// branches and arms, and the argument of a `dbg` or a `Some`. Then the branches of `e` join by
 /// the order of their ranks, not as members of one join (see `Checker::branches`).
@@ -1199,29 +1227,35 @@ fn valueless_value(checked: &Checked) -> Option<(Span, bool)> {
 /// Only a `unit` or a `unit?` can give one, so the walk stops at any other type. The second part
 /// says that the `if` is an `if let`.
 pub(super) fn valueless(e: &tir::Expr) -> Option<(Span, bool)> {
-    without_value(e, false)
+    without_value(e, false, &|ty| ty)
 }
 
 /// `valueless` of `e`, a `unit` that lifts to `unit?`. There each `if` without an `else` has no
 /// value, whatever its branch has, as for an `i64?`.
 fn unlifted(e: &tir::Expr) -> Option<(Span, bool)> {
-    without_value(e, true)
+    without_value(e, true, &|ty| ty)
 }
 
 /// The walk of `valueless`; with `lifted`, an `if` without an `else` has no value by itself.
-fn without_value(e: &tir::Expr, lifted: bool) -> Option<(Span, bool)> {
-    let unit = e.ty == Type::UNIT;
-    if !unit && !optional_unit(e.ty) {
+/// `resolve` gives the type of an inference variable, which a nested join leaves in its nodes.
+fn without_value(
+    e: &tir::Expr,
+    lifted: bool,
+    resolve: &dyn Fn(Type) -> Type,
+) -> Option<(Span, bool)> {
+    let ty = resolve(e.ty);
+    let unit = ty == Type::UNIT;
+    if !unit && !optional_unit(ty) {
         return None;
     }
     // The tail of a `never` block is unreachable, so no code reads its value.
     let tail = |block: &tir::Block| {
         (block.value.as_deref())
             .filter(|_| block.ty != Type::NEVER)
-            .and_then(|value| without_value(value, lifted))
+            .and_then(|value| without_value(value, lifted, resolve))
     };
     // A branch with a value beside no `else`: an `if let` on an enum is a `match` of two arms.
-    let has_value = |block: &tir::Block| !matches!(block.ty, Type::UNIT | Type::NEVER);
+    let has_value = |block: &tir::Block| !matches!(resolve(block.ty), Type::UNIT | Type::NEVER);
     match &e.kind {
         tir::ExprKind::If {
             then_block,
@@ -1248,7 +1282,7 @@ fn without_value(e: &tir::Expr, lifted: bool) -> Option<(Span, bool)> {
             arms.iter().find_map(|arm| tail(&arm.body))
         }
         tir::ExprKind::Block(block) => tail(block),
-        tir::ExprKind::Wrap(inner) => without_value(inner, lifted),
+        tir::ExprKind::Wrap(inner) => without_value(inner, lifted, resolve),
         // Each of these gives its own value, which no `if` gives.
         tir::ExprKind::Int(_)
         | tir::ExprKind::Float(_)
