@@ -323,6 +323,18 @@ mod tests {
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
+    /// A line break after `..` does not end an arm, so the new arm of an E0130 fix would become
+    /// the end of the range. The report then has no fix.
+    #[test]
+    fn the_e0130_fix_should_keep_the_syntax_after_an_open_range() {
+        for range in ["1..", "1..="] {
+            let src = format!(
+                "fn g(s: i64?) -> i64 {{\n    match s {{\n        Some(_) => {range}   }}\n}}\n\nfn main() {{\n    print(\"{{g(None)}}\")\n}}\n"
+            );
+            crate::on_compiler_stack(|| front_end(src.as_bytes()));
+        }
+    }
+
     /// Inputs that the fuzz target found. A fix must keep the syntax, and a safe one must keep
     /// every report of another code.
     #[test]
