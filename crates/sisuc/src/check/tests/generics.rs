@@ -1705,6 +1705,33 @@ fn the_part_at_a_parameter_should_be_found_in_linear_work_on_an_alias_chain() {
     assert_at_most_doubles(sixteen, steps(32));
 }
 
+/// GIVEN `q ?? S(f0: [0], ...)` with `q: S<i64, ...>?` and a struct `S` of 8 and of 16 type
+/// parameters, and the same `S(...)` under the written type `S<i64, ...>?`
+/// WHEN each is checked
+/// THEN the closed form of each parameter takes its part of the hint or of the written type
+/// AND no join walks the whole result of the call
+#[test]
+fn a_call_under_a_hint_or_a_written_optional_should_walk_no_result_for_a_closed_form() {
+    for n in [8, 16] {
+        let params: Vec<String> = (0..n).map(|i| format!("A{i}")).collect();
+        let fields: Vec<String> = (0..n).map(|i| format!("f{i}: [A{i}]")).collect();
+        let args: Vec<String> = (0..n).map(|i| format!("f{i}: [{i}]")).collect();
+        let ty = format!("S<{}>", vec!["i64"; n].join(", "));
+        let src = format!(
+            "struct S<{}> {{ {} }}\nfn main() {{\n    let q: {ty}? = None\n    \
+             let r = q ?? S({})\n    let w: {ty}? = S({})\n    print(r.f0.len())\n    \
+             print(w ?? r)\n}}\n",
+            params.join(", "),
+            fields.join("; "),
+            args.join(", "),
+            args.join(", "),
+        );
+        join::REQUIRED_JOINS.set(0);
+        clean(&src);
+        assert_eq!(join::REQUIRED_JOINS.get(), 0, "{n} type parameters");
+    }
+}
+
 /// GIVEN a generic call whose argument is an `if` or a `match` of a struct and `None`
 /// AND the call is under a written optional of an `any` type
 /// WHEN the program is checked

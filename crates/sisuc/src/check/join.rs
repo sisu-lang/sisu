@@ -37,6 +37,8 @@ thread_local! {
     pub(super) static PART_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many value positions `converts_at` has visited, on this thread.
     pub(super) static CONVERTS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many times `required_join` has walked the result of a call, on this thread.
+    pub(super) static REQUIRED_JOINS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The candidate of a join that took the fewest wraps so far, with that number.

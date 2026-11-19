@@ -3390,6 +3390,8 @@ impl Checker<'_> {
         (ret, with): (Type, &[Type]),
         want: Type,
     ) -> Expectation {
+        #[cfg(test)]
+        super::join::REQUIRED_JOINS.set(super::join::REQUIRED_JOINS.get() + 1);
         let TypeKind::Param(name, _) = with[t].kind() else {
             return Expectation::Member;
         };
