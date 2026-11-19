@@ -1174,6 +1174,8 @@ pub(super) fn nested_join(e: &ast::Expr) -> bool {
 /// a member until Task 5d.
 pub(super) fn gives_made_value(e: &ast::Expr) -> bool {
     ensure_stack(|| {
+        #[cfg(test)]
+        super::VALUE_WALK_STEPS.set(super::VALUE_WALK_STEPS.get() + 1);
         made_value(e)
             || match &e.kind {
                 ExprKind::Unary {
@@ -1265,6 +1267,8 @@ fn without_value(
     lifted: bool,
     resolve: &dyn Fn(Type) -> Type,
 ) -> Option<(Span, bool)> {
+    #[cfg(test)]
+    super::VALUE_WALK_STEPS.set(super::VALUE_WALK_STEPS.get() + 1);
     // An element is a value of its own: the join of a nested array settles it late, so the walk
     // looks into the elements of an array of any type.
     match &e.kind {

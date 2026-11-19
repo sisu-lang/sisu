@@ -1214,3 +1214,30 @@ fn a_conflict_in_array_elements_should_report_once_at_the_call() {
         codes(&src, &[(Code::Mismatch, (6, 5))]);
     }
 }
+
+/// The expressions that `gives_made_value` and `without_value` visit when `main` is checked,
+/// whose `let` takes an array literal of `n` nested layers around `1`.
+fn nested_array_walk_steps(n: usize) -> usize {
+    let src = format!(
+        "fn main() {{\n    let a = {}1{}\n    print(\"{{a.len()}}\")\n}}\n",
+        "[".repeat(n),
+        "]".repeat(n)
+    );
+    VALUE_WALK_STEPS.set(0);
+    let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+    assert!(errors(&src, &ds).is_empty(), "{n} layers");
+    VALUE_WALK_STEPS.get()
+}
+
+#[test]
+fn nested_array_literal_should_cost_linear_value_walk_steps() {
+    // GIVEN `let a = [[...[1]...]]` of 48, 96 and 144 layers
+    // WHEN each is checked
+    let steps = [
+        nested_array_walk_steps(48),
+        nested_array_walk_steps(96),
+        nested_array_walk_steps(144),
+    ];
+    // THEN no layer walks the layers inside it again, so the steps grow linearly
+    assert_near_linear(steps[0], steps[1], steps[2]);
+}
