@@ -114,6 +114,10 @@ KNOWN: list[tuple[str, str, int | str]] = [
     # calls of the helpers that make an array or a box unique.
     ("struct writes -O2", "optimize", 687),
     ("struct writes -O2", "object", 687),
+    # LLVM's `PromotePass` on the nested chain; `main` gives the same counts.
+    ("else-if chain with a result type", "optimize", 765),
+    # The ratio is near the limit on `main` too (2.21 at 8n), with 4 times more work.
+    ("alias chain", "mono", 766),
 ]
 ANNOTATE = ["callgrind_annotate", "--inclusive=yes", "--threshold=100", "--show=Ir", "--auto=no"]
 DIAGNOSTIC = re.compile(r"^(error|warning)\[([EW]\d{4})\]")
