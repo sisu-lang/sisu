@@ -91,14 +91,14 @@ fn a_break_origin_should_reach_each_part_of_the_value() {
         (
             "a branch of a `break` value",
             "fn main() {\n    let a = loop {\n        if true { break 1 }\n        break if true { 1 } else { \"x\" }\n    }\n    print(a)\n}\n",
-            (4, 36),
-            Explained::Label(3, 19),
+            (4, 15),
+            Explained::Labels(&[(4, 25), (4, 36)]),
         ),
         (
             "a branch of a `break` value after a `string` branch",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break if d { \"x\" } else { 2 }\n    }\n    print(a)\n}\nfn main() {\n    f(true, true)\n}\n",
-            (4, 22),
-            Explained::Label(3, 16),
+            (4, 15),
+            Explained::Labels(&[(4, 22), (4, 35)]),
         ),
         (
             "a `break` value, the row of S21",
@@ -367,8 +367,8 @@ fn an_earlier_value_should_explain_the_type() {
         (
             "branch",
             "fn main() {\n    let a = if true { 1 } else { \"x\" }\n    print(a)\n}\n",
-            (2, 34),
-            Explained::Label(2, 23),
+            (2, 13),
+            Explained::Labels(&[(2, 23), (2, 34)]),
         ),
         (
             "type parameter",
@@ -379,20 +379,20 @@ fn an_earlier_value_should_explain_the_type() {
         (
             "an inner `if` against the outer first branch (fable-9)",
             "fn f(c: bool, d: bool) {\n    let a = if c { 1 } else { if d { \"x\" } else { \"y\" } }\n    print(a)\n}\nfn main() {\n    f(true, true)\n}\n",
-            (2, 31),
-            Explained::Label(2, 20),
+            (2, 13),
+            Explained::Labels(&[(2, 20), (2, 38), (2, 51)]),
         ),
         (
             "an inner join whose first branch gives the type (fable-10)",
             "fn f(c: bool, d: bool) {\n    let a = if c { 1 } else { if d { \"x\" } else { 2 } }\n    print(a)\n}\nfn main() {\n    f(true, true)\n}\n",
-            (2, 51),
-            Explained::Label(2, 38),
+            (2, 13),
+            Explained::Labels(&[(2, 20), (2, 38), (2, 51)]),
         ),
         (
             "a value that reads the join's hint (fable-20)",
             "fn f(c: bool) {\n    let a = if c { 1 } else { [] }\n    print(a)\n}\nfn main() {\n    f(true)\n}\n",
-            (2, 31),
-            Explained::Label(2, 20),
+            (2, 13),
+            Explained::Labels(&[(2, 20), (2, 31)]),
         ),
         (
             "an operand under the hint of a branch",
@@ -403,8 +403,8 @@ fn an_earlier_value_should_explain_the_type() {
         (
             "a later arm makes the join optional (opus-41)",
             "fn f(n: i64) {\n    let a = match n {\n        1 => 5\n        2 => Some(1)\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {\n    f(1)\n}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(3, 14), (4, 19), (5, 14)]),
         ),
         (
             "a later element makes the array optional (opus-43)",
@@ -428,57 +428,59 @@ fn an_earlier_value_should_explain_the_type() {
 }
 
 /// A branch or an element that took its type from a sibling's hint did not give that type: the
-/// label names the value that gave it, in the order of the check.
+/// label names the value that gave it, in the order of the check. Branches and arms that do not
+/// join give E0032 at the head of the `if` or the `match` (ADR 0052). Each value that gives its
+/// own type gets a label, and a value that took one gets none.
 #[test]
 fn a_value_that_took_a_hint_should_not_be_the_origin() {
     origin_rows(&[
         (
             "a literal arm that took a later arm's type (opus-1)",
             "fn f(n: i64, b: u8) {\n    let a = match n {\n        1 => 5\n        2 => b\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(4, 14), (5, 14)]),
         ),
         (
             "an empty array arm that took a later arm's type",
             "fn f(n: i64, b: [i64]) {\n    let a = match n {\n        1 => []\n        2 => b\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(4, 14), (5, 14)]),
         ),
         (
             "a `None` arm before an optional arm (sol-1)",
             "fn f(n: i64, v: i64?) {\n    let a = match n {\n        0 => None\n        1 => v\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(4, 14), (5, 14)]),
         ),
         (
             "a block arm that holds `None`",
             "fn f(n: i64, v: i64?) {\n    let a = match n {\n        0 => { None }\n        1 => v\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(4, 14), (5, 14)]),
         ),
         (
             "an `if` arm whose branches are both `None`",
             "fn f(n: i64, v: i64?, c: bool) {\n    let a = match n {\n        0 => if c { None } else { None }\n        1 => v\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(4, 14), (5, 14)]),
         ),
         (
             "a `None` arm that makes a later arm optional: that arm gives its own type",
             "fn f(n: i64, v: i64) {\n    let a = match n {\n        0 => None\n        1 => v\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(3, 14), (4, 14), (5, 14)]),
         ),
         (
             "a `None` arm before an inner join that gives the type",
             "fn f(n: i64, v: i64?, c: bool) {\n    let a = match n {\n        0 => None\n        1 => if c { v } else { 1 }\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(4, 21), (4, 32), (5, 14)]),
         ),
         (
             "a control that passes before and after the fix: an `else if` chain whose first branch took the type",
             "fn f(c: bool, d: bool, b: u8) {\n    let a = if c { 5 } else if d { b } else { \"x\" }\n    print(a)\n}\nfn main() {}\n",
-            (2, 47),
-            Explained::Label(2, 36),
+            (2, 13),
+            Explained::Labels(&[(2, 36), (2, 47)]),
         ),
         (
             "a literal element that took a later element's type (opus-2)",
@@ -507,8 +509,8 @@ fn a_value_that_took_a_hint_should_not_be_the_origin() {
         (
             "an `if` arm of a literal and `None` that took a `u8` arm's type",
             "fn f(n: i64, b: u8, c: bool) {\n    let a = match n {\n        1 => b\n        2 => if c { 5 } else { None }\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(3, 14),
+            (2, 13),
+            Explained::Labels(&[(3, 14), (4, 32), (5, 14)]),
         ),
         (
             "an `if` element of a literal and `None` that took a `u8` element's type",

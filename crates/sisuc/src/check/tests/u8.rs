@@ -249,7 +249,7 @@ fn no_mixing() {
 /// `mismatch` call that can offer one: an expected type, a comparison, `??`, a branch with
 /// none expected, an array element.
 #[test]
-fn mismatch_fix_converts_the_expression_found() {
+fn mismatch_fix_should_convert_the_expression_found() {
     let rows = [
         // `u8` found where `i64` is wanted: an argument, a return value, a field.
         (
@@ -303,9 +303,10 @@ fn mismatch_fix_converts_the_expression_found() {
             "i64",
         ),
         (
-            "fn f(c: bool, b: u8?, n: i64) {\n    let x = if c { b } else { n }\n}\nfn main() {}",
-            "n",
-            "u8",
+            // The fix converts toward the type that holds the other (spec, Diagnostics).
+            "fn f(c: bool, b: u8, n: i64) {\n    let x = if c { n } else { b }\n}\nfn main() {}",
+            "b",
+            "i64",
         ),
         (
             "fn f(b: u8?, n: i64) {\n    let xs = [b, n]\n}\nfn main() {}",

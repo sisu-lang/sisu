@@ -22,25 +22,38 @@ fn program(stmt: &str) -> String {
 
 const FAILED_LET: Wanted = (UnknownType, (4, 13));
 const GET: Wanted = (Mismatch, (4, 15));
+/// The `[]` of `IF` is an `[Any]` member (spec, Kinds). So the `if` joins a `string` with an
+/// array, which is a true conflict at its head (ADR 0052), also in a failed context. A context
+/// that the `if` then fails waits.
+const IF_HEAD: (usize, usize) = (4, 16);
 
 /// GIVEN an array whose context failed, and a later element or branch that does not fit
 /// WHEN the program is checked
 /// THEN it reports the failure, and an element that does not fit an earlier element,
-/// AND a mistake inside the later element waits for the next run
+/// AND a mistake inside a later loop waits for the next run
+/// AND an `if` that joins a `string` with a `[]` reports its own conflict
 #[test]
 fn a_later_mistake_in_a_failed_array_should_wait() {
     let rows: Vec<ErrorRow<'_>> = vec![
-        ("arg if", format!("\"abc\".get([{IF}])"), vec![GET]),
-        ("arg if let", format!("\"abc\".get([{IFLET}])"), vec![GET]),
+        (
+            "arg if",
+            format!("\"abc\".get([{IF}])"),
+            vec![(Mismatch, IF_HEAD)],
+        ),
+        (
+            "arg if let",
+            format!("\"abc\".get([{IFLET}])"),
+            vec![(Mismatch, IF_HEAD)],
+        ),
         (
             "let if",
             format!("let _x: Missing = [{IF}]"),
-            vec![FAILED_LET],
+            vec![FAILED_LET, (Mismatch, (4, 24))],
         ),
         (
             "let if let",
             format!("let _x: Missing = [{IFLET}]"),
-            vec![FAILED_LET],
+            vec![FAILED_LET, (Mismatch, (4, 24))],
         ),
         (
             "let loop empty",
@@ -58,18 +71,14 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
             vec![FAILED_LET],
         ),
         (
-            // The `[]` branch fails, so the `if` is untyped: the spec row `if`, `match` (a
-            // branch).
             "second if",
             format!("let _x: Missing = [1, {IF}]"),
-            vec![FAILED_LET],
+            vec![FAILED_LET, (Mismatch, (4, 27))],
         ),
         (
-            // The `[]` branch fails, so the `if let` is untyped: the spec row `if`, `match` (a
-            // branch).
             "second if let",
             format!("let _x: Missing = [1, {IFLET}]"),
-            vec![FAILED_LET],
+            vec![FAILED_LET, (Mismatch, (4, 27))],
         ),
         (
             "second loop empty",
@@ -89,12 +98,12 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
         (
             "operand if",
             format!("print(missing + [{IF}])"),
-            vec![(BindingNotFound, (4, 11))],
+            vec![(BindingNotFound, (4, 11)), (Mismatch, (4, 22))],
         ),
         (
             "operand if let",
             format!("print(missing + [{IFLET}])"),
-            vec![(BindingNotFound, (4, 11))],
+            vec![(BindingNotFound, (4, 11)), (Mismatch, (4, 22))],
         ),
         (
             "operand loop empty",
@@ -179,8 +188,9 @@ fn a_nested_branch_mismatch_in_a_failed_array_should_be_at_the_whole_branch() {
 #[test]
 fn an_array_that_did_not_fail_should_keep_its_mistake() {
     let rows: Vec<ErrorRow<'_>> = vec![
-        ("no failure if", format!("let _x = [{IF}]"), (4, 35)),
-        ("no failure second", format!("let _x = [1, {IF}]"), (4, 38)),
+        // At the head of the `if` (ADR 0052).
+        ("no failure if", format!("let _x = [{IF}]"), (4, 15)),
+        ("no failure second", format!("let _x = [1, {IF}]"), (4, 18)),
         ("no failure loop", format!("let _x = [{LN}]"), (4, 46)),
         ("typed", format!("let _x: [string] = [{IF}]"), (4, 45)),
     ]
@@ -221,7 +231,8 @@ fn a_string_get_with_a_failed_argument_should_wait() {
     let rows = [(
         "negated if",
         program("\"abc\".get(-(if c { 1 } else { \"x\" }))"),
-        vec![(Mismatch, (4, 35))],
+        // At the head of the `if` (ADR 0052).
+        vec![(Mismatch, (4, 17))],
     )];
     error_rows(&rows);
 }
@@ -400,12 +411,12 @@ fn a_hint_should_reach_exactly_its_value() {
         (
             "tail",
             "let _a = if c { 1 } else { if d { \"a\" } else { None } }",
-            e((6, 32)),
+            e((6, 14)),
         ),
         (
             "tail in match block",
             "let _a = match c {\n        true => 1\n        false => { if d { \"a\" } else { None } }\n    }",
-            e((8, 20)),
+            e((6, 14)),
         ),
         (
             "match block none",
@@ -433,16 +444,17 @@ fn a_hint_should_reach_exactly_its_value() {
             "let _a = if c { 1 } else { dbg(None) }",
             vec![],
         ),
-        ("empty", "let _a = if c { 1 } else { [] }", e((6, 32))),
+        ("empty", "let _a = if c { 1 } else { [] }", e((6, 14))),
         (
             "loop none",
             "let _a = loop { if c { break 1 }; break None }",
             e((6, 45)),
         ),
         (
+            // interim: Task 5e gives E0032 at (6, 14)
             "loop value",
             "let _a = if c { 1 } else { loop { break \"a\" } }",
-            e((6, 14)),
+            e((6, 32)),
         ),
         ("coalesce none", "let _a = o ?? None", vec![]),
         ("coalesce empty", "let _a = o ?? []", e((6, 19))),
@@ -460,9 +472,10 @@ fn a_hint_should_reach_exactly_its_value() {
         ("beside any none", "let _a = [a, None]", vec![]),
         ("beside any empty", "let _a = [a, []]", e((6, 18))),
         (
+            // Rule A's `?`-added candidate: `i64??`, so the first branch wraps twice.
             "some none",
             "let _a = if c { Some(1) } else { Some(None) }",
-            e((6, 43)),
+            vec![],
         ),
         ("any array", "let _a = if c { [a] } else { [] }", vec![]),
         (
@@ -480,7 +493,7 @@ fn a_hint_should_reach_exactly_its_value() {
             (
                 "alias str",
                 "let _a = if c { \"a\" } else { O.None }",
-                e((5, 34)),
+                e((5, 14)),
             ),
             (
                 "alias some",
@@ -490,7 +503,7 @@ fn a_hint_should_reach_exactly_its_value() {
             (
                 "alias some str",
                 "let _a = if c { \"a\" } else { O.Some(\"b\") }",
-                vec![(Mismatch, (5, 34)), (Mismatch, (5, 41))],
+                vec![(Mismatch, (5, 14)), (Mismatch, (5, 41))],
             ),
         ]
         .map(|(name, stmt, wanted)| (name, alias_program(stmt), wanted)),

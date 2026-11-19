@@ -676,27 +676,27 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
         (
             "two classes that both conform, in an `if`",
             "fn main() {\n    let r = if true { Circle(r: 1.0) } else { Rect(w: 1.0) }\n}",
-            vec![(Code::Mismatch, (2, 47))],
+            vec![(Code::Mismatch, (2, 13))],
         ),
         (
             "three classes in an `else if` chain, where the earlier branch is the hint",
             "fn main() {\n    let r = if true { Circle(r: 1.0) } else if false { Rect(w: 1.0) } else { Cube(s: 1.0) }\n}",
-            vec![(Code::Mismatch, (2, 56))],
+            vec![(Code::Mismatch, (2, 13))],
         ),
         (
             "a `Some` of a class after a `Some` of another class: the class is the mistake",
             "fn main() {\n    let r = if true { Some(Circle(r: 1.0)) } else { Some(Rect(w: 1.0)) }\n}",
-            vec![(Code::Mismatch, (2, 58))],
+            vec![(Code::Mismatch, (2, 13))],
         ),
         (
             "a `Some` of a class after a value that is no object: the `Some` is the mistake",
             "fn main() {\n    let r = if true { 1 } else { Some(Circle(r: 1.0)) }\n}",
-            vec![(Code::Mismatch, (2, 34))],
+            vec![(Code::Mismatch, (2, 13))],
         ),
         (
             "a `Some` of a class after another class: the class is the mistake",
             "fn main() {\n    let r = if true { Circle(r: 1.0) } else { Some(Rect(w: 1.0)) }\n}",
-            vec![(Code::Mismatch, (2, 52))],
+            vec![(Code::Mismatch, (2, 13))],
         ),
         (
             "a `Some` of a class after a `Some` of another class, in a loop: the class is the mistake",
@@ -706,7 +706,7 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
         (
             "a `Some` of a `Some` of a class after one of another class: the class is the mistake",
             "fn main() {\n    let r = if true { Some(Some(Circle(r: 1.0))) } else { Some(Some(Rect(w: 1.0))) }\n}",
-            vec![(Code::Mismatch, (2, 69))],
+            vec![(Code::Mismatch, (2, 13))],
         ),
         (
             "a `Some` of a `Some` of a class after one of another class, in a loop",
@@ -731,7 +731,7 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
         (
             "two `any` values of unrelated interfaces, in an `if`",
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let k: any Named = Cube(s: 1.0)\n    let r = if true { s } else { k }\n}",
-            vec![(Code::Mismatch, (4, 34))],
+            vec![(Code::Mismatch, (4, 13))],
         ),
         (
             "two `any` values of unrelated interfaces, as `break` values",
@@ -746,7 +746,7 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
         (
             "an optional object and an `any` value",
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let o: Circle? = None\n    let r = if true { o } else { s }\n}",
-            vec![(Code::Mismatch, (4, 23))],
+            vec![(Code::Mismatch, (4, 13))],
         ),
     ] {
         codes_after(row, src, &expected);
@@ -755,7 +755,8 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
 
 /// A join with an `any` type in reach, its own or its siblings', reports the member that does not
 /// convert to the widest `any` type, whatever the order of the members and at every site: a class
-/// that does not conform gets `NotConform`, as a value does where the `any` type is expected.
+/// that does not conform gets `NotConform`, as a value does where the `any` type is expected. An
+/// `if` or a `match` has no candidate then, and gives one E0032 at its head in each order.
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -800,20 +801,27 @@ fn a_join_should_report_the_member_that_leaves_its_any_type() {
             let src = format!(
                 "fn main() {{\n    let c = true\n    let d = false\n    let n = 1\n    let s: any Shape = Circle(r: 1.0)\n    let o: (any Shape)? = None\n    let r = {join}\n}}"
             );
-            let cube = src
-                .find("Cube")
-                .expect("the program should hold the `Cube`");
-            let line = src[..cube].matches('\n').count() + 1;
-            let col = cube - src[..cube].rfind('\n').map_or(0, |i| i + 1) + 1;
+            // An `if` or a `match` reports at its head, as its join has no direction (ADR 0052).
+            // interim: Task 5d gives E0032 at the `??`. Its default joins under a hint, so the
+            // `if` whose own join holds the `Cube` reports.
+            let (code, at) = match site {
+                "an array literal" | "a `loop`" => (Code::NotConform, src.find("Cube")),
+                "the default of `??`" if x != "Cube(s: 1.0)" => (Code::Mismatch, src.rfind("if ")),
+                "the default of `??`" => (Code::Mismatch, src.find("if ")),
+                _ => (Code::Mismatch, src.find(&join)),
+            };
+            let at = at.expect("the program should hold the member or the head");
+            let line = src[..at].matches('\n').count() + 1;
+            let col = at - src[..at].rfind('\n').map_or(0, |i| i + 1) + 1;
             let row = format!("{site}: {x}, {y}, {z}");
-            codes_after(&row, &src, &[(Code::NotConform, (line, col))]);
+            codes_after(&row, &src, &[(code, (line, col))]);
         }
     }
     rows_after(&[
         (
             "a number, after an `any` value",
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = if true { s } else { 5 }\n}",
-            vec![(Code::NotConform, (3, 34))],
+            vec![(Code::Mismatch, (3, 13))],
         ),
         (
             "a number in an array literal, after an `any` value",
@@ -823,12 +831,12 @@ fn a_join_should_report_the_member_that_leaves_its_any_type() {
         (
             "a type parameter that has no bound, after an `any` value",
             "fn f<T>(t: T, s: any Shape) {\n    let r = if true { s } else { t }\n}\nfn main() {}",
-            vec![(Code::NotConform, (2, 34))],
+            vec![(Code::Mismatch, (2, 13))],
         ),
         (
             "a `Some` of a class that does not conform, after an `any` value",
             "fn main() {\n    let x: any Solid = Cube(s: 1.0)\n    let r = if true { x } else { Some(Circle(r: 1.0)) }\n}",
-            vec![(Code::NotConform, (3, 39))],
+            vec![(Code::Mismatch, (3, 13))],
         ),
         (
             "a `Some` of a class that does not conform, after an `any` value, in a loop",
@@ -843,7 +851,7 @@ fn a_join_should_report_the_member_that_leaves_its_any_type() {
         (
             "a `Some` of a value that is no object, after an `any` value: it converts as under an expected type",
             "fn main() {\n    let x: any Solid = Cube(s: 1.0)\n    let r = if true { x } else { Some(5) }\n}",
-            vec![(Code::NotConform, (3, 39))],
+            vec![(Code::Mismatch, (3, 13))],
         ),
         (
             "a branch with no value, after an `any` value and a class",
@@ -858,12 +866,12 @@ fn a_join_should_report_the_member_that_leaves_its_any_type() {
         (
             "a nested join that leaves its own `any` type, under an `any` hint it does not join",
             "fn main() {\n    let c = true\n    let d = false\n    let s: any Shape = Circle(r: 1.0)\n    let k: any Named = Cube(s: 1.0)\n    let r = if c { s } else { if d { k } else { Circle(r: 1.0) } }\n}",
-            vec![(Code::NotConform, (6, 49))],
+            vec![(Code::Mismatch, (6, 13))],
         ),
         (
             "a `Some` of a value that is no object, then an `any` value",
             "fn main() {\n    let c = true\n    let s: any Shape = Circle(r: 1.0)\n    let r = if c { Some(5) } else { s }\n}",
-            vec![(Code::Mismatch, (4, 20))],
+            vec![(Code::Mismatch, (4, 13))],
         ),
         (
             "an optional class that does not conform, then an optional `any` default",
@@ -888,24 +896,25 @@ fn a_join_should_report_the_member_that_leaves_its_any_type() {
         (
             "an `any` value, then an object that does not conform to its interface",
             "fn main() {\n    let s: any Solid = Cube(s: 1.0)\n    let r = if true { s } else { Circle(r: 1.0) }\n}",
-            vec![(Code::NotConform, (3, 34))],
+            vec![(Code::Mismatch, (3, 13))],
         ),
         (
             "a `Some` of a `Some` of a class that does not conform, after one of an `any` value",
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = if true { Some(Some(s)) } else { Some(Some(Kelvin(k: 1.0))) }\n}",
-            vec![(Code::NotConform, (3, 56))],
+            vec![(Code::Mismatch, (3, 13))],
         ),
         (
             "three layers of `Some` of a class that does not conform, after an `any` value",
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let r = if true { Some(Some(Some(s))) } else { Some(Some(Some(Kelvin(k: 1.0)))) }\n}",
-            vec![(Code::NotConform, (3, 67))],
+            vec![(Code::Mismatch, (3, 13))],
         ),
     ]);
 }
 
 /// With a written type, a join with an `any` member reports as a join with none does: the first
-/// member, in source order, that does not fit the written type, against it; a branch with no
-/// value first. So does a `??` default. The wording is in the fixtures.
+/// member, in source order, that does not fit the written type, against it, and so does each
+/// later member that does not fit; a branch with no value first. So does a `??` default.
+/// The wording is in the fixtures.
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -970,20 +979,6 @@ fn a_join_should_report_the_member_that_leaves_it_against_the_written_type() {
             Code::Mismatch,
         ),
         (
-            "an `any` value under a type that is no object",
-            ": i64",
-            "if true { s } else { o }",
-            (5, 28, "s"),
-            Code::Mismatch,
-        ),
-        (
-            "a branch with no value, after a branch that does not fit",
-            ": (any Shape)?",
-            "if true { o } else { print(1) }",
-            (5, 48, "print(1)"),
-            Code::NoValue,
-        ),
-        (
             "a `??` default of a `Some` of a class that does not conform",
             ": (any Shape)?",
             "os ?? Some(Kelvin(k: 1.0))",
@@ -1030,6 +1025,30 @@ fn a_join_should_report_the_member_that_leaves_it_against_the_written_type() {
         };
         diagnostic_row(row, &src, code, (line + LINES, col, text), secondary);
     }
+    // Under a type that is no object, each member that does not fit gets its own E0032 (Q33).
+    let src = format!(
+        "{DECLS}fn main() {{\n    let o: Circle? = None\n    let s: any Shape = Circle(r: 1.0)\n    let os: (any Shape)? = None\n    let r: i64 = if true {{ s }} else {{ o }}\n}}"
+    );
+    codes_row(
+        "an `any` value under a type that is no object",
+        &src,
+        &[
+            (Code::Mismatch, (5 + LINES, 28)),
+            (Code::Mismatch, (5 + LINES, 39)),
+        ],
+    );
+    let src = src.replace(
+        ": i64 = if true { s } else { o }",
+        ": (any Shape)? = if true { o } else { print(1) }",
+    );
+    codes_row(
+        "a branch with no value, after a branch that does not fit",
+        &src,
+        &[
+            (Code::Mismatch, (5 + LINES, 37)),
+            (Code::NoValue, (5 + LINES, 48)),
+        ],
+    );
     for (row, join) in [
         ("an optional class, then an `any` default", "o ?? s"),
         ("an optional `any` value, then an `any` default", "os ?? s"),
@@ -1733,7 +1752,8 @@ fn parity_run(
 /// of the earlier branch array, of type `E`: `if c { [e] } else { [v] }` checks clean exactly
 /// when `if c { e } else { v }` does and has the type `E`, and then has the type `[E]`; an array
 /// does not widen. Else an error is in the later array, or at the `e` that the scalar join
-/// blames, and nowhere else. The same holds in a `match` and a `loop`, and one level deeper.
+/// blames, and nowhere else. A scalar join that blames its head blames the later array.
+/// The same holds in a `match` and a `loop`, and one level deeper.
 #[test]
 fn a_branch_array_should_join_as_its_elements_would_in_a_scalar_join() {
     let mut failures = Vec::new();
@@ -1796,10 +1816,18 @@ fn a_branch_array_should_join_as_its_elements_would_in_a_scalar_join() {
                                     && (1..scalar_members.len()).any(|k| element(k).contains(&at))
                             })
                     } else {
+                        // A blame at the head of an `if` or a `match` (ADR 0052) is no member:
+                        // then an element of the later array is the mistake, which the array
+                        // reports by its own rule. interim: Task 5c gives the array its head.
+                        let later =
+                            |at: usize| (1..scalar_members.len()).any(|k| element(k).contains(&at));
                         !array.errors.is_empty()
                             && array.errors.iter().all(|&(at, code)| {
                                 blamed.iter().any(|&(k, c)| {
-                                    c == code && k.is_some_and(|k| element(k).contains(&at))
+                                    k.map_or_else(
+                                        || later(at),
+                                        |k| c == code && element(k).contains(&at),
+                                    )
                                 })
                             })
                     };
@@ -1974,12 +2002,12 @@ fn a_hinted_some_should_not_box_an_optional_argument_into_a_bare_any() {
         (
             "an `if`",
             "    let r = if c { o } else { Some(y) }",
-            vec![(Code::Mismatch, (10, 31))],
+            vec![(Code::Mismatch, (10, 13))],
         ),
         (
             "a `match`",
             "    let r = match c { true => o; false => Some(y) }",
-            vec![(Code::Mismatch, (10, 43))],
+            vec![(Code::Mismatch, (10, 13))],
         ),
         (
             "the default of `??`",
@@ -2004,7 +2032,7 @@ fn a_hinted_some_should_not_box_an_optional_argument_into_a_bare_any() {
         (
             "a `Some` of an optional beside a bare `any` value",
             "    let r = if c { d } else { Some(x) }",
-            vec![(Code::Mismatch, (10, 31))],
+            vec![(Code::Mismatch, (10, 13))],
         ),
         (
             "the same in an array with no sibling",
@@ -2023,13 +2051,24 @@ fn a_hinted_some_should_not_box_an_optional_argument_into_a_bare_any() {
 }
 
 /// Beside `h`, of an optional `any` type, a `Some` checks clean when its argument converts to
-/// the `any` type, and is a mismatch at the `Some` when its argument is an optional, in an `if`,
-/// a `match`, the default of `??`, a `loop` of `break`s and an array in an `if`.
+/// the `any` type. It is a mismatch at the `Some` when its argument is an optional. This holds
+/// in the default of `??`, a `loop` of `break`s and an array in an `if`. An `if` and a `match`
+/// join by rule A (ADR 0052). The candidate `h` with `?` added takes a `Some` whose argument
+/// converts to `h`, and the join is an optional of an optional. Any other value is a mismatch at
+/// the head.
 #[test]
 fn a_hinted_some_should_build_only_when_its_argument_is_not_optional() {
-    let builds: [(&str, &[&str]); 2] = [
-        ("o", &["Some(d)", "Some(2)"]),
-        ("so", &["Some(s)", "Some(Circle(r: 2.0))"]),
+    let builds: [(&str, &[&str], &[&str]); 2] = [
+        (
+            "o",
+            &["Some(d)", "Some(2)"],
+            &["Some(Some(2))", "Some(o)", "Some(Some(Circle(r: 2.0)))"],
+        ),
+        (
+            "so",
+            &["Some(s)", "Some(Circle(r: 2.0))"],
+            &["Some(Some(Circle(r: 2.0)))", "Some(so)"],
+        ),
     ];
     let rejected = [
         "Some(x)",
@@ -2042,19 +2081,29 @@ fn a_hinted_some_should_build_only_when_its_argument_is_not_optional() {
     ];
     let mut failures = Vec::new();
     let mut cases = 0;
-    for (h, good) in builds {
+    for (h, good, lifted) in builds {
         let values = (good.iter()).map(|&v| (v, true));
         for (value, clean) in values.chain(rejected.iter().map(|&v| (v, false))) {
-            for form in [
-                format!("if c {{ {h} }} else {{ {value} }}"),
-                format!("match c {{ true => {h}; false => {value} }}"),
-                format!("{h} ?? {value}"),
-                format!("loop {{ if c {{ break {h} }}; break {value} }}"),
-                format!("if c {{ [{h}] }} else {{ [{value}] }}"),
+            for (form, branches) in [
+                (format!("if c {{ {h} }} else {{ {value} }}"), true),
+                (format!("match c {{ true => {h}; false => {value} }}"), true),
+                (format!("{h} ?? {value}"), false),
+                (
+                    format!("loop {{ if c {{ break {h} }}; break {value} }}"),
+                    false,
+                ),
+                (format!("if c {{ [{h}] }} else {{ [{value}] }}"), false),
             ] {
                 cases += 1;
                 let src = format!("{DECLS}{HINTED_SOME_LOCALS}    let r = {form}\n}}");
-                let start = src.rfind(value).expect("the program should hold the value");
+                let clean = clean || branches && lifted.contains(&value);
+                // The join of an `if` or a `match` reports at its head, the first word of `form`.
+                let (start, value) = if branches {
+                    (src.rfind(&form), form.split(' ').next().unwrap_or_default())
+                } else {
+                    (src.rfind(value), value)
+                };
+                let start = start.expect("the program should hold the value");
                 let (_, ds) = checked(&src);
                 let errors: Vec<_> = (ds.iter())
                     .filter(|d| d.severity() == Severity::Error)
@@ -2158,15 +2207,17 @@ fn an_optional_should_not_convert_to_a_bare_any() {
             "    let r = P(a: d, b: x)",
             vec![(Code::Mismatch, (8, 13))],
         ),
+        // The candidate that `?` adds, `(any Display)?`, takes both, as in `[d, Some(2)]`: the
+        // `Some` of a number is no optional argument (ADR 0052, Rule A).
         (
             "a `Some` of a number after an `any` value, in a generic call",
             "    let r = pick(d, Some(2))",
-            vec![(Code::Mismatch, (8, 13))],
+            vec![],
         ),
         (
             "a hint with no `any` type and an optional argument of another type",
             "    let k: i64?? = None\n    let z: f64? = 1.0\n    let r = if c { k } else { Some(z) }",
-            vec![(Code::Mismatch, (10, 36))],
+            vec![(Code::Mismatch, (10, 13))],
         ),
         (
             "a `Some` of an `any` value",
@@ -2395,22 +2446,22 @@ fn label_rows() -> Vec<LabelRow<'static>> {
         (
             "an `if` join, the `any` value first",
             sh(&format!("{WITH_CS}    let _a = if c {{ s }} else {{ 1 }}\n}}")),
-            (8, 32, "1"),
-            vec![(8, 21, "s")],
+            (8, 14, "if"),
+            vec![(8, 21, "s"), (8, 32, "1")],
         ),
         (
             "an `if` join, the `any` value last",
             sh(&format!("{WITH_CS}    let _b = if c {{ 1 }} else {{ s }}\n}}")),
-            (8, 21, "1"),
-            vec![(8, 32, "s")],
+            (8, 14, "if"),
+            vec![(8, 21, "1"), (8, 32, "s")],
         ),
         (
             "a `match` join",
             sh(&format!(
                 "{WITH_CS}    let _a = match c {{ true => s; false => 1 }}\n}}"
             )),
-            (8, 44, "1"),
-            vec![(8, 32, "s")],
+            (8, 14, "match"),
+            vec![(8, 32, "s"), (8, 44, "1")],
         ),
         (
             "an array join, the `any` value first",
@@ -2461,8 +2512,8 @@ fn label_rows() -> Vec<LabelRow<'static>> {
             sh(&format!(
                 "{WITH_CS}    let _a = if c {{ Some(s) }} else {{ 1 }}\n}}"
             )),
-            (8, 38, "1"),
-            vec![(8, 21, "Some(s)")],
+            (8, 14, "if"),
+            vec![(8, 26, "s"), (8, 38, "1")],
         ),
         (
             "a parameter of a generic function",
@@ -2493,8 +2544,8 @@ fn label_rows() -> Vec<LabelRow<'static>> {
             sh(&format!(
                 "{WITH_CS}    let _a = if c {{ 1 }} else if c {{ s }} else {{ En.A }}\n}}"
             )),
-            (8, 21, "1"),
-            vec![(8, 30, "if c { s } else { En.A }")],
+            (8, 14, "if"),
+            vec![(8, 21, "1"), (8, 37, "s"), (8, 48, "En.A")],
         ),
         (
             "a loop that gives a `Some` of an object",
@@ -2517,8 +2568,8 @@ fn label_rows() -> Vec<LabelRow<'static>> {
             sh(&format!(
                 "class D {{}}\n{WITH_CS}    let _a = if c {{ s }} else if c {{ D() }} else {{ 1 }}\n}}"
             )),
-            (9, 37, "D()"),
-            vec![(9, 21, "s")],
+            (9, 14, "if"),
+            vec![(9, 21, "s"), (9, 37, "D()"), (9, 50, "1")],
         ),
         (
             "a loop whose later break gives the type",
@@ -2555,24 +2606,24 @@ fn label_rows() -> Vec<LabelRow<'static>> {
             sh(&format!(
                 "class D {{}}\n{WITH_CS}    let _a = [s, if c {{ s }} else {{ D() }}]\n}}"
             )),
-            (9, 36, "D()"),
-            vec![(9, 25, "s")],
+            (9, 18, "if"),
+            vec![(9, 25, "s"), (9, 36, "D()")],
         ),
         (
             "a match arm that a sibling of the same type hints",
             sh(&format!(
                 "class D {{}}\n{WITH_CS}    let _a = [s, match c {{ true => s; false => D() }}]\n}}"
             )),
-            (9, 48, "D()"),
-            vec![(9, 36, "s")],
+            (9, 18, "match"),
+            vec![(9, 36, "s"), (9, 48, "D()")],
         ),
         (
             "two branches of one type, the nearer one gives it",
             sh(&format!(
                 "class D {{}}\n{WITH_CS}    let _a = if c {{ s }} else if c {{ s }} else {{ D() }}\n}}"
             )),
-            (9, 48, "D()"),
-            vec![(9, 37, "s")],
+            (9, 14, "if"),
+            vec![(9, 21, "s"), (9, 37, "s"), (9, 48, "D()")],
         ),
         (
             "two elements of one type, the first gives it",
@@ -2611,22 +2662,23 @@ fn label_rows() -> Vec<LabelRow<'static>> {
         (
             "an `if` join of an `any` parameter of another function, issue 377",
             format!("{NAMED}    let _a = if c {{ n }} else {{ 1 }}\n    print(show(n))\n}}"),
-            (18, 32, "1"),
-            vec![(18, 21, "n")],
+            (18, 14, "if"),
+            vec![(18, 21, "n"), (18, 32, "1")],
         ),
         (
             "an `if` join of a `Some`, issue 377",
             format!("{NAMED}    let _b = if c {{ Some(n) }} else {{ 1 }}\n    print(show(n))\n}}"),
-            (18, 38, "1"),
-            vec![(18, 21, "Some(n)")],
+            (18, 14, "if"),
+            vec![(18, 26, "n"), (18, 38, "1")],
         ),
     ]
 }
 
 /// Every conversion to an `any` type that fails with E0154 labels the place that the `any` type
 /// comes from: the same fact as the E0032 of the same place, or no label when that has none. It
-/// does not label the first place in the file that writes the same `any` type. A red run lists
-/// each red row.
+/// does not label the first place in the file that writes the same `any` type. An `if` or a
+/// `match` whose members do not join gives E0032 at its head, with a label for each member. A red
+/// run lists each red row.
 #[test]
 fn a_conversion_that_fails_should_label_where_its_any_type_comes_from() {
     let mut red = Vec::new();
@@ -2646,7 +2698,13 @@ fn a_conversion_that_fails_should_label_where_its_any_type_comes_from() {
                 (d.code(), at(&src, d.span()), &src[d.span().range()], labels)
             })
             .collect();
-        let wanted = vec![(Code::NotConform, (line, col), text, secondary)];
+        // The join of an `if` or a `match` has no direction: E0032 at its head (ADR 0052).
+        let code = if matches!(text, "if" | "match") {
+            Code::Mismatch
+        } else {
+            Code::NotConform
+        };
+        let wanted = vec![(code, (line, col), text, secondary)];
         if found != wanted {
             red.push(format!(
                 "row `{row}`:\n  found {found:?}\n  wanted {wanted:?}"

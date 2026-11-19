@@ -301,9 +301,10 @@ impl Checker<'_> {
             // Its value comes from `break`s anywhere in its body, so the warning points at the
             // loop, from its loop label through `loop`.
             (ast::ExprKind::Loop { label, keyword, .. }, _) => {
-                if !is_silent(checked.ty) {
+                let ty = self.table.default_open(checked.ty);
+                if !is_silent(ty) {
                     unused.push(Unused {
-                        ty: self.type_name(checked.ty),
+                        ty: self.type_name(ty),
                         at: label.as_ref().map_or(*keyword, |l| l.span).to(*keyword),
                         site: source.span,
                         arm,
@@ -322,9 +323,11 @@ impl Checker<'_> {
                 );
                 // `dbg` is meant to be run, so its value may go unused.
                 let dbg = matches!(checked.kind, ExprKind::Dbg { .. });
-                if !dbg && !is_silent(checked.ty) {
+                // A member of a join has the type that the join settled, not its own variable.
+                let ty = self.table.default_open(checked.ty);
+                if !dbg && !is_silent(ty) {
                     unused.push(Unused {
-                        ty: self.type_name(checked.ty),
+                        ty: self.type_name(ty),
                         at: source.span,
                         site: source.span,
                         arm,

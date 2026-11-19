@@ -462,17 +462,17 @@ fn generic_call_in_a_join_should_check_in_each_order() {
 fn generic_call_with_no_taker_should_stay_an_error() {
     // GIVEN generic calls whose type no form can take
     // WHEN each is checked
-    // THEN each reports one E0032: the call's own join at the call, as a join report has no
-    //      direction (ADR 0052), and an `if` where `main` reports it
+    // THEN each reports one E0032: the call's own join at the call and an `if` at the `if`, as a
+    //      join report has no direction (ADR 0052)
     body_rows(&[
         ("let x = f(xs, Some(1))", &[(Code::Mismatch, (1, 9))]),
         (
             "let t: Two<u8?, u8> = Two(a: Some(a), b: a)\nlet x = if c { t } else { dup(a) }",
-            &[(Code::Mismatch, (2, 27))],
+            &[(Code::Mismatch, (2, 9))],
         ),
         (
             "let t: Two<u8?, u8> = Two(a: Some(a), b: a)\nlet x = if c { dup(a) } else { t }",
-            &[(Code::Mismatch, (2, 32))],
+            &[(Code::Mismatch, (2, 9))],
         ),
     ]);
 }
@@ -882,10 +882,10 @@ fn open_set_shared_with_a_failed_context_should_close_quietly_under_no_type() {
 fn join_after_a_conflict_should_be_untyped() {
     // GIVEN a join of a `u8` and an `i64`, and a `let` with a `u8` type that reads it
     // WHEN it is checked
-    // THEN only the join reports E0032, and the `let` reports nothing
+    // THEN only the join reports E0032, at the `if` (ADR 0052), and the `let` reports nothing
     body_rows(&[(
         "let bi: i64 = 4\nlet x = if c { a } else { bi }\nlet y: u8 = x",
-        &[(Code::Mismatch, (2, 27))],
+        &[(Code::Mismatch, (2, 9))],
     )]);
 }
 
@@ -1552,12 +1552,12 @@ fn array_elements_should_join_in_each_order() {
         // interim: Task 5c gives no error, and `x` is `[any Seen]`
         (
             "let x = [if d { Eye(v: 1) } else { Lid(v: 2) }, e]",
-            &[(Code::Mismatch, (1, 36))],
+            &[(Code::Mismatch, (1, 10))],
         ),
         // interim: Task 5c gives no error, and `x` is `[any Seen]`
         (
             "let x = if c { [if d { Eye(v: 1) } else { Lid(v: 2) }] } else { [e] }",
-            &[(Code::Mismatch, (1, 43))],
+            &[(Code::Mismatch, (1, 17))],
         ),
     ]);
 }
@@ -1717,7 +1717,8 @@ fn bare_break_should_require_a_unit_of_each_break_value() {
         // interim: Task 5e gives [(NoValue, (1, 23))]
         (
             "let x = loop { if c { break }; break if d { 1 } else { \"s\" } }",
-            &[(Code::Mismatch, (1, 56))],
+            // The `if` reports its own conflict at its head (ADR 0052).
+            &[(Code::Mismatch, (1, 38))],
         ),
     ]);
 }
@@ -2134,12 +2135,15 @@ fn a_late_argument_beside_a_form_not_converted_should_give_its_interim_report() 
             row("let x = if c { h(G<u8>.V(1, [2, 3]), 4) } else { None }"),
             vec![(Code::Mismatch, at(18))],
         ),
+        // An `if` of literals is a join of literals, so it meets the coalesce as `1` does in
+        // `two(1, o ?? 5)`.
+        // interim: Task 5d gives no error, and `x` is `u8`
+        (
+            "if of literals beside a coalesce",
+            row("let x = two(if true { 1 } else { 2 }, o ?? 5)"),
+            vec![(Code::Mismatch, at(39))],
+        ),
     ]);
-    // AND an `if` of literals beside a coalesce takes the `u8` of the coalesce
-    assert_eq!(
-        join_type(&row("let x = two(if true { 1 } else { 2 }, o ?? 5)")),
-        "u8"
-    );
 }
 
 /// The functions of the rows of `a_closed_call_whose_known_part_clashes_should_blame_its_argument`.
@@ -2202,10 +2206,12 @@ fn a_failed_late_argument_should_add_no_report_for_its_siblings() {
             row("let b = pick([nope()], [None])"),
             vec![(Code::FunctionNotFound, at(15))],
         ),
+        // The branches of an `if` are members of the call's join, so the conflict is at the
+        // call (ADR 0052).
         (
             "if with a wrong branch",
             row("let a = pick(if c { 1 } else { \"s\" }, if c { None } else { None })"),
-            vec![(Code::Mismatch, at(32))],
+            vec![(Code::Mismatch, at(9))],
         ),
         (
             "nested picks of None",

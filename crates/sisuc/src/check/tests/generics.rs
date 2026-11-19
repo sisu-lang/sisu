@@ -1580,13 +1580,16 @@ fn a_waiting_branch_of_a_failed_call_should_report_its_own_mistakes() {
             "fn g() {\n    let xs = id(match 1.0 { _ => [] })\n}",
             vec![(Code::CannotMatch, (2, 23))],
         ),
+        // A missing arm is no failed type (ADR 0049), so the call cannot infer the element.
         (
             "fn g() {\n    let ys = id(match true { true => [] })\n}",
-            vec![(Code::NonExhaustive, (2, 17))],
+            vec![(Code::CannotInfer, (2, 14)), (Code::NonExhaustive, (2, 17))],
         ),
+        // A failed condition poisons the `if`, so neither its join nor the call reports a second
+        // mistake (ADR 0049).
         (
             "fn g() {\n    let xs = id(if 1.0 { [] } else { [] })\n}",
-            vec![(Code::CannotInfer, (2, 14)), (Code::Mismatch, (2, 20))],
+            vec![(Code::Mismatch, (2, 20))],
         ),
         // What fails inside the branch for the call's failure is not reported again.
         (
@@ -3780,14 +3783,15 @@ fn hole_below_the_top_of_a_parameter_should_bind_nothing() {
     codes(src, &[(Code::CannotInfer, (3, 15))]);
 }
 
-/// A waiting `if` keeps the rule it had: it waits, and `f` cannot infer `T`.
+/// An `if` whose branches wait is a member of the call's join (ADR 0052): its branches bind `T`
+/// as `f(Ok(1))` does.
 #[test]
-fn waiting_branch_should_keep_waiting_when_a_parameter_is_partly_bound() {
+fn waiting_branch_should_bind_a_partly_bound_parameter_as_its_branches_do() {
     with_prelude();
     let src = format!(
         "{PARTLY_BOUND}fn main() {{\n    let c = true\n    let x = f(if c {{ Ok(1) }} else {{ Ok(2) }})\n    print(x)\n}}"
     );
-    codes(&src, &[(Code::CannotInfer, (4, 13))]);
+    assert_eq!(call_types(&src, "f"), ["i64", "i64"]);
 }
 
 /// The context for an inner call has a hole where the outer call binds nothing yet. A part of
@@ -4680,12 +4684,12 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
             "h(true, Two.P(\"s\", 1))",
             &[(Mismatch, "Two.P(")],
         ),
-        // The `else` branch fails, so the `if` is untyped (the spec row `if`, `match`: a branch),
-        // and the mismatch of the whole argument waits.
+        // At a place that names two decided parameters, the `if` waits (Q28). Its branches do
+        // not join, so E0032 is at its head (ADR 0052).
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, if true { Two.P(\"s\", 1) } else { Two.P(true, 2) })",
-            &[(Mismatch, "true, 2)")],
+            &[(Mismatch, "if true")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
@@ -6620,10 +6624,12 @@ fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
         let trail: Vec<_> = (0..n).map(|k| format!("_b{k}: T{k}")).collect();
         let args: Vec<_> = (0..n)
             .map(|_| "one()")
-            .chain((0..n).map(|_| "if true { mk() } else { mk() }"))
+            .chain((0..n).map(|_| "loop { break mk() }"))
             .collect();
         // The call returns the type parameter `R`, so it waits for its context, and the other
         // side of `==` hints it: only a hinted call reads the origins (see `Inference::hinted`).
+        // A late argument that waits is a loop: an `if` is a member of the call's join now, and
+        // Task 5e makes a loop one too.
         let src = format!(
             "class Two<A, B> {{\n    a: A\n    b: B\n}}\nfn one() -> i64 {{ 1 }}\n\
              fn mk<X>() -> Two<X, bool> {{ panic(\"no\") }}\n\
@@ -6740,6 +6746,14 @@ const PARITY_ROWS: &[ParityRow<'static>] = &[
     ("", "let x: i64? = None\nprint(x == { mk2() })"),
     ("", "print(1 == if true { mk2() } else { mk2() })"),
     ("", "print(1 == if true { 1 } else { mk2() })"),
+    // A misfit joins by the type that it found, as its twin joins by its own type, in each order.
+    ("", "print(1 == if true { mk2() } else { 1 })"),
+    // Under a written type, each member that does not convert is reported (Q33).
+    ("", "let y: i64 = if true { mk2() } else { None }\nprint(y)"),
+    (
+        "",
+        "let y: i64 = if true { mk2() } else if false { mk2() } else { 3 }\nprint(y)",
+    ),
     // The `never` branch gives the join no type, so the join acts as the other branch.
     ("", "print(1 == if true { mk2() } else { panic(\"x\") })"),
     ("", "print(1 == match 1 { _ => mk2() })"),
@@ -7102,19 +7116,6 @@ const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
         ),
         &[(Code::BindingNotFound, (4, 14))],
     ),
-    // A branch that does not fit gives the join no type (the spec row `if`, `match`: a branch),
-    // so the misfit of an earlier branch waits, as the concrete twin's mismatch does.
-    (
-        ("", "let y: i64 = if true { mk2() } else { None }\nprint(y)"),
-        &[(Code::Mismatch, (2, 43))],
-    ),
-    (
-        (
-            "",
-            "let y: i64 = if true { mk2() } else if false { mk2() } else { 3 }\nprint(y)",
-        ),
-        &[(Code::Mismatch, (2, 52))],
-    ),
     // The side of the type parameter has no `==`, which is the first mistake.
     (
         (
@@ -7123,15 +7124,15 @@ const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
         ),
         &[(Code::ParamLacks, (2, 5)), (Code::CannotInfer, (2, 10))],
     ),
-    // The misfit fails its branch, so the join is untyped (the spec row `if`, `match`: a
-    // branch), and `==` waits.
+    // The misfit joins by the type that it found, `Two<_, bool>`, whose unbound `X` has no
+    // `Display`, so the branches conflict.
     (
         (
             "",
             "let a: any Display = 1\nprint(1 == if true { a } else { mk2() })",
         ),
         // interim: Task 5d gives [(CannotInfer, (3, 37))]
-        &[(Code::CannotCompare, (3, 11))],
+        &[(Code::Mismatch, (3, 16))],
     ),
 ];
 
@@ -7181,11 +7182,6 @@ const DEPARTURE_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
             "let b = true\nprint(loop { if b { break mk2() }; break 1 })",
         ),
         &[(Code::CannotInfer, (2, 27))],
-    ),
-    // The first branch gives the join no type, so the `1` leads and the call is held to `i64`.
-    (
-        ("", "print(1 == if true { mk2() } else { 1 })"),
-        &[(Code::Mismatch, (1, 22))],
     ),
 ];
 
@@ -8838,7 +8834,8 @@ fn waiting_argument_should_keep_its_report_before_and_after() {
 
 /// GIVEN the hint of `==`, `if` or `??`, or a `mut` argument, that makes a generic call fail
 /// WHEN the program is checked
-/// THEN the code and the position are those of the base, and only the text changes
+/// THEN the code and the position are those of the base, and only the text changes.
+///   An `if` or a `match` whose values do not join reports at its head (ADR 0052).
 #[test]
 #[expect(clippy::too_many_lines, reason = "a table of rows")]
 fn hint_blame_should_keep_its_code_and_position_before_and_after() {
@@ -8891,7 +8888,7 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
         (
             "n499_10",
             blame_program("let x = if c { v } else { first(ys) }"),
-            vec![(Mismatch, (8, 37))],
+            vec![(Mismatch, (8, 13))],
         ),
         // valid: the spec gives `pick(a, loop { break 1 })` no error (Generic calls in a join)
         (
@@ -8929,7 +8926,7 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
         (
             "n499_17",
             blame_program("let x = if c { o } else { first(ys) }"),
-            vec![(Mismatch, (8, 37))],
+            vec![(Mismatch, (8, 13))],
         ),
         (
             "b2",
@@ -8954,7 +8951,7 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
         (
             "b18",
             blame_b_program("let x = if c { q } else if c { v } else { q }"),
-            vec![(Mismatch, (10, 36))],
+            vec![(Mismatch, (10, 13))],
         ),
         ("b23", blame_b_program("let x = v == first([1, 2])"), vec![]),
         (
@@ -8964,7 +8961,7 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
         ),
         // interim: Task 5d gives [(Mismatch, (7, 22))]
         ("499", REPRO_499.to_string(), vec![(Mismatch, (7, 16))]),
-        ("499if", REPRO_499_IF.to_string(), vec![(Mismatch, (6, 35))]),
+        ("499if", REPRO_499_IF.to_string(), vec![(Mismatch, (6, 11))]),
         // interim: Task 5d gives [(Mismatch, (5, 22))]
         ("499q", REPRO_499_Q.to_string(), vec![(Mismatch, (5, 16))]),
         (
@@ -8978,7 +8975,8 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
 
 /// GIVEN the hint of `==`, `if`, `match` or `??` on a value that does not fit it
 /// WHEN the program is checked
-/// THEN the code and the position are those of the base, and only the text changes
+/// THEN the code and the position are those of the base, and only the text changes.
+///   An `if` or a `match` whose values do not join reports at its head (ADR 0052).
 #[test]
 fn hint_report_should_keep_its_code_and_position_before_and_after() {
     use Code::{BlockAsStatement, Mismatch};
@@ -8991,7 +8989,7 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
         (
             "n538_2",
             report_program("let x = if c == 1 { q } else { v }"),
-            vec![(Mismatch, (7, 36))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_3",
@@ -9001,7 +8999,7 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
         (
             "n538_4",
             report_program("let x = if c == 1 { q } else { if c == 2 { v } else { q } }"),
-            vec![(Mismatch, (7, 48))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_5",
@@ -9043,7 +9041,7 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
         (
             "n538_12",
             report_program("let x = if c == 1 { q } else { id(v) }"),
-            vec![(Mismatch, (7, 39))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "b10",

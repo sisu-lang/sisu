@@ -67,6 +67,13 @@ impl Checker<'_> {
     ) -> Checked {
         let dropped = self.body.dropped == Some(span);
         let (cond, _) = self.operand(cond, Expectation::Required(Type::BOOL, Origin::Condition));
+        // A failed condition makes the `if` a poisoned member, which the join around it does not
+        // convert. So its branches join by themselves in a failed context: its type stays known,
+        // and a type that stays open reports nothing (ADR 0049).
+        let expected = match expected {
+            Expectation::Member if cond.is_err() => Expectation::Poisoned,
+            _ => expected,
+        };
         let (then, other, ty) = self.branches(
             span,
             (then_block, else_block),
@@ -307,10 +314,21 @@ impl Checker<'_> {
                 self.join_type(&mut members, None, None).ok_or(None)
             }
         } else {
+            // A branch whose generic call found a type that cannot meet its context joins by that
+            // type, as its concrete twin does (see `Misfit`). The whole stays `Error`.
+            for value in &mut values {
+                if self.misfit_type(value).is_some()
+                    && let Err(poisoned @ Poisoned { found: Some(_), .. }) = value
+                {
+                    poisoned.ty = poisoned.found.map(|misfit| misfit.ty);
+                }
+            }
             let mut members = whole_members(&mut values, spans);
             let expected = match expected {
                 Expectation::Required(want, _)
-                    if self.lifted_whole(&members, want) || self.unit_whole(&members, want) =>
+                    if self.lifted_whole(&members, want)
+                        || self.agreed_whole(&members, want)
+                        || self.unit_whole(&members, want) =>
                 {
                     Expectation::None
                 }
@@ -321,7 +339,7 @@ impl Checker<'_> {
             self.body.dropped_join = outer;
             ty.map_err(Some)
         };
-        let blocks: Vec<CheckedBlock> = (values.into_iter())
+        let mut blocks: Vec<CheckedBlock> = (values.into_iter())
             .map(|value| {
                 value.map(|e| match e.kind {
                     tir::ExprKind::Block(block) => block,
@@ -330,6 +348,7 @@ impl Checker<'_> {
             })
             .collect();
         let ty = ty.map_err(|p| p.unwrap_or_else(|| Poisoned::untyped(failed_branch(&blocks))));
+        let ty = self.misfit_join(&mut blocks, ty);
         let ty = match ty {
             // A failed branch has reported: the close is silent, as in a failed context.
             Ok(ty) if self.table.resolve(ty).holds_infer() => {
@@ -352,18 +371,61 @@ impl Checker<'_> {
             }),
             Ok(ty) => Ok(ty),
             // A join that fails with a type required, with no failed branch, rejected that type.
-            Err(poisoned) => Err(Poisoned {
-                mismatch: poisoned.mismatch
+            Err(poisoned) => {
+                let mismatch = poisoned.mismatch
                     || matches!(expected, Expectation::Required(..))
                         && blocks.iter().all(Result::is_ok)
-                    || (blocks.iter()).any(|b| matches!(b, Err(Poisoned { mismatch: true, .. }))),
-                // A join that has no type is kept when a branch is: that call's E0050 is the one
-                // report.
-                kept: poisoned.ty.is_none() && blocks.iter().any(is_kept),
-                ..poisoned
-            }),
+                    || (blocks.iter()).any(|b| matches!(b, Err(Poisoned { mismatch: true, .. })));
+                Err(Poisoned {
+                    // A join that rejected its type is `Error`, as a value that does: no type
+                    // outlives its report (ADR 0049).
+                    ty: poisoned.ty.filter(|_| !mismatch),
+                    mismatch,
+                    // A join that has no type is kept when a branch is: that call's E0050 is the
+                    // one report.
+                    kept: poisoned.ty.is_none() && blocks.iter().any(is_kept),
+                    ..poisoned
+                })
+            }
         };
         (blocks, ty)
+    }
+
+    /// `ty`, the join of `blocks`, with each misfit branch untyped again. A join that failed has
+    /// reported each misfit. Else the first misfit carries the joined type to the code that uses
+    /// the value, which reports it, and the whole is `Error`.
+    fn misfit_join(
+        &mut self,
+        blocks: &mut [CheckedBlock],
+        ty: Result<Type, Poisoned>,
+    ) -> Result<Type, Poisoned> {
+        let mut carried = None;
+        for block in blocks.iter_mut() {
+            let Err(poisoned) = block else {
+                continue;
+            };
+            let (Some(found), Some(_)) = (poisoned.found, poisoned.ty) else {
+                continue;
+            };
+            poisoned.ty = None;
+            match (&carried, &ty) {
+                (None, Ok(joined)) => {
+                    let found = Misfit {
+                        ty: *joined,
+                        ..found
+                    };
+                    carried = Some((found, poisoned.reported()));
+                }
+                _ => self.settle_misfit(block),
+            }
+        }
+        match carried {
+            Some((found, reported)) => Err(Poisoned {
+                found: Some(found),
+                ..Poisoned::untyped(reported)
+            }),
+            None => ty,
+        }
     }
 
     /// Whether `members` all have one type that `want`, a required optional, lifts: then they
@@ -377,6 +439,25 @@ impl Checker<'_> {
             return false;
         };
         own != want && fits(want, own) && types.all(|ty| ty == own)
+    }
+
+    /// Whether `members` all have one known type other than `want`. Then they keep that type, as
+    /// the value of a block does. The context reports the whole value once, with its own code
+    /// (E0094 for a `char` in arithmetic). A misfit counts with the type it found.
+    fn agreed_whole(&self, members: &[JoinMember<'_>], want: Type) -> bool {
+        // A failed member has reported, so the members do not agree. A misfit has not.
+        if (members.iter()).any(|member| matches!(member.value, Err(Poisoned { found: None, .. })))
+        {
+            return false;
+        }
+        let mut types = (members.iter())
+            .filter_map(JoinMember::ty)
+            .map(|ty| self.table.resolve(ty))
+            .filter(|&ty| ty != Type::NEVER);
+        let Some(own) = types.next() else {
+            return false;
+        };
+        own != want && !own.holds_infer() && types.all(|ty| ty == own)
     }
 
     /// Whether each of `members` is `unit` or `never`, one at least `unit`, and `want` takes no

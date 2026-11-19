@@ -138,7 +138,7 @@ fn type_of_v(src: &str) -> String {
 const ABC: &str = "\nenum Abc {\n    A\n    B\n    C\n}";
 
 #[test]
-fn match_join() {
+fn match_arms_should_join_to_one_type() {
     // Each row: the arms' values, in order, and the type they join to.
     let rows: [(&[&str], &str); 10] = [
         (&["1", "return 2", "3"], "i64"),
@@ -208,10 +208,10 @@ fn match_join() {
         ),
         &["(arm _ (block (wrap 1)))"],
     );
-    // Arms that do not join: the later one is the mistake, against the earlier.
+    // Arms that do not join: E0032 at the head of the `match` (ADR 0052).
     codes(
         &arm_on_15("e", "Num(_) => \"a\""),
-        &[(Code::Mismatch, (16, 14))],
+        &[(Code::Mismatch, (14, 13))],
     );
     // With a type expected, the arm that does not fit it is.
     codes(

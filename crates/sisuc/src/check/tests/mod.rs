@@ -792,7 +792,7 @@ fn failed_rule_should_make_its_expression_error() {
             "fn main() {\n    let x = if true { 1 } else { false }\n    print(x == false)\n}"
                 .into(),
             MISMATCH,
-            (2, 34),
+            (2, 13),
         ),
     ];
     for (name, src, code, pos) in rows {
@@ -1118,12 +1118,16 @@ fn failed_value_of_an_annotated_let_should_keep_the_declared_type() {
             "fn f() -> i64 {\n    let x: i64 = return 1\n    let s: string = x\n    0\n}\n\nfn main() {\n    print(f())\n}",
             &[(Code::NoValue, (2, 18)), (Code::Mismatch, (3, 21))],
         ),
-        // The failed branch gives the `if` no type (the spec row `if`, `match`: a branch), so the
-        // `"s"` gets no mismatch against the declared `i64`.
+        // The declared `i64` decides the join without the failed branch (Q33), so the `"s"` gets a
+        // mismatch against it.
         (
             "branch_other",
             "fn main() {\n    let w: i64 = if true { nope } else { \"s\" }\n    let q: string = w\n    print(q)\n}",
-            &[(Code::BindingNotFound, (2, 28)), (Code::Mismatch, (3, 21))],
+            &[
+                (Code::BindingNotFound, (2, 28)),
+                (Code::Mismatch, (2, 42)),
+                (Code::Mismatch, (3, 21)),
+            ],
         ),
         (
             "if_branch",
@@ -2804,10 +2808,10 @@ fn if_without_else_has_no_value() {
 }
 
 #[test]
-fn if_branches_differ() {
+fn if_branches_of_two_types_should_report_at_the_if() {
     codes(
         "fn main() {\n    let x = if true { 1 } else { false }\n}",
-        &[(Code::Mismatch, (2, 34))],
+        &[(Code::Mismatch, (2, 13))],
     );
 }
 
@@ -5556,10 +5560,10 @@ fn a_unit_branch_beside_a_value_should_report_no_value() {
 
 /// Branches of two other types still report a mismatch.
 #[test]
-fn value_branches_of_different_types_still_mismatch() {
+fn value_branches_of_two_types_should_report_a_mismatch() {
     codes(
         "fn main() { let x = if true { 1 } else { false } }",
-        &[(Code::Mismatch, (1, 42))],
+        &[(Code::Mismatch, (1, 21))],
     );
 }
 

@@ -256,7 +256,6 @@ crates/sisuc/src/check/tests/mod.rs::field_on_i64
 crates/sisuc/src/check/tests/mod.rs::for_variable_has_no_fix
 crates/sisuc/src/check/tests/mod.rs::functions_in_any_order
 crates/sisuc/src/check/tests/mod.rs::header_jump_leaves_target_untyped
-crates/sisuc/src/check/tests/mod.rs::if_branches_differ
 crates/sisuc/src/check/tests/mod.rs::if_let_needs_optional
 crates/sisuc/src/check/tests/mod.rs::if_let_scope
 crates/sisuc/src/check/tests/mod.rs::if_let_shadows
@@ -419,7 +418,6 @@ crates/sisuc/src/check/tests/mod.rs::unknown_type
 crates/sisuc/src/check/tests/mod.rs::unknown_type_in_signature
 crates/sisuc/src/check/tests/mod.rs::unreachable_break_still_counts
 crates/sisuc/src/check/tests/mod.rs::unreachable_warned_once_per_block
-crates/sisuc/src/check/tests/mod.rs::value_branches_of_different_types_still_mismatch
 crates/sisuc/src/check/tests/mod.rs::variable_may_shadow_a_param
 crates/sisuc/src/check/tests/mod.rs::variable_reassigned_in_inner_block
 crates/sisuc/src/check/tests/mod.rs::warning_and_error_in_position_order
@@ -452,7 +450,6 @@ crates/sisuc/src/check/tests/patterns.rs::literal_patterns
 crates/sisuc/src/check/tests/patterns.rs::malformed_patterns_of_a_wide_variant_check_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::many_unreachable_rows_check_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::match_coverage
-crates/sisuc/src/check/tests/patterns.rs::match_join
 crates/sisuc/src/check/tests/patterns.rs::match_lowers
 crates/sisuc/src/check/tests/patterns.rs::match_spills
 crates/sisuc/src/check/tests/patterns.rs::one_named_field_per_arm_checks_in_linear_time
@@ -545,7 +542,6 @@ crates/sisuc/src/check/tests/u8.rs::literal_argument_is_optional
 crates/sisuc/src/check/tests/u8.rs::literal_does_not_fit
 crates/sisuc/src/check/tests/u8.rs::literal_from_each_source
 crates/sisuc/src/check/tests/u8.rs::literal_typed_by_sibling
-crates/sisuc/src/check/tests/u8.rs::mismatch_fix_converts_the_expression_found
 crates/sisuc/src/check/tests/u8.rs::no_mixing
 crates/sisuc/src/check/tests/u8.rs::optional_literal
 crates/sisuc/src/check/tests/u8.rs::print_takes_u8

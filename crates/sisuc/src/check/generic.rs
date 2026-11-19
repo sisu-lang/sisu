@@ -4063,12 +4063,12 @@ impl Checker<'_> {
                 ..
             }
             | K::Match { .. } => (!closed && !gives_made_value(e)).then_some(Expectation::Member),
+            // An `if` with no `else` is a `unit` member, which no optional lifts (E0043).
+            K::If { .. } | K::IfLet { .. } => (!closed).then_some(Expectation::Member),
             K::MethodCall { .. }
             | K::Binary { .. }
             | K::Coalesce { .. }
             | K::ArrayFill { .. }
-            | K::If { .. }
-            | K::IfLet { .. }
             | K::Loop { .. } => None,
             _ => Some(Expectation::Member),
         }

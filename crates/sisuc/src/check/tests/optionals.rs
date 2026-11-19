@@ -122,17 +122,18 @@ fn a_value_should_convert_through_one_layer_only() {
             &[(3, 14)],
             true,
         ),
+        // A `match` reports at its head, with a label at each arm and no help (spec, Diagnostics).
         (
             "let n = 1\n    let r = match n {\n        0 => n\n        1 => w\n        _ => x\n    }",
-            (4, 14, "n"),
-            &[(6, 14)],
-            true,
+            (3, 13, "match"),
+            &[(4, 14), (5, 14), (6, 14)],
+            false,
         ),
         (
             "let n = 1\n    let r = match n {\n        0 => x\n        1 => w\n        _ => n\n    }",
-            (6, 14, "n"),
-            &[(4, 14)],
-            true,
+            (3, 13, "match"),
+            &[(4, 14), (5, 14), (6, 14)],
+            false,
         ),
     ];
     for (body, at, secondary, layers) in rows {
@@ -650,16 +651,16 @@ fn a_branch_that_waits_should_take_the_type_of_the_others() {
     }
 }
 
-/// A branch that waits and is no optional by its syntax expects the type of the others as it is,
-/// so it is reported for what it is, once.
+/// A branch that waits and is no optional by its syntax is a member as it is. So the join
+/// reports it once for its type, at the head (ADR 0052).
 #[test]
 fn a_waiting_branch_that_is_no_optional_should_be_reported_for_its_type() {
     for (statement, text) in [
-        ("let _a = if c { [] } else { 1 }", "[]"),
-        ("let _a = if c { 1 } else { [] }", "[]"),
+        ("let _a = if c { [] } else { 1 }", "if"),
+        ("let _a = if c { 1 } else { [] }", "if"),
         (
             "let _a = match c {\n        true => []\n        false => 1\n    }",
-            "[]",
+            "match",
         ),
     ] {
         let src = format!("fn main() {{\n    let c = true\n    {statement}\n}}");
@@ -797,6 +798,13 @@ fn a_none_beside_an_exit_should_act_as_a_plain_none() {
         "let _: i64? = $",
         "print($)",
     ];
+    // A loop is not a member of a call's join yet. So the `if` that holds it waits, and meets the
+    // `i64` of the other argument.
+    // interim: Task 5e gives the codes of a plain `None`
+    let waits = [
+        ("let _ = pick(1, $)", "loop { }", [Code::Mismatch]),
+        ("let _ = pick($, 1)", "loop { }", [Code::Mismatch]),
+    ];
     let mut unequal = Vec::new();
     for position in positions {
         // An operator takes the `if` in parentheses.
@@ -811,7 +819,10 @@ fn a_none_beside_an_exit_should_act_as_a_plain_none() {
         let plain = error_codes(&place("None"));
         for exit in EXITS {
             let beside = error_codes(&place(&format!("if c {{ None }} else {{ {exit} }}")));
-            if beside != plain {
+            let wanted = (waits.iter())
+                .find(|&&(at, form, _)| (at, form) == (position, exit))
+                .map_or(plain.as_slice(), |(.., codes)| codes.as_slice());
+            if beside != wanted {
                 unequal.push(format!(
                     "position `{position}`, exit `{exit}`: {beside:?}, but a plain `None` gives {plain:?}"
                 ));
@@ -946,25 +957,25 @@ fn a_rule_on_the_spelling_of_none_should_not_reach_an_if() {
     }
 }
 
-/// A block that a statement before its tail makes never has a type to the checker, and gives its
-/// `None` none: E0050 stays. Each program also warns of its dead code, and without the dead code
-/// the error goes. These rows stay as they are, because `block_rank` reads the tail alone.
+/// A block that a statement before its tail makes never is a `never` member of the join. So the
+/// `None` beside it joins with the `1` of the other branch. Each program is valid, and warns of
+/// its dead code.
 #[test]
-fn a_block_made_never_before_its_tail_should_keep_its_error() {
+fn a_block_made_never_before_its_tail_should_join_as_never() {
     super::with_prelude();
     // The wanted codes of each row, in the order of their numbers.
     for (statement, wanted) in [
         (
             "let _ = if d { 1 } else if c { None } else { todo(\"x\"); print(\"a\") }",
-            [Code::CannotInfer, Code::UnreachableCode, Code::TodoLeft].as_slice(),
+            [Code::UnreachableCode, Code::TodoLeft].as_slice(),
         ),
         (
             "let _ = if d { 1 } else if c { None } else { while true { } }",
-            &[Code::CannotInfer, Code::WhileTrue],
+            &[Code::WhileTrue],
         ),
         (
             "let _ = if d { 1 } else if c { None } else { loop { }; print(\"a\") }",
-            &[Code::CannotInfer, Code::UnreachableCode],
+            &[Code::UnreachableCode],
         ),
     ] {
         let mut codes: Vec<_> = diags(&with_exit_body(statement))
@@ -975,7 +986,7 @@ fn a_block_made_never_before_its_tail_should_keep_its_error() {
         assert_eq!(codes, wanted, "{statement}");
     }
     let src = "fn f(c: bool, d: bool) -> i64 {\n    let _ = if d { 1 } else if c { None } else { return 1; let y = 1 }\n    2\n}\nfn main() {\n    print(f(true, false))\n}";
-    assert_eq!(error_codes(src), [Code::CannotInfer]);
+    assert_eq!(error_codes(src), []);
     assert!(
         diags(src).iter().any(|d| d.code() == Code::UnreachableCode),
         "the dead `let` should warn"

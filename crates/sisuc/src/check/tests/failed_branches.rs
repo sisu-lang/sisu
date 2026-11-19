@@ -2,6 +2,7 @@
 //! no error that follows only from the failed part. A true error stays.
 
 use super::*;
+use crate::check::join::{SETTLED, VALUE_STEPS};
 use Code::{
     ArgumentCount, BindingNotFound, CannotCompare, CannotInfer, FunctionNotFound,
     IntegerDoesNotFit, Mismatch, NegatedU8, NoMember, NoValue, UnknownType, UnwrapNeedsOptional,
@@ -148,10 +149,11 @@ fn a_failed_context_should_keep_a_true_error_holds_before_and_after() {
             "let _x = v1 ?? (if c { None } else { 8 })",
             vec![cut],
         ),
+        // The join has no direction: E0032 at the head of the `if` (ADR 0052).
         (
             "string against u8",
             "let _x = v1 ?? (if c { m } else { \"s\" })",
-            vec![cut, (Mismatch, (5, 39))],
+            vec![cut, (Mismatch, (5, 21))],
         ),
         (
             "array of string against array of u8",
@@ -170,11 +172,11 @@ fn a_failed_context_should_keep_a_true_error_holds_before_and_after() {
             "let _x = v1 ?? (if c { [8] } else { [m] })",
             vec![cut, (Mismatch, (5, 41))],
         ),
-        // `[]` is no literal branch, so it waits for the next run.
+        // No type joins a `u8` and an array, so the conflict at the `match` is a true error.
         (
             "empty array in a match arm beside a typed arm",
             "f(match c {\n true => m\n false => []\n })",
-            vec![call],
+            vec![call, (Mismatch, (5, 7))],
         ),
     ]));
 }
@@ -451,23 +453,23 @@ fn a_break_in_a_failed_join_should_keep_its_output_holds_before_and_after() {
             "let a = loop { f(if c { if c { break panic(\"x\") } else { 8 } } else { 8 }) }",
             vec![(NoValue, (5, 13)), (ArgumentCount, (5, 20))],
         ),
-        // Under no expectation the branches are ranked in a different order than the source, and
-        // the `break None` comes first. #676 fixes this false error.
+        // Under no expectation the branches once ranked in another order than the source, and the
+        // `break None` came first, with a false error (#676). The branches now join by one rule.
         (
             "no expectation",
             "let a = loop { let _x = if c { if c { break Some(1) } else { 8 } } else { if c { break None }; 8 } }",
-            vec![(CannotInfer, (5, 92))],
+            vec![],
         ),
     ]));
 }
 
 /// GIVEN `v1 ?? (if c { NEST } else { 8 })`, where `NEST` is the same `if` again, so that the
 ///   right side of `??` is a poisoned context
-/// WHEN the checker ranks the nested branches at three depths
+/// WHEN the checker ranks or joins the nested branches at three depths
 /// THEN the steps above those of depth 0 grow with the depth, and grow linearly
 /// AND the depths are 10, 20 and 30, because 60 levels overflow the stack of a debug test thread
 #[test]
-fn nested_branches_in_a_failed_context_should_rank_in_linear_steps() {
+fn nested_branches_in_a_failed_context_should_join_in_linear_steps() {
     crate::on_compiler_stack(|| {
         with_prelude();
         let steps = |depth: usize| {
@@ -477,9 +479,12 @@ fn nested_branches_in_a_failed_context_should_rank_in_linear_steps() {
                 open.repeat(depth),
                 close.repeat(depth)
             );
+            // The nested branches are members of one join (ADR 0052): its walk counts too.
             generic::RANK_STEPS.set(0);
+            VALUE_STEPS.set(0);
+            SETTLED.set(0);
             diags(&src);
-            generic::RANK_STEPS.get()
+            generic::RANK_STEPS.get() + VALUE_STEPS.get() + SETTLED.get()
         };
         // The prelude's own steps, about 20, are the same at each depth.
         let base = steps(0);

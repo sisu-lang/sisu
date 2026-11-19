@@ -1150,11 +1150,16 @@ pub(super) fn branch_join(e: &ast::Expr) -> bool {
 /// Whether `e` gives a made value (see `made_value`) at its value, or at an argument of a call in
 /// it. Its value is that of its block, branches and arms. A call with such an argument waits for
 /// its join, as the made value does (see `takes_member`). Then the branches of `e` join by the
-/// order of their ranks, not as members of one join (see `Checker::branches`).
+/// order of their ranks, not as members of one join (see `Checker::branches`). A `-` of a value
+/// that is not a literal counts too: in a branch it is not a member until Task 5d.
 pub(super) fn gives_made_value(e: &ast::Expr) -> bool {
     ensure_stack(|| {
         made_value(e)
             || match &e.kind {
+                ExprKind::Unary {
+                    op: UnaryOp::Neg,
+                    operand,
+                } => !matches!(operand.kind, ExprKind::Int { .. }),
                 ExprKind::If {
                     then_block,
                     else_block,
