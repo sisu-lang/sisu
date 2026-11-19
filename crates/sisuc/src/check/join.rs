@@ -694,8 +694,27 @@ impl Checker<'_> {
             (TypeKind::Optional(x), _) => Some(Type::optional(self.merge(x, b)?)),
             (_, TypeKind::Optional(y)) => Some(Type::optional(self.merge(a, y)?)),
             (TypeKind::Array(x), TypeKind::Array(y)) => Some(Type::array(self.merge(x, y)?)),
+            // A nominal type of one name merges its type arguments pair by pair, as an array
+            // merges its element: `P<?a>` and `P<i64>` are `P<i64>`.
+            (TypeKind::Struct(x, xs), TypeKind::Struct(y, ys)) if x == y => {
+                Some(Type::intern(TypeKind::Struct(x, self.merge_args(xs, ys)?)))
+            }
+            (TypeKind::Enum(x, xs), TypeKind::Enum(y, ys)) if x == y => {
+                Some(Type::intern(TypeKind::Enum(x, self.merge_args(xs, ys)?)))
+            }
+            (TypeKind::Class(x, xs), TypeKind::Class(y, ys)) if x == y => {
+                Some(Type::intern(TypeKind::Class(x, self.merge_args(xs, ys)?)))
+            }
             _ => (a == b).then_some(a),
         })
+    }
+
+    /// `merge` of each pair of the type arguments `xs` and `ys` of one nominal type.
+    fn merge_args(&self, xs: TypeArgs, ys: TypeArgs) -> Option<TypeArgs> {
+        let merged = (xs.get().iter().zip(ys.get()))
+            .map(|(&x, &y)| self.merge(x, y))
+            .collect::<Option<Vec<_>>>()?;
+        Some(TypeArgs::intern(&merged))
     }
 
     /// Whether a leaf of `value`, an argument at `place`, has a part at `hole`: then the argument
