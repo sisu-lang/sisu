@@ -323,18 +323,6 @@ mod tests {
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
-    /// A line break after `..` does not end an arm, so the new arm of an E0130 fix would become
-    /// the end of the range. The report then has no fix.
-    #[test]
-    fn the_e0130_fix_should_keep_the_syntax_after_an_open_range() {
-        for range in ["1..", "1..="] {
-            let src = format!(
-                "fn g(s: i64?) -> i64 {{\n    match s {{\n        Some(_) => {range}   }}\n}}\n\nfn main() {{\n    print(\"{{g(None)}}\")\n}}\n"
-            );
-            crate::on_compiler_stack(|| front_end(src.as_bytes()));
-        }
-    }
-
     /// Inputs that the fuzz target found. A fix must keep the syntax, and a safe one must keep
     /// every report of another code.
     #[test]
@@ -349,6 +337,8 @@ mod tests {
             "fn pick(c: bool) -> i64 {\n    rows: loop {..\n        break loop {\n            if c { break rows 1 }\n            break 2\n        }\n    }\n}\n\nfn main() {\n    print(pick(true))\n}\n",
             "struct Pile {\n    n: i64\n    fn change(mut self, mut other: Pile) { other.n = 1 }\n}\nfn main() {\n    let mut pile = Pile(n: 0)\n    pile.change(mut pile)\n}\n",
             "struct Pile {\n    n: i64\n    fn show(mut self) { print(self.n) }\n}\nfn main() {\n    let pile = Pile(n: 0)\n    pile.show()\n}\n",
+            "fn g(s: i64?) -> i64 {\n    match s {\n        Some(_) => 1..   }\n}\n\nfn main() {\n    print(\"{g(None)}\")\n}\n",
+            "fn g(s: i64?) -> i64 {\n    match s {\n        Some(_) => 1..=   }\n}\n\nfn main() {\n    print(\"{g(None)}\")\n}\n",
         ];
         let failures: Vec<String> = crate::on_compiler_stack(|| {
             rows.iter()
