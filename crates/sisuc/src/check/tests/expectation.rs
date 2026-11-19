@@ -3,8 +3,8 @@
 
 use super::*;
 use Code::{
-    BindingNotFound, CannotExtend, DefinedTwice, MethodNeedsSelf, Mismatch, NoMain, SelfOutside,
-    SelfOutsideMethod, UnknownType,
+    BindingNotFound, CannotExtend, DefinedTwice, MethodNeedsSelf, Mismatch, NoMain, NoValue,
+    SelfOutside, SelfOutsideMethod, UnknownType,
 };
 
 const IF: &str = r#"if c { "a" } else { [] }"#;
@@ -513,5 +513,244 @@ fn a_hint_should_reach_exactly_its_value() {
         "interface I {}\nclass P: I {}\nclass Q: I {}\ntype O = P?\nfn f(a: any I, q: Q) {\n    let _a: bool = [a, O.Some(q)]\n}\nfn main() {}\n".to_string(),
         e((6, 20)),
     ));
+    error_rows(&rows);
+}
+
+/// The program of a row of `a_join_under_an_open_element_type_should_take_its_branches_type`:
+/// `stmt` is line 9.
+fn open_element_program(stmt: &str) -> String {
+    format!(
+        "fn pick<T>(a: T, _b: T) -> T {{ a }}\nfn one<T>(x: T) -> [T] {{ [x] }}\nenum E {{ A; B }}\nfn main() {{\n    let a: u8 = 3\n    let c = [1].len() == 2\n    let e = E.B\n    let p: u8? = None\n    {stmt}\n    dbg(x)\n}}\n"
+    )
+}
+
+/// GIVEN an array argument of a generic call beside `[]` or `one(None)`, which leaves its element
+///   type open
+/// WHEN its element is an `if`, a `match` or an `if let` of a `u8` and a literal, or a typed
+///   element beside a literal
+/// THEN the program is valid, as on `main`
+/// AND a conflict in an element, or a failed branch, reports once at its own place
+#[test]
+fn a_join_under_an_open_element_type_should_take_its_branches_type() {
+    let rows: Vec<(&str, &str, Vec<Wanted>)> = vec![
+        (
+            "an `if` element",
+            "let x = pick([if c { a } else { 1 }], [])",
+            vec![],
+        ),
+        (
+            "a `match` element",
+            "let x = pick([match e { E.A => a; _ => 1 }], [])",
+            vec![],
+        ),
+        (
+            "an `if let` element",
+            "let x = pick([if let Some(q) = p { q } else { 1 }], [])",
+            vec![],
+        ),
+        (
+            "an `if` of arrays",
+            "let x = pick([if c { [a] } else { [1] }], [])",
+            vec![],
+        ),
+        (
+            "two `if` elements",
+            "let x = pick([if c { a } else { 1 }, if c { a } else { 1 }], [])",
+            vec![],
+        ),
+        (
+            "an `if` element, then a typed element",
+            "let x = pick([if c { a } else { 1 }, a], [])",
+            vec![],
+        ),
+        (
+            "a typed element, then an `if` element",
+            "let x = pick([a, if c { a } else { 1 }], [])",
+            vec![],
+        ),
+        (
+            "a typed element, then a literal",
+            "let x = pick([a, 1], [])",
+            vec![],
+        ),
+        (
+            "an `if` element in the second argument",
+            "let x = pick([], [if c { a } else { 1 }])",
+            vec![],
+        ),
+        (
+            "an `if` of `None` and a value",
+            "let x = pick([if c { None } else { a }], [])",
+            vec![],
+        ),
+        (
+            "an `if` of `Some` values beside `one(None)`",
+            "let x = pick([if c { Some(a) } else { Some(1) }], one(None))",
+            vec![],
+        ),
+        (
+            "a generic call whose arguments conflict",
+            "let x = pick([pick(a, \"s\")], [])",
+            vec![(Mismatch, (9, 19))],
+        ),
+        (
+            "an `if` with an unknown name",
+            "let x = pick([if c { nope } else { 1 }], [])",
+            vec![(BindingNotFound, (9, 26))],
+        ),
+    ];
+    let rows: Vec<ErrorRow<'_>> = (rows.into_iter())
+        .map(|(name, stmt, wanted)| (name, open_element_program(stmt), wanted))
+        .collect();
+    error_rows(&rows);
+}
+
+/// The program of a row of `a_nested_join_of_unit_values_should_be_unit`: `stmt` is line 6.
+fn unit_arm_program(stmt: &str) -> String {
+    format!(
+        "enum E {{ A; B }}\nfn u() {{}}\nfn main() {{\n    let e = E.B\n    let c = [1].len() == 2\n    {stmt}\n}}\n"
+    )
+}
+
+/// GIVEN a `match` whose arm is a `match`, an `if` or an `if let` of `unit` values
+/// AND an `if` of `unit` values in a branch of an `if`
+/// WHEN it is at a `let`, in `dbg` and in an array
+/// THEN the program is valid, as on `main`
+/// AND an `if` with no `else` in an arm reports E0043 at its `if`
+#[test]
+fn a_nested_join_of_unit_values_should_be_unit() {
+    let rows: Vec<(&str, &str, Vec<Wanted>)> = vec![
+        (
+            "an `if` of `unit` values in an arm, in an array",
+            "let x = [match e { E.A => if c { u() } else { u() }; _ => u() }]",
+            vec![],
+        ),
+        (
+            "an `if` of `unit` values in an arm, in `dbg`",
+            "dbg(match e { E.A => if c { u() } else { u() }; _ => u() })",
+            vec![],
+        ),
+        (
+            "an `if` of `unit` values in a branch, in an array",
+            "let x = [if c { if c { u() } else { u() } } else { u() }]",
+            vec![],
+        ),
+        (
+            "an `if` of `unit` values in a branch, in `dbg`",
+            "dbg(if c { if c { u() } else { u() } } else { u() })",
+            vec![],
+        ),
+        (
+            "an `if` of `unit` values in a branch, at a `let`",
+            "let x = if c { if c { u() } else { u() } } else { u() }",
+            vec![],
+        ),
+        (
+            "an `if let` of `unit` values in an arm, in an array",
+            "let x = [match e { E.A => if let E.A = e { u() } else { u() }; _ => u() }]",
+            vec![],
+        ),
+        (
+            "an `if let` of `unit` values in an arm, in `dbg`",
+            "dbg(match e { E.A => if let E.A = e { u() } else { u() }; _ => u() })",
+            vec![],
+        ),
+        (
+            "an `if let` of `unit` values in an arm, at a `let`",
+            "let x = match e { E.A => if let E.A = e { u() } else { u() }; _ => u() }",
+            vec![],
+        ),
+        (
+            "an `if` of `unit` values in an arm, at a `let`",
+            "let x = match e { E.A => if c { u() } else { u() }; _ => u() }",
+            vec![],
+        ),
+        (
+            "a `match` of `unit` values in an arm, in an array",
+            "let x = [match e { E.A => match e { _ => u() }; _ => u() }]",
+            vec![],
+        ),
+        (
+            "a `match` of `unit` values in an arm, in `dbg`",
+            "dbg(match e { E.A => match e { _ => u() }; _ => u() })",
+            vec![],
+        ),
+        (
+            "a `match` of `unit` values in an arm, at a `let`",
+            "let x = match e { E.A => match e { _ => u() }; _ => u() }",
+            vec![],
+        ),
+        (
+            "an `if` with no `else`, a true E0043, in an arm, in an array",
+            "let x = [match e { E.A => if c { 1 }; _ => u() }]",
+            vec![(NoValue, (6, 31))],
+        ),
+        (
+            "an `if` with no `else`, a true E0043, in an arm, in `dbg`",
+            "dbg(match e { E.A => if c { 1 }; _ => u() })",
+            vec![(NoValue, (6, 26))],
+        ),
+        (
+            "an `if` with no `else`, a true E0043, in an arm, at a `let`",
+            "let x = match e { E.A => if c { 1 }; _ => u() }",
+            vec![(NoValue, (6, 30))],
+        ),
+    ];
+    let rows: Vec<ErrorRow<'_>> = (rows.into_iter())
+        .map(|(name, stmt, wanted)| (name, unit_arm_program(stmt), wanted))
+        .collect();
+    error_rows(&rows);
+}
+
+/// The program of a row of `a_held_conflict_that_the_join_opens_should_give_way_to_its_report`:
+/// `stmt` is line 15.
+fn held_program(stmt: &str) -> String {
+    format!(
+        "interface Seen {{ fn seen(self) -> i64 }}\nstruct Eye: Seen {{\n    v: i64\n    fn seen(self) -> i64 {{ self.v }}\n}}\nstruct Lid: Seen {{\n    v: i64\n    fn seen(self) -> i64 {{ self.v + 100 }}\n}}\nfn pick<T>(a: T, _b: T) -> T {{ a }}\nfn main() {{\n    let a: u8 = 3\n    let c = [1].len() == 2\n    let s: any Seen = Eye(v: 1)\n    {stmt}\n}}\n"
+    )
+}
+
+/// GIVEN a generic call that waits with a held conflict, `pick(Eye(..), Lid(..))`, in a join that
+///   fails
+/// WHEN a candidate of the failed join, `any Seen`, opens the call
+/// THEN the join reports its own conflict at its head, and the call reports nothing
+/// AND when no candidate opens the call, the call reports its held conflict
+#[test]
+fn a_held_conflict_that_the_join_opens_should_give_way_to_its_report() {
+    let rows: Vec<(&str, &str, Vec<Wanted>)> = vec![
+        (
+            "a held conflict that `any Seen` opens, beside a literal",
+            "let _x = pick(if c { pick(Eye(v: 1), Lid(v: 2)) } else { 1 }, s)",
+            vec![(Mismatch, (15, 14))],
+        ),
+        (
+            "a held conflict that `any Seen` opens, beside `any Seen`",
+            "let _x = pick(if c { pick(Eye(v: 1), Lid(v: 2)) } else { s }, s)",
+            vec![],
+        ),
+        (
+            "a held conflict that no candidate opens, beside a literal",
+            "let _x = pick(pick(Eye(v: 1), Lid(v: 2)), 1)",
+            vec![(Mismatch, (15, 19))],
+        ),
+        (
+            "a held conflict of a `u8` and a `string`, beside literals",
+            "let _x = pick(if c { pick(a, \"s\") } else { 1 }, 2)",
+            vec![(Mismatch, (15, 26))],
+        ),
+        (
+            "a held conflict of a `u8` and a `string`, beside a literal",
+            "let _x = pick(pick(a, \"s\"), 1)",
+            vec![(Mismatch, (15, 19))],
+        ),
+        (
+            "a held conflict in a branch, beside a literal",
+            "let _x = if c { pick(Eye(v: 1), Lid(v: 2)) } else { 1 }",
+            vec![(Mismatch, (15, 21))],
+        ),
+    ];
+    let rows: Vec<ErrorRow<'_>> = (rows.into_iter())
+        .map(|(name, stmt, wanted)| (name, held_program(stmt), wanted))
+        .collect();
     error_rows(&rows);
 }

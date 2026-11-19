@@ -16,3 +16,4 @@ fn main() {
     print(u == if b { x } else { 1 })
     print(s == if b { "a" } else { 1 })
 }
+// interim: Task 5d gives the report of main on line 16: "expected `u8`, found `i64`" at `x`

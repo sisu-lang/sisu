@@ -829,3 +829,254 @@ fn a_failure_that_the_join_fix_does_not_reach_should_keep_its_errors_holds_befor
     ];
     error_rows(&rows);
 }
+
+/// The program of a row of `a_failed_head_should_add_no_conflict_of_its_branches`:
+/// `stmt` is line 12.
+fn failed_head_program(stmt: &str) -> String {
+    format!(
+        "fn pick<T>(a: T, _b: T) -> T {{ a }}\nfn take(v: u8) -> u8 {{ v }}\nfn takeo(v: u8?) -> bool {{ v == None }}\nstruct Box {{ v: u8 }}\nstruct BoxO {{ v: u8? }}\nenum E {{ A; B }}\nfn main() {{\n    let a: u8 = 2\n    let o: u8? = Some(2)\n    let c = [1].len() == 2\n    let e = E.B\n    {stmt}\n}}\n"
+    )
+}
+
+/// GIVEN an `if` or a `match` whose condition, `if let` value or guard failed
+/// AND it has a `u8` branch and literal branches
+/// WHEN it is at a `let`, in an argument, in a field or in a generic argument
+/// THEN only the failed head reports: the literal branches take the type of the others
+/// AND no E0032 follows from the failure (ADR 0049)
+#[test]
+#[expect(clippy::too_many_lines, reason = "one row per shape and position")]
+fn a_failed_head_should_add_no_conflict_of_its_branches() {
+    let rows: Vec<(&str, &str, Vec<Wanted>)> = vec![
+        (
+            "a failed condition in a `match` arm, in an argument",
+            "print(take(match e { E.A => a; _ => if nope { 1 } else { 2 } }))",
+            vec![(BindingNotFound, (12, 44))],
+        ),
+        (
+            "a failed condition in a `match` arm, in a field",
+            "let b = Box(v: match e { E.A => a; _ => if nope { 1 } else { 2 } })",
+            vec![(BindingNotFound, (12, 48))],
+        ),
+        (
+            "a failed condition in a `match` arm, at a `let`",
+            "let x = match e { E.A => a; _ => if nope { 1 } else { 2 } }",
+            vec![(BindingNotFound, (12, 41))],
+        ),
+        (
+            "a failed comparison as the `else if` condition, in an argument",
+            "print(take(if c { a } else if c == \"s\" { 1 } else { 2 }))",
+            vec![(CannotCompare, (12, 35))],
+        ),
+        (
+            "a failed comparison as the `else if` condition, in a field",
+            "let b = Box(v: if c { a } else if c == \"s\" { 1 } else { 2 })",
+            vec![(CannotCompare, (12, 39))],
+        ),
+        (
+            "a failed comparison as the `else if` condition, at a `let`",
+            "let x = if c { a } else if c == \"s\" { 1 } else { 2 }",
+            vec![(CannotCompare, (12, 32))],
+        ),
+        (
+            "a failed `else if` condition, in an argument",
+            "print(take(if c { a } else if ready { 1 } else { 2 }))",
+            vec![(BindingNotFound, (12, 35))],
+        ),
+        (
+            "a failed `else if` condition, in a field",
+            "let b = Box(v: if c { a } else if ready { 1 } else { 2 })",
+            vec![(BindingNotFound, (12, 39))],
+        ),
+        (
+            "a failed `else if` condition, at a `let`",
+            "let x = if c { a } else if ready { 1 } else { 2 }",
+            vec![(BindingNotFound, (12, 32))],
+        ),
+        (
+            "a failed guard, in an argument",
+            "print(take(match e { E.A => a; _ if nope => 1; _ => 2 }))",
+            vec![(BindingNotFound, (12, 41))],
+        ),
+        (
+            "a failed guard, in a field",
+            "let b = Box(v: match e { E.A => a; _ if nope => 1; _ => 2 })",
+            vec![(BindingNotFound, (12, 45))],
+        ),
+        (
+            "a failed guard, at a `let`",
+            "let x = match e { E.A => a; _ if nope => 1; _ => 2 }",
+            vec![(BindingNotFound, (12, 38))],
+        ),
+        (
+            "a failed value of an `else if let`, in an argument",
+            "print(take(if c { a } else if let Some(v) = nope { v } else { 2 }))",
+            vec![(BindingNotFound, (12, 49))],
+        ),
+        (
+            "a failed value of an `else if let`, in a field",
+            "let b = Box(v: if c { a } else if let Some(v) = nope { v } else { 2 })",
+            vec![(BindingNotFound, (12, 53))],
+        ),
+        (
+            "a failed value of an `else if let`, at a `let`",
+            "let x = if c { a } else if let Some(v) = nope { v } else { 2 }",
+            vec![(BindingNotFound, (12, 46))],
+        ),
+        (
+            "`None` and `Some(1)` after a failed condition, in an argument",
+            "print(takeo(if c { o } else if nope { None } else { Some(1) }))",
+            vec![(BindingNotFound, (12, 36))],
+        ),
+        (
+            "`None` and `Some(1)` after a failed condition, in a field",
+            "let b = BoxO(v: if c { o } else if nope { None } else { Some(1) })",
+            vec![(BindingNotFound, (12, 40))],
+        ),
+        (
+            "`None` and `Some(1)` after a failed condition, at a `let`",
+            "let x = if c { o } else if nope { None } else { Some(1) }",
+            vec![(BindingNotFound, (12, 32))],
+        ),
+        (
+            "a failed condition in a generic argument, in an argument",
+            "print(take(pick(if nope { 1 } else { 2 }, a)))",
+            vec![(BindingNotFound, (12, 24))],
+        ),
+        (
+            "a failed comparison in a generic argument, in an argument",
+            "print(take(pick(if c == \"s\" { 1 } else { 2 }, a)))",
+            vec![(CannotCompare, (12, 24))],
+        ),
+        (
+            "a failed comparison in a generic argument, in a field",
+            "let b = Box(v: pick(if c == \"s\" { 1 } else { 2 }, a))",
+            vec![(CannotCompare, (12, 28))],
+        ),
+        (
+            "a failed comparison in a generic argument, at a `let`",
+            "let x = pick(if c == \"s\" { 1 } else { 2 }, a)",
+            vec![(CannotCompare, (12, 21))],
+        ),
+        (
+            "a failed condition in a generic argument, in a field",
+            "let b = Box(v: pick(if nope { 1 } else { 2 }, a))",
+            vec![(BindingNotFound, (12, 28))],
+        ),
+        (
+            "a failed condition in a generic argument, at a `let`",
+            "let x = pick(if nope { 1 } else { 2 }, a)",
+            vec![(BindingNotFound, (12, 21))],
+        ),
+    ];
+    let rows: Vec<ErrorRow<'_>> = (rows.into_iter())
+        .map(|(name, stmt, wanted)| (name, failed_head_program(stmt), wanted))
+        .collect();
+    error_rows(&rows);
+}
+
+/// The program of a row of `a_failed_scrutinee_should_report_once_in_each_wrapper`:
+/// `stmt` is line 5.
+fn wrapped_program(stmt: &str) -> String {
+    format!(
+        "fn id<T>(x: T) -> T {{ x }}\nenum S {{ C(r: f64); Q(s: f64) }}\nfn main() {{\n    let c = [1].len() == 2\n    {stmt}\n    dbg(x)\n}}\n"
+    )
+}
+
+/// GIVEN a `match` or an `if let` whose scrutinee or value failed: an unknown name, an unknown
+///   function, a failed addition, or a failed comparison as an `if` condition
+/// WHEN it is in `Some` or in a generic call, at one and at two levels
+/// THEN the failure reports once, as on `main`
+#[test]
+fn a_failed_scrutinee_should_report_once_in_each_wrapper() {
+    let rows: Vec<(&str, &str, Vec<Wanted>)> = vec![
+        (
+            "`Some` of a `match`",
+            "let x = Some(match shp { S.C(r) => r; S.Q(s) => s })",
+            vec![(BindingNotFound, (5, 24))],
+        ),
+        (
+            "two `Some` around a `match`",
+            "let x = Some(Some(match shp { S.C(r) => r; S.Q(s) => s }))",
+            vec![(BindingNotFound, (5, 29))],
+        ),
+        (
+            "two generic calls around a `match`",
+            "let x = id(id(match shp { S.C(r) => r; S.Q(s) => s }))",
+            vec![(BindingNotFound, (5, 25))],
+        ),
+        (
+            "two generic calls around an `if let`",
+            "let x = id(id(if let Some(v) = nope { v } else { 0 }))",
+            vec![(BindingNotFound, (5, 36))],
+        ),
+        (
+            "a generic call and `Some` around an `if let`",
+            "let x = id(Some(if let Some(v) = nope { v } else { 0 }))",
+            vec![(BindingNotFound, (5, 38))],
+        ),
+        (
+            "`Some` of a `match` of an unknown function",
+            "let x = Some(match nofn() { _ => 1 })",
+            vec![(FunctionNotFound, (5, 24))],
+        ),
+        (
+            "two generic calls around a `match` of an unknown function",
+            "let x = id(id(match nofn() { _ => 1 }))",
+            vec![(FunctionNotFound, (5, 25))],
+        ),
+        (
+            "a generic call of an `if let` of an unknown function",
+            "let x = id(if let Some(v) = nofn() { v } else { 0 })",
+            vec![(FunctionNotFound, (5, 33))],
+        ),
+        (
+            "`Some` of a `match` of a failed addition",
+            "let x = Some(match 1 + true { _ => 1 })",
+            vec![(Mismatch, (5, 28))],
+        ),
+        (
+            "two generic calls around a `match` of a failed addition",
+            "let x = id(id(match 1 + true { _ => 1 }))",
+            vec![(Mismatch, (5, 29))],
+        ),
+        (
+            "a generic call of an `if let` of a failed addition",
+            "let x = id(if let Some(v) = 1 + true { v } else { 0 })",
+            vec![(Mismatch, (5, 37))],
+        ),
+        (
+            "two `Some` around an `if` with a failed comparison",
+            "let x = Some(Some(if c == \"s\" { 1 } else { 2 }))",
+            vec![(CannotCompare, (5, 26))],
+        ),
+        (
+            "a generic call of a `match`",
+            "let x = id(match nope { _ => 1 })",
+            vec![(BindingNotFound, (5, 22))],
+        ),
+        (
+            "a generic call of an `if let`",
+            "let x = id(if let Some(v) = nope { v } else { 0 })",
+            vec![(BindingNotFound, (5, 33))],
+        ),
+        (
+            "a generic call of a `match` of an unknown enum value",
+            "let x = id(match shp { S.C(r) => r; S.Q(s) => s })",
+            vec![(BindingNotFound, (5, 22))],
+        ),
+        (
+            "a generic call of an `if let` that also reads an unknown name",
+            "let x = id(if let Some(v) = nope { v } else { v })",
+            vec![(BindingNotFound, (5, 33)), (BindingNotFound, (5, 51))],
+        ),
+        (
+            "two `Some` around an `if let`",
+            "let x = Some(Some(if let Some(v) = nope { v } else { 0 }))",
+            vec![(BindingNotFound, (5, 40))],
+        ),
+    ];
+    let rows: Vec<ErrorRow<'_>> = (rows.into_iter())
+        .map(|(name, stmt, wanted)| (name, wrapped_program(stmt), wanted))
+        .collect();
+    error_rows(&rows);
+}

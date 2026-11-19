@@ -9,11 +9,6 @@ error[E0032]: the branches of this `if` have different types
    |
 16 |     print(u == if b { x } else { 1 })
    |                ^^     - `i64`    - `u8`
-   |
-help: if the types are right, convert it with `i64(...)`
-   |
-16 |     print(u == if b { x } else { i64(1) })
-   |                                  ++++ +
 
 error[E0032]: the branches of this `if` have different types
   --> E0032-comparison-branch.sisu:17:16

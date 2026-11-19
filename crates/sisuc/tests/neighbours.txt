@@ -876,3 +876,16 @@ sk(wk().mkb(), $)
 # An open call whose known part clashes with the type of one argument, beside a broken bound.
 gbm(pyb(true, nothing()), $)
 gbm(pyb($, nothing()), 1)
+# A join whose head failed: a condition, a scrutinee, a guard and an `if let` value, in a
+# generic call and in `Some`, at one and at two levels. Only the head reports.
+let _a = if true { $ } else if nope { $ } else { $ }
+let _a = id(id(match nope { _ => $ }))
+let _a = Some(Some(if let Some(_v) = nope { $ } else { $ }))
+let _a = match true { true => $; _ if nope => $; _ => $ }
+# A join under an element type that a `[]` beside it leaves open: the join takes its members'
+# type, as on `main`.
+let _a = pick([if true { $ } else { $ }], [])
+let _a = pick([$, if true { $ } else { $ }], [])
+let _a = pick([match true { true => $; _ => $ }], [nothing()])
+# A held conflict in a join that a candidate of the failed join can open.
+let _a = pick(if true { pick($, $) } else { 1 }, $)
