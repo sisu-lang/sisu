@@ -455,13 +455,19 @@ impl Checker<'_> {
             let start = arms.last().map_or(close, |arm| arm.body.span.end());
             (Span::new(start, close), Some(match_indent.to_string()))
         };
+        // A line break after an open range does not end the arm: the new arm would become the
+        // range's end. So that arm gets no fix.
+        let open = arms.last().is_some_and(|arm| {
+            let body = source.slice(arm.body.span.start()..arm.body.span.end());
+            body.ends_with("..") || body.ends_with("..=")
+        });
         self.error(DiagnosticKind::NonExhaustive {
             missing: missing.pattern,
             partly: missing.partly,
             guarded: missing.guarded,
             gap: missing.gap,
             at: keyword,
-            insert,
+            insert: (!open).then_some(insert),
             indent,
             close,
         });
