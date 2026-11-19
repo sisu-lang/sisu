@@ -143,6 +143,15 @@ impl Checker<'_> {
                 *failed = self.fails(site, i, &mut members[i], required);
             }
         }
+        // A member can fail the shape of the required type and hold leaves that conflict, as
+        // `[1, "s"]` at `i64`. It has no type to name: the members conflict, as with no required
+        // type.
+        for (i, member) in members.iter_mut().enumerate() {
+            let target = target(member.at, site.hole, required);
+            if fails[i] && self.conflicts_alone(member, site.hole, target) {
+                return None;
+            }
+        }
         let first_failing = fails.iter().position(|&failed| failed);
         // A loop with a bare `break` gives `unit`: the first value that is not `unit` is the label.
         if let Origin::BareBreak { at } = origin {
@@ -206,7 +215,7 @@ impl Checker<'_> {
         let Ok(Joined::Typed(got)) = self.join_members(members, site.hole, site.fixed, None) else {
             return None;
         };
-        let got = self.table.resolve(got);
+        let got = self.settled_type(members, (site.hole, site.fixed), got);
         if got == required {
             return None;
         }
@@ -307,6 +316,26 @@ impl Checker<'_> {
         wraps.is_none()
     }
 
+    /// Whether `member` does not enter `target`, and its leaves conflict with each other, with no
+    /// other member. It binds nothing.
+    fn conflicts_alone(
+        &mut self,
+        member: &mut JoinMember<'_>,
+        hole: Option<Symbol>,
+        target: Type,
+    ) -> bool {
+        let Ok(e) = &mut *member.value else {
+            return false;
+        };
+        let mut nested = false;
+        value_positions(e, &mut |_| nested = true);
+        nested
+            && self.enter(e, target).is_none()
+            && self
+                .join_members(std::slice::from_mut(member), hole, None, None)
+                .is_err()
+    }
+
     /// Whether the value `e`, which has no value position, does not convert to `target`. It binds
     /// nothing.
     fn leaf_fails(&mut self, e: &mut tir::Expr, target: Type) -> bool {
@@ -357,13 +386,15 @@ impl Checker<'_> {
                 && self.enter(inner, payload).is_none()
                 && self.leaf_fails(inner, payload)
             {
-                return Some(self.report_value(inner, inner.ty, target, origin, top));
+                let got = self.closed_form(inner);
+                return Some(self.report_value(inner, got, target, origin, top));
             }
             let Some((part, _)) = self.enter(e, target) else {
                 if !self.leaf_fails(e, target) {
                     return None;
                 }
-                return Some(self.report_value(e, e.ty, target, origin, top));
+                let got = self.closed_form(e);
+                return Some(self.report_value(e, got, target, origin, top));
             };
             let node = matches!(
                 e.kind,
@@ -383,6 +414,53 @@ impl Checker<'_> {
             });
             last
         })
+    }
+
+    /// The type that the leaves of `e` join to, as the type of a value that the join around it did
+    /// not settle: a nested array is `[X]` with `X` open until then. `e.ty` when `e` has no value
+    /// position or its leaves do not join. It binds nothing.
+    fn closed_form(&mut self, e: &mut tir::Expr) -> Type {
+        let mut nested = false;
+        value_positions(e, &mut |_| nested = true);
+        if !nested {
+            return e.ty;
+        }
+        let span = e.span;
+        let placeholder = tir::Expr::new(ExprKind::Unit, Type::UNIT, span);
+        let mut value = Ok(std::mem::replace(e, placeholder));
+        let mut member = JoinMember {
+            value: &mut value,
+            at: Place::Whole,
+            label: span,
+        };
+        let members = std::slice::from_mut(&mut member);
+        let closed = (self.join_type(members, None, None))
+            .map(|ty| self.settled_type(members, (None, None), ty));
+        let Ok(value) = value else {
+            unreachable!("a test of the join of `e` should not poison it");
+        };
+        *e = value;
+        closed.unwrap_or(e.ty)
+    }
+
+    /// `ty`, the type that `members` join to, resolved after each member converts to it: the
+    /// converts bind what the members leave open, as the element of a nested array. `hole` and
+    /// `fixed` are as in `Site`. It binds nothing.
+    fn settled_type(
+        &mut self,
+        members: &mut [JoinMember<'_>],
+        (hole, fixed): (Option<Symbol>, Option<usize>),
+        ty: Type,
+    ) -> Type {
+        let snapshot = self.table.snapshot();
+        for (i, member) in members.iter_mut().enumerate() {
+            let target = target(member.at, hole, ty);
+            // The join found that each member converts.
+            let _ = self.member_converts(member, target, fixed == Some(i));
+        }
+        let settled = self.table.resolve(ty);
+        self.table.rollback(snapshot);
+        settled
     }
 
     /// The type of each leaf of `e`, when it is one type.
