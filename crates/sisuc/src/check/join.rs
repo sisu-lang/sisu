@@ -668,7 +668,34 @@ impl Checker<'_> {
                 add(self, Type::optional(around));
             }
         }
+        // Each candidate above adds at most one `?`. Optional leaves at more depths, as in
+        // `[[[1, None], None], None]`, need a `?` at each: the merge of all the leaves has them.
+        // Without it, the open top of the first member decides, by the order of its leaves.
+        if optionals > 1
+            && let Some(merged) = (found.iter().map(|&(around, ..)| Some(around)))
+                .reduce(|merged, around| self.merge(merged?, around?))
+                .flatten()
+        {
+            add(self, merged);
+        }
         candidates
+    }
+
+    /// The type that has each `?` of `a` and of `b`, at the same positions, or `None` when their
+    /// shapes differ. An open variable takes the shape of the other side. It binds nothing.
+    fn merge(&self, a: Type, b: Type) -> Option<Type> {
+        let (a, b) = (self.table.shallow(a), self.table.shallow(b));
+        ensure_stack(|| match (a.kind(), b.kind()) {
+            (TypeKind::Infer(_), _) => Some(b),
+            (_, TypeKind::Infer(_)) => Some(a),
+            (TypeKind::Optional(x), TypeKind::Optional(y)) => {
+                Some(Type::optional(self.merge(x, y)?))
+            }
+            (TypeKind::Optional(x), _) => Some(Type::optional(self.merge(x, b)?)),
+            (_, TypeKind::Optional(y)) => Some(Type::optional(self.merge(a, y)?)),
+            (TypeKind::Array(x), TypeKind::Array(y)) => Some(Type::array(self.merge(x, y)?)),
+            _ => (a == b).then_some(a),
+        })
     }
 
     /// Whether a leaf of `value`, an argument at `place`, has a part at `hole`: then the argument
