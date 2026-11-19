@@ -1623,6 +1623,7 @@ impl<'src> Checker<'src> {
         let outer_obligations = std::mem::take(&mut self.obligations);
         let errors = self.diagnostics.errors();
         let mut result = f(self);
+        self.report_held_conflicts();
         self.report_left_waiting();
         let mut table = std::mem::replace(&mut self.table, outer);
         self.obligations = outer_obligations;

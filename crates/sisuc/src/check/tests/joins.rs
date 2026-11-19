@@ -1324,8 +1324,9 @@ fn call_whose_own_join_fails_should_wait_for_the_outer_join() {
 
 #[test]
 fn call_whose_own_join_fails_should_report_once_when_no_candidate_opens_it() {
-    // GIVEN `pick(a, "s")`, whose arguments have no shared type, as a branch, under a type that
-    //       is not found, in a statement and as an argument
+    // GIVEN `pick(a, "s")`, whose arguments have no shared type
+    // AND it is a branch, under a type that is not found, in a statement, an argument, or an
+    //     argument of a call that fails
     // WHEN each is checked
     // THEN each reports one E0032 at `pick`, and nothing around it reports more
     body_rows(&[
@@ -1342,6 +1343,12 @@ fn call_whose_own_join_fails_should_report_once_when_no_candidate_opens_it() {
             &[(Code::Mismatch, (1, 19))],
         ),
         ("let x = id(pick(a, \"s\"))", &[(Code::Mismatch, (1, 12))]),
+        // The outer call fails at `nope`, so no join opens the inner call: the end of the
+        // function reports its conflict.
+        (
+            "let x = pick(pick(a, \"s\"), nope)",
+            &[(Code::Mismatch, (1, 14)), (Code::BindingNotFound, (1, 28))],
+        ),
     ]);
 }
 

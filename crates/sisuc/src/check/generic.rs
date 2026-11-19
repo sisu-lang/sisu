@@ -21,7 +21,7 @@ use super::mut_args::{MutParts, MutSite, PlaceShape, marked};
 use super::names::{self, ItemId, Resolved};
 use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
-use super::reports::Reported;
+use super::reports::{Held, Reported};
 use super::stmt::BlockSoFar;
 use super::{
     Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Origin, Poisoned,
@@ -1483,6 +1483,18 @@ pub(super) struct OpenEntry {
     /// Each member at a place of an open parameter: the span of its argument and the type of its
     /// parameter, as the callee declares it.
     members: Vec<(Span, Type)>,
+    /// The report of a join of an open parameter that had no candidate, held for the outer join
+    /// (review sol 4). The open form that settles drops it. Else it is reported where the outer
+    /// join fails, where the value closes, or at the end of the function.
+    conflict: Option<(Held, Reported)>,
+}
+
+impl OpenEntry {
+    /// Whether the call holds a conflict: its closed form has no type, so a join tries only its
+    /// open form.
+    pub(super) fn conflicts(&self) -> bool {
+        self.conflict.is_some()
+    }
 }
 
 /// A bound of an open form whose subject holds an open variable: the subject, the bound, and the
@@ -2420,6 +2432,12 @@ impl Checker<'_> {
                 // Through `dbg`, a wrap and a block's value, the call keeps its own span.
                 let mut at = e;
                 loop {
+                    // The call is closed only, so its held conflict is final.
+                    if let Some(call) = self.table.open_call(at)
+                        && self.report_held(call).is_some()
+                    {
+                        self.table.poison(at.ty);
+                    }
                     self.table.forget_open(at.span);
                     at = match &at.kind {
                         tir::ExprKind::Dbg { operand, .. } | tir::ExprKind::Wrap(operand) => {
@@ -2454,6 +2472,8 @@ impl Checker<'_> {
         // The parameters that are open for an outer join, each with its name and the arguments of
         // its members (see `OpenEntry`).
         let mut openable = Vec::new();
+        // The held report of each join of an open parameter that had no candidate.
+        let mut conflict: Option<(Held, Reported)> = None;
         // The arguments that fit their place with no type for any parameter: each was reported.
         let mut misfits = vec![false; args.len()];
         // The parameters with a bound whose members all leave a part open, as `[]` and `[None]`
@@ -2567,8 +2587,10 @@ impl Checker<'_> {
                 }
                 // An argument that does not fit its place, whatever type each parameter takes, is
                 // a mistake of its shape: it gets the directed report, as on main, and joins
-                // nothing. A nested join is tested by the join, leaf by leaf.
-                let tested = value.is_ok() && !branch_join(&args[i].value);
+                // nothing. A nested join is tested by the join, leaf by leaf, and so is a call
+                // that waits with a held conflict.
+                let tested = value.as_mut().is_ok_and(|e| !self.holds_conflict(e))
+                    && !branch_join(&args[i].value);
                 if !(split[i] && pending[i].is_empty() && !bound_early)
                     && tested
                     && !param.has_assoc()
@@ -2648,10 +2670,12 @@ impl Checker<'_> {
                 with[t] = var;
                 let filled = param.subst(&with);
                 with[t] = param_t;
-                // A nested join decides by its leaves, which the join walks.
+                // A nested join decides by its leaves, which the join walks, and a call that waits
+                // with a held conflict by its open form.
                 if let Some(ty) = type_of(value)
                     && ty != Type::NEVER
                     && !branch_join(&args[i].value)
+                    && !value.as_mut().is_ok_and(|e| self.holds_conflict(e))
                     && self.decides_nothing(ty, filled, var)
                 {
                     open.push((filled, ty, argument, i, false));
@@ -2845,9 +2869,30 @@ impl Checker<'_> {
                     }
                 }
                 let before: Vec<Option<Type>> = members.iter().map(JoinMember::ty).collect();
-                let joined = expected_here;
-                let result =
-                    self.join_form_with(form, (heading, returns), &mut members, joined, None);
+                // Under `Member`, a join with no candidate waits for the outer join, which can
+                // open the call (review sol 4). Its report is held until then.
+                let waits = expected == Expectation::Member
+                    && ret_t.is_some()
+                    && open.is_empty()
+                    && failed.is_none();
+                let (result, waiting) = self.join_form_holding(
+                    form,
+                    (heading, returns),
+                    &mut members,
+                    (expected_here, None),
+                    waits,
+                );
+                if let (Some(waiting), Err(poisoned)) = (waiting, &result) {
+                    match &mut conflict {
+                        Some((all, _)) => all.absorb(waiting),
+                        None => conflict = Some((waiting, poisoned.reported())),
+                    }
+                    for &i in of.iter().filter(|&&i| split[i]) {
+                        pending[i].push(t);
+                    }
+                    openable.push((t, name, of));
+                    continue;
+                }
                 // A join that settled no member unified no part of a split member.
                 if !matches!(result, Ok(ty) if ty != Type::NEVER) {
                     for &i in of.iter().filter(|&&i| split[i]) {
@@ -3183,6 +3228,10 @@ impl Checker<'_> {
         );
         self.mut_final(&mut call, sig, args, failed.is_none().then_some(list));
         if let Some(reported) = failed {
+            // A held conflict is an error of this call too.
+            if let Some((held, _)) = conflict {
+                self.diagnostics.restore(held);
+            }
             // No argument settles a parameter in a failed call: the receiver and the written
             // type arguments bind the result, or it is untyped. A written type argument that its
             // bound rejects is `REJECTED` there, and binds no parameter.
@@ -3237,6 +3286,7 @@ impl Checker<'_> {
                 types,
                 bounds,
                 members,
+                conflict,
             };
             self.table.add_open(span, entry);
         }
@@ -3869,6 +3919,22 @@ impl Checker<'_> {
             wraps += self.converts_at(arg, param.subst(&with))?;
         }
         Some(wraps)
+    }
+
+    /// Reports the held conflict of `call` once (see `OpenEntry`), and gives its proof. A rollback
+    /// does not hold it again: a check of the call again makes a new entry.
+    pub(super) fn report_held(&mut self, call: OpenCall) -> Option<Reported> {
+        let (held, reported) = self.table.open_entry_mut(call).conflict.take()?;
+        self.diagnostics.restore(held);
+        Some(reported)
+    }
+
+    /// Reports each held conflict that no join settled or reported, so that none is lost: the
+    /// net at the end of a function.
+    pub(super) fn report_held_conflicts(&mut self) {
+        for call in self.table.unsettled_opens() {
+            let _reported = self.report_held(call);
+        }
     }
 
     /// Settles the open form of `call`, the call node `e`, at `candidate`, which `open_at` took:
@@ -6480,6 +6546,7 @@ mod tests {
             params: Vec::new(),
             bounds: Vec::new(),
             members: Vec::new(),
+            conflict: None,
         };
         let call = |at| {
             let kind = tir::ExprKind::Struct {

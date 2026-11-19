@@ -749,7 +749,8 @@ impl Checker<'_> {
     }
 
     /// `close` with no type to meet: the type of `checked` with each open `Int` as `i64`, or
-    /// E0050 at the first source of each open `Any`. A failed context reports none: its own
+    /// E0050 at the first source of each open `Any`. A call in it that waits with a held conflict
+    /// reports that conflict in place of E0050. A failed context reports none: its own
     /// report covers it. A value that it leaves open fails with no type, as a `None` does there.
     pub(super) fn close_open(&mut self, checked: Checked, expected: Expectation) -> Checked {
         let Ok(mut value) = checked else {
@@ -757,6 +758,10 @@ impl Checker<'_> {
         };
         if !value.ty.holds_infer() {
             return Ok(value);
+        }
+        // A call that waits with a held conflict reports it, in place of E0050.
+        if let Some(reported) = self.held_conflict_in(&mut value) {
+            return Err(Poisoned::untyped(reported));
         }
         let unsettled = self.table.unsettled(value.ty);
         if expected == Expectation::Poisoned {

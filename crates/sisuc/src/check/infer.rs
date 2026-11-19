@@ -294,6 +294,24 @@ impl Table {
         &self.opens[call.0]
     }
 
+    /// `open_entry`, to change.
+    pub(super) fn open_entry_mut(&mut self, call: OpenCall) -> &mut OpenEntry {
+        &mut self.opens[call.0]
+    }
+
+    /// Each call that has an open form and has not settled, in source order.
+    pub(super) fn unsettled_opens(&self) -> Vec<OpenCall> {
+        let mut opens: Vec<(Span, usize)> = (self.open_spans.iter())
+            .filter(|(at, _)| !self.settled.contains(at))
+            .map(|(&at, &index)| (at, index))
+            .collect();
+        opens.sort_unstable_by_key(|&(at, _)| (at.start(), at.end()));
+        opens
+            .into_iter()
+            .map(|(_, index)| OpenCall(index))
+            .collect()
+    }
+
     pub(super) fn is_empty(&self) -> bool {
         self.slots.is_empty()
     }

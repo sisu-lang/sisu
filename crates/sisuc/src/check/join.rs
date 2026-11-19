@@ -12,7 +12,7 @@ mod join_report;
 use super::any::Conversion;
 use super::infer::Table;
 use super::operator::Operator;
-use super::reports::Reported;
+use super::reports::{Held, Reported};
 use super::{Checked, Checker, Expectation, Poisoned};
 use crate::conformance::ensure_stack;
 use crate::source::Span;
@@ -212,11 +212,25 @@ impl Checker<'_> {
     pub(super) fn join_form_with(
         &mut self,
         form: JoinForm,
-        (heading, returns): (Heading, impl FnOnce(&mut Self) -> Option<Type>),
+        heading: (Heading, impl FnOnce(&mut Self) -> Option<Type>),
         members: &mut [JoinMember<'_>],
         expected: Expectation,
         binding: Option<Span>,
     ) -> Result<Type, Poisoned> {
+        self.join_form_holding(form, heading, members, (expected, binding), false)
+            .0
+    }
+
+    /// `join_form_with`. With `waits`, a join with no candidate and no type required gives its
+    /// report as `Held`, out of the list. The call that waits keeps it (see `OpenEntry`).
+    pub(super) fn join_form_holding(
+        &mut self,
+        form: JoinForm,
+        (heading, returns): (Heading, impl FnOnce(&mut Self) -> Option<Type>),
+        members: &mut [JoinMember<'_>],
+        (expected, binding): (Expectation, Option<Span>),
+        waits: bool,
+    ) -> (Result<Type, Poisoned>, Option<Held>) {
         let hole = match form {
             JoinForm::Call { param } => Some(param),
             _ => None,
@@ -243,7 +257,7 @@ impl Checker<'_> {
             Err(poisoned) if poisoned.ty.is_none() => Some(poisoned.reported()),
             _ => None,
         });
-        match self.join_members(members, hole, fixed, required.map(|(ty, _)| ty)) {
+        let joined = match self.join_members(members, hole, fixed, required.map(|(ty, _)| ty)) {
             Ok(Joined::Typed(ty)) => {
                 for (i, member) in members.iter_mut().enumerate() {
                     let target = target(member.at, hole, ty);
@@ -261,16 +275,28 @@ impl Checker<'_> {
                 Err(Poisoned::untyped(reported))
             }
             Err(conflict) => {
+                // A call that waits with a held conflict reports it, and the join reports nothing
+                // more (S26).
+                if let Some(reported) = self.held_conflicts(members) {
+                    let poisoned = match required {
+                        Some((ty, _)) => Poisoned::typed(ty, reported),
+                        None => Poisoned::untyped(reported),
+                    };
+                    return (Err(poisoned), None);
+                }
                 site.heading.returns = returns(self);
                 if let Some((ty, origin)) = required {
                     let reported = self.report_required(site, (ty, origin), members);
                     Err(Poisoned::typed(ty, reported))
                 } else {
+                    let mark = self.diagnostics.mark();
                     let reported = self.report_conflict(site, binding, members, &conflict);
-                    Err(Poisoned::untyped(reported))
+                    let taken = waits.then(|| self.diagnostics.take_since(mark));
+                    return (Err(Poisoned::untyped(reported)), taken);
                 }
             }
-        }
+        };
+        (joined, None)
     }
 
     /// The type that the join of `members` takes, with no report and no bind: `None` when it has
@@ -285,6 +311,54 @@ impl Checker<'_> {
             Ok(Joined::Typed(ty)) => Some(ty),
             Ok(Joined::Untyped | Joined::Never) | Err(_) => None,
         }
+    }
+
+    /// Reports the held conflict of each call in `members` that waits with one (see
+    /// `OpenEntry`), and gives the first report.
+    fn held_conflicts(&mut self, members: &mut [JoinMember<'_>]) -> Option<Reported> {
+        let mut first = None;
+        for member in members.iter_mut() {
+            if let Ok(e) = &mut *member.value
+                && let Some(reported) = self.held_conflict_in(e)
+            {
+                first.get_or_insert(reported);
+            }
+        }
+        first
+    }
+
+    /// Whether a call at a value position of `e` waits with a held conflict: then `e` fits only
+    /// where the open form of that call fits, which a bare variable does not show.
+    pub(super) fn holds_conflict(&self, e: &mut tir::Expr) -> bool {
+        if (self.table.open_call(e)).is_some_and(|call| self.table.open_entry(call).conflicts()) {
+            return true;
+        }
+        let mut found = false;
+        ensure_stack(|| {
+            value_positions(e, &mut |child| found = found || self.holds_conflict(child));
+        });
+        found
+    }
+
+    /// Reports the held conflict of each call at a value position of `e` that waits with one, and
+    /// poisons its type. It gives the first report.
+    pub(super) fn held_conflict_in(&mut self, e: &mut tir::Expr) -> Option<Reported> {
+        if let Some(call) = self.table.open_call(e)
+            && !self.table.settled(e.span)
+            && let Some(reported) = self.report_held(call)
+        {
+            self.table.poison(e.ty);
+            return Some(reported);
+        }
+        let mut first = None;
+        ensure_stack(|| {
+            value_positions(e, &mut |child| {
+                if let Some(reported) = self.held_conflict_in(child) {
+                    first.get_or_insert(reported);
+                }
+            });
+        });
+        first
     }
 
     /// The candidate that each member takes with the fewest wraps. Each test runs under a
@@ -491,12 +565,16 @@ impl Checker<'_> {
             None => match self.table.open_call(e) {
                 // An open call converts as its closed form when it can, else at the candidate.
                 Some(call) => {
-                    let snapshot = self.table.snapshot();
-                    if let Some(steps) = self.conversion(e.ty, target) {
-                        self.keep_snapshot(snapshot);
-                        return Some(steps.len());
+                    // A call with a held conflict has no closed form: its open variable would
+                    // take any type.
+                    if !self.table.open_entry(call).conflicts() {
+                        let snapshot = self.table.snapshot();
+                        if let Some(steps) = self.conversion(e.ty, target) {
+                            self.keep_snapshot(snapshot);
+                            return Some(steps.len());
+                        }
+                        self.table.rollback(snapshot);
                     }
-                    self.table.rollback(snapshot);
                     self.open_at(call, e, target)
                 }
                 None => self.conversion(e.ty, target).map(|steps| steps.len()),
@@ -566,12 +644,14 @@ impl Checker<'_> {
             None => match self.table.open_call(e) {
                 // As `converts_at`: the closed form when it converts, else the open form.
                 Some(call) => {
-                    let snapshot = self.table.snapshot();
-                    if let Some(steps) = self.conversion(e.ty, target) {
-                        self.keep_snapshot(snapshot);
-                        return self.convert_in_place(e, &steps);
+                    if !self.table.open_entry(call).conflicts() {
+                        let snapshot = self.table.snapshot();
+                        if let Some(steps) = self.conversion(e.ty, target) {
+                            self.keep_snapshot(snapshot);
+                            return self.convert_in_place(e, &steps);
+                        }
+                        self.table.rollback(snapshot);
                     }
-                    self.table.rollback(snapshot);
                     self.settle_open(call, e, target)
                 }
                 None => match self.conversion(e.ty, target) {
