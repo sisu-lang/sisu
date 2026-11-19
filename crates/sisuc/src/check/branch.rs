@@ -192,24 +192,25 @@ impl Checker<'_> {
             self.body.dropped = Some(then_block.span);
             return (then(self, Expectation::None), None, Ok(Type::UNIT));
         };
+        let inner = self.branches_expect(expected);
         // shortcut: a branch that gives a made value joins by rank, as on `main`, until the
         // forms of `made_value` are members (Tasks 5c to 5e).
-        if matches!(expected, Expectation::None | Expectation::Poisoned)
+        if matches!(inner, Expectation::None | Expectation::Poisoned)
             && [then_block, else_block]
                 .into_iter()
                 .filter_map(tail)
                 .any(gives_made_value)
         {
-            return self.ranked_branches((then_block, else_block), (expected, dropped), bind, then);
+            return self.ranked_branches((then_block, else_block), (inner, dropped), bind, then);
         }
         let binding = self.let_name(span);
         let first = self.waiting(expected, |c| {
             c.body.dropped = dropped.then_some(then_block.span);
-            then(c, branch_expectation(expected, tail(then_block)))
+            then(c, branch_expectation(inner, tail(then_block)))
         });
         let other = self.waiting(expected, |c| {
             c.body.dropped = dropped.then_some(else_block.span);
-            c.block(else_block, branch_expectation(expected, tail(else_block)))
+            c.block(else_block, branch_expectation(inner, tail(else_block)))
         });
         // The parentheses around an `if` are part of its span (see the parser), not of its head.
         let text = self.source.text(span);
@@ -232,6 +233,25 @@ impl Checker<'_> {
         let [first, other] =
             <[_; 2]>::try_from(blocks).unwrap_or_else(|_| panic!("a join should give two blocks"));
         (first, Some(other), ty)
+    }
+
+    /// What the branches of a join under `expected` take. A required type that is a bare variable,
+    /// as the element of a `[]` beside the join, is no type to meet: the branches are members, and
+    /// the join gives the variable their type (see `join_blocks`).
+    pub(super) fn branches_expect(&self, expected: Expectation) -> Expectation {
+        match expected {
+            Expectation::Required(want, _) if self.bare_variable(want) => Expectation::None,
+            _ => expected,
+        }
+    }
+
+    /// Whether `ty` is an inference variable with no type yet, or an optional of one.
+    pub(super) fn bare_variable(&self, ty: Type) -> bool {
+        let mut ty = self.table.resolve(ty);
+        while let TypeKind::Optional(inner) = ty.kind() {
+            ty = self.table.resolve(inner);
+        }
+        matches!(ty.kind(), TypeKind::Infer(_))
     }
 
     /// `branches` by the ranks of the two blocks (see `join`).

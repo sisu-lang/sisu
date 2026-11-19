@@ -76,7 +76,11 @@ impl Checker<'_> {
                 self.ranked(|c| c.hinted_elements(span, elements, element))
             };
         }
-        if let Some(element) = expected_element(expected.ty()) {
+        // An element type that is a bare variable, as from a `[]` beside the array, is no type to
+        // meet: the elements join, and the context gives the variable their type.
+        if let Some(element) = expected_element(expected.ty()).filter(|&element| {
+            elements.is_empty() || !matches!(self.table.resolve(element).kind(), TypeKind::Infer(_))
+        }) {
             let want = Expectation::Required(element, expected.origin());
             // An element type that is still open takes a `unit` only after the other elements,
             // as a join does: beside another type, the `unit` is no value (E0043).

@@ -251,7 +251,7 @@ impl Checker<'_> {
     ) -> Checked {
         let dropped = self.body.dropped == Some(span);
         let whole = expected;
-        let (expected, siblings) = expected.split_hint();
+        let siblings = expected.split_hint().1;
         let checked = self.value_kept(scrutinee);
         let mut position = type_of(&checked);
         let cannot = position.take_if(|&mut ty| !matchable(ty)).map(|ty| {
@@ -291,19 +291,20 @@ impl Checker<'_> {
         };
         // shortcut: an arm that gives a made value joins by rank, as on `main`, until the forms
         // of `made_value` are members (Tasks 5c to 5e).
-        let (blocks, ty) = if matches!(whole, Expectation::None | Expectation::Poisoned)
+        let inner = self.branches_expect(whole);
+        let (blocks, ty) = if matches!(inner, Expectation::None | Expectation::Poisoned)
             && arms.iter().any(|arm| gives_made_value(&arm.body))
         {
             self.ranked(|c| {
-                let sources = c.arm_branches(arms, &form, expected);
-                c.join(&sources, (expected, siblings), dropped, check_arm)
+                let sources = c.arm_branches(arms, &form, inner);
+                c.join(&sources, (inner, siblings), dropped, check_arm)
             })
         } else {
             let binding = self.let_name(span);
             let blocks = (0..arms.len())
                 .map(|i| {
                     let tail = arm_tail(&arms[i]);
-                    let expected = branch_expectation(whole, tail);
+                    let expected = branch_expectation(inner, tail);
                     self.waiting(whole, |c| check_arm(c, i, expected))
                 })
                 .collect();

@@ -126,13 +126,14 @@ impl Checker<'_> {
         self.error(kind)
     }
 
-    /// Reports the join `site` under the required type, which a member does not take.
+    /// Reports the join `site` under the required type, which a member does not take. `None` when
+    /// each member takes it alone: then the members conflict with each other only.
     pub(super) fn report_required(
         &mut self,
         site: Site,
         (required, origin): (Type, Origin),
         members: &mut [JoinMember<'_>],
-    ) -> Reported {
+    ) -> Option<Reported> {
         let head = site.heading.head;
         let mut taking = 0;
         let mut fails = vec![false; members.len()];
@@ -146,7 +147,7 @@ impl Checker<'_> {
         // A loop with a bare `break` gives `unit`: the first value that is not `unit` is the label.
         if let Origin::BareBreak { at } = origin {
             let valued = first_failing.map_or(head, |i| members[i].label);
-            return self.error(DiagnosticKind::BareBreak { at, valued });
+            return Some(self.error(DiagnosticKind::BareBreak { at, valued }));
         }
         // A call names the first argument that converts as the one that gives the parameter a type.
         let origin = self
@@ -158,7 +159,7 @@ impl Checker<'_> {
         if failing == taking
             && let Some(reported) = self.agreed(site, (required, origin), members, taking)
         {
-            return reported;
+            return Some(reported);
         }
         let mut last = None;
         for (i, _) in fails.iter().enumerate().filter(|&(_, &failed)| failed) {
@@ -187,7 +188,7 @@ impl Checker<'_> {
             });
             last = Some(reported);
         }
-        last.unwrap_or_else(|| self.proof(head))
+        last
     }
 
     /// The report of members that agree with each other, and differ from the required type only.

@@ -245,7 +245,10 @@ impl Checker<'_> {
             hole,
             fixed,
         };
+        // A required type that is a bare variable, as the element of a `[]` beside the join, is no
+        // candidate: the members join by themselves, and the context gives the variable their type.
         let required = match expected {
+            Expectation::Required(ty, _) if self.bare_variable(ty) => None,
             Expectation::Required(ty, origin) => Some((ty, origin)),
             Expectation::None
             | Expectation::Poisoned
@@ -286,7 +289,8 @@ impl Checker<'_> {
                 }
                 site.heading.returns = returns(self);
                 if let Some((ty, origin)) = required {
-                    let reported = self.report_required(site, (ty, origin), members);
+                    let reported = (self.report_required(site, (ty, origin), members))
+                        .unwrap_or_else(|| self.report_conflict(site, binding, members, &conflict));
                     Err(Poisoned::typed(ty, reported))
                 } else {
                     let mark = self.diagnostics.mark();
