@@ -373,10 +373,7 @@ const GAP_POINTS: &[&str] = &[
     "make_check keeps an applied type",
     "make_any on the right",
     "make_any on the left",
-    "seeded_join for a branch",
     "seeded_join for a loop",
-    "hinted_elements",
-    "value_beside",
     "a dbg in a generic function",
     "a dbg of an enum in a generic function",
     "an any conversion in a generic function",
@@ -7169,7 +7166,7 @@ print(j.seen())
 class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { [a] } else { [Eye(v: 2), Lid(v: 3)] }; print(j[0].seen()) }",
-            &["hinted_elements", "seeded_join for a branch"],
+            &[],
         ),
         (
             "an array of integers beside an array of integers",
@@ -7182,7 +7179,7 @@ fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { 
 class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = [a, Eye(v: 2)]; print(j[0].seen()) }",
-            &["value_beside"],
+            &[],
         ),
         (
             "an object before an `any` element",

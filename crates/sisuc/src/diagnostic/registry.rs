@@ -2363,8 +2363,6 @@ pub(crate) enum MismatchOrigin {
     Index,
     /// The rule that an index of a place is an `i64`.
     PlaceIndex,
-    /// The element at `at` gave its inferred array the type `ty`.
-    Element { at: Span, ty: String },
     /// The branch value at `at` gave its `if` or `match` the type `ty`.
     Branch { at: Span, ty: String },
     /// The argument at `at` gave the type parameter `param` the type `ty`.
@@ -2403,7 +2401,6 @@ impl MismatchOrigin {
             Self::Condition => (None, "a condition must be `bool`".to_string()),
             Self::Index => (None, "an index must be `i64` or a range".to_string()),
             Self::PlaceIndex => (None, "an index must be `i64`".to_string()),
-            Self::Element { at, ty } => (Some(at), format!("this element gives the type `{ty}`")),
             Self::Branch { at, ty } => (Some(at), format!("this branch gives the type `{ty}`")),
             Self::Inferred { at, param, ty } => (
                 Some(at),

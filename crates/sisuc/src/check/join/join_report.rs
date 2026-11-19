@@ -322,6 +322,17 @@ impl Checker<'_> {
         wraps.is_none()
     }
 
+    /// `report_leaves` for a value `e` that is no member of a join: an argument that fits its
+    /// place for no type of the parameters.
+    pub(in crate::check) fn report_misfit_leaves(
+        &mut self,
+        e: &mut tir::Expr,
+        target: Type,
+        origin: Origin,
+    ) -> Option<Reported> {
+        self.report_leaves(e, target, origin, None, false)
+    }
+
     /// Reports each leaf of `e` that does not convert to `target`: the leaf, against the part of
     /// `target` at its position. One walk visits each value position once. `top` is set when `e` is
     /// the member itself. `in_join` is set below an `if` or a `match`. The first one of a chain

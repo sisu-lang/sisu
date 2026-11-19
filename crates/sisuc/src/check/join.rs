@@ -76,7 +76,7 @@ impl JoinMember<'_> {
 
 /// The form of a join, which its report names.
 #[derive(Clone, Copy)]
-#[expect(dead_code, reason = "the other forms come in Task 5c and later")]
+#[expect(dead_code, reason = "the other forms come in Task 5d and later")]
 pub(super) enum JoinForm {
     If,
     Match,
@@ -112,6 +112,8 @@ struct Conflict {
     /// Each member that is a made part of its argument, at the argument's span, with its part's
     /// type. A call labels it as the argument that gives its type parameter that type.
     parts: Vec<(Span, Type)>,
+    /// Whether a member has no part at the type parameter: it does not fit its place.
+    misfit: bool,
 }
 
 /// The leaves of the members of a conflict that have one type, by their spans: a member of a
@@ -159,6 +161,8 @@ struct Leaf {
     lifted: Type,
     /// Whether a `Some` stands around the leaf: then a nested member above it is optional.
     wrapped: bool,
+    /// The number of elements and payloads around the leaf: the layers that `around` adds.
+    depth: usize,
     /// The value of an integer literal that the leaf is.
     literal: Option<i64>,
 }
@@ -171,6 +175,7 @@ impl Leaf {
             around: ty,
             lifted: Type::optional(ty),
             wrapped: false,
+            depth: 0,
             literal: None,
         }
     }
@@ -290,6 +295,22 @@ impl Checker<'_> {
                     };
                     return (Err(poisoned), None);
                 }
+                // Members that all give the parameter one type do not conflict at it: another
+                // part of their place failed (`V` in `h(true, [Two.P(true, 1), Two.P(true, "s")])`
+                // with `b: [Two<U, V>]`). The parameter takes that type, and the join of that part
+                // reports. A member that failed may hold the conflict, and a place that names the
+                // parameter twice may conflict in one member: both report below.
+                let failed = members.iter().any(|member| match member.at {
+                    Place::Part { place, .. } => {
+                        hole.is_some_and(|hole| hole_places(self.table.resolve(place), hole) > 1)
+                    }
+                    _ => false,
+                } || member.value.is_err());
+                if let Some(ty) = (hole.filter(|_| required.is_none() && !failed))
+                    .and_then(|_| self.one_part(&conflict))
+                {
+                    return (Ok(ty), None);
+                }
                 site.heading.returns = returns(self);
                 if let Some((ty, origin)) = required {
                     let reported = (self.report_required(site, (ty, origin), members))
@@ -318,6 +339,24 @@ impl Checker<'_> {
             Ok(Joined::Typed(ty)) => Some(ty),
             Ok(Joined::Untyped | Joined::Never) | Err(_) => None,
         }
+    }
+
+    /// The one type that the groups and the made parts of `conflict` give its parameter, when
+    /// they all unify: an open literal takes the type of a sibling, as in `[1, t]`.
+    fn one_part(&mut self, conflict: &Conflict) -> Option<Type> {
+        let groups = conflict.groups.iter().map(|group| group.ty);
+        let types: Vec<Type> = groups
+            .chain(conflict.parts.iter().map(|&(_, ty)| ty))
+            .collect();
+        let (&first, rest) = types.split_first().filter(|_| !conflict.misfit)?;
+        let snapshot = self.table.snapshot();
+        let one = rest.iter().all(|&ty| self.table.unify(first, ty).is_some());
+        self.table.rollback(snapshot);
+        let known = types
+            .iter()
+            .map(|&ty| self.table.resolve(ty))
+            .find(|ty| !ty.holds_infer());
+        one.then(|| known.unwrap_or(first))
     }
 
     /// Reports the held conflict of each call in `members` that waits with one (see
@@ -524,7 +563,16 @@ impl Checker<'_> {
                     }
                     Place::Split { part, .. } => Some(part),
                 };
-                let Some(around) = part(leaf.around) else {
+                // A nested member that is no optional at an optional place converts at its top, as
+                // a top does: its part is then its own type (`1` in `[1]` at `[T?]` gives `i64`).
+                let lenient = || match member.at {
+                    Place::Part { place, .. } if k > 0 => hole.and_then(|hole| {
+                        let ty = self.table.resolve(leaf.around);
+                        leaf_part(self.table.resolve(place), hole, ty, leaf.depth)
+                    }),
+                    _ => None,
+                };
+                let Some(around) = part(leaf.around).or_else(lenient) else {
                     continue;
                 };
                 // A top is optional by its part at `hole`. A nested member is optional by its own
@@ -548,11 +596,32 @@ impl Checker<'_> {
         };
         for &(around, lifted, own) in &found {
             add(self, around);
-            if let Some(lifted) = lifted.filter(|_| optionals > usize::from(own)) {
-                add(self, lifted);
+            if optionals > usize::from(own) {
+                if let Some(lifted) = lifted {
+                    add(self, lifted);
+                }
+                // The `?` added at the top of the member too: a nested member in an element gives
+                // `[t?]` inside and `[t]?` at the top. For other positions the two are one type.
+                add(self, Type::optional(around));
             }
         }
         candidates
+    }
+
+    /// Whether a leaf of `value`, an argument at `place`, has a part at `hole`: then the argument
+    /// gives `hole` a candidate (see `candidates`). A nested join whose leaves all have none, as
+    /// `[[]]` at `[[Two<T, i64>]]`, decides nothing of `hole`.
+    pub(super) fn leaves_decide(&self, value: &mut Checked, place: Type, hole: Symbol) -> bool {
+        let label = Span::new(0, 0);
+        let mut member = [JoinMember {
+            value,
+            at: Place::Part {
+                place,
+                argument: label,
+            },
+            label,
+        }];
+        !self.candidates(&mut member, &[0], Some(hole)).is_empty()
     }
 
     /// `converts` for `member`, whose target is `target`. A split member only unifies its part.
@@ -603,6 +672,15 @@ impl Checker<'_> {
     pub(super) fn converts_at(&mut self, e: &mut tir::Expr, target: Type) -> Option<usize> {
         if e.ty == Type::NEVER || self.settled_as(e, target) {
             return Some(0);
+        }
+        self.open_target(e, target);
+        // A loop that only a bare `break` ends has no value position: it converts as itself.
+        if matches!(e.kind, ExprKind::Loop(_)) {
+            let mut valued = false;
+            value_positions(e, &mut |_| valued = true);
+            if !valued {
+                return self.conversion(e.ty, target).map(|steps| steps.len());
+            }
         }
         ensure_stack(|| match self.enter(e, target) {
             Some((part, wrapped)) => {
@@ -678,6 +756,7 @@ impl Checker<'_> {
         if e.ty == Type::NEVER || self.settled_as(e, target) {
             return Ok(());
         }
+        self.open_target(e, target);
         ensure_stack(|| match self.enter(e, target) {
             Some((part, wrapped)) => {
                 let mut failed = Ok(());
@@ -716,6 +795,27 @@ impl Checker<'_> {
                 },
             },
         })
+    }
+
+    /// Gives the open variable of `target` the type of `e`, an array or a `Some`, so that the
+    /// walk enters `e`: the element `X` of a nested array, `[X]`, is open until its elements
+    /// settle to it. An array takes the variable under the optionals of `target` too, as it is no
+    /// optional itself: `[X]` meets `V?` as `V = [X]`, with one wrap.
+    fn open_target(&mut self, e: &tir::Expr, target: Type) {
+        let mut open = self.table.resolve(target);
+        match e.kind {
+            ExprKind::ArrayLit(_) | ExprKind::ArrayFill { .. } => {
+                while let TypeKind::Optional(payload) = open.kind() {
+                    open = payload;
+                }
+            }
+            ExprKind::Wrap(_) => {}
+            _ => return,
+        }
+        if matches!(open.kind(), TypeKind::Infer(_)) {
+            // A variable that does not take `e` stays open: the conversion fails at the top.
+            self.unify(open, e.ty);
+        }
     }
 
     /// Whether `e` has the type `target` already, with no variable in it: the join of `e` has
@@ -834,7 +934,7 @@ impl Checker<'_> {
         fixed: Option<usize>,
     ) -> Conflict {
         let mut groups: Vec<Group> = Vec::new();
-        let mut parts = Vec::new();
+        let (mut parts, mut misfit) = (Vec::new(), false);
         let mut index: FxHashMap<Type, usize> = FxHashMap::default();
         for &i in taking {
             let member = &mut members[i];
@@ -881,7 +981,18 @@ impl Checker<'_> {
                         } else {
                             ty
                         };
-                        part_at(place, hole, ty).unwrap_or(ty)
+                        // A nested member converts at its top, as in `candidates`. A nested leaf
+                        // with no part at the hole, as `None` at `[Two<U, V>?]`, gives it no type.
+                        let part = (part_at(place, hole, ty))
+                            .or_else(|| leaf_part(place, hole, ty, leaf.depth));
+                        match part {
+                            Some(part) => part,
+                            None if !top => continue,
+                            None => {
+                                misfit = true;
+                                ty
+                            }
+                        }
                     }
                     // The left side of `??` is at its payload.
                     (Place::Part { .. } | Place::Split { .. }, None) => match ty.kind() {
@@ -916,7 +1027,11 @@ impl Checker<'_> {
                 }
             }
         }
-        Conflict { groups, parts }
+        Conflict {
+            groups,
+            parts,
+            misfit,
+        }
     }
 }
 
@@ -982,6 +1097,7 @@ fn nested_leaves(e: &mut tir::Expr, out: &mut Vec<Leaf>) -> bool {
         leaf.around = around(leaf.around);
         leaf.lifted = around(leaf.lifted);
         leaf.wrapped |= wrapped;
+        leaf.depth += 1;
     }
     inner
 }
@@ -1187,6 +1303,39 @@ pub(super) fn part_at(place: Type, hole: Symbol, ty: Type) -> Option<Type> {
         }
         _ => part_in(place, hole, ty, &mut misses),
     }
+}
+
+/// `part_at` for a leaf with `depth` elements and payloads of literals around it (`Leaf`): each of
+/// those, and the leaf, converts at its top, so an optional of `place` takes it as its payload.
+fn leaf_part(place: Type, hole: Symbol, ty: Type, depth: usize) -> Option<Type> {
+    if depth == 0 {
+        return part_at(place, hole, ty);
+    }
+    ensure_stack(|| match (place.kind(), ty.kind()) {
+        (TypeKind::Param(name, MARK_INDEX), _) if name == hole => Some(ty),
+        (TypeKind::Array(ours), TypeKind::Array(theirs))
+        | (TypeKind::Optional(ours), TypeKind::Optional(theirs)) => {
+            leaf_part(ours, hole, theirs, depth - 1)
+        }
+        (TypeKind::Optional(ours), _) => leaf_part(ours, hole, ty, depth),
+        _ => None,
+    })
+}
+
+/// How many places of `place` name the type parameter `hole`.
+fn hole_places(place: Type, hole: Symbol) -> usize {
+    if !place.has_param() {
+        return 0;
+    }
+    ensure_stack(|| match place.kind() {
+        TypeKind::Param(name, MARK_INDEX) if name == hole => 1,
+        TypeKind::Array(inner) | TypeKind::Optional(inner) => hole_places(inner, hole),
+        TypeKind::Class(_, args)
+        | TypeKind::Struct(_, args)
+        | TypeKind::Enum(_, args)
+        | TypeKind::Any(_, args) => (args.get().iter()).map(|&arg| hole_places(arg, hole)).sum(),
+        _ => 0,
+    })
 }
 
 /// `part_at` below the top. `misses` holds each pair of a place and a type that gave `None`. So a

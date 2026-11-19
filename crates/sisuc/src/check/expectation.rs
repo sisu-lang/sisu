@@ -41,8 +41,6 @@ pub(super) enum Origin {
     Index,
     /// The rule that an index of a place is an `i64`: a place takes no range.
     PlaceIndex,
-    /// The element at `at` of an inferred array, which gave the array its type `ty`.
-    Element { at: Span, ty: Type },
     /// The branch value at `at`, which gave its `if` or `match` the type `ty`.
     Branch { at: Span, ty: Type },
     /// The argument at `at`, which bound the type parameter `param` of a call to `ty`.
@@ -77,11 +75,12 @@ pub(super) enum Expectation {
     Required(Type, Origin),
     /// The siblings that the value joins give it `want`, the type of the siblings (`siblings`).
     /// Siblings are the branches before it and the earlier values of its loop. They are also the
-    /// other side of its `==`, the left side of its `??`, and an element beside an `any` element
-    /// (`value_beside`). An operator can also hint each operand except its leader, the first
-    /// operand of a concrete type, or each operand when it has no leader. The hint is the type
-    /// that the operator takes by default (`i64`), or takes from a leader of a type that it does
-    /// not take. The context did not write it. `want` steers inference as a required type does.
+    /// other side of its `==` and the left side of its `??`. In an array, they are the elements
+    /// beside an element that waits (`late_hint` in `check/array.rs`). An operator can also hint
+    /// each operand except its leader, the first operand of a concrete type. With no leader, it
+    /// hints each operand. The hint is the type that the operator takes by default (`i64`), or
+    /// takes from a leader of a type that it does not take. The context did not write it. `want`
+    /// steers inference as a required type does.
     /// But the value does not convert to an `any` type for it. A join in the value takes
     /// `siblings` as its first anchor, not as its expected type (see `split_hint`). A value part
     /// of the value keeps the hint. Such a part is the tail of a block, a branch of a hinted `if`
@@ -331,10 +330,6 @@ impl Checker<'_> {
             Origin::Condition => Some(MismatchOrigin::Condition),
             Origin::Index => Some(MismatchOrigin::Index),
             Origin::PlaceIndex => Some(MismatchOrigin::PlaceIndex),
-            Origin::Element { at, ty } => Some(MismatchOrigin::Element {
-                at,
-                ty: self.type_name(ty),
-            }),
             Origin::Branch { at, ty } => Some(MismatchOrigin::Branch {
                 at,
                 ty: self.type_name(ty),

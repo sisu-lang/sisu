@@ -349,11 +349,15 @@ impl Checker<'_> {
                 }
             }
             let mut members = whole_members(&mut values, spans);
+            // An array does not lift, and reports each `unit` element: its join meets the
+            // required element type (see `agreed_kind`).
+            let whole = !matches!(form, JoinForm::Array);
             let expected = match expected {
                 Expectation::Required(want, _)
-                    if self.lifted_whole(&members, want)
-                        || self.agreed_whole(&members, want)
-                        || self.unit_whole(&members, want) =>
+                    if whole
+                        && (self.lifted_whole(&members, want)
+                            || self.agreed_whole(&members, want)
+                            || self.unit_whole(&members, want)) =>
                 {
                     Expectation::None
                 }
@@ -769,11 +773,7 @@ impl Checker<'_> {
         };
         // With an `any` type in reach, the mistake is the member that leaves it.
         let failed = match self.seeded_join(siblings.map(|(ty, _)| ty), &objects) {
-            AnyJoin::Joined { ty } => {
-                #[cfg(test)]
-                super::reached("seeded_join for a branch");
-                return (Some(made(ty)), error, None);
-            }
+            AnyJoin::Joined { ty } => return (Some(made(ty)), error, None),
             leaves @ AnyJoin::Leaves { .. } => leaves,
             AnyJoin::NoAny | AnyJoin::Fails { .. } => failed,
         };
@@ -966,9 +966,7 @@ pub(super) struct Branch<'a> {
     /// Whether the type of the value comes only from the defaults of its integer literals
     /// (`Ranked::of_literals`; see `rank_value` in `check/generic.rs`), as in `8`, `[8]` and
     /// `id(8)`. A value that only waited, such as `[mk(); 2]`, holds no literal.
-    /// Only `join` under `Poisoned` reads it. `value_branch` sets it from the rank after
-    /// `Ranked::sibling`, so `[8]` is `false` there; `hinted_elements` joins under `None`, where
-    /// the flag is not read.
+    /// Only `join` under `Poisoned` reads it.
     literal: bool,
     span: Span,
     tail: Option<&'a ast::Expr>,
@@ -1018,19 +1016,6 @@ impl Checker<'_> {
             literal: fit && ranked.is_some_and(Ranked::of_literals),
             span: value_span(block),
             tail: tail(block),
-        }
-    }
-
-    /// The branch for `e`, an element of an array literal that joins as a branch does (see
-    /// `hinted_elements`).
-    pub(super) fn value_branch<'a>(&mut self, e: &'a ast::Expr) -> Branch<'a> {
-        let (rank, optional) = self.sibling_ranked(e);
-        Branch {
-            rank,
-            optional,
-            literal: rank == Rank::Literal,
-            span: e.span,
-            tail: Some(e),
         }
     }
 

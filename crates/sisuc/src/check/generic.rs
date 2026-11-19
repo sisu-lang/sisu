@@ -12,7 +12,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::{Through, Via};
 use super::array::innermost;
-use super::expr::{branch_join, gives_made_value, literal_type, option_written, read_jump};
+use super::expr::{gives_made_value, literal_type, nested_join, option_written, read_jump};
 use super::infer::{Kind, ObligationId, OpenCall};
 use super::interface::{Bound, Bounds, Required};
 use super::join::{Heading, JoinForm, JoinMember, Place, part_at, target};
@@ -2590,9 +2590,11 @@ impl Checker<'_> {
                 // An argument that does not fit its place, whatever type each parameter takes, is
                 // a mistake of its shape: it gets the directed report, as on main, and joins
                 // nothing. A nested join is tested by the join, leaf by leaf, and so is a call
-                // that waits with a held conflict.
-                let tested = value.as_mut().is_ok_and(|e| !self.holds_conflict(e))
-                    && !branch_join(&args[i].value);
+                // that waits with a held conflict. A nested join whose leaves decide nothing of
+                // `T` gives the join no type: it is tested here and waits as a member that is open.
+                let joins = nested_join(&args[i].value)
+                    && self.leaves_decide(value, param.subst(&with), name);
+                let tested = value.as_mut().is_ok_and(|e| !self.holds_conflict(e)) && !joins;
                 if !(split[i] && pending[i].is_empty() && !bound_early)
                     && tested
                     && !param.has_assoc()
@@ -2649,8 +2651,26 @@ impl Checker<'_> {
                             failed.get_or_insert(reported);
                             continue;
                         }
+                        // A nested join that decides nothing of `T` reports each leaf that does
+                        // not fit, as under a written type (`let x: [[i64?]] = [1]`).
+                        let origin = call.declarer.origin(i);
+                        // `T` is a hole there: the leaves are checked against what no type of
+                        // `T` changes, and the report shows `T` as `_`.
+                        with[t] = *HOLE;
+                        let shown_place =
+                            (self.table).default_open(self.table.resolve(param.subst(&with)));
+                        with[t] = param_t;
+                        if nested_join(&args[i].value)
+                            && let Ok(e) = value
+                            && let Some(reported) =
+                                self.report_misfit_leaves(e, shown_place, origin)
+                        {
+                            *value = Err(Poisoned::untyped(reported));
+                            failed.get_or_insert(reported);
+                            continue;
+                        }
                         // The report waits for the other members, which can give `T` its type.
-                        misfit_at.push((argument, ty, param, call.declarer.origin(i)));
+                        misfit_at.push((argument, ty, param, origin));
                         continue;
                     }
                 }
@@ -2676,7 +2696,7 @@ impl Checker<'_> {
                 // with a held conflict by its open form.
                 if let Some(ty) = type_of(value)
                     && ty != Type::NEVER
-                    && !branch_join(&args[i].value)
+                    && !joins
                     && !value.as_mut().is_ok_and(|e| self.holds_conflict(e))
                     && self.decides_nothing(ty, filled, var)
                 {
@@ -2725,10 +2745,23 @@ impl Checker<'_> {
             // Only a bound reads it. The resolve walks each member's whole type, which can name
             // each parameter of the call.
             let bounded = (sig.bounds.get(t - sig.owner.len())).is_some_and(|b| !b.list.is_empty());
+            // A nested join, as `[n]`, has an open type of its own until the join: its leaves
+            // tell whether it decides `t`.
             by_context[t] = bounded
                 && (!open.is_empty() || !members.is_empty())
-                && (members.iter()).all(|(_, m)| {
-                    type_of(m.value).is_some_and(|ty| self.table.resolve(ty).holds_infer())
+                && (members.iter_mut()).all(|(i, m)| {
+                    let ty = if nested_join(&args[*i].value) {
+                        let at = m.at;
+                        let member = JoinMember {
+                            value: &mut *m.value,
+                            at,
+                            label: m.label,
+                        };
+                        self.join_type(&mut [member], Some(name), None)
+                    } else {
+                        type_of(m.value)
+                    };
+                    ty.is_some_and(|ty| self.table.resolve(ty).holds_infer())
                 });
             if let [(i, member)] = members.as_slice()
                 && open.is_empty()
@@ -2868,6 +2901,29 @@ impl Checker<'_> {
                             let at = (t, var, sig.bounds.get(t - owned));
                             c.required_join(members, at, (ret, &with), want)
                         }
+                        // Under a hint, as under a required type, but only a part that the
+                        // members take: the hint is no mistake. The siblings' type first, as in
+                        // `hinted_join`. So the elements of `[1]` in `id([1])` take the `u8?` of a
+                        // hint `[u8?]`.
+                        (Expectation::Hint { want, siblings, .. }, Some(ret))
+                            if failed.is_none() =>
+                        {
+                            let at = (t, var, sig.bounds.get(t - owned));
+                            let mut takes =
+                                |want: Type| match c.required_join(members, at, (ret, &with), want)
+                                {
+                                    Expectation::Required(part, origin)
+                                        if c.join_type(members, Some(name), Some(part))
+                                            .is_some() =>
+                                    {
+                                        Some(Expectation::Required(part, origin))
+                                    }
+                                    _ => None,
+                                };
+                            takes(siblings)
+                                .or_else(|| takes(want))
+                                .unwrap_or(Expectation::Member)
+                        }
                         _ => Expectation::Member,
                     };
                 let mut expected_here = joined(self, &mut members);
@@ -2940,7 +2996,7 @@ impl Checker<'_> {
                         }
                         // A nested join knows only now whether its value is a valueless `if`.
                         for (m, &i) in members.iter_mut().zip(&of) {
-                            if branch_join(&args[i].value)
+                            if nested_join(&args[i].value)
                                 && let Some(reported) = self.refuse_settled_valueless(m.value)
                             {
                                 failed.get_or_insert(reported);
@@ -3347,12 +3403,7 @@ impl Checker<'_> {
         // `want` in its report, as on `main`.
         let wraps_top = matches!(want.kind(), TypeKind::Optional(_))
             && !members.is_empty()
-            && (members.iter()).all(|m| {
-                type_of(m.value).is_some_and(|ty| {
-                    let ty = self.table.resolve(ty);
-                    !matches!(ty.kind(), TypeKind::Infer(_)) && !ty.holds_optional()
-                })
-            });
+            && (members.iter()).all(|m| self.closed_plain(m, name));
         // An optional result never converts to a `want` that is not optional: no part of it
         // opens the call, and the closed form reports at the call, as on `main`.
         let unwrapped = matches!(shown.kind(), TypeKind::Optional(_))
@@ -3455,6 +3506,22 @@ impl Checker<'_> {
         } else {
             Expectation::Member
         }
+    }
+
+    /// Whether the member `m` of the parameter `name` gives it a type with a known head and no
+    /// optional. A member at a part of the parameter gives that part: an array `[X]` at `[T]`
+    /// gives the `X` that its elements join to.
+    fn closed_plain(&self, m: &JoinMember<'_>, name: Symbol) -> bool {
+        type_of(m.value).is_some_and(|ty| {
+            let ty = self.table.resolve(ty);
+            let ty = match m.at {
+                Place::Part { place, .. } => {
+                    part_at(self.table.resolve(place), name, ty).unwrap_or(ty)
+                }
+                Place::Whole | Place::Split { .. } => ty,
+            };
+            !matches!(ty.kind(), TypeKind::Infer(_)) && !ty.holds_optional()
+        })
     }
 
     /// Whether the closed form of the join of `members`, the members of the parameter `name`,
@@ -4088,10 +4155,11 @@ impl Checker<'_> {
     /// value has its own type, or a type that stays open where the join decides it: an integer
     /// literal, a `None`, a `[]`, a generic call or method call, a case of a generic enum
     /// (`Two.P(5, 7)`). An `if` or a `match` whose branches join is a nested join: its branches
-    /// are members. A value that is a join of its own does not yet. That is a loop, an array
-    /// literal with elements, an operator, a `??`, or an `if` or `match` whose branch gives one
-    /// (`gives_made_value`). It meets what the members decide (see `late_argument`). A call that
-    /// has such an argument does not either, as `Some(1 + 2)`. A block does when its value does.
+    /// are members, and so is an array, whose elements are members. A value that is a join of its
+    /// own does not yet. That is a loop, an operator, a `??`, or an `if` or `match` whose branch
+    /// gives one (`gives_made_value`). It meets what the members decide (see `late_argument`). A
+    /// call or an array that has such an argument or element does not either, as `Some(1 + 2)`.
+    /// A block does when its value does.
     ///
     /// A method call with no argument is closed, unless it waits for its context to pick among
     /// conformances (`Rank::Waits`). A method call that checks its receiver as a place is closed.
@@ -4102,7 +4170,13 @@ impl Checker<'_> {
     fn takes_member(&mut self, e: &ast::Expr, closed: bool) -> Option<Expectation> {
         use ast::ExprKind as K;
         match &e.kind {
-            K::ArrayLit(elements) => elements.is_empty().then_some(Expectation::Member),
+            // An array is a nested join, unless an element waits.
+            K::ArrayLit(elements) => (elements.iter())
+                .all(|e| self.takes_member(e, closed).is_some())
+                .then_some(Expectation::Member),
+            K::ArrayFill { value, .. } => self
+                .takes_member(value, closed)
+                .map(|_| Expectation::Member),
             K::Call { args, .. } => (args
                 .iter()
                 .all(|arg| self.takes_member(&arg.value, closed).is_some()))
@@ -4195,11 +4269,7 @@ impl Checker<'_> {
             | K::Match { .. } => (!closed && !gives_made_value(e)).then_some(Expectation::Member),
             // An `if` with no `else` is a `unit` member, which no optional lifts (E0043).
             K::If { .. } | K::IfLet { .. } => (!closed).then_some(Expectation::Member),
-            K::MethodCall { .. }
-            | K::Binary { .. }
-            | K::Coalesce { .. }
-            | K::ArrayFill { .. }
-            | K::Loop { .. } => None,
+            K::MethodCall { .. } | K::Binary { .. } | K::Coalesce { .. } | K::Loop { .. } => None,
             _ => Some(Expectation::Member),
         }
     }

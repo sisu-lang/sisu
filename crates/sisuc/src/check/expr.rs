@@ -1121,18 +1121,14 @@ pub(super) fn if_some(
     )
 }
 
-/// Whether `e` is a form that a join does not convert yet: an array literal with elements,
-/// `[v; n]`, an operator, a `??` or a loop. As a member, it is checked as a made value, with no
-/// type expected.
+/// Whether `e` is a form that a join does not convert yet: an operator, a `??` or a loop that a
+/// `break` leaves. As a member, it is checked as a made value, with no type expected. A loop that
+/// no `break` leaves never ends: it has no value, as a `return`.
 pub(super) fn made_value(e: &ast::Expr) -> bool {
-    match &e.kind {
-        ExprKind::ArrayLit(elements) => !elements.is_empty(),
-        ExprKind::ArrayFill { .. }
-        | ExprKind::Binary { .. }
-        | ExprKind::Coalesce { .. }
-        | ExprKind::Loop { .. } => true,
-        _ => false,
-    }
+    matches!(
+        e.kind,
+        ExprKind::Binary { .. } | ExprKind::Coalesce { .. } | ExprKind::Loop { breaks: true, .. }
+    )
 }
 
 /// Whether `e` holds a join of branches whose leaves the join around it settles: an `if` or an
@@ -1153,11 +1149,29 @@ pub(super) fn branch_join(e: &ast::Expr) -> bool {
     })
 }
 
-/// Whether `e` gives a made value (see `made_value`) at its value, or at an argument of a call in
-/// it. Its value is that of its block, branches and arms. A call with such an argument waits for
-/// its join, as the made value does (see `takes_member`). Then the branches of `e` join by the
-/// order of their ranks, not as members of one join (see `Checker::branches`). A `-` of a value
-/// that is not a literal counts too: in a branch it is not a member until Task 5d.
+/// Whether `e` holds a join whose leaves the join around it settles: a join of branches (see
+/// `branch_join`) or an array with elements, as `e` or as the value of a block, a `dbg` or a
+/// `Some`. Its type can leave open what its leaves decide, as `[None, Some(1)]` does.
+pub(super) fn nested_join(e: &ast::Expr) -> bool {
+    ensure_stack(|| match &e.kind {
+        ExprKind::ArrayLit(elements) => !elements.is_empty(),
+        ExprKind::ArrayFill { .. } => true,
+        ExprKind::Block(block) => super::tail(block).is_some_and(nested_join),
+        ExprKind::Call { callee, args, .. }
+            if callee.name.as_str() == "dbg" || callee.name == Symbol::SOME =>
+        {
+            matches!(args.as_slice(), [arg] if nested_join(&arg.value))
+        }
+        _ => branch_join(e),
+    })
+}
+
+/// Whether `e` gives a made value (see `made_value`) at its value, or at a call argument or an
+/// array element in it. Its value is that of its block, branches and arms. A call with
+/// such an argument waits for its join, as the made value does (see `takes_member`). The
+/// branches of `e` then join by the order of their ranks, not as members of one join (see
+/// `Checker::branches`). A `-` of a value that is not a literal counts too: in a branch it is not
+/// a member until Task 5d.
 pub(super) fn gives_made_value(e: &ast::Expr) -> bool {
     ensure_stack(|| {
         made_value(e)
@@ -1183,6 +1197,8 @@ pub(super) fn gives_made_value(e: &ast::Expr) -> bool {
                 ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. } => {
                     args.iter().any(|arg| gives_made_value(&arg.value))
                 }
+                ExprKind::ArrayLit(elements) => elements.iter().any(gives_made_value),
+                ExprKind::ArrayFill { value, .. } => gives_made_value(value),
                 _ => false,
             }
     })
@@ -1226,8 +1242,9 @@ impl Checker<'_> {
     }
 
     /// The span of the `if` without an `else` whose branch has a value, when `e` is one or gives
-    /// the value of one: through a block's value, a branch, an arm or a wrap. Such an `if` has no
-    /// value. Only a `unit` or a `unit?` can give one, so the walk stops at any other type. The
+    /// the value of one: through a block's value, a branch, an arm, a wrap or an element of an
+    /// array. Such an `if` has no value. Only a `unit`, a `unit?` or an array can give one, so the
+    /// walk stops at any other type. The
     /// second part says that the `if` is an `if let`. A nested join leaves an inference variable
     /// in its nodes, so each type is read through the table.
     pub(super) fn valueless(&self, e: &tir::Expr) -> Option<(Span, bool)> {
@@ -1248,9 +1265,18 @@ fn without_value(
     lifted: bool,
     resolve: &dyn Fn(Type) -> Type,
 ) -> Option<(Span, bool)> {
+    // An element is a value of its own: the join of a nested array settles it late, so the walk
+    // looks into the elements of an array of any type.
+    match &e.kind {
+        tir::ExprKind::ArrayLit(elements) => {
+            return (elements.iter()).find_map(|element| without_value(element, lifted, resolve));
+        }
+        tir::ExprKind::ArrayFill { value, .. } => return without_value(value, lifted, resolve),
+        _ => {}
+    }
     let ty = resolve(e.ty);
     let unit = ty == Type::UNIT;
-    if !unit && !optional_unit(ty) {
+    if !unit && !optional_unit(ty) && !matches!(ty.kind(), TypeKind::Array(_)) {
         return None;
     }
     // The tail of a `never` block is unreachable, so no code reads its value.
