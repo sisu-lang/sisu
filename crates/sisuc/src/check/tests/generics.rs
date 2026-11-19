@@ -1705,6 +1705,30 @@ fn the_part_at_a_parameter_should_be_found_in_linear_work_on_an_alias_chain() {
     assert_at_most_doubles(sixteen, steps(32));
 }
 
+/// GIVEN a generic call whose argument is an `if` or a `match` of a struct and `None`
+/// AND the call is under a written optional of an `any` type
+/// WHEN the program is checked
+/// THEN it is valid, as the `if` alone is: the branches convert to the written type (spec, the
+///   unify rule)
+#[test]
+fn a_branch_join_argument_under_a_written_optional_any_should_convert_as_its_branches() {
+    let decls = "interface Seen { fn seen(self) -> i64 }\nstruct Eye: Seen {\n    v: i64\n    \
+                 fn seen(self) -> i64 { self.v }\n}\nenum E { A; B }\nfn id<T>(x: T) -> T { x }\n\
+                 fn tso(x: (any Seen)?) -> i64 { if let Some(s) = x { s.seen() } else { 0 - 1 } }\n";
+    for row in [
+        "dbg(tso(id(if c { Eye(v: 2) } else { None })))",
+        "dbg(tso(id(if c { None } else { Eye(v: 2) })))",
+        "let x: (any Seen)? = id(if c { Eye(v: 2) } else { None })",
+        "dbg(tso(id(match e { E.A => Eye(v: 2); _ => None })))",
+        "dbg(tso(id(id(if c { Eye(v: 2) } else { None }))))",
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let c = [1].len() == 2\n    let e = E.B\n    {row}\n}}"
+        );
+        clean_row(row, &src);
+    }
+}
+
 /// GIVEN a constructor with `n` type parameters under a written type, called with literals and
 ///   with arrays of literals
 /// WHEN the program is checked
