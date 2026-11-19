@@ -2,9 +2,7 @@ error[E0032]: the branches of this `if` have different types
  --> E0032-if-literal-group.sisu:3:13
   |
 3 |     let x = if c { 1 } else { "s" }
-  |             ^^     -          --- `string`
-  |                    |
-  |                    `i64`
+  |             ^^     - `i64`    --- `string`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

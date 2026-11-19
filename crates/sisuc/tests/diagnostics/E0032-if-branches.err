@@ -2,9 +2,7 @@ error[E0032]: the branches of this `if` have different types
  --> E0032-if-branches.sisu:5:13
   |
 5 |     let x = if c { a } else { b }
-  |             ^^     -          - `i64`
-  |                    |
-  |                    `u8`
+  |             ^^     - `u8`     - `i64`
   |
 help: if the types are right, convert it with `i64(...)`
   |

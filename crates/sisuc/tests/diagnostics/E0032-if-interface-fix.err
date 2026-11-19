@@ -2,9 +2,7 @@ error[E0032]: the branches of this `if` have different types
   --> E0032-if-interface-fix.sisu:17:13
    |
 17 |     let x = if c { Eye(v: 1) } else { Lid(v: 2) }
-   |             ^^     ---------          --------- `Lid`
-   |                    |
-   |                    `Eye`
+   |             ^^     --------- `Eye`    --------- `Lid`
    |
 help: if the values should share the type `any Seen`, write it
    |

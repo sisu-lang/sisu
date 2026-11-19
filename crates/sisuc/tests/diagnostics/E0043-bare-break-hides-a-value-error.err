@@ -18,13 +18,11 @@ error[E0032]: expected `string`, found `u8`
 5 |     let x: string = loop { if c { break }; if d { break a }; break a }
   |            ------ declared as `string` here                        ^
 
-error[E0032]: expected `i64`, found `string`
- --> E0043-bare-break-hides-a-value-error.sisu:7:60
+error[E0032]: the branches of this `if` have different types
+ --> E0043-bare-break-hides-a-value-error.sisu:7:42
   |
 7 |     let y = loop { if c { break }; break if d { 1 } else { "s" } }
-  |                                                 -          ^^^
-  |                                                 |
-  |                                                 this branch gives the type `i64`
+  |                                          ^^     - `i64`    --- `string`
 
 sisu: 4 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032, E0043

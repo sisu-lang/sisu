@@ -326,5 +326,5 @@ fn parenthesised_sum_plus_char(c: char) { let z = (id(mk2()) + 1) + c }
 fn call_plus_char(c: char) { let z = id(mk2()) + c }
 fn negated_sum_less_char(c: char) { let z = -(id(mk2()) + 1) < c }
 
-// interim: Tasks 5b, 5c and 5d give the E0050 reports of main on some rows. These rows hold
-// operators, `??`, `if`, `match` and arrays (task 5a run 4b, C3).
+// interim: Tasks 5c and 5d give the E0050 reports of main on some rows. These rows hold
+// operators, `??` and arrays (task 5a run 4b, C3). An `if` with no shared type reports E0032.

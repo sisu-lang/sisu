@@ -14,21 +14,17 @@ error[E0032]: expected `i64`, found `None`
 17 |         break { None }
    |                 ^^^^
 
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-break.sisu:24:36
+error[E0032]: the branches of this `if` have different types
+  --> E0032-origin-break.sisu:24:15
    |
-23 |         if true { break 1 }
-   |                   ------- this `break` gave the loop the type `i64`
 24 |         break if true { 1 } else { "x" }
-   |                                    ^^^
+   |               ^^        - `i64`    --- `string`
 
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-break.sisu:31:22
+error[E0032]: the branches of this `if` have different types
+  --> E0032-origin-break.sisu:31:15
    |
-30 |         if c { break 1 }
-   |                ------- this `break` gave the loop the type `i64`
 31 |         break if d { "x" } else { 2 }
-   |                      ^^^
+   |               ^^     --- `string` - `i64`
 
 error[E0032]: expected `i64`, found `[]`
   --> E0032-origin-break.sisu:38:22

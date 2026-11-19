@@ -98,13 +98,27 @@ impl Checker<'_> {
         members: &mut [JoinMember<'_>],
         conflict: &Conflict,
     ) -> Reported {
-        let unit = (conflict.groups.iter()).any(|group| group.ty == Type::UNIT);
-        let beside = (conflict.groups.iter()).any(|group| group.ty != Type::UNIT)
-            || !conflict.parts.is_empty();
+        // A part is a `unit` too where an `if` with no `else` meets a `T?` (`k(1, if c { g() })`).
+        let types = (conflict.groups.iter().map(|group| group.ty))
+            .chain(conflict.parts.iter().map(|&(_, ty)| ty));
+        let (units, others): (Vec<Type>, Vec<Type>) = types.partition(|&ty| ty == Type::UNIT);
+        let (unit, beside) = (!units.is_empty(), !others.is_empty());
         if unit && beside {
+            // A `unit` leaf should give the one type of the other groups, and at a `T?` an
+            // optional (see `unit_cause`).
+            let optional = |ty: Type| matches!(ty.kind(), TypeKind::Optional(_));
+            let mut known = (others.iter()).map(|&ty| self.table.default_open(ty));
+            let first = known.next();
+            let beside = first.filter(|&one| known.all(|ty| ty == one));
             let mut units = Vec::new();
             for member in members.iter_mut() {
-                self.member_units(member, None, &mut units);
+                let want = match member.at {
+                    Place::Part { place, .. } => {
+                        Some(self.table.resolve(place)).filter(|&ty| optional(ty))
+                    }
+                    _ => None,
+                };
+                self.member_units(member, want.or(beside), &mut units);
             }
             return self.no_values(units, site.heading.head);
         }

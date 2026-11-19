@@ -30,13 +30,11 @@ error[E0050]: cannot infer `V` for `id`
    |
    = help: annotate the result, or write the type: `id<...>(...)`
 
-error[E0050]: cannot infer `V` for `id`
-  --> E0050-generic-hint.sisu:16:29
+error[E0032]: the branches of this `if` have different types
+  --> E0050-generic-hint.sisu:16:11
    |
 16 |     print(if c { 1 } else { id(id(mk2())) })
-   |                             ^^
-   |
-   = help: annotate the result, or write the type: `id<...>(...)`
+   |           ^^     - `i64`    ------------- `Two<_, bool>`
 
 error[E0050]: cannot infer `V` for `id`
   --> E0050-generic-hint.sisu:21:26
@@ -290,13 +288,11 @@ error[E0032]: expected `string`, found `bool`
    |            |
    |            declared as `string` here
 
-error[E0050]: cannot infer `V` for `id`
-  --> E0050-generic-hint.sisu:76:31
+error[E0032]: the branches of this `if` have different types
+  --> E0050-generic-hint.sisu:76:13
    |
 76 |     let z = if c { 1 } else { id(mk2()) }
-   |                               ^^
-   |
-   = help: annotate the result, or write the type: `id<...>(...)`
+   |             ^^     - `i64`    --------- `Two<_, bool>`
 
 error[E0032]: expected `i64`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:79:51

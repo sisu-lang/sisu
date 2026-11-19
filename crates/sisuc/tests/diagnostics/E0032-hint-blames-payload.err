@@ -4,13 +4,16 @@ error[E0032]: expected `u8`, found `i64`
 12 |     print(b == first(ys))
    |                ^^^^^^^^^
 
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-blames-payload.sisu:19:29
+error[E0032]: the branches of this `if` have different types
+  --> E0032-hint-blames-payload.sisu:19:11
    |
 19 |     print(if c { b } else { first(ys) })
-   |                  -          ^^^^^^^^^
-   |                  |
-   |                  this branch gives the type `u8`
+   |           ^^     - `u8`     --------- `i64`
+   |
+help: if the types are right, convert it with `i64(...)`
+   |
+19 |     print(if c { i64(b) } else { first(ys) })
+   |                  ++++ +
 
 error[E0032]: expected `u8`, found `i64`
   --> E0032-hint-blames-payload.sisu:25:16
@@ -46,13 +49,16 @@ error[E0032]: expected `u8`, found `i64`
 48 |     let x = v != first(ys)
    |                  ^^^^^^^^^
 
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-blames-payload.sisu:56:36
+error[E0032]: the arms of this `match` have different types
+  --> E0032-hint-blames-payload.sisu:56:13
    |
 56 |     let x = match k { 0 => v; _ => first(ys) }
-   |                            -       ^^^^^^^^^
-   |                            |
-   |                            this branch gives the type `u8`
+   |             ^^^^^          - `u8`  --------- `i64`
+   |
+help: if the types are right, convert it with `i64(...)`
+   |
+56 |     let x = match k { 0 => i64(v); _ => first(ys) }
+   |                            ++++ +
 
 error[E0032]: expected `u8`, found `i64`
   --> E0032-hint-blames-payload.sisu:69:18

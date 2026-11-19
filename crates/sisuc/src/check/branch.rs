@@ -487,7 +487,10 @@ impl Checker<'_> {
         else {
             return expected;
         };
-        if self.join_type(members, None, None).is_some() {
+        // A join with no member that has a value takes no type from a hint: it is untyped
+        // (ADR 0049).
+        let valued = |m: &JoinMember<'_>| m.ty().is_some_and(|ty| ty != Type::NEVER);
+        if !members.iter().any(valued) || self.join_type(members, None, None).is_some() {
             return Expectation::None;
         }
         [siblings, want]

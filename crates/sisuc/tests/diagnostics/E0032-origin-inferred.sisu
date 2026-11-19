@@ -4,9 +4,9 @@
 // WHEN `sisu check` runs on it
 // THEN each E0032 says which earlier value gave its required type
 // AND an inferred array names its first element of the type in the message
-// AND a join names its first branch of the type in the message, also when a later branch makes
-// the join optional
-// AND a value that reads the hint of a join names the branch that gave the hint
+// AND an operand in a branch names the branch that gave its type (line 38)
+// AND an `if` or a `match` whose branches have no shared type reports at its head, with a label
+// at each group (ADR 0052)
 // AND a generic call names the argument that bound the type parameter
 // AND an element of an array argument binds for the whole argument
 // AND a literal, `None` or `[]` that took its type from a later sibling is not the origin

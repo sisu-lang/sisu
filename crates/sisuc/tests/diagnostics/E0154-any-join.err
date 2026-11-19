@@ -1,10 +1,8 @@
-error[E0154]: `D` does not conform to `Sh`
-  --> E0154-any-join.sisu:21:32
+error[E0032]: the branches of this `if` have different types
+  --> E0154-any-join.sisu:21:14
    |
 21 |     let _a = if c { s } else { D() }
-   |                     -          ^^^
-   |                     |
-   |                     this branch gives the type `any Sh`
+   |              ^^     - `any Sh` --- `D`
 
 error[E0154]: `D` does not conform to `Sh`
   --> E0154-any-join.sisu:22:18
@@ -23,4 +21,4 @@ error[E0154]: `D` does not conform to `Sh`
    |                            this `break` gave the loop the type `any Sh`
 
 sisu: 3 errors
-sisu: for more on a code, run `sisu explain <code>`: E0154
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0154

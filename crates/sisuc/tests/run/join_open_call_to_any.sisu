@@ -15,7 +15,7 @@ struct Lid: Seen {
     fn seen(self) -> i64 { self.v }
 }
 
-fn pick<T>(a: T, b: T) -> T { a }
+fn pick<T>(a: T, _b: T) -> T { a }
 
 fn main() {
     let c = [1].len() == 2

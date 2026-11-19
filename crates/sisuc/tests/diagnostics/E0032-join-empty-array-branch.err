@@ -1,8 +1,8 @@
-error[E0032]: expected `i64`, found `[]`
- --> E0032-join-empty-array-branch.sisu:3:20
+error[E0032]: the branches of this `if` have different types
+ --> E0032-join-empty-array-branch.sisu:3:13
   |
 3 |     let x = if c { [] } else { 1 }
-  |                    ^^          - this branch gives the type `i64`
+  |             ^^     -- `[]`     - `i64`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

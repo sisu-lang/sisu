@@ -76,7 +76,7 @@ impl JoinMember<'_> {
 
 /// The form of a join, which its report names.
 #[derive(Clone, Copy)]
-#[expect(dead_code, reason = "the forms come in Task 5")]
+#[expect(dead_code, reason = "the other forms come in Task 5c and later")]
 pub(super) enum JoinForm {
     If,
     Match,

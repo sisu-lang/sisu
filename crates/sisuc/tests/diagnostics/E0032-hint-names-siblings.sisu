@@ -104,5 +104,5 @@ fn equal_to_loop_with_optional() {
 
 fn main() {}
 
-// interim: Tasks 5b and 5d give the places of main on lines 37 and 74.
+// interim: Task 5d gives the place of main on line 74.
 // valid: the spec gives `id(loop { break 1 })` under `u8` no error (lines 15 and 60).
