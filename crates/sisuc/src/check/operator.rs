@@ -525,6 +525,8 @@ impl Checker<'_> {
                 param || unordered(self, ty)
             });
             if let Some(param) = lacking {
+                // An operand that rejected the leader's type inside it is the first mistake.
+                mismatched |= matches!(value, Err(Poisoned { mismatch: true, .. }));
                 let reported = match lacks {
                     Some(reported) => reported,
                     None if arithmetic => self.param_lacks(e.span, param, op(i)),

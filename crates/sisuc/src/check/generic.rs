@@ -4052,7 +4052,8 @@ impl Checker<'_> {
                 }
                 found
             }
-            // A branch join is a nested join, unless a branch gives a form that waits.
+            // A branch join is a nested join, unless a branch gives a form that waits. At a place
+            // that names two decided parameters it waits, as a call there is closed (Q28).
             K::If {
                 else_block: Some(_),
                 ..
@@ -4061,7 +4062,7 @@ impl Checker<'_> {
                 else_block: Some(_),
                 ..
             }
-            | K::Match { .. } => (!gives_made_value(e)).then_some(Expectation::Member),
+            | K::Match { .. } => (!closed && !gives_made_value(e)).then_some(Expectation::Member),
             K::MethodCall { .. }
             | K::Binary { .. }
             | K::Coalesce { .. }

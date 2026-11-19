@@ -210,8 +210,14 @@ impl Checker<'_> {
             c.body.dropped = dropped.then_some(else_block.span);
             c.block(else_block, branch_expectation(expected, tail(else_block)))
         });
+        // The parentheses around an `if` are part of its span (see the parser), not of its head.
+        let text = self.source.text(span);
+        let parens = text.len()
+            - text
+                .trim_start_matches(|c: char| c == '(' || c.is_whitespace())
+                .len();
         let heading = Heading {
-            head: Span::new(span.start(), span.start() + "if".len()),
+            head: Span::new(span.start() + parens, span.start() + parens + "if".len()),
             whole: span,
             returns: None,
         };
@@ -276,8 +282,14 @@ impl Checker<'_> {
     ) -> (Vec<CheckedBlock>, Result<Type, Poisoned>) {
         let mut values: Vec<Checked> = (blocks.into_iter().zip(spans))
             .map(|(block, &at)| {
-                block.map(|block| {
+                block.map(|mut block| {
                     let ty = block.ty;
+                    // A nested branch with no value keeps where it ends, so that the join around
+                    // it reports its `unit` there, not at the whole `if`.
+                    if expected == Expectation::Member && block.value.is_none() && ty == Type::UNIT
+                    {
+                        block.value = Some(Box::new(tir::Expr::new(tir::ExprKind::Unit, ty, at)));
+                    }
                     tir::Expr::new(tir::ExprKind::Block(block), ty, at)
                 })
             })
@@ -297,7 +309,9 @@ impl Checker<'_> {
         } else {
             let mut members = whole_members(&mut values, spans);
             let expected = match expected {
-                Expectation::Required(want, _) if self.lifted_whole(&members, want) => {
+                Expectation::Required(want, _)
+                    if self.lifted_whole(&members, want) || self.unit_whole(&members, want) =>
+                {
                     Expectation::None
                 }
                 _ => self.hinted_join(&mut members, expected),
@@ -363,6 +377,15 @@ impl Checker<'_> {
             return false;
         };
         own != want && fits(want, own) && types.all(|ty| ty == own)
+    }
+
+    /// Whether each of `members` is `unit` or `never`, one at least `unit`, and `want` takes no
+    /// `unit`. Then the context reports the whole join once, with the cause of its `unit`.
+    fn unit_whole(&self, members: &[JoinMember<'_>], want: Type) -> bool {
+        let mut types = (members.iter()).map(|m| m.ty().map(|ty| self.table.resolve(ty)));
+        !takes_unit(want)
+            && types.all(|ty| matches!(ty, Some(Type::UNIT | Type::NEVER)))
+            && (members.iter()).any(|m| m.ty().map(|ty| self.table.resolve(ty)) == Some(Type::UNIT))
     }
 
     /// The expectation that the join of `members` under `expected` takes. Under a hint it is no
