@@ -2455,6 +2455,8 @@ impl Checker<'_> {
         // finds them, at the first join that needs them: a walk of the whole result for each
         // parameter, as in `required_join`, makes a call quadratic in its parameters.
         let mut want_parts: Option<FxHashMap<Symbol, Type>> = None;
+        // The same for the two types of a hint: the siblings' type and the hint.
+        let mut hint_parts: [Option<FxHashMap<Symbol, Type>>; 2] = [None, None];
         // The one member of a parameter's join, when it has one, which a mismatch of the result
         // names (see `close_call`): its parameter, its span, its type, and its parameter type.
         let mut lone = Vec::new();
@@ -2888,11 +2890,7 @@ impl Checker<'_> {
                             // A closed form that takes the part of `want` converts, as
                             // `required_join` finds by a walk of the whole result. The
                             // declared result has each parameter at the place of `with`.
-                            let parts = want_parts.get_or_insert_with(|| {
-                                let mut parts = FxHashMap::default();
-                                parts_at(ret, c.table.resolve(want), &mut parts);
-                                parts
-                            });
+                            let parts = want_parts.get_or_insert_with(|| c.result_parts(ret, want));
                             if let Some(&part) = parts.get(&name)
                                 && c.closed_takes(members, name, part)
                             {
@@ -2909,9 +2907,17 @@ impl Checker<'_> {
                             if failed.is_none() =>
                         {
                             let at = (t, var, sig.bounds.get(t - owned));
-                            let mut takes =
-                                |want: Type| match c.required_join(members, at, (ret, &with), want)
+                            let [sibling_parts, want_parts] = &mut hint_parts;
+                            let mut takes = |want: Type, parts: &mut Option<_>| {
+                                // A closed form that takes the part of the hint needs no walk
+                                // of the whole result, as under `Required`.
+                                let parts = parts.get_or_insert_with(|| c.result_parts(ret, want));
+                                if let Some(&part) = parts.get(&name)
+                                    && c.closed_takes(members, name, part)
                                 {
+                                    return None;
+                                }
+                                match c.required_join(members, at, (ret, &with), want) {
                                     Expectation::Required(part, origin)
                                         if c.join_type(members, Some(name), Some(part))
                                             .is_some() =>
@@ -2919,9 +2925,10 @@ impl Checker<'_> {
                                         Some(Expectation::Required(part, origin))
                                     }
                                     _ => None,
-                                };
-                            takes(siblings)
-                                .or_else(|| takes(want))
+                                }
+                            };
+                            takes(siblings, sibling_parts)
+                                .or_else(|| takes(want, want_parts))
                                 .unwrap_or(Expectation::Member)
                         }
                         _ => Expectation::Member,
@@ -3524,6 +3531,21 @@ impl Checker<'_> {
             };
             !matches!(ty.kind(), TypeKind::Infer(_)) && !ty.holds_optional()
         })
+    }
+
+    /// The part of `want` at the place of each parameter in the declared result `ret`, as
+    /// `required_join` finds it: a result that is not optional meets the payload of an optional
+    /// `want` too.
+    fn result_parts(&self, ret: Type, want: Type) -> FxHashMap<Symbol, Type> {
+        let want = self.table.resolve(want);
+        let mut parts = FxHashMap::default();
+        parts_at(ret, want, &mut parts);
+        if let TypeKind::Optional(inner) = want.kind()
+            && !matches!(ret.kind(), TypeKind::Optional(_))
+        {
+            parts_at(ret, inner, &mut parts);
+        }
+        parts
     }
 
     /// Whether the closed form of the join of `members` (the members of the parameter `name`) is
