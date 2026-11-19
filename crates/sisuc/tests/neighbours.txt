@@ -429,6 +429,11 @@ self
 olp()
 # An optional of a type parameter bound by `Km`, which requires `mut self`.
 w
+# Values that end in an open range, which can end an expression but not a line: a line break after
+# `..` or `..=` does not end the statement (`can_end_statement`, `lexer/mod.rs`). A rule about what
+# ends an arm or a statement gets a probe for each.
+1..
+1..=
 
 [failed values]
 # A type parameter read: in the function whose bound failed, `u` is unknown.
