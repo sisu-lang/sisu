@@ -2370,10 +2370,8 @@ impl Checker<'_> {
                 call.slots[i] = slot;
             }
         }
-        if let Expectation::Required(want, _) | Expectation::Hint { want, .. } = expected
-            && !call.mut_shapes.is_empty()
-        {
-            self.mut_against_context(&mut call, sig, named, want);
+        if !call.mut_shapes.is_empty() {
+            self.mut_against_context(&mut call, sig, named, expected);
         }
         // The arguments that the `mut` loop checked as places, which join nothing.
         let placed: Vec<bool> = call.slots.iter().map(Option::is_some).collect();
@@ -4791,24 +4789,26 @@ impl Checker<'_> {
         })
     }
 
-    /// The `mut` places of `call` against `want`, the call's required type, before the other
-    /// arguments. A place binds the parameters that its parameter names (see `infer_call`): that
-    /// is the closed form. When its result does not convert to `want`, the call is open at
-    /// `want`, and a place is no member of the open form (Q19). So each parameter that a place
-    /// binds, and that the call does not write, takes the type that `want` makes of it. The
-    /// payload of an optional comes first, as `meet_context` meets it at the top. Each place that
-    /// does not have the type of its parameter then gets E0170, and the other arguments meet the
-    /// types that `want` gave. Nothing changes when a place failed already, or when `want` does
-    /// not decide the type of each place. `named` is the count of the type arguments that the
-    /// call writes.
+    /// The `mut` places of `call` against `want`, the type of `expected`, before the other
+    /// arguments. A place binds the parameters that its parameter names (see `infer_call`): that is
+    /// the closed form. When its result does not convert to `want`, the call is open at `want`, and
+    /// a place is no member of the open form (Q19). So each parameter that a place binds, and that
+    /// the call does not write, takes the type that `want` makes of it. As in `meet_context`, a
+    /// required optional comes whole first, and a hint's payload first. Each place that does not
+    /// have the type of its parameter then gets E0170, and the other arguments meet the types that
+    /// `want` gave. Nothing changes when a place failed already, or when `want` does not decide the
+    /// type of each place. `named` is the count of the type arguments that the call writes.
     fn mut_against_context(
         &mut self,
         call: &mut Inference<'_>,
         sig: &GenericSig<'_>,
         named: usize,
-        want: Type,
+        expected: Expectation,
     ) {
         let (Some(site), Some(ret)) = (sig.mut_site, sig.ret) else {
+            return;
+        };
+        let (Expectation::Required(want, _) | Expectation::Hint { want, .. }) = expected else {
             return;
         };
         let held = |i: usize| call.mut_shapes.iter().any(|&(k, _)| k == i);
@@ -4843,11 +4843,17 @@ impl Checker<'_> {
             }
         }
         let ret = ret.subst(&with);
-        let payload_first = self.table.snapshot();
-        let mut meets = self.unify(ret, payload(want));
-        if !meets && matches!(want.kind(), TypeKind::Optional(_)) {
-            self.table.rollback(payload_first);
-            meets = self.unify(ret, want);
+        // Unify before wrap, as `meet_context` does: under a required type the places take the
+        // whole type first. A hint meets its payload first (Task 5c).
+        let (first, then) = match expected {
+            Expectation::Required(..) => (want, payload(want)),
+            _ => (payload(want), want),
+        };
+        let snapshot_first = self.table.snapshot();
+        let mut meets = self.unify(ret, first);
+        if !meets && first != then {
+            self.table.rollback(snapshot_first);
+            meets = self.unify(ret, then);
         }
         let wants: Vec<Option<Type>> = (call.mut_shapes.iter())
             .map(|&(i, _)| {
