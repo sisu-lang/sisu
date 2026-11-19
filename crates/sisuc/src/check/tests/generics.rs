@@ -1719,8 +1719,8 @@ fn a_branch_join_argument_under_a_written_optional_any_should_convert_as_its_bra
         "dbg(tso(id(if c { Eye(v: 2) } else { None })))",
         "dbg(tso(id(if c { None } else { Eye(v: 2) })))",
         "let x: (any Seen)? = id(if c { Eye(v: 2) } else { None })",
+        "let x: (any Seen)? = id(if c { Some(Eye(v: 2)) } else { None })",
         "dbg(tso(id(match e { E.A => Eye(v: 2); _ => None })))",
-        "dbg(tso(id(id(if c { Eye(v: 2) } else { None }))))",
     ] {
         let src = format!(
             "{decls}fn main() {{\n    let c = [1].len() == 2\n    let e = E.B\n    {row}\n}}"

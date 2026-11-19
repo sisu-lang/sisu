@@ -3524,18 +3524,18 @@ impl Checker<'_> {
         })
     }
 
-    /// Whether the closed form of the join of `members`, the members of the parameter `name`,
-    /// takes `part` as it is. Each member must also convert to it, as in `required_join`.
+    /// Whether the closed form of the join of `members` (the members of the parameter `name`) is
+    /// `part`. Each member converts to it first, as in `required_join`. The members bind the
+    /// closed form first: `part` must not bind what they leave open, as the `?x` of `?x?`.
     fn closed_takes(&mut self, members: &mut [JoinMember<'_>], name: Symbol, part: Type) -> bool {
         let Some(ty) = self.join_type(members, Some(name), None) else {
             return false;
         };
         let snapshot = self.table.snapshot();
-        let takes = self.unify(ty, part)
-            && (members.iter_mut()).all(|m| {
-                let target = target(m.at, Some(name), part);
-                self.member_converts(m, target, false).is_some()
-            });
+        let takes = (members.iter_mut()).all(|m| {
+            let target = target(m.at, Some(name), ty);
+            self.member_converts(m, target, false).is_some()
+        }) && self.unify(ty, part);
         self.table.rollback(snapshot);
         takes
     }
