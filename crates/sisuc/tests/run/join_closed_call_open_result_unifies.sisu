@@ -1,0 +1,30 @@
+// GIVEN a generic call under a required nested optional, as `id(None)` under `i64??`
+// AND its arguments decide its type parameter as an optional with an open payload
+// WHEN the program runs
+// THEN the result unifies with the required type and takes no wrap
+// AND the value is the outer `None`, as on `main`, also in a branch of an `if` under that type
+fn id<T>(x: T) -> T { x }
+fn pair<T>(a: T, _b: T) -> T { a }
+
+fn main() {
+    let a: i64?? = id(None)
+    print(a == None) // true
+    let b: i64?? = pair(None, None)
+    print(b == None) // true
+    let e: i64??? = id(None)
+    print(e == None) // true
+    let o2: i64?? = Some(Some(2))
+    let c = [1].len() == 2
+    let x7: i64?? = id(None)
+    print(x7 == None) // true
+    let x8: i64?? = if c { Some(Some(1)) } else { id(None) }
+    print(x8 == None) // true
+    let x9: i64?? = if c { id(None) } else { id(None) }
+    print(x9 == None) // true
+    let xa: i64?? = if c { o2 } else { None }
+    print(xa == None) // true
+    let xb = if c { o2 } else { None }
+    print(xb == None) // true
+    let xc: i64?? = if c { o2 } else { id(None) }
+    print(xc == None) // true
+}

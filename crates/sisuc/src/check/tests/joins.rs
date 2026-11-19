@@ -2100,3 +2100,31 @@ fn two_wraps_through_a_part_should_report_at_the_call() {
         ),
     ]);
 }
+
+#[test]
+fn closed_call_with_an_open_result_should_unify_before_it_wraps() {
+    // GIVEN a generic call under a required nested optional, whose arguments decide its type
+    //       parameter as an optional with an open payload
+    // WHEN it is checked
+    // THEN its result unifies with the required type: the call takes that type and no `Wrap`
+    for (line, call) in [
+        ("let x: i64?? = id(None)", "(let x#0 (call id<i64??> None))"),
+        (
+            "let x: i64??? = id(None)",
+            "(let x#0 (call id<i64???> None))",
+        ),
+        (
+            "let x: i64?? = pair(None, None)",
+            "(let x#0 (call pair<i64??> None None))",
+        ),
+    ] {
+        let src = format!(
+            "fn id<T>(x: T) -> T {{ x }}\nfn pair<T>(a: T, _b: T) -> T {{ a }}\nfn main() {{\n    {line}\n    print(x == None)\n}}\n"
+        );
+        let (program, ds) = checked_with(PRELUDE_SOURCE, &src);
+        let found = errors(&src, &ds);
+        assert!(found.is_empty(), "{line}: {found:?}");
+        let printed = program.expect("no errors").to_string();
+        assert!(printed.contains(call), "{line}: {call} in {printed}");
+    }
+}
