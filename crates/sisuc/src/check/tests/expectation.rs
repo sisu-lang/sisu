@@ -23,37 +23,38 @@ fn program(stmt: &str) -> String {
 const FAILED_LET: Wanted = (UnknownType, (4, 13));
 const GET: Wanted = (Mismatch, (4, 15));
 /// The `[]` of `IF` is an `[Any]` member (spec, Kinds). So the `if` joins a `string` with an
-/// array, which is a true conflict at its head (ADR 0052), also in a failed context. A context
-/// that the `if` then fails waits.
-const IF_HEAD: (usize, usize) = (4, 16);
+/// array, which is a true conflict, also in a failed context. The `if` is a nested join of the
+/// array, so the array reports it at its head (ADR 0052). A context that the array then fails
+/// waits.
+const ARRAY_HEAD: (usize, usize) = (4, 15);
 
 /// GIVEN an array whose context failed, and a later element or branch that does not fit
 /// WHEN the program is checked
 /// THEN it reports the failure, and an element that does not fit an earlier element,
 /// AND a mistake inside a later loop waits for the next run
-/// AND an `if` that joins a `string` with a `[]` reports its own conflict
+/// AND an `if` that joins a `string` with a `[]` is reported at the head of its array
 #[test]
 fn a_later_mistake_in_a_failed_array_should_wait() {
     let rows: Vec<ErrorRow<'_>> = vec![
         (
             "arg if",
             format!("\"abc\".get([{IF}])"),
-            vec![(Mismatch, IF_HEAD)],
+            vec![(Mismatch, ARRAY_HEAD)],
         ),
         (
             "arg if let",
             format!("\"abc\".get([{IFLET}])"),
-            vec![(Mismatch, IF_HEAD)],
+            vec![(Mismatch, ARRAY_HEAD)],
         ),
         (
             "let if",
             format!("let _x: Missing = [{IF}]"),
-            vec![FAILED_LET, (Mismatch, (4, 24))],
+            vec![FAILED_LET, (Mismatch, (4, 23))],
         ),
         (
             "let if let",
             format!("let _x: Missing = [{IFLET}]"),
-            vec![FAILED_LET, (Mismatch, (4, 24))],
+            vec![FAILED_LET, (Mismatch, (4, 23))],
         ),
         (
             "let loop empty",
@@ -73,12 +74,12 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
         (
             "second if",
             format!("let _x: Missing = [1, {IF}]"),
-            vec![FAILED_LET, (Mismatch, (4, 27))],
+            vec![FAILED_LET, (Mismatch, (4, 23))],
         ),
         (
             "second if let",
             format!("let _x: Missing = [1, {IFLET}]"),
-            vec![FAILED_LET, (Mismatch, (4, 27))],
+            vec![FAILED_LET, (Mismatch, (4, 23))],
         ),
         (
             "second loop empty",
@@ -98,12 +99,12 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
         (
             "operand if",
             format!("print(missing + [{IF}])"),
-            vec![(BindingNotFound, (4, 11)), (Mismatch, (4, 22))],
+            vec![(BindingNotFound, (4, 11)), (Mismatch, (4, 21))],
         ),
         (
             "operand if let",
             format!("print(missing + [{IFLET}])"),
-            vec![(BindingNotFound, (4, 11)), (Mismatch, (4, 22))],
+            vec![(BindingNotFound, (4, 11)), (Mismatch, (4, 21))],
         ),
         (
             "operand loop empty",
@@ -135,10 +136,11 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
 }
 
 /// GIVEN an array whose context failed, and a `loop` element
-/// AND a mismatch between its `break` values, between the elements, or between the branches of
-/// an `if` that holds it
+/// AND a mismatch between its `break` values, between the loop and the elements, or between the
+/// branches of an `if` that holds it
 /// WHEN the program is checked
 /// THEN it reports the failure only, and the mismatch waits for the next run
+/// AND a mismatch between two elements that are no loop is reported, as with no loop
 #[test]
 fn a_mismatch_with_a_loop_in_a_failed_array_should_wait() {
     let rows: Vec<ErrorRow<'_>> = vec![
@@ -160,7 +162,7 @@ fn a_mismatch_with_a_loop_in_a_failed_array_should_wait() {
         (
             "bool then loop",
             "let _x: Missing = [1, true, loop { break 2 }]".to_string(),
-            vec![FAILED_LET],
+            vec![FAILED_LET, (Mismatch, (4, 23))],
         ),
     ]
     .into_iter()
@@ -171,13 +173,13 @@ fn a_mismatch_with_a_loop_in_a_failed_array_should_wait() {
 
 /// GIVEN an array whose context failed, and an element that is a branch of arrays
 /// WHEN the branches do not join
-/// THEN the mismatch is at the whole branch
+/// THEN the mismatch is at the head of the outer array: the branch is a nested join (ADR 0052)
 #[test]
-fn a_nested_branch_mismatch_in_a_failed_array_should_be_at_the_whole_branch() {
+fn a_nested_branch_mismatch_in_a_failed_array_should_be_at_the_outer_array() {
     let rows = [(
         "nested if",
         program("let _x: Missing = [if c { [1] } else { [\"a\"] }]"),
-        vec![FAILED_LET, (Mismatch, (4, 44))],
+        vec![FAILED_LET, (Mismatch, (4, 23))],
     )];
     error_rows(&rows);
 }
@@ -188,9 +190,9 @@ fn a_nested_branch_mismatch_in_a_failed_array_should_be_at_the_whole_branch() {
 #[test]
 fn an_array_that_did_not_fail_should_keep_its_mistake() {
     let rows: Vec<ErrorRow<'_>> = vec![
-        // At the head of the `if` (ADR 0052).
-        ("no failure if", format!("let _x = [{IF}]"), (4, 15)),
-        ("no failure second", format!("let _x = [1, {IF}]"), (4, 18)),
+        // At the head of the array: the `if` is a nested join (ADR 0052).
+        ("no failure if", format!("let _x = [{IF}]"), (4, 14)),
+        ("no failure second", format!("let _x = [1, {IF}]"), (4, 14)),
         ("no failure loop", format!("let _x = [{LN}]"), (4, 46)),
         ("typed", format!("let _x: [string] = [{IF}]"), (4, 45)),
     ]
@@ -470,7 +472,8 @@ fn a_hint_should_reach_exactly_its_value() {
             e((6, 14)),
         ),
         ("beside any none", "let _a = [a, None]", vec![]),
-        ("beside any empty", "let _a = [a, []]", e((6, 18))),
+        // At the head of the array (ADR 0052).
+        ("beside any empty", "let _a = [a, []]", e((6, 14))),
         (
             // Rule A's `?`-added candidate: `i64??`, so the first branch wraps twice.
             "some none",
@@ -508,10 +511,12 @@ fn a_hint_should_reach_exactly_its_value() {
         ]
         .map(|(name, stmt, wanted)| (name, alias_program(stmt), wanted)),
     );
+    // The elements join as the branches of an `if` do: `O.Some(q)` takes no hint from `a`, so
+    // its `q` is no `P`, and the array reports its conflict at its head.
     rows.push((
-        "alias keeps hint",
+        "alias keeps no hint",
         "interface I {}\nclass P: I {}\nclass Q: I {}\ntype O = P?\nfn f(a: any I, q: Q) {\n    let _a: bool = [a, O.Some(q)]\n}\nfn main() {}\n".to_string(),
-        e((6, 20)),
+        vec![(Mismatch, (6, 20)), (Mismatch, (6, 31))],
     ));
     error_rows(&rows);
 }
@@ -715,6 +720,7 @@ fn held_program(stmt: &str) -> String {
 /// WHEN a candidate of the failed join, `any Seen`, opens the call
 /// THEN the join reports its own conflict at its head, and the call reports nothing
 /// AND when no candidate opens the call, the call reports its held conflict
+/// AND an element of an array, at any depth, is opened by the element type of a candidate
 #[test]
 fn a_held_conflict_that_the_join_opens_should_give_way_to_its_report() {
     let rows: Vec<(&str, &str, Vec<Wanted>)> = vec![
@@ -747,6 +753,69 @@ fn a_held_conflict_that_the_join_opens_should_give_way_to_its_report() {
             "a held conflict in a branch, beside a literal",
             "let _x = if c { pick(Eye(v: 1), Lid(v: 2)) } else { 1 }",
             vec![(Mismatch, (15, 21))],
+        ),
+        // The elements of an array are a join (f6-4): `any Seen` opens the call, so the array
+        // reports at `[`, in each order, also as an argument, nested, and in a branch.
+        (
+            "an element with a held conflict, first",
+            "let _x = [pick(Eye(v: 1), Lid(v: 2)), s, 1]",
+            vec![(Mismatch, (15, 14))],
+        ),
+        (
+            "an element with a held conflict, second",
+            "let _x = [s, pick(Eye(v: 1), Lid(v: 2)), 1]",
+            vec![(Mismatch, (15, 14))],
+        ),
+        (
+            "an element with a held conflict, last",
+            "let _x = [1, s, pick(Eye(v: 1), Lid(v: 2))]",
+            vec![(Mismatch, (15, 14))],
+        ),
+        (
+            "an element with a held conflict, beside `any Seen` only",
+            "let _x = [pick(Eye(v: 1), Lid(v: 2)), s]",
+            vec![],
+        ),
+        (
+            "an element with a held conflict, after `any Seen` only",
+            "let _x = [s, pick(Eye(v: 1), Lid(v: 2))]",
+            vec![],
+        ),
+        (
+            "an element with a held conflict, beside `None` and `any Seen`",
+            "let _x = [pick(Eye(v: 1), Lid(v: 2)), None, s]",
+            vec![],
+        ),
+        (
+            "an array argument with a held conflict, beside a literal",
+            "let _x = pick([pick(Eye(v: 1), Lid(v: 2)), s, 1], [])",
+            vec![(Mismatch, (15, 14))],
+        ),
+        (
+            "an array argument with a held conflict, beside `[]`",
+            "let _x = pick([pick(Eye(v: 1), Lid(v: 2)), s], [])",
+            vec![],
+        ),
+        (
+            "a nested element with a held conflict, beside a literal",
+            "let _x = [[pick(Eye(v: 1), Lid(v: 2))], [s], [1]]",
+            vec![(Mismatch, (15, 14))],
+        ),
+        (
+            "a nested fill with a held conflict, beside `[]`",
+            "let _x = [[pick(Eye(v: 1), Lid(v: 2)); 2], [s], []]",
+            vec![],
+        ),
+        (
+            "an element with a held conflict, in a branch beside a literal",
+            "let _x = if c { [pick(Eye(v: 1), Lid(v: 2))] } else if c { [s] } else { [1] }",
+            vec![(Mismatch, (15, 14))],
+        ),
+        // No candidate opens the call: it reports its held conflict.
+        (
+            "a fill with a held conflict",
+            "let _x = [pick(Eye(v: 1), Lid(v: 2)); 2]",
+            vec![(Mismatch, (15, 15))],
         ),
     ];
     let rows: Vec<ErrorRow<'_>> = (rows.into_iter())

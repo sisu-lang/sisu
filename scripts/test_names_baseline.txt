@@ -56,7 +56,6 @@ crates/sisuc/src/ast.rs::display_float
 crates/sisuc/src/check/string.rs::a_match_is_one_term_only_in_parentheses
 crates/sisuc/src/check/tests/arrays.rs::array_of_t_is_not_array_of_optional_t
 crates/sisuc/src/check/tests/arrays.rs::declared_len_is_called
-crates/sisuc/src/check/tests/arrays.rs::element_does_not_fit
 crates/sisuc/src/check/tests/arrays.rs::element_join
 crates/sisuc/src/check/tests/arrays.rs::empty_array_cannot_be_inferred
 crates/sisuc/src/check/tests/arrays.rs::empty_array_typed_by_sibling_branch

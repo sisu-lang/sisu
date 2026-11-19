@@ -206,10 +206,10 @@ fn reports_at_should_match_the_start_of_a_primary_or_a_secondary_span() {
 /// WHEN `unless_parked` runs it
 /// THEN it panics and says to remove the line of the case
 #[test]
-#[should_panic(expected = "parks it (interim: Task 5c): remove its line")]
+#[should_panic(expected = "parks it (interim: Task 5e): remove its line")]
 fn unless_parked_should_fail_a_parked_case_that_passes() {
     let path = Path::new("run/parked_case.sisu");
-    support::unless_parked(Some("interim: Task 5c"), path, true, |_| {});
+    support::unless_parked(Some("interim: Task 5e"), path, true, |_| {});
 }
 
 /// GIVEN a case that `tests/parked.txt` parks, and that fails
@@ -219,7 +219,7 @@ fn unless_parked_should_fail_a_parked_case_that_passes() {
 fn unless_parked_should_pass_a_parked_case_that_fails() {
     let path = Path::new("run/parked_case.sisu");
     let mut runs = Vec::new();
-    support::unless_parked(Some("interim: Task 5c"), path, true, |bless| {
+    support::unless_parked(Some("interim: Task 5e"), path, true, |bless| {
         runs.push(bless);
         panic!("the parked case fails");
     });

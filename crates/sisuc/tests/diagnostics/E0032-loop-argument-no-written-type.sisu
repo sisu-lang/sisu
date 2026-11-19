@@ -19,4 +19,5 @@ fn main() {
     print(e)
 }
 
-// valid: the spec gives `pick(a, loop { break 1 })` no error (line 13).
+// valid: the spec gives `pick(a, loop { break 1 })` and `[loop { break 1 }, a]` no error (lines
+// 13 and 14).

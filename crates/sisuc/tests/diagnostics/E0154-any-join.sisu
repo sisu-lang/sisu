@@ -2,7 +2,7 @@
 // AND each joins a value of type `any Sh` and a `D`, a class that does not conform to `Sh`
 // WHEN `sisu check` runs on it
 // THEN it reports E0032 at the `if` (21:14), with a label at each branch (ADR 0052)
-// AND it reports E0154 at 22:18, with a label at 22:15, "this element gives the type `any Sh`"
+// AND it reports E0032 at the array (22:14), with a label at each element (ADR 0052)
 // AND it reports E0154 at 23:45, with a label at 23:28, "this `break` gave the loop the type `any Sh`"
 interface Sh {
     fn n(self) -> i64

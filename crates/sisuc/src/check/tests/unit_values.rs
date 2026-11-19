@@ -817,11 +817,8 @@ fn a_unit_argument_should_bind_its_parameter_before_the_arguments_that_wait() {
         ("None first", "print(opt(None, g()))".into(), vec![]),
         ("unit first", "print(later(g(), None))".into(), vec![]),
         ("empty array", "listed([], g())".into(), vec![]),
-        (
-            "array of None",
-            "listed([None], g())".into(),
-            vec![(Code::Mismatch, "None", false)],
-        ),
+        // `[None]` is a member of the call: `T` is `unit?`, as in `two(None, None, g())`.
+        ("array of None", "listed([None], g())".into(), vec![]),
         ("two None", "two(None, None, g())".into(), vec![]),
         (
             "unit local",

@@ -155,22 +155,24 @@ fn a_failed_context_should_keep_a_true_error_holds_before_and_after() {
             "let _x = v1 ?? (if c { m } else { \"s\" })",
             vec![cut, (Mismatch, (5, 21))],
         ),
+        // The arrays are nested joins of the `if`, which reports the conflict at its head
+        // (ADR 0052).
         (
             "array of string against array of u8",
             "let _x = v1 ?? (if c { [m] } else { [\"a\"] })",
-            vec![cut, (Mismatch, (5, 41))],
+            vec![cut, (Mismatch, (5, 21))],
         ),
         (
             "arrays with no failed context",
             "let _x = if c { [m] } else { [8] }\n print(_x)",
             vec![],
         ),
-        // `[8]` ranks as a value that is checked first, as with no expected type, so it fixes
-        // `[i64]` and `[m]` does not fit. A later run can change this.
+        // The elements `8` and `m` are nested members of the `if`, so they join as `u8`, as the
+        // branches `8` and `m` do.
         (
             "array literal first",
             "let _x = v1 ?? (if c { [8] } else { [m] })",
-            vec![cut, (Mismatch, (5, 41))],
+            vec![cut],
         ),
         // No type joins a `u8` and an array, so the conflict at the `match` is a true error.
         (

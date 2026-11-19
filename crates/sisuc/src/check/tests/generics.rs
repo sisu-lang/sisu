@@ -1594,18 +1594,15 @@ fn a_waiting_branch_of_a_failed_call_should_report_its_own_mistakes() {
         // What fails inside the branch for the call's failure is not reported again.
         (
             "fn g() {\n    let xs = id(match true { _ => [id([])] })\n}",
-            // interim: Task 5c gives [(CannotInfer, (2, 14))]
-            vec![(Code::CannotInfer, (2, 36))],
+            vec![(Code::CannotInfer, (2, 14))],
         ),
         (
             "fn g() {\n    let xs = id([[[]]])\n}",
-            // interim: Task 5c gives [(CannotInfer, (2, 14))]
-            vec![(Code::CannotInfer, (2, 19))],
+            vec![(Code::CannotInfer, (2, 14))],
         ),
         (
             "fn g() {\n    let xs = id([id([])])\n}",
-            // interim: Task 5c gives [(CannotInfer, (2, 14))]
-            vec![(Code::CannotInfer, (2, 18))],
+            vec![(Code::CannotInfer, (2, 14))],
         ),
     ] {
         codes(&with_generics(body), &expected);
@@ -1706,6 +1703,37 @@ fn the_part_at_a_parameter_should_be_found_in_linear_work_on_an_alias_chain() {
     let (eight, sixteen) = (steps(8), steps(16));
     assert_at_most_doubles(eight, sixteen);
     assert_at_most_doubles(sixteen, steps(32));
+}
+
+/// GIVEN a constructor with `n` type parameters under a written type, called with literals and
+///   with arrays of literals
+/// WHEN the program is checked
+/// THEN the work grows linearly in `n`: the part of the written type at each parameter is found
+///   in one walk, not in a walk of the whole result for each parameter
+#[test]
+fn a_constructor_under_a_written_type_should_cost_linear_work_in_its_parameters() {
+    let work = |n: usize, value: &str, written: &str| {
+        let params: Vec<_> = (0..n).map(|i| format!("A{i}")).collect();
+        let fields: Vec<_> = (0..n).map(|i| format!("    a{i}: A{i}")).collect();
+        let args: Vec<_> = (0..n).map(|i| format!("a{i}: {value}")).collect();
+        let src = format!(
+            "struct Tup<{}> {{\n{}\n}}\nfn main() {{\n    let _t: Tup<{}> = Tup({})\n}}",
+            params.join(", "),
+            fields.join("\n"),
+            vec![written; n].join(", "),
+            args.join(", "),
+        );
+        // Each read of a type counts: a walk of the result reads each of its parameters.
+        crate::types::READS.set(0);
+        call_work(&src) + crate::types::READS.get()
+    };
+    for (value, written) in [("1", "i64"), ("[Some(1), None]", "[i64?]")] {
+        assert_near_linear(
+            work(100, value, written),
+            work(200, value, written),
+            work(300, value, written),
+        );
+    }
 }
 
 /// The work of checking `src`: the steps of the type walks, the snapshots, the types rebuilt, the
@@ -1968,8 +1996,9 @@ fn a_call_with_many_type_parameters_should_cost_linear_work() {
 }
 
 /// An element pattern `depth` arrays deep, so a walk of it for each element would show. Once the
-/// first element binds `T`, a later one adds one step, at each depth. A `P<i64, bool>` before it
-/// gives a mismatch, and the work grows linearly with the count of such elements.
+/// first element binds `T`, a later one adds one step, at each depth. Each `P<i64, bool>` before
+/// it is a member of the call's join that does not fit: the call gives one mismatch at its head
+/// (ADR 0052), and the work grows linearly with the count of such elements.
 #[test]
 fn array_elements_should_meet_a_bound_element_type_with_no_new_walk() {
     let work = |depth: usize, elements: &str| {
@@ -1991,7 +2020,7 @@ fn array_elements_should_meet_a_bound_element_type_with_no_new_walk() {
     assert_eq!(added(20), added(40));
     let bad = |n: usize| {
         let (steps, mismatches) = work(20, &format!("{}x", "b, ".repeat(n)));
-        assert_eq!(mismatches, n);
+        assert_eq!(mismatches, 1);
         steps
     };
     assert_near_linear(bad(100), bad(200), bad(300));
@@ -2142,12 +2171,12 @@ fn literal_like_arguments_should_follow_the_others() {
             "pair",
             &["f64", "[f64]"],
         ),
+        (
+            "fn g(x: f64) {\n    let xs = pair([1], [1, x])\n}",
+            "pair",
+            &["[f64]", "[[f64]]"],
+        ),
     ]);
-    // interim: Task 5c gives no error, and `T` is `[f64]`
-    codes(
-        &with_generics("fn g(x: f64) {\n    let xs = pair([1], [1, x])\n}"),
-        &[(Code::Mismatch, (2, 28))],
-    );
 }
 
 /// The generic functions that the rows of the two tests below call.
@@ -2268,13 +2297,12 @@ fn a_call_whose_type_its_arguments_do_not_give_should_rank_concrete() {
         );
         clean_row(row, &src);
     }
-    // The call is `i64` whatever its argument is, so it binds before `x`, which is then the one
-    // reported.
+    // The call is `i64` whatever its argument is. So its type and the `u8` of `x` are the
+    // conflict of `pick`'s join, at its head (ADR 0052). A local `ys` for `[1]` gives the same.
     let src =
         format!("{decls}fn main() {{\n    let x: u8 = 3\n    let r = pick(len_of([1]), x)\n}}");
     let line = decls.lines().count() + 3;
-    // interim: Task 5c gives E0032 at column 31, at `x`
-    codes(&src, &[(Code::Mismatch, (line, 18))]);
+    codes(&src, &[(Code::Mismatch, (line, 13))]);
 }
 
 /// A call of a method, or of a requirement of a bound, that returns `U?` makes an optional by
@@ -2316,10 +2344,6 @@ fn a_method_that_returns_an_optional_should_make_the_call_that_holds_it_optional
 /// arguments, and a context of `i64?` or `u8?`, make no difference. A `Some` that the callee does
 /// not return (`k2(Some(1), [2])`) does not make its call hold an optional.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "a table of rows; the interim rows go when Task 5c ends"
-)]
 fn an_optional_argument_should_bind_before_a_plain_literal() {
     with_prelude();
     let decls = "fn pick<T>(a: T, b: T) -> T { a }\n\
@@ -2405,49 +2429,16 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
             vec![],
         ),
         ("let v = pick(if c { 2 } else { None }, 1)", vec![]),
-        // interim: Task 5c gives no error
-        (
-            "let v = pick([1], [Some(2)])",
-            vec![(Code::Mismatch, "Some")],
-        ),
-        // interim: Task 5c gives no error
-        (
-            "let v = pick([1], [None, Some(2)])",
-            vec![(Code::Mismatch, "None"), (Code::Mismatch, "Some")],
-        ),
-        // interim: Task 5c gives no error
-        (
-            "let v = pick([[1]], [[Some(2)]])",
-            vec![(Code::Mismatch, "Some")],
-        ),
-        // interim: Task 5c gives no error
-        (
-            "let v = pick([1], id([Some(2)]))",
-            vec![(Code::Mismatch, "Some")],
-        ),
-        // interim: Task 5c gives no error
-        ("let v = k(1, [Some(2)])", vec![(Code::Mismatch, "Some")]),
+        ("let v = pick([1], [Some(2)])", vec![]),
+        ("let v = pick([1], [None, Some(2)])", vec![]),
+        ("let v = pick([[1]], [[Some(2)]])", vec![]),
+        ("let v = pick([1], id([Some(2)]))", vec![]),
+        ("let v = k(1, [Some(2)])", vec![]),
         ("let v = pick([1], wrap(if c { 2 } else { None }))", vec![]),
-        // interim: Task 5c gives no error
-        (
-            "let v = pick([[1]], wrap([Some(2)]))",
-            vec![(Code::Mismatch, "Some")],
-        ),
-        // interim: Task 5c gives no error
-        (
-            "let v = pick([1], g([Some(2)]))",
-            vec![(Code::Mismatch, "Some")],
-        ),
-        // interim: Task 5c gives no error
-        (
-            "let v = pick([1], dbg([Some(2)]))",
-            vec![(Code::Mismatch, "Some")],
-        ),
-        // interim: Task 5c gives no error
-        (
-            "let v = pick(k2(Some(1), [2]), [Some(3)])",
-            vec![(Code::Mismatch, "Some(3")],
-        ),
+        ("let v = pick([[1]], wrap([Some(2)]))", vec![]),
+        ("let v = pick([1], g([Some(2)]))", vec![]),
+        ("let v = pick([1], dbg([Some(2)]))", vec![]),
+        ("let v = pick(k2(Some(1), [2]), [Some(3)])", vec![]),
     ] {
         let src = format!(
             "{decls}fn main() {{\n    let c = true\n    let holder = Holder()\n    {row}\n}}"
@@ -2505,10 +2496,10 @@ fn a_call_should_rank_from_the_places_of_its_returned_parameter() {
         ("print([k2(x, 2), x])", None),
         ("print([x, k2([1], 2)])", None),
         ("print([x, k2(1, None)])", None),
-        // A call that returns `T?` does not pass the type of its literal on: `Some(1)` is an
-        // optional `i64`, which a `u8` beside it does not give its type.
-        ("print([Some(1), x])", Some((Code::Mismatch, "x]"))),
-        ("print([opt(1), x])", Some((Code::Mismatch, "x]"))),
+        // The elements are a join (Task 5c): the literal in `Some(1)` or `opt(1)` takes the `u8`
+        // of `x` (the unify rule), as in `if c { Some(1) } else { x }`, and `x` converts.
+        ("print([Some(1), x])", None),
+        ("print([opt(1), x])", None),
         // The literal at the returned place still has to fit the type that the others give.
         (
             "print([x, k2(1, 300)])",
@@ -2592,14 +2583,12 @@ fn a_nested_optional_at_a_lifted_place_should_make_the_call_an_optional() {
         "print(pick(h(1, Some(Some(2))), 3) ?? 0)",
         "print(pick(h(1, Some(Some(2))), Some(3)) ?? 0)",
         "print(pick(1, h(1, Some(Some(2)))) ?? 0)",
+        // The element of the array is a member of the call's join (Task 5c), as the `Some` of `h`
+        // is: `T = i64?`, and the `1` converts.
+        "let v: i64? = g(1, [Some(Some(2))])\n    print(v ?? 0)",
     ] {
         clean_row(row, &places_main(row));
     }
-    // Under an array, `[T?]` does not pass a nested optional on (see `Makes::Through`): the
-    // context meets the payload, as it did before.
-    let row = "let v: i64? = g(1, [Some(Some(2))])\n    print(v ?? 0)";
-    let src = places_main(row);
-    codes(&src, &[(Code::Mismatch, in_row(&src, row, "Some(2)"))]);
     for (row, wanted) in [
         (
             "let v: i64? = h(1, Some(if x > 0 { Some(2) } else { None }))\n    print(v ?? 0)",
@@ -2692,10 +2681,9 @@ fn a_context_should_meet_a_call_whose_argument_holds_an_optional() {
         let src = format!("{decls}fn main() {{\n    {row}\n}}");
         clean_row(row, &src);
     }
-    // interim: Task 5c gives no error
     let row = "let v: i64? = k(1, [Some(2)])";
     let src = format!("{decls}fn main() {{\n    {row}\n}}");
-    codes(&src, &[(Code::Mismatch, in_row(&src, row, "Some(2)"))]);
+    codes(&src, &[]);
 }
 
 /// A safe call (`receiver?.method(...)`) has an optional result, whatever the method returns, so
@@ -3697,13 +3685,11 @@ fn generic_array_literals_should_take_optional_elements() {
         ("g4([[], [1]])", "g4", "i64"),
         // A parameter that is no array of optionals keeps the join.
         ("g5([1, None])", "g5", "i64?"),
+        ("g1([b, 1])", "g1", "u8"),
+        ("g1([1, b])", "g1", "u8"),
     ] {
         let found = call_types(&with_optional_elements(call), callee);
         assert_eq!(found, [expected, "i64"], "{call}");
-    }
-    // interim: Task 5c gives no error, and `T` is `u8`
-    for call in ["g1([b, 1])", "g1([1, b])"] {
-        codes(&with_optional_elements(call), &[(Code::Mismatch, (2, 12))]);
     }
 }
 
@@ -3717,7 +3703,8 @@ fn generic_array_literals_should_report_each_mistake_once() {
             "g1([nope, None, []])",
             vec![(Code::BindingNotFound, (2, 9))],
         ),
-        ("g1([b, x])", vec![(Code::Mismatch, (2, 12))]),
+        // The elements are members of the call's join: one E0032 at its head (ADR 0052).
+        ("g1([b, x])", vec![(Code::Mismatch, (2, 5))]),
         // An array is invariant: a variable of `[i64]` is not a `[i64?]`.
         (
             "let zs = [1, 2]\n    g1(zs)",
@@ -3779,8 +3766,7 @@ fn hole_below_the_top_of_a_parameter_should_bind_nothing() {
     with_prelude();
     let src = "fn f<T>(r: Result<[T], string>) -> [T] { panic(\"e\") }\n\
                fn main() {\n    let x = f(Ok([1]))\n    print(x.len())\n}";
-    // interim: Task 5c gives no error, and `T` is `i64`
-    codes(src, &[(Code::CannotInfer, (3, 15))]);
+    assert_eq!(call_types(src, "f"), ["i64", "[i64]"]);
 }
 
 /// An `if` whose branches wait is a member of the call's join (ADR 0052): its branches bind `T`
@@ -4149,17 +4135,18 @@ fn an_associated_type_argument_should_report_its_own_mistake() {
         ),
         // After a failed bound, no later argument is checked against the type that does not
         // exist, in an array of optionals or in a second parameter.
-        // interim: Task 5c gives E0154 at column 14
         (
             "fn h<T: I>(_p: [Two<T, T.Item>?]) {}\n",
+            // E0154 of an array argument is at the call (ADR 0052).
             "h([None, Two.P(5, 7)])",
-            &[(Code::NotConform, 7)],
+            &[(Code::NotConform, 5)],
         ),
         (
             "fn h<T: I>(_p: [Two<T, T.Item>?]) {}\n",
-            // The elements are members of the join of `T`, so their conflict is the report.
+            // The elements are members of the join of `T`, so their conflict is the report, at
+            // the call (ADR 0052).
             "h([Two.P(5, 7), Two.P(W(), 8)])",
-            &[(Code::Mismatch, 21)],
+            &[(Code::Mismatch, 5)],
         ),
         (
             "fn h<T: I>(_p: Two<T, T.Item>, _q: Two<T, T.Item>) {}\n",
@@ -4253,7 +4240,6 @@ fn check_partial_rows(rows: &[PartialRow<'_>]) {
 const PART_ROWS: &[PartialRow<'static>] = {
     use Code::Mismatch;
     const S: &str = "\"s\"";
-    const X: &str = "\"x\"";
     &[
         (
             "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: Two<U, V>?) {}\n",
@@ -4303,12 +4289,12 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "h(true, [Two.P(\"s\", 1)])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "h(true, [Two.P(true, 1), Two.P(\"s\", 2)])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
@@ -4328,7 +4314,7 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: [Two<U, V>?]) {}\n",
             "h(true, [Some(Two.P(\"s\", 1))])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Result<U, V>) {}\n",
@@ -4373,7 +4359,7 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: [[Two<U, V>]]) {}\n",
             "h(true, [[Two.P(\"s\", 1)]])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
@@ -4393,12 +4379,12 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: [[Two<U, V>?]]) {}\n",
             "h(true, [[None, Some(Two.P(\"s\", 1))]])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [[Two<U, V>?]]) {}\n",
             "h(true, [[Some(Two.P(true, 1)), None], [Some(Two.P(false, \"x\"))]])",
-            &[(Mismatch, X)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn fix<A>(x: A) -> Two<i64, A> { Two.P(1, x) }\nfn h<U, V>(c: V, b: Two<U, V>) {}\n",
@@ -4458,7 +4444,7 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I, U>(_a: U, _b: [Two<U, T.Item>], _c: T) {}\n",
             "h(true, [Two.P(\"s\", 7)], W())",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<T: I, U>(_a: U, _b: Two<U, T.Item>?, _c: T) {}\n",
@@ -4473,7 +4459,7 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I, U, V>(_a: Two<T, T.Item>, _b: U, _c: [Two<U, V>]) {}\n",
             "h(Two.P(W(), 7), true, [Two.P(\"s\", 1)])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn hn<U, V>(a: U, b: Two<Two<U, V>?, i64>) {}\n",
@@ -4523,52 +4509,52 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "h(true, [dbg(Two.P(\"s\", 1))])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let t = Two.P(true, 1)\nh(true, [Two.P(\"s\", 1), t])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let t = Two.P(true, 1)\nh(true, [t, Two.P(\"s\", 1)])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let t = Two.P(true, 1)\nh(true, [t, t, Two.P(\"s\", 1), t])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let t = Two.P(true, 1)\nlet ts = [t]\nh(true, [Two.P(\"s\", 1), ts[0]])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\nfn mk0() -> Two<bool, i64> { Two.P(true, 1) }\n",
             "h(true, [mk0(), Two.P(\"s\", 1)])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn hn<U, V>(a: U, b: [[Two<U, V>]]) {}\n",
             "let t = Two.P(true, 1)\nhn(true, [[t], [Two.P(\"s\", 1), t]])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "hn(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>?]) {}\n",
             "let t = Two.P(true, 1)\nh(true, [t, None, Two.P(\"s\", 1)])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let t = Two.P(true, 1)\nlet u = Two.P(\"x\", 1)\nh(true, [t, u])",
-            &[(Mismatch, "u]")],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let t = Two.P(true, 1)\nh(true, [Two.P(true, 1), t, Two.P(\"s\", 2)])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
     ]
 };
@@ -4577,8 +4563,9 @@ const PART_ROWS: &[PartialRow<'static>] = {
 /// is checked against what the call binds, with a hole for the rest. So a mistake is reported at
 /// the part that is wrong, not at the whole argument against a type that names the callee's `V`.
 /// The argument is a call, a construction or a method call. A safe call is one only for an
-/// optional parameter. The same holds under `Some`, in an array and in a call that returns its
-/// argument. An array element that takes no context, such as a local variable, does not stop
+/// optional parameter. The same holds under `Some` and in a call that returns its argument. In an
+/// array, the elements are members of the call's join, which reports at the head of the call
+/// (ADR 0052). An array element that takes no context, such as a local variable, does not stop
 /// the others from taking it.
 #[test]
 fn a_partly_bound_parameter_should_report_the_part_that_is_wrong() {
@@ -4698,15 +4685,13 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]?) {}\n",
-            // interim: Task 5c gives E0032 at `Some(`
             "h(true, Some([Two.P(\"s\", 1)]))",
-            &[(Mismatch, "\"s\"")],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]?) {}\n",
-            // interim: Task 5c gives E0032 at `[Two.P`
             "h(true, [Two.P(\"s\", 1)])",
-            &[(Mismatch, "\"s\"")],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Pair<U, Pair<V, i64>>) {}\n",
@@ -4760,9 +4745,8 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
-            // interim: Task 5c gives E0032 at `dbg(`
             "h(true, dbg([Two.P(\"s\", 1)]))",
-            &[(Mismatch, "\"s\"")],
+            &[(Mismatch, "h(")],
         ),
     ]
 };
@@ -5240,18 +5224,19 @@ const NESTED_ARRAY_ROWS: &[(&str, &[(Code, &str)])] = {
         ("print(f3([[[mk(true)], []], [[mk(false)]]]))", &[]),
         ("print(f([[]]))", &[(CannotInfer, "f(")]),
         ("print(f([[], []]))", &[(CannotInfer, "f(")]),
-        // The second element disagrees, at the bottom or one level up: one mismatch.
-        ("print(f([[mk(true)], [mk(1)]]))", &[(Mismatch, "1)")]),
+        // The second element disagrees, at the bottom or one level up: one E0032, at the head of
+        // the call, as a nested join reports at the outer head (ADR 0052).
+        ("print(f([[mk(true)], [mk(1)]]))", &[(Mismatch, "f(")]),
         (
             "print(f([[mk(true), mk(1)], [mk(false)]]))",
-            &[(Mismatch, "1)")],
+            &[(Mismatch, "f(")],
         ),
-        ("print(f3([[[mk(true)], [mk(2)]]]))", &[(Mismatch, "2)")]),
-        ("print(fto([[1], [\"s\"]]))", &[(Mismatch, "\"s\"")]),
+        ("print(f3([[[mk(true)], [mk(2)]]]))", &[(Mismatch, "f3(")]),
+        ("print(fto([[1], [\"s\"]]))", &[(Mismatch, "fto(")]),
         // An element type that names `T` at two places.
         ("print(f2([[mk2(true)]]))", &[]),
-        ("print(f2([[mk(true)]]))", &[(Mismatch, "mk(true)")]),
-        ("print(f2([[mk2(true)], [mk2(1)]]))", &[(Mismatch, "1)")]),
+        ("print(f2([[mk(true)]]))", &[(Mismatch, "f2(")]),
+        ("print(f2([[mk2(true)], [mk2(1)]]))", &[(Mismatch, "f2(")]),
         // The same depth under `Some(...)` and under a generic call.
         ("print(fs(Some([[mk(true)]])))", &[]),
         ("print(f(id([[mk(true)]])))", &[]),
@@ -5259,8 +5244,7 @@ const NESTED_ARRAY_ROWS: &[(&str, &[(Code, &str)])] = {
         ("print(fa([[mkw()]]))", &[]),
         ("print(fa([[mkw(), mkw()], [mkw()]]))", &[]),
         ("print(fb([[mkw(), None]]))", &[]),
-        // interim: Task 5c gives E0032 at `mkv()`
-        ("print(fa([[mkw()], [mkv()]]))", &[(Mismatch, "[mkv()]")]),
+        ("print(fa([[mkw()], [mkv()]]))", &[(Mismatch, "fa(")]),
         // The context of the call holds a hole, which hints `T`. So the outer literal goes to
         // `inferred_array`, and its element type is `T`, not an array.
         ("print(gl(idl([[mk(true)]]), true))", &[]),
@@ -5270,7 +5254,7 @@ const NESTED_ARRAY_ROWS: &[(&str, &[(Code, &str)])] = {
         ("let x = [mk(true)]\nprint(f([[mk(false)], x]))", &[]),
         (
             "let x = [mk(1)]\nprint(f([[mk(false)], x]))",
-            &[(Mismatch, "x]")],
+            &[(Mismatch, "f(")],
         ),
         // A local variable at the bottom refuses the literals above it. Each level
         // still takes its context from the level above.
@@ -5281,7 +5265,7 @@ const NESTED_ARRAY_ROWS: &[(&str, &[(Code, &str)])] = {
         ),
         (
             "let y = mk(true)\nprint(f3([[[mk(false)], [y]], [[mk(1)]]]))",
-            &[(Mismatch, "1)")],
+            &[(Mismatch, "f3(")],
         ),
     ]
 };
@@ -5495,13 +5479,12 @@ const REJECT_PART_ROWS: &[PartialRow<'static>] = {
             "let n: i64 = 5\nh(Two.P(n, 7), Two.P(W(), 1), \"s\")",
             &[(Mismatch, "h("), (NotConform, P)],
         ),
-        // Parked (progress.md, "After the merge (Task 5 calls)": U row 3). The array literal
-        // waits, so `"s"` decides `U` and each element reports. The nested join rule would give
-        // one report that names `1`, `2` and `"s"`.
+        // The elements of the array are members of the join of `U` (Task 5c): one report at the
+        // call that names `1`, `2` and `"s"`, as the nested join rule gives.
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: [Two<T, U>], _b: U) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), [Two.P(W(), 1), Two.P(W(), 2)], \"s\")",
-            &[(NotConform, P), (Mismatch, "1)"), (Mismatch, "2)")],
+            &[(Mismatch, "h("), (NotConform, P)],
         ),
         // The part that is not the rejected parameter must still meet the parameter's type.
         (
@@ -5569,15 +5552,17 @@ const OTHER_WAIT_ROWS: &[PartialRow<'static>] = {
         ),
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: [U?]) {}\n",
+            // The element is a member of the join of `U` (Task 5c): the call reports, as above.
             "let n: i64 = 5\nh(Two.P(n, 7), [none()])",
-            &[(NotConform, "Two.P(n"), (CannotInfer, "none()")],
+            &[(CannotInfer, "h("), (NotConform, "Two.P(n")],
         ),
     ]
 };
 
 /// The context of a call that waits for `U` holds `HOLE` for `U`, which no bound rejected. The
 /// call cannot bind it, and nothing else reports that, so the call keeps its E0050 after a failed
-/// bound of `T`.
+/// bound of `T`. A call in an array argument is a member of the outer call's join. So the outer
+/// call gives that E0050 at its head (ADR 0052).
 #[test]
 fn a_call_that_waits_for_another_parameter_should_still_report_its_own_inference_error() {
     check_rows_after(REJECT_DECLS, OTHER_WAIT_ROWS);
@@ -5764,8 +5749,9 @@ const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
         ),
         (
             "fn h<T: I, U>(_p: T, _a: [Two<T, U>]) {}\n",
+            // The element is a member of the join of `U` (Task 5c): the call reports, as above.
             "h(5, [two()])",
-            &[(NotConform, "5"), (CannotInfer, "two()")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: Two<T, U>) {}\n",
@@ -5800,8 +5786,9 @@ const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
 };
 
 /// A part of a context that no bound rejected is `HOLE`, not `REJECTED`. A nested call that it
-/// leaves with a parameter unbound still reports E0050, next to the failed bound. So does a call
-/// that has a rejected parameter and an unbound one.
+/// leaves with a parameter unbound still reports E0050, next to the failed bound; in an array
+/// argument, the outer call gives it at its head (ADR 0052). So does a call that has a rejected
+/// parameter and an unbound one.
 #[test]
 fn an_unbound_part_next_to_a_rejected_one_should_keep_its_inference_error() {
     check_rows_after(REJECT_DECLS, UNBOUND_NEXT_ROWS);
@@ -6076,34 +6063,29 @@ fn a_bound_that_holds_should_leave_the_arguments_after_it_checked() {
 #[test]
 fn an_array_literal_should_not_make_the_call_that_holds_it_optional() {
     infers(&[
-        // interim: Task 5c gives `[i64?]` for `T` and for the call
         (
             "fn g() { let r: [i64?]? = id([Some(1)]) }",
             "id",
-            &["[i64?]?", "[i64?]?"],
+            &["[i64?]", "[i64?]"],
         ),
-        // interim: Task 5c gives `[i64?]` for `T` and for the call
         (
             "fn g(c: bool) { let r: [i64?]? = id([if c { 1 } else { None }]) }",
             "id",
-            &["[i64?]?", "[i64?]?"],
+            &["[i64?]", "[i64?]"],
         ),
     ]);
 }
 
 /// An element that is a call of `dbg` with a type argument does not fit its declaration. So it
 /// keeps the order of a call, also when the array is the argument of a generic call. It is checked
-/// first, with no expected type. It reports its own `[]` (E0050), not a mismatch with the other
-/// element.
+/// first, with no expected type, and gives E0137 only: it is a poisoned member of the call's join,
+/// which reports nothing more, neither a mismatch with the other element nor its own `[]` (S7).
 #[test]
 fn a_call_that_does_not_fit_should_be_checked_first_in_an_array_argument() {
     with_prelude();
     let src =
         with_generics("fn g() {\n    take_all([dbg<i64>([]), [1]])\n}\nfn take_all<T>(xs: [T]) {}");
-    codes(
-        &src,
-        &[(Code::TypeArguments, (2, 18)), (Code::CannotInfer, (2, 24))],
-    );
+    codes(&src, &[(Code::TypeArguments, (2, 18))]);
 }
 
 /// The declarations that the rows of
@@ -6748,6 +6730,8 @@ const PARITY_ROWS: &[ParityRow<'static>] = &[
     ("", "print(1 == if true { 1 } else { mk2() })"),
     // A misfit joins by the type that it found, as its twin joins by its own type, in each order.
     ("", "print(1 == if true { mk2() } else { 1 })"),
+    // The elements of an array are a join (Task 5c): it reports at its head, as its twin does.
+    ("", "print([mk2(), 1])"),
     // Under a written type, each member that does not convert is reported (Q33).
     ("", "let y: i64 = if true { mk2() } else { None }\nprint(y)"),
     (
@@ -6939,10 +6923,15 @@ fn a_clash_with_an_unbound_shape_should_report_the_argument() {
             "let n: i64 = 5\n    h(n, id(true))",
             &[(Code::Mismatch, "true")],
         ),
-        // interim: Task 5c gives E0032 at `5`
-        ("U", "[U]", "h(5, id([true]))", &[(Code::Mismatch, "true")]),
         // The literal `5` and `bool` make two groups of one join, and the report of a join has no
-        // direction (ADR 0052): the E0032 is at the call.
+        // direction (ADR 0052): the E0032 is at the call, as for a local `[bool]` in place of
+        // `id([true])`. The interim note named `5`, the label of the `i64` group.
+        (
+            "U",
+            "[U]",
+            "h(5, id([true]))",
+            &[(Code::Mismatch, "h(5, id([true]))")],
+        ),
         (
             "U",
             "U?",
@@ -7159,8 +7148,6 @@ type Placed = (Code, (usize, usize));
 /// concrete twin. Each row pins the code and the place of each diagnostic, by its line in `main`
 /// and its column there. Each text is true, and none of the programs is accepted.
 const DEPARTURE_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
-    // The first element gives no whole type, so the `1` leads and the call is held to `i64`.
-    (("", "print([mk2(), 1])"), &[(Code::Mismatch, (1, 8))]),
     // The misfit gives no whole type, so the rule of E0067 sees no class.
     (
         ("", "let xs: [i64] = [mk2(); 3]\nprint(xs)"),
@@ -7913,18 +7900,18 @@ fn fill_or_sum_argument_should_take_the_written_context() {
         ("509id", REPRO_509_ID.to_string(), vec![]),
         ("557", REPRO_557.to_string(), vec![]),
         // The fill holds an optional of its own. That is no optional of the call: the context
-        // `[u8?]??` has one `?` more than the call makes.
-        // interim: Task 5c gives no error
+        // `[u8?]??` has one `?` more than the call makes. One wrap per conversion point (S25):
+        // the closed result `[_?]` needs two wraps, and so does the fill in the open form, as `1`
+        // in `let s: u8?? = id(1)`. Nothing gives the `None` its type, and the call reports it.
         (
             "fill of None, three layers",
             fill_program("let r: [u8?]?? = id([None; 2])"),
-            vec![(Code::CannotInfer, (7, 26))],
+            vec![(Code::CannotInfer, (7, 22))],
         ),
-        // interim: Task 5c gives no error
         (
             "fill of a nested optional, lifted place",
             fill_lift_program("let r: [u8??]?? = lift([Some(None); 2])"),
-            vec![(Code::CannotInfer, (7, 29))],
+            vec![],
         ),
     ];
     error_rows(&rows);
@@ -8030,10 +8017,12 @@ fn sum_of_waiting_calls_should_take_its_default_type() {
             fill_mk_program("let r = id(-(mk() + mk()))"),
             vec![],
         ),
+        // The fill is a member of the call's join (Task 5c): nothing gives `T` a type, and the
+        // call reports it, as for `id(if c == 1 { mk() } else { mk() })`.
         (
             "ctl-6",
             fill_mk_program("let r = id([mk(); 2])"),
-            vec![(CannotInfer, (7, 17))],
+            vec![(CannotInfer, (7, 13))],
         ),
         (
             "ctl-7",
@@ -8086,15 +8075,18 @@ fn poisoned_join_should_take_the_anchor_type_for_a_sum_or_a_fill() {
 /// WHEN the program is checked
 /// THEN the context is the only report. A branch that only waited holds no integer literal. So
 ///   it is not a branch of literals, and neither is a join with such a branch: it does not take
-///   the type of the anchor, and no other report follows from that guess.
+///   the type of the anchor, and no other report follows from that guess. A fill of a waiting
+///   call is a member: it is an array, which no other branch is, and the `if` reports that.
 #[test]
 fn poisoned_join_should_add_no_report_for_a_waiting_fill_or_negation() {
     use Code::UnknownType;
     let rows: Vec<ErrorRow<'_>> = vec![
+        // The fill is a member (Task 5c): `[_]` differs from `u8` for each type of its element,
+        // so the `if` reports at its head, as `if c == 1 { v } else { "s" }` does here.
         (
             "p05",
             fill_mk_program("let r: Nope = if c == 1 { v } else { [mk(); 2] }"),
-            vec![(UnknownType, (7, 12))],
+            vec![(UnknownType, (7, 12)), (Code::Mismatch, (7, 19))],
         ),
         (
             "p43",
@@ -8126,7 +8118,8 @@ fn poisoned_join_should_add_no_report_for_a_waiting_fill_or_negation() {
             fill_mk_program(
                 "let r: Nope = if c == 1 { v } else if c == 2 { 3 } else { [mk(); 2] }",
             ),
-            vec![(UnknownType, (7, 12))],
+            // As `p05`.
+            vec![(UnknownType, (7, 12)), (Code::Mismatch, (7, 19))],
         ),
     ];
     error_rows(&rows);
@@ -8151,17 +8144,20 @@ fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
             fill_program("let r: Result<[u8], bool> = Ok([v; 2])"),
             vec![],
         ),
-        // interim: Task 5c gives [(Mismatch, (7, 36))]
+        // The fill is checked under its element `u8` (Task 5c): the E0032 is at `k`, as for
+        // `let r: [u8] = [k; 2]`.
         (
             "n509_13",
             fill_program("let r: Result<[u8], bool> = Ok([k; 2])"),
             vec![(Mismatch, (7, 37))],
         ),
         ("n509_16", fill_program("let r = id([5; 2])"), vec![]),
+        // Each fill is a member of the join (Task 5c): the literal `5` takes `u8` from `v`, as in
+        // `if c == 1 { 5 } else { v }` (the unify rule).
         (
             "n509_17",
             fill_program("let r = if c == 1 { [5; 2] } else { [v; 2] }"),
-            vec![(Mismatch, (7, 42))],
+            vec![],
         ),
         (
             "n509_22",
@@ -8203,10 +8199,12 @@ fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
             fill_program("let r: Result<[u8], i64> = Ok([2, loop { break 2 }])"),
             vec![],
         ),
+        // The loop takes the type `u8` of the element before it, as in
+        // `if c == 1 { v } else { loop { break 2 } }` (Task 5c).
         (
             "n557_21",
             fill_program("let r = [v, loop { break 2 }]"),
-            vec![(Mismatch, (7, 17))],
+            vec![],
         ),
         (
             "n557_26",
@@ -8247,10 +8245,12 @@ fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
             fill_program("let r = if c == 1 { -id(2) } else { v }"),
             vec![(Mismatch, (7, 41))],
         ),
+        // The negation takes the type `u8` of the other element (Task 5c), as `-2` does in
+        // `[-2, v]`: E0042 at it.
         (
             "`-` of a call leads an array",
             fill_program("let r = [-id(2), v]"),
-            vec![(Mismatch, (7, 22))],
+            vec![(Code::NegatedU8, (7, 14))],
         ),
     ];
     error_rows(&rows);
@@ -8778,11 +8778,12 @@ fn waiting_argument_should_keep_its_report_before_and_after() {
             wait_program("let x: G?? = make()"),
             vec![(NotConform, (16, 18))],
         ),
-        // ruling: main gives 16:17; the place 16:23 waits for a later diagnostics issue
+        // The array is a member of the call's join (Task 5c): the E0154 of `S = G?` is at the
+        // call's head, as for an `if` argument (ADR 0052), and as on main.
         (
             "n428_5",
             wait_program("let x: G? = first([None])"),
-            vec![(NotConform, (16, 23))],
+            vec![(NotConform, (16, 17))],
         ),
         (
             "n428_11",
@@ -8802,12 +8803,14 @@ fn waiting_argument_should_keep_its_report_before_and_after() {
         (
             "c1",
             wait_c_program("let x: G? = first([o])"),
-            vec![(NotConform, (17, 23))],
+            // As `n428_5`.
+            vec![(NotConform, (17, 17))],
         ),
         (
             "c2",
             wait_c_program("let x: G? = first([Some(g)])"),
-            vec![(NotConform, (17, 23))],
+            // As `n428_5`.
+            vec![(NotConform, (17, 17))],
         ),
         (
             "c7",
@@ -8908,10 +8911,12 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
             blame_program("let x = o ?? id(loop { break 1 })"),
             vec![],
         ),
+        // The elements join (Task 5c): `u8` and `i64?` conflict, and the report of a join is at
+        // its head, `[` (ADR 0052).
         (
             "n499_14",
             blame_program("let x = [v, first(ys)]"),
-            vec![(Mismatch, (8, 17))],
+            vec![(Mismatch, (8, 13))],
         ),
         (
             "n499_15",
@@ -9023,10 +9028,12 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
             report_program("let x = o ?? loop { break v }"),
             vec![(Mismatch, (7, 31))],
         ),
+        // The loop takes the type `i64` of `q` (Task 5c): the E0032 is at `v`, as in
+        // `if c == 1 { q } else { loop { break v } }`.
         (
             "n538_9",
             report_program("let x = [q, loop { break v }]"),
-            vec![(Mismatch, (7, 17))],
+            vec![(Mismatch, (7, 30))],
         ),
         (
             "n538_10",
@@ -9101,12 +9108,11 @@ fn a_callee_parameter_printed_as_a_hole_should_report_the_code_and_place_it_did_
             "fn take<T>(xs: [T]) -> i64 { 0 }\nfn main() { print(take(Err(\"x\"))) }".to_string(),
             vec![(Mismatch, (2, 24))],
         ),
-        // interim: Task 5c gives [(Mismatch, (3, 18))]
         (
             "405a4",
             "fn id<T>(x: T) -> T { x }\nfn h<U>(a: U, b: [[U]]) {}\nfn main() { h(5, id([true])) }"
                 .to_string(),
-            vec![(Mismatch, (3, 22))],
+            vec![(Mismatch, (3, 18))],
         ),
         (
             "405a5",

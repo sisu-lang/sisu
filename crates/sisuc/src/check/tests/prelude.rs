@@ -1985,9 +1985,11 @@ fn dbg_of_another_shape_should_keep_the_order_of_a_call() {
         ("let _ = [dbg([], 1), 1]", &[Code::PrintArgument][..]),
         ("let _ = [dbg(), 1]", &[Code::PrintArgument][..]),
         ("let _ = [dbg<i64>(1), 1]", &[Code::TypeArguments][..]),
+        // The array joins its elements as `pick` joins its arguments (ADR 0052): one E0032 at the
+        // head, as `pick(dbg<i64>([]), 1)` gives.
         (
             "let _ = [dbg<i64>([]), 1]",
-            &[Code::TypeArguments, Code::CannotInfer][..],
+            &[Code::Mismatch, Code::TypeArguments][..],
         ),
     ] {
         let src = body("", statement);
@@ -2005,7 +2007,6 @@ fn a_labeled_dbg_should_give_the_errors_of_the_form_without_the_label() {
     with_prelude();
     let fn_p = "fn p<T>(a: [T], b: T) -> i64 { 1 }\n";
     for (labeled, plain) in [
-        ("print([dbg(x: []), 1])", "print([dbg([]), 1])"),
         (
             "print([dbg(x: None), Some(1)])",
             "print([dbg(None), Some(1)])",
@@ -2025,6 +2026,11 @@ fn a_labeled_dbg_should_give_the_errors_of_the_form_without_the_label() {
         let (found, src) = run(labeled);
         assert_eq!(found, want, "row `{labeled}`: {src}");
     }
+    // A labeled `dbg` is a typed poisoned member of the array: its conflict with `1` reports
+    // nothing more (spec, Poisoned members; S7). Without the label, the array reports it.
+    let src = format!("{fn_p}fn main() {{\n    print([dbg(x: []), 1])\n}}");
+    let found: Vec<_> = diags(&src).iter().map(Diagnostic::code).collect();
+    assert_eq!(found, [Code::LabeledArgument], "{src}");
 }
 
 /// A labeled `dbg` has a poisoned result, so it binds no `T`. The `[]` of a later argument that

@@ -309,9 +309,10 @@ fn mismatch_fix_should_convert_the_expression_found() {
             "i64",
         ),
         (
-            "fn f(b: u8?, n: i64) {\n    let xs = [b, n]\n}\nfn main() {}",
-            "n",
-            "u8",
+            // The elements join as the branches of an `if` do (ADR 0052).
+            "fn f(b: u8, n: i64) {\n    let xs = [b, n]\n}\nfn main() {}",
+            "b",
+            "i64",
         ),
     ];
     for (src, found, to) in rows {

@@ -160,7 +160,7 @@ fn a_literal_in_a_failed_context_should_still_join_its_elements() {
         // The elements that no sibling hints still join: a `string` and a `bool` do not.
         (
             "fn main() {\n    let xs: Bad = [\"a\", true]\n}",
-            vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (2, 25))],
+            vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (2, 19))],
         ),
         // A loop in a statement before the element's value keeps its own rules.
         (
@@ -205,20 +205,22 @@ fn a_part_that_fails_on_its_own_in_a_quiet_element_should_add_no_report() {
     );
 }
 
+/// The branches are a nested join of the array: the array reports their conflict at its head
+/// (ADR 0052).
 #[test]
 fn branches_that_do_not_join_in_a_quiet_element_should_still_be_reported() {
     for (src, at) in [
         (
             "fn main() {\n    let xs: Bad = [if true { [] } else { 1 }]\n}",
-            (2, 30),
+            (2, 19),
         ),
         (
             "fn main() {\n    let xs: Bad = [if true { 1 } else { [] }]\n}",
-            (2, 41),
+            (2, 19),
         ),
         (
             "fn main() {\n    let xs: Bad = [match true {\n        true => []\n        false => 1\n    }]\n}",
-            (3, 17),
+            (2, 19),
         ),
     ] {
         codes(src, &[(Code::UnknownType, (2, 13)), (Code::Mismatch, at)]);
@@ -251,11 +253,12 @@ fn empty_array_where_no_array_is_expected() {
     );
 }
 
+/// The elements of an array that do not join give one report at its head (ADR 0052).
 #[test]
-fn element_does_not_fit() {
+fn elements_that_do_not_join_should_report_once_at_the_array() {
     codes(
         "fn main() { let a = [1, true] }",
-        &[(Code::Mismatch, (1, 25))],
+        &[(Code::Mismatch, (1, 21))],
     );
     codes(
         "fn main() { print([1] == [true]) }",
@@ -574,7 +577,7 @@ fn a_failed_value_of_an_unannotated_let_should_give_no_second_error() {
         (
             "fn main() {\n    let x = [1, []]\n    print(x + true)\n}".to_owned(),
             Code::Mismatch,
-            (2, 17),
+            (2, 13),
         ),
         (
             format!("{NODE}fn main() {{\n    let x = [Node(v: 1); 3]\n    print(x + true)\n}}"),
@@ -1025,12 +1028,18 @@ fn siblings_should_take_the_type_of_the_others_in_an_array_literal() {
 #[test]
 fn a_waiting_sibling_that_is_no_optional_should_be_reported_for_its_type() {
     with_prelude();
-    for statement in ["let _a = [[], 1]", "f([[], 1])", "let _a = [1, []]"] {
+    // The report of the join is at its head, and an array in a call is a nested join of the
+    // call (ADR 0052).
+    for (statement, head) in [
+        ("let _a = [[], 1]", "["),
+        ("f([[], 1])", "f"),
+        ("let _a = [1, []]", "["),
+    ] {
         let src = join_main(statement);
         codes_row(
             statement,
             &src,
-            &[(Code::Mismatch, in_statement(&src, statement, "[]"))],
+            &[(Code::Mismatch, in_statement(&src, statement, head))],
         );
     }
 }
@@ -1076,27 +1085,19 @@ fn a_dbg_with_two_arguments_in_an_array_should_report_the_count_once() {
     );
 }
 
-/// A literal that holds an array is not typed beside a sibling: it keeps its default type, as it
-/// did before, because `literal_type` knows scalars only. The `[[1], x2]` row guards this limit
-/// (see `Ranked::sibling`): it passes at the base and fails when the limit is lifted by mistake,
-/// and a change that types an array beside a sibling must change the row.
+/// A literal that holds an array takes its type from a sibling, as a scalar literal does: the
+/// elements of an array are members of one join (ADR 0052), so `[[1], x2]` is `[[u8]]`.
 #[test]
-fn a_literal_array_should_keep_its_default_type_beside_a_sibling() {
+fn a_literal_array_should_take_its_type_beside_a_sibling() {
     for statement in [
         "let _a = [[1], [2]]",
         "let _a: [i64?] = [Option<i64>.None, 1]",
         "let _a = if c { [1] } else { [] }",
+        "let _a = [[1], x2]",
+        "let _a = [x2, [1]]",
     ] {
         clean_row(statement, &join_main(statement));
     }
-    let src = join_main("let _a = [[1], x2]");
-    codes(
-        &src,
-        &[(
-            Code::Mismatch,
-            in_statement(&src, "let _a = [[1], x2]", "x2]"),
-        )],
-    );
 }
 
 /// A block, a call or an `if` that ranks a sibling is checked once. The statements of a block
@@ -1149,4 +1150,67 @@ fn a_requirement_call_that_waits_should_take_the_type_of_its_sibling() {
     let src = "interface G {\n    fn ropt<U>(self) -> U?\n}\n\
         fn f<X: G>(x: X) {\n    let a = [x.ropt(), 1]\n}\nfn main() {}";
     clean(src);
+}
+
+/// GIVEN an array whose elements join an `any` value with an optional, `None` or a `Some` of an
+///   optional
+/// AND the `if` that joins the same values as its branches
+/// WHEN the program is checked
+/// THEN the array is valid, as its twin is: its elements are members of one join (spec, S1)
+/// AND an array in a branch is a nested join, whose elements are members of the `if`'s join
+#[test]
+fn an_array_should_accept_what_its_if_twin_accepts() {
+    let rows = [
+        (
+            "let b = [Some(2), d]",
+            "let b = if c { Some(2) } else { d }",
+        ),
+        ("let f = [d, opt(2)]", "let f = if c { d } else { opt(2) }"),
+        (
+            "let e = [o, Some(Some(2))]",
+            "let e = if c { o } else { Some(Some(2)) }",
+        ),
+        (
+            "let g = if c { [d] } else { [None] }",
+            "let g = if c { d } else { None }",
+        ),
+        (
+            "let g = if c { [d] } else { [1, None] }",
+            "let g = if c { d } else if c { 1 } else { None }",
+        ),
+        (
+            "let b = if c { [o] } else { [Some(Some(2))] }",
+            "let b = if c { o } else { Some(Some(2)) }",
+        ),
+    ];
+    for (array, twin) in rows {
+        for row in [array, twin] {
+            let src = format!(
+                "fn opt<T>(x: T) -> T? {{ Some(x) }}\nfn main() {{\n    let c = [1].len() == 2\n    \
+                 let d: any Display = 1\n    let o: (any Display)? = Some(7)\n    {row}\n}}"
+            );
+            clean_row(row, &src);
+        }
+    }
+}
+
+/// GIVEN a call whose array argument gives the parameter `U` one type and `V` two types
+/// AND the elements are at each depth, and beside `None`
+/// WHEN the program is checked
+/// THEN the call reports the conflict of `V` once, at its head (ADR 0052)
+#[test]
+fn a_conflict_in_array_elements_should_report_once_at_the_call() {
+    let decls = "enum Two<A, B> { P(A, B) }\nfn hh<U, V>(a: U, b: [[Two<U, V>?]]) {}\n\
+                 fn h1<U, V>(a: U, b: [Two<U, V>?]) {}\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n";
+    for row in [
+        "hh(true, [[Some(Two.P(true, 1)), None], [Some(Two.P(false, \"x\"))]])",
+        "h1(true, [Some(Two.P(true, 1)), None, Some(Two.P(false, \"x\"))])",
+        "hh(true, [[Some(Two.P(true, 1))], [Some(Two.P(false, \"x\"))]])",
+        "hh(true, [[None, Some(Two.P(true, 1))], [Some(Two.P(false, \"x\"))]])",
+        "h(true, [Two.P(true, 1), Two.P(true, \"s\")])",
+        "h(true, [Two.P(true, \"s\"), Two.P(false, 1)])",
+    ] {
+        let src = format!("{decls}fn main() {{\n    {row}\n}}");
+        codes(&src, &[(Code::Mismatch, (6, 5))]);
+    }
 }

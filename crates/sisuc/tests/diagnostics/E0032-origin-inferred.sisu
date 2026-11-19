@@ -3,12 +3,11 @@
 // or an argument that bound a type parameter of a generic call
 // WHEN `sisu check` runs on it
 // THEN each E0032 says which earlier value gave its required type
-// AND an inferred array names its first element of the type in the message
-// AND an operand in a branch names the branch that gave its type (line 38)
-// AND an `if` or a `match` whose branches have no shared type reports at its head, with a label
-// at each group (ADR 0052)
+// AND an operand in a branch names the branch that gave its type (line 37)
+// AND an `if`, a `match` or an array whose members do not join reports at its head (ADR 0052),
+// with a label at each group
 // AND a generic call names the argument that bound the type parameter
-// AND an element of an array argument binds for the whole argument
+// AND the elements of an array argument are members of the call's join, with a label each
 // AND a literal, `None` or `[]` that took its type from a later sibling is not the origin
 fn element() {
     let a = [1, "x"]
@@ -95,5 +94,4 @@ fn main() {
     literal_element(2)
 }
 
-// S26: a conflict between the arguments for `T` is reported at the call (line 23).
-// interim: Task 5c gives the one E0032 of main at 59:27.
+// S26: a conflict between the arguments for `T` is reported at the call (line 22).

@@ -19,13 +19,13 @@ error[E0154]: `Color` does not conform to `AnyObject`
   |          ^^^^^^^^^ only classes conform to `AnyObject`
 
 error[E0154]: `[Color]` does not conform to `AnyObject`
- --> E0154-anyobject-enum.sisu:9:10
+ --> E0154-anyobject-enum.sisu:9:5
   |
 6 | fn keep<U: AnyObject>(u: U) {}
   |            --------- required by this bound
 ...
 9 |     keep([Color.Red])
-  |          ^^^^^^^^^^^ only classes conform to `AnyObject`
+  |     ^^^^^^^^^^^^^^^^^ only classes conform to `AnyObject`
 
 sisu: 3 errors
 sisu: for more on a code, run `sisu explain <code>`: E0154

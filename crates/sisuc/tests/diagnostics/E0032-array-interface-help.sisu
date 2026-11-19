@@ -16,4 +16,4 @@ fn main() {
     print([Eye(v: 1), Lid(v: 2)].len())
 }
 
-// interim: Task 5c gives the join report with the interface help (S6b)
+// The join of the elements reports at the array, with the interface help (S6b).

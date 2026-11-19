@@ -2832,11 +2832,14 @@ fn operators_should_report_a_missing_bound() {
         let start = src.find(at).expect("the row should hold its operator");
         codes_row(row, &src, &[(code, line_col(&src, start))]);
     }
-    // An argument that does not conform is reported at the argument, not inside the body.
+    // An argument that does not conform is reported at the call, not inside the body: an array
+    // argument is a nested join, so the call's head holds the report (ADR 0052).
     let src = format!(
         "{decls}fn largest<T: Ord>(xs: [T]) -> T? {{\n    None\n}}\nfn main() {{\n    let n1 = Node()\n    let best = largest([n1])\n    print(best == None)\n}}"
     );
-    let start = src.find("[n1]").expect("the call should have its argument");
+    let start = src
+        .find("largest([n1])")
+        .expect("the call should have its argument");
     codes(&src, &[(Code::NotConform, line_col(&src, start))]);
 }
 
@@ -4944,15 +4947,12 @@ fn an_operator_should_reach_a_written_method_through_its_hub_edge() {
             Some("has([W(x: [self.x])], W(x: [other.x]))"),
         ),
     ];
-    // interim: Task 5d gives no error
+    // `W(x: [self.x])` converts to `A?` with `A` its own type: the array of the field is a member
+    // of the constructor's join, so its type is known before the call to `go` lifts it.
     let none = format!(
         "{w}fn go<A>(a: A?) -> bool {{\n    a == None\n}}\nextend<T: Eq> W<T>: Eq {{\n    fn eq(self, other: Self) -> bool {{\n        go(W(x: [self.x]))\n    }}\n}}\nfn main() {{\n    print(W(x: 1) == W(x: 2))\n}}"
     );
-    codes_row(
-        "equality with `None` calls nothing",
-        &none,
-        &[(Code::Mismatch, (9, 12))],
-    );
+    codes_row("equality with `None` calls nothing", &none, &[]);
     for (row, src, cycle) in rows {
         match cycle {
             Some(text) => codes_row(

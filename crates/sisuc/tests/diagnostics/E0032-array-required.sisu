@@ -5,4 +5,4 @@ fn main() {
     print(x.len())
 }
 
-// interim: Task 5c gives one E0032 at the array under the written type (Q33)
+// Under the written type, one E0032 reports at the array (Q33).

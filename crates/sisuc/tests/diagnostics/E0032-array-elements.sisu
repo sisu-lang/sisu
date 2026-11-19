@@ -5,4 +5,4 @@ fn main() {
     print(x.len())
 }
 
-// interim: Task 5c gives the join report of ADR 0052 at the array
+// The elements of an array are a join: the join reports at the array (ADR 0052).

@@ -1,10 +1,15 @@
-error[E0032]: expected `u8`, found `i64`
- --> E0032-array-elements.sisu:4:17
+error[E0032]: the elements of this array have different types
+ --> E0032-array-elements.sisu:4:13
   |
 4 |     let x = [a, b]
-  |              -  ^
+  |             ^-  - `i64`
   |              |
-  |              this element gives the type `u8`
+  |              `u8`
+  |
+help: if the types are right, convert it with `i64(...)`
+  |
+4 |     let x = [i64(a), b]
+  |              ++++ +
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

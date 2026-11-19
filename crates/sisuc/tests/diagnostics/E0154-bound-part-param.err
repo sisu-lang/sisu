@@ -1,11 +1,11 @@
 error[E0154]: `[T]` does not conform to `Eq`
- --> E0154-bound-part-param.sisu:3:10
+ --> E0154-bound-part-param.sisu:3:5
   |
 1 | fn need<U: Eq>(u: U) {}
   |            -- required by this bound
 2 | fn f<T>(t: T) {
 3 |     need([t])
-  |          ^^^ `[T]` holds `T`, which does not conform to `Eq`
+  |     ^^^^^^^^^ `[T]` holds `T`, which does not conform to `Eq`
   |
   = help: add a bound: `T: Eq`
 

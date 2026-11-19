@@ -1,10 +1,12 @@
-error[E0032]: expected `Eye`, found `Lid`
-  --> E0032-array-interface-help.sisu:16:23
+error[E0032]: the elements of this array have different types
+  --> E0032-array-interface-help.sisu:16:11
    |
 16 |     print([Eye(v: 1), Lid(v: 2)].len())
-   |            ---------  ^^^^^^^^^
+   |           ^---------  --------- `Lid`
    |            |
-   |            this element gives the type `Eye`
+   |            `Eye`
+   |
+   = help: the values have no shared type; `any Seen` holds each of them
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

@@ -109,16 +109,13 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
     |
     = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
-error[E0032]: expected `u8?`, found `i64`
-   --> E0032-hint-blames-payload.sisu:107:25
+error[E0032]: expected `[u8?]`, found `[i64]`
+   --> E0032-hint-blames-payload.sisu:107:24
     |
 107 |     let x: u8? = first([q, None])
-    |                         ^
-    |
-help: if the types are right, convert it with `u8(...)`
-    |
-107 |     let x: u8? = first([u8(q), None])
-    |                         +++ +
+    |            ---         ^^^^^^^^^
+    |            |
+    |            declared as `u8?` here
 
 warning[W0015]: `x` can be `None`, and then this writes the word "None"
    --> E0032-hint-blames-payload.sisu:108:11
@@ -153,7 +150,7 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
     |
     = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
-error[E0032]: expected `i64?`, found `u8`
+error[E0032]: expected `i64`, found `u8`
    --> E0032-hint-blames-payload.sisu:131:19
     |
 131 |     let x: i64? = pick(v, ao)

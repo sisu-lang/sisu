@@ -199,21 +199,23 @@ fn a_grouped_type_argument_should_parse() {
     );
 }
 
-/// A value that cannot convert to the `any` type of its siblings is the one that a report names.
+/// An element that cannot join the `any` type of the earlier branch array makes the join of the
+/// `if` fail. The `if` then reports at its head (ADR 0052). A `None` beside an `any` element joins
+/// as it does in a scalar `if`, to an optional of the `any` type.
 #[test]
-fn a_conversion_mistake_should_be_reported_at_the_value_that_cannot_convert() {
+fn a_branch_array_that_leaves_its_any_type_should_report_at_the_head() {
     codes_row(
         "an element of an array branch",
         &format!(
             "{PRE}{}",
             "fn main() {\n    let b = true\n    let xs: [any Shape] = [Circle(r: 1.0)]\n    let ys = if b { xs } else { [Circle(r: 2.0), None] }\n    print(ys.len())\n}\n"
         ),
-        &[(Mismatch, (39, 50))],
+        &[(Mismatch, (39, 14))],
     );
     codes_row(
         "an element beside an `any` element",
         "fn main() {\n    let d: any Display = 3\n    let xs = if true { [d] } else { [1, None] }\n    print(xs.len())\n}\n",
-        &[(Mismatch, (3, 41))],
+        &[],
     );
     codes_row(
         "a `break` of two optionals",
@@ -299,14 +301,14 @@ fn a_written_any_type_should_convert_each_break_value() {
     );
 }
 
-/// An array after an array branch of a plain type expects that type, so each element that is not of
-/// it is reported.
+/// An array whose elements do not join the elements of the earlier array branch, of a plain type,
+/// makes the join of the `if` fail: one report at its head (ADR 0052), as the scalar `if` gives.
 #[test]
-fn a_hinted_array_with_no_any_element_should_report_each_element() {
+fn a_branch_array_with_no_any_element_should_report_once_at_the_head() {
     codes_row(
         "two strings after an `i64` array",
         "fn main() {\n    let b = true\n    let ys = if b { [1] } else { [\"a\", \"b\"] }\n    print(ys)\n}\n",
-        &[(Mismatch, (3, 35)), (Mismatch, (3, 40))],
+        &[(Mismatch, (3, 14))],
     );
 }
 

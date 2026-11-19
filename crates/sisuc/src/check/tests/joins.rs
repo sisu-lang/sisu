@@ -340,10 +340,7 @@ fn join_should_keep_the_result_that_main_gives() {
         ("show(Ok(if c { 3 } else { 4 }))", &[]),
         ("show(Ok(if c { 4 } else { 3 }))", &[]),
     ]);
-    body_rows(&[
-        // interim: Task 5c gives no error, and `x` is `[u8]`
-        ("let x = pick([1, 2], [a])", &[(Code::Mismatch, (1, 23))]),
-    ]);
+    type_rows(&[("let x = pick([1, 2], [a])", "[u8]")]);
 }
 
 #[test]
@@ -450,11 +447,9 @@ fn generic_call_in_a_join_should_check_in_each_order() {
         ),
         ("let t: Two<u8?, u8?> = dup(1)\nlet x = t", "Two<u8?, u8?>"),
     ]);
-    body_rows(&[
-        // interim: Task 5c gives no error, and `x` is `[u8?]`
-        ("let x = pick(id([1]), [m])", &[(Code::Mismatch, (1, 24))]),
-        // interim: Task 5c gives no error, and `x` is `u8?`
-        ("let x = f([m], id(1))", &[(Code::Mismatch, (1, 12))]),
+    type_rows(&[
+        ("let x = pick(id([1]), [m])", "[u8?]"),
+        ("let x = f([m], id(1))", "u8?"),
     ]);
 }
 
@@ -508,14 +503,15 @@ fn join_should_give_the_same_result_in_each_order() {
         ("let x = if c { a } else { panic(\"no\") }", "u8"),
         ("let x = if c { panic(\"no\") } else { a }", "u8"),
     ]);
+    // The array is a member of the `if`'s join: the conflict reports at the `if` (ADR 0052).
     body_rows(&[
         (
             "let mi: i64? = Some(5)\nlet xi: [i64] = [1]\nlet x = if c { [mi] } else { xi }",
-            &[(Code::Mismatch, (3, 30))],
+            &[(Code::Mismatch, (3, 9))],
         ),
         (
             "let mi: i64? = Some(5)\nlet xi: [i64] = [1]\nlet x = if c { xi } else { [mi] }",
-            &[(Code::Mismatch, (3, 29))],
+            &[(Code::Mismatch, (3, 9))],
         ),
     ]);
 }
@@ -1046,11 +1042,9 @@ fn generic_call_should_join_the_arguments_of_each_type_parameter() {
         ("let x = pick(None, a)", "u8?"),
         ("let x = pick(loop { break 1 }, a)", "u8"),
     ]);
-    body_rows(&[
-        // interim: Task 5c gives no error, and `x` is `u8?`
-        ("let x = f([Some(1)], a)", &[(Code::Mismatch, (1, 17))]),
-        // interim: Task 5c gives no error, and `x` is `u8?`
-        ("let x = f([a], Some(1))", &[(Code::Mismatch, (1, 12))]),
+    type_rows(&[
+        ("let x = f([Some(1)], a)", "u8?"),
+        ("let x = f([a], Some(1))", "u8?"),
     ]);
 }
 
@@ -1218,36 +1212,21 @@ fn if_and_match_should_join_in_each_order() {
             "(any Seen)?",
         ),
     ]);
-    body_rows(&[
-        // interim: Task 5c gives no error, and `x` is `[u8]`
+    type_rows(&[
+        ("let x = if c { [id(1)] } else { [a] }", "[u8]"),
+        ("let x = if c { id([1]) } else { [m] }", "[u8?]"),
+        ("let x = if c { [None] } else { [last(xs)] }", "[u8?]"),
+        ("let x = if c { [last(xs)] } else { [None] }", "[u8?]"),
         (
-            "let x = if c { [id(1)] } else { [a] }",
-            &[(Code::Mismatch, (1, 34))],
+            "let ys: [u8?] = [Some(1)]\nlet x = if c { [1; 3] } else { ys }",
+            "[u8?]",
         ),
+    ]);
+    body_rows(&[
         // interim: Task 5d gives no error, and `x` is `u8`
         (
             "let x = if c { id(1) + 0 } else { a }",
             &[(Code::Mismatch, (1, 35))],
-        ),
-        // interim: Task 5c gives no error, and `x` is `[u8?]`
-        (
-            "let x = if c { id([1]) } else { [m] }",
-            &[(Code::Mismatch, (1, 34))],
-        ),
-        // interim: Task 5c gives no error, and `x` is `[u8?]`
-        (
-            "let x = if c { [None] } else { [last(xs)] }",
-            &[(Code::Mismatch, (1, 17))],
-        ),
-        // interim: Task 5c gives no error, and `x` is `[u8?]`
-        (
-            "let x = if c { [last(xs)] } else { [None] }",
-            &[(Code::Mismatch, (1, 37))],
-        ),
-        // interim: Task 5c gives no error, and `x` is `[u8?]`
-        (
-            "let ys: [u8?] = [Some(1)]\nlet x = if c { [1; 3] } else { ys }",
-            &[(Code::Mismatch, (2, 32))],
         ),
     ]);
 }
@@ -1490,8 +1469,7 @@ fn no_let_should_give_the_interface_help() {
         .filter(|d| d.code().severity() == Severity::Error)
         .map(|d| (d.code(), d.help().is_some(), d.fixes().len()))
         .collect();
-    // interim: Task 5c gives the E0032 a help
-    assert_eq!(found, vec![(Code::Mismatch, false, 0)]);
+    assert_eq!(found, vec![(Code::Mismatch, true, 0)]);
 }
 
 #[test]
@@ -1524,47 +1502,31 @@ fn array_elements_should_join_in_each_order() {
             "[any Seen]",
         ),
     ]);
-    body_rows(&[
-        // interim: Task 5c gives no error, and `x` is `[u8]`
-        (
-            "let x = if c { [1, 2] } else { [a] }",
-            &[(Code::Mismatch, (1, 33))],
-        ),
-        // interim: Task 5c gives no error, and `x` is `[i64?]`
+    type_rows(&[
+        ("let x = if c { [1, 2] } else { [a] }", "[u8]"),
         (
             "let mi: i64? = Some(5)\nlet x = if c { [1] } else { [mi] }",
-            &[(Code::Mismatch, (2, 30))],
+            "[i64?]",
         ),
-        // interim: Task 5c gives no error, and `x` is `[i64?]`
         (
             "let mi: i64? = Some(5)\nlet x = match c { true => [1]; false => [mi] }",
-            &[(Code::Mismatch, (2, 42))],
+            "[i64?]",
         ),
-        // interim: Task 5c gives no error, and `x` is `[i64?]`
         (
             "let mi: i64? = Some(5)\nlet x = if let Some(v) = mi { print(v); [1] } else { [mi] }",
-            &[(Code::Mismatch, (2, 55))],
+            "[i64?]",
         ),
-        // interim: Task 5c gives no error, and `x` is `[i64?]`
-        (
-            "let x = if c { [None; 2] } else { [Some(1)] }",
-            &[(Code::CannotInfer, (1, 17))],
-        ),
-        // interim: Task 5c gives no error, and `x` is `[(any Seen)?]`
-        ("let x = [Some(Eye(v: 1)), e]", &[(Code::Mismatch, (1, 10))]),
-        // interim: Task 5c gives no error, and `x` is `[u8?]`
-        ("let x = [Some(1), a]", &[(Code::Mismatch, (1, 19))]),
-        // interim: Task 5c gives no error, and `x` is `[u8?]`
-        ("let x = [a, Some(1)]", &[(Code::Mismatch, (1, 13))]),
-        // interim: Task 5c gives no error, and `x` is `[any Seen]`
+        ("let x = if c { [None; 2] } else { [Some(1)] }", "[i64?]"),
+        ("let x = [Some(Eye(v: 1)), e]", "[(any Seen)?]"),
+        ("let x = [Some(1), a]", "[u8?]"),
+        ("let x = [a, Some(1)]", "[u8?]"),
         (
             "let x = [if d { Eye(v: 1) } else { Lid(v: 2) }, e]",
-            &[(Code::Mismatch, (1, 10))],
+            "[any Seen]",
         ),
-        // interim: Task 5c gives no error, and `x` is `[any Seen]`
         (
             "let x = if c { [if d { Eye(v: 1) } else { Lid(v: 2) }] } else { [e] }",
-            &[(Code::Mismatch, (1, 17))],
+            "[any Seen]",
         ),
     ]);
 }
@@ -2136,12 +2098,6 @@ fn a_late_argument_beside_a_form_not_converted_should_give_its_interim_report() 
             row("let x = pick(o ?? p, o ?? p)"),
             vec![(Code::Mismatch, at(14))],
         ),
-        // interim: Task 5c gives no error, and `x` is `u8?`
-        (
-            "closed variant with an array under an if",
-            row("let x = if c { h(G<u8>.V(1, [2, 3]), 4) } else { None }"),
-            vec![(Code::Mismatch, at(18))],
-        ),
         // An `if` of literals is a join of literals, so it meets the coalesce as `1` does in
         // `two(1, o ?? 5)`.
         // interim: Task 5d gives no error, and `x` is `u8`
@@ -2151,6 +2107,18 @@ fn a_late_argument_beside_a_form_not_converted_should_give_its_interim_report() 
             vec![(Code::Mismatch, at(39))],
         ),
     ]);
+}
+
+#[test]
+fn a_closed_variant_with_an_array_under_an_if_should_join_with_none() {
+    // GIVEN an `if` whose branch is a call with a closed variant that holds an array, beside
+    //       `None`
+    // WHEN it is checked
+    // THEN it is valid, and `x` is `u8?`
+    let src = format!(
+        "{SEED_FUNCTIONS}fn main() {{\n    let c = [1].len() == 1\n    let x = if c {{ h(G<u8>.V(1, [2, 3]), 4) }} else {{ None }}\n    print(x)\n}}\n"
+    );
+    assert_eq!(join_type(&src), "u8?");
 }
 
 /// The functions of the rows of `a_closed_call_whose_known_part_clashes_should_blame_its_argument`.
@@ -2203,10 +2171,12 @@ fn a_failed_late_argument_should_add_no_report_for_its_siblings() {
     let at = |col: usize| (4, col + 4);
     let nested = "let v = pick([pick([pick([pick([1], [None])], [None])], [None])], [None])";
     error_rows(&[
+        // The array is a member of the call's join: its conflict reports once, at the head of the
+        // outer join (ADR 0052).
         (
             "array with a wrong element",
             row("let a = pick([1, \"s\"], [None])"),
-            vec![(Code::Mismatch, at(18))],
+            vec![(Code::Mismatch, at(9))],
         ),
         (
             "array with an unknown function",
@@ -2220,11 +2190,9 @@ fn a_failed_late_argument_should_add_no_report_for_its_siblings() {
             row("let a = pick(if c { 1 } else { \"s\" }, if c { None } else { None })"),
             vec![(Code::Mismatch, at(9))],
         ),
-        (
-            "nested picks of None",
-            row(nested),
-            vec![(Code::Mismatch, at(nested.find("None").map_or(0, |n| n + 1)))],
-        ),
+        // Each array is a member: `[None]` beside `[X]` makes `[X?]` (spec, the unify rule), so
+        // each level adds one `?` and the program is valid.
+        ("nested picks of None", row(nested), vec![]),
     ]);
 }
 

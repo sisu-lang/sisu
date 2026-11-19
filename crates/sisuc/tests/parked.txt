@@ -2,12 +2,6 @@
 # the `cases` binary, a case under `tests/` and its task: `<test> <case> interim: Task 5<x>`.
 # A parked case still runs, and it must fail. When it passes, its test fails: its task then
 # removes its line. `memory` does not run a case that has a `run` line here.
-run run/generic_partial_context.sisu interim: Task 5c
-run run/optional_argument_beside_literal.sisu interim: Task 5c
-run run/join_closed_first_under_a_required_type.sisu interim: Task 5c
-run run/join_nested_none_in_array.sisu interim: Task 5c
 run run/generic_loop_argument_kept.sisu interim: Task 5e
-every_program_certifies run/generic_partial_context.sisu interim: Task 5c
-every_program_certifies run/optional_argument_beside_literal.sisu interim: Task 5c
 every_program_certifies run/generic_loop_argument_kept.sisu interim: Task 5e
 diagnostics diagnostics/E0043-bare-break-beside-optional-unit.sisu interim: Task 5e

@@ -109,18 +109,20 @@ fn a_value_should_convert_through_one_layer_only() {
         ("let r: i64??? = 5", (2, 21, "5"), &[(2, 12)], true),
         ("let r = x ?? \"a\"", (2, 18, "\"a\""), &[], false),
         ("let r = x == 5", (2, 18, "5"), &[], true),
-        // A join of three depths: the `i64` is two layers below the join, in either order.
+        // A join of three depths: the `i64` is two layers below the join, in either order. An
+        // array reports at its head, with a label at each element and no help, as a `match`
+        // does (ADR 0052).
         (
             "let n = 1\n    let r = [n, w, x]",
-            (3, 14, "n"),
-            &[(3, 20)],
-            true,
+            (3, 13, "["),
+            &[(3, 14), (3, 17), (3, 20)],
+            false,
         ),
         (
             "let n = 1\n    let r = [x, w, n]",
-            (3, 20, "n"),
-            &[(3, 14)],
-            true,
+            (3, 13, "["),
+            &[(3, 14), (3, 17), (3, 20)],
+            false,
         ),
         // A `match` reports at its head, with a label at each arm and no help (spec, Diagnostics).
         (
@@ -798,13 +800,6 @@ fn a_none_beside_an_exit_should_act_as_a_plain_none() {
         "let _: i64? = $",
         "print($)",
     ];
-    // A loop is not a member of a call's join yet. So the `if` that holds it waits, and meets the
-    // `i64` of the other argument.
-    // interim: Task 5e gives the codes of a plain `None`
-    let waits = [
-        ("let _ = pick(1, $)", "loop { }", [Code::Mismatch]),
-        ("let _ = pick($, 1)", "loop { }", [Code::Mismatch]),
-    ];
     let mut unequal = Vec::new();
     for position in positions {
         // An operator takes the `if` in parentheses.
@@ -819,10 +814,7 @@ fn a_none_beside_an_exit_should_act_as_a_plain_none() {
         let plain = error_codes(&place("None"));
         for exit in EXITS {
             let beside = error_codes(&place(&format!("if c {{ None }} else {{ {exit} }}")));
-            let wanted = (waits.iter())
-                .find(|&&(at, form, _)| (at, form) == (position, exit))
-                .map_or(plain.as_slice(), |(.., codes)| codes.as_slice());
-            if beside != wanted {
+            if beside != plain {
                 unequal.push(format!(
                     "position `{position}`, exit `{exit}`: {beside:?}, but a plain `None` gives {plain:?}"
                 ));

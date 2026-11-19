@@ -2159,10 +2159,11 @@ fn a_call_through_a_bound_should_lower_to_an_interface_call() {
 #[test]
 fn bound_violations_should_be_reported_once_at_the_call() {
     for (row, expected) in [
-        // The argument that binds the parameter.
+        // An array argument is a nested join, as an `if` is: the bound is not met at the head of
+        // the call (ADR 0052).
         (
             "fn total<T: Shape>(xs: [T]) -> f64 {\n    0.0\n}\nfn go(n: Node) -> f64 {\n    total([n])\n}",
-            vec![(Code::NotConform, (5, 11))],
+            vec![(Code::NotConform, (5, 5))],
         ),
         // A parameter without the bound: one report, and the body is not checked again.
         (
@@ -2186,10 +2187,11 @@ fn bound_violations_should_be_reported_once_at_the_call() {
             "enum Bad {\n    B(Sorted<Node>)\n}",
             vec![(Code::NotConform, (2, 14))],
         ),
-        // A class and a variant built with arguments that do not meet the bound.
+        // A class and a variant built with arguments that do not meet the bound. The array is a
+        // nested join, as an `if` is: the report is at the head of the call (ADR 0052).
         (
             "fn mk(n: Node) {\n    let s = Sorted(items: [n])\n}",
-            vec![(Code::NotConform, (2, 27))],
+            vec![(Code::NotConform, (2, 13))],
         ),
         (
             "fn mk(n: Node) {\n    let p = Pick.One(n)\n}",

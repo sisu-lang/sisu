@@ -1,18 +1,10 @@
-error[E0032]: expected `string`, found `u8`
- --> E0032-array-required.sisu:4:24
+error[E0032]: expected `[string]`, found `[u8]`
+ --> E0032-array-required.sisu:4:23
   |
 4 |     let x: [string] = [a, b]
-  |            --------    ^
+  |            --------   ^^^^^^
   |            |
   |            declared as `[string]` here
 
-error[E0032]: expected `string`, found `u8`
- --> E0032-array-required.sisu:4:27
-  |
-4 |     let x: [string] = [a, b]
-  |            --------       ^
-  |            |
-  |            declared as `[string]` here
-
-sisu: 2 errors
+sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

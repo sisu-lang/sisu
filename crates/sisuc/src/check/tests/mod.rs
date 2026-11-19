@@ -1283,14 +1283,15 @@ fn an_invalid_jump_in_a_ranked_block_should_give_e0038_and_no_e0043() {
         ("let xs = [1, { break outer; 1 }]", None, &[J]),
         ("let xs = [1, { continue outer; 1 }]", None, &[J]),
         // The kinds of work that ranking keeps besides a block: a guard, an `if let` value and a
-        // `match` value. Each gives what its twin that ranking does not reach gives. The `return`
-        // of each arm makes the value `never`, not the failed jump, so E0043 reports the value.
+        // `match` value. Each gives what its twin that ranking does not reach gives. An element is
+        // a member of the array's join, as an argument of a generic call is (ADR 0052): a failed
+        // jump in a guard poisons the `match`, so no E0043 reports it, as in `pick(1, match ...)`.
+        // The `return` of each branch makes the `if let` and the `match` with the failed
+        // scrutinee `never`, not the failed jump, so E0043 reports them.
         (
             "let x = [1, match c {\n        true if { break; true } => { return \"a\"; 1 }\n        _ => { return \"b\"; 2 }\n    }]",
-            Some(
-                "match c {\n        true if { break; true } => { return \"a\"; 1 }\n        _ => { return \"b\"; 2 }\n    }",
-            ),
-            &[V, J, M, U, M, U],
+            None,
+            &[J, M, U, M, U],
         ),
         (
             "let o: i64? = None\n    let x = [1, if let Some(v) = { break; o } { return \"a\"; 1 } else { return \"b\"; 2 }]",

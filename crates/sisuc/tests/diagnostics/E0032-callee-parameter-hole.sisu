@@ -35,5 +35,3 @@ fn main() {
     nested(5, id([true]))
     optional(5, id(true))
 }
-
-// interim: Task 5c gives the E0032 of main at 35:15

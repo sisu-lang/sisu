@@ -355,14 +355,17 @@ fn a_passed_down_expectation_should_keep_its_origin() {
     ]);
 }
 
+/// An earlier value explains the type that a later one does not meet. Elements that do not join
+/// give E0032 at the head of the array, or at the call that holds it (ADR 0052). Each element of
+/// its own type gets a label.
 #[test]
 fn an_earlier_value_should_explain_the_type() {
     origin_rows(&[
         (
             "element inferred",
             "fn main() {\n    let a = [1, \"x\"]\n    print(a)\n}\n",
-            (2, 17),
-            Explained::Label(2, 14),
+            (2, 13),
+            Explained::Labels(&[(2, 14), (2, 17)]),
         ),
         (
             "branch",
@@ -409,28 +412,29 @@ fn an_earlier_value_should_explain_the_type() {
         (
             "a later element makes the array optional (opus-43)",
             "fn main() {\n    let a = [5, Some(1), \"x\"]\n    print(a)\n}\n",
-            (2, 26),
-            Explained::Label(2, 17),
+            (2, 13),
+            Explained::Labels(&[(2, 14), (2, 22), (2, 26)]),
         ),
         (
             "the element that set the bound of `T` (opus-12)",
             "fn f<T>(a: [T]) -> i64 { 0 }\nfn g(n: i64) {\n    print(f([None, n, \"x\"]))\n}\nfn main() { g(1) }\n",
-            (3, 23),
-            Explained::Label(3, 20),
+            (3, 11),
+            Explained::Labels(&[(3, 14), (3, 20), (3, 23)]),
         ),
     ]);
-    // interim: Task 5c gives one E0032 at (3, 27), with a label at (3, 15)
-    error_rows(&[(
+    origin_rows(&[(
         "the argument that holds the binding element (opus4-3)",
-        "fn has<T>(a: [T], x: T) -> bool { true }\nfn g(n: i64) {\n    print(has([\"a\", \"b\"], n))\n}\nfn main() { g(1) }\n".into(),
-        vec![(Code::Mismatch, (3, 16)), (Code::Mismatch, (3, 21))],
+        "fn has<T>(a: [T], x: T) -> bool { true }\nfn g(n: i64) {\n    print(has([\"a\", \"b\"], n))\n}\nfn main() { g(1) }\n",
+        (3, 11),
+        Explained::Labels(&[(3, 16), (3, 21), (3, 27)]),
     )]);
 }
 
 /// A branch or an element that took its type from a sibling's hint did not give that type: the
-/// label names the value that gave it, in the order of the check. Branches and arms that do not
-/// join give E0032 at the head of the `if` or the `match` (ADR 0052). Each value that gives its
-/// own type gets a label, and a value that took one gets none.
+/// label names the value that gave it, in the order of the check. Branches, arms and elements
+/// that do not join give E0032 at the head of their `if`, `match` or array (ADR 0052). An array
+/// argument reports at its call. Each value that gives its own type gets a label, and a value
+/// that took one gets none.
 #[test]
 fn a_value_that_took_a_hint_should_not_be_the_origin() {
     origin_rows(&[
@@ -485,26 +489,26 @@ fn a_value_that_took_a_hint_should_not_be_the_origin() {
         (
             "a literal element that took a later element's type (opus-2)",
             "fn f(b: u8) {\n    let a = [5, b, \"x\"]\n    print(a)\n}\nfn main() {}\n",
-            (2, 20),
-            Explained::Label(2, 17),
+            (2, 13),
+            Explained::Labels(&[(2, 17), (2, 20)]),
         ),
         (
             "a literal element that took a later element's type, against a `bool`",
             "fn f(b: u8) {\n    let a = [5, b, true]\n    print(a)\n}\nfn main() {}\n",
-            (2, 20),
-            Explained::Label(2, 17),
+            (2, 13),
+            Explained::Labels(&[(2, 17), (2, 20)]),
         ),
         (
             "a literal element of a generic call's array that took a later element's type",
             "fn g<T>(a: [T]) -> i64 { 0 }\nfn f(b: u8) {\n    print(g([5, b, \"x\"]))\n}\nfn main() {}\n",
-            (3, 20),
-            Explained::Label(3, 17),
+            (3, 11),
+            Explained::Labels(&[(3, 17), (3, 20)]),
         ),
         (
             "a control that passes before and after the fix: a `Some` element after `None` and a concrete element",
             "fn f(n: i64) {\n    let a = [None, n, Some(2), \"x\"]\n    print(a)\n}\nfn main() {}\n",
-            (2, 32),
-            Explained::Label(2, 23),
+            (2, 13),
+            Explained::Labels(&[(2, 14), (2, 20), (2, 28), (2, 32)]),
         ),
         (
             "an `if` arm of a literal and `None` that took a `u8` arm's type",
@@ -515,8 +519,8 @@ fn a_value_that_took_a_hint_should_not_be_the_origin() {
         (
             "an `if` element of a literal and `None` that took a `u8` element's type",
             "fn f(b: u8, c: bool) {\n    let a = [b, if c { 5 } else { None }, \"x\"]\n    print(a)\n}\nfn main() {}\n",
-            (2, 43),
-            Explained::Nothing,
+            (2, 13),
+            Explained::Labels(&[(2, 14), (2, 35), (2, 43)]),
         ),
     ]);
 }

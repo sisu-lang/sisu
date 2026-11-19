@@ -1,121 +1,119 @@
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-inferred.sisu:14:17
+error[E0032]: the elements of this array have different types
+  --> E0032-origin-inferred.sisu:13:13
    |
-14 |     let a = [1, "x"]
-   |              -  ^^^
+13 |     let a = [1, "x"]
+   |             ^-  --- `string`
    |              |
-   |              this element gives the type `i64`
+   |              `i64`
 
 error[E0032]: the branches of this `if` have different types
-  --> E0032-origin-inferred.sisu:18:13
+  --> E0032-origin-inferred.sisu:17:13
    |
-18 |     let a = if true { 1 } else { "x" }
+17 |     let a = if true { 1 } else { "x" }
    |             ^^        - `i64`    --- `string`
 
 error[E0032]: the arguments for `T` of this call have different types
-  --> E0032-origin-inferred.sisu:23:5
+  --> E0032-origin-inferred.sisu:22:5
    |
-23 |     g(1, "x")
+22 |     g(1, "x")
    |     ^ -  --- `string`
    |       |
    |       this argument gives `T` the type `i64`
 
 error[E0032]: the branches of this `if` have different types
-  --> E0032-origin-inferred.sisu:26:13
+  --> E0032-origin-inferred.sisu:25:13
    |
-26 |     let a = if c { 1 } else { if d { "x" } else { "y" } }
+25 |     let a = if c { 1 } else { if d { "x" } else { "y" } }
    |             ^^     - `i64`           --- `string` --- `string`
 
 error[E0032]: the branches of this `if` have different types
-  --> E0032-origin-inferred.sisu:30:13
+  --> E0032-origin-inferred.sisu:29:13
    |
-30 |     let a = if c { 1 } else { if d { "x" } else { 2 } }
+29 |     let a = if c { 1 } else { if d { "x" } else { 2 } }
    |             ^^     - `i64`           --- `string` - `i64`
 
 error[E0032]: the branches of this `if` have different types
-  --> E0032-origin-inferred.sisu:34:13
+  --> E0032-origin-inferred.sisu:33:13
    |
-34 |     let a = if c { 1 } else { [] }
+33 |     let a = if c { 1 } else { [] }
    |             ^^     - `i64`    -- `[]`
 
 error[E0032]: expected `i64`, found `None`
-  --> E0032-origin-inferred.sisu:38:35
+  --> E0032-origin-inferred.sisu:37:35
    |
-38 |     let a = if c { n } else { 1 + None }
+37 |     let a = if c { n } else { 1 + None }
    |                    -              ^^^^
    |                    |
    |                    this branch gives the type `i64`
 
 error[E0032]: the arms of this `match` have different types
-  --> E0032-origin-inferred.sisu:42:13
+  --> E0032-origin-inferred.sisu:41:13
    |
-42 |     let a = match n {
+41 |     let a = match n {
    |             ^^^^^
-43 |         1 => 5
+42 |         1 => 5
    |              - `i64`
-44 |         2 => Some(1)
+43 |         2 => Some(1)
    |                   - `i64?`
-45 |         _ => "x"
+44 |         _ => "x"
    |              --- `string`
 
-error[E0032]: expected `i64?`, found `string`
-  --> E0032-origin-inferred.sisu:50:26
+error[E0032]: the elements of this array have different types
+  --> E0032-origin-inferred.sisu:49:13
    |
-50 |     let a = [5, Some(1), "x"]
-   |                 -------  ^^^
-   |                 |
-   |                 this element gives the type `i64?`
+49 |     let a = [5, Some(1), "x"]
+   |             ^-       -   --- `string`
+   |              |       |
+   |              `i64`   `i64?`
 
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-inferred.sisu:55:23
+error[E0032]: the arguments for `T` of this call have different types
+  --> E0032-origin-inferred.sisu:54:11
    |
-55 |     print(f([None, n, "x"]))
-   |                    -  ^^^
-   |                    |
-   |                    this element gives the type `i64`
+54 |     print(f([None, n, "x"]))
+   |           ^  ----  -  --- `string`
+   |              |     |
+   |              |     `i64`
+   |              this argument gives `T` the type `None`
 
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-inferred.sisu:59:16
+error[E0032]: the arguments for `T` of this call have different types
+  --> E0032-origin-inferred.sisu:58:11
    |
-59 |     print(has(["a", "b"], n))
-   |                ^^^
-
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-inferred.sisu:59:21
-   |
-59 |     print(has(["a", "b"], n))
-   |                     ^^^
+58 |     print(has(["a", "b"], n))
+   |           ^^^  ---  ---   - `i64`
+   |                |    |
+   |                |    `string`
+   |                this argument gives `T` the type `string`
 
 error[E0032]: the arms of this `match` have different types
-  --> E0032-origin-inferred.sisu:62:13
+  --> E0032-origin-inferred.sisu:61:13
    |
-62 |     let a = match n {
+61 |     let a = match n {
    |             ^^^^^
-63 |         1 => 5
-64 |         2 => b
+62 |         1 => 5
+63 |         2 => b
    |              - `u8`
-65 |         _ => "x"
+64 |         _ => "x"
    |              --- `string`
 
 error[E0032]: the arms of this `match` have different types
-  --> E0032-origin-inferred.sisu:70:13
+  --> E0032-origin-inferred.sisu:69:13
    |
-70 |     let a = match n {
+69 |     let a = match n {
    |             ^^^^^
-71 |         0 => None
+70 |         0 => None
    |              ---- `None`
-72 |         1 => v
+71 |         1 => v
    |              - `i64`
-73 |         _ => "x"
+72 |         _ => "x"
    |              --- `string`
 
-error[E0032]: expected `u8`, found `string`
-  --> E0032-origin-inferred.sisu:78:20
+error[E0032]: the elements of this array have different types
+  --> E0032-origin-inferred.sisu:77:13
    |
-78 |     let a = [5, b, "x"]
-   |                 -  ^^^
+77 |     let a = [5, b, "x"]
+   |             ^   -  --- `string`
    |                 |
-   |                 this element gives the type `u8`
+   |                 `u8`
 
-sisu: 15 errors
+sisu: 14 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032
