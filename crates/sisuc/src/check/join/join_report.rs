@@ -780,8 +780,8 @@ impl Checker<'_> {
     }
 
     /// Whether each of `spans` is a number literal. A number literal states no type: its type came
-    /// from a hint, and a conversion of it fixes nothing (interim: Task 5d gives the report of
-    /// `main`).
+    /// from a hint, and a conversion of it fixes nothing (deferred, see the Task 5d report: the
+    /// plan gives the report of `main`).
     fn number_literals(&self, spans: &[Span]) -> bool {
         (spans.iter()).all(|&at| {
             self.source

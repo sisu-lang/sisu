@@ -3,8 +3,10 @@
 use super::any::{is_target, widen};
 use super::expr::{fits, if_some, literal_type, local, operator, path, takes_unit, typed};
 use super::generic::{Rank, mismatched};
+use super::infer::Kind;
 use super::infer::LiteralCheck;
 use super::interface::Operation;
+use super::join::{Heading, JoinForm, JoinMember, Place};
 use super::reports::{Held, Reported};
 use super::{
     Checked, Checker, Expectation, Lowered, Origin, Poisoned, as_optional, beyond_one_layer,
@@ -218,7 +220,7 @@ impl Checker<'_> {
         let operator = if tir_op == tir::BinaryOp::Add {
             Operator::Plus { compound }
         } else {
-            Operator::Arithmetic
+            Operator::Arithmetic { compound }
         };
         let start = self.diagnostics.len();
         let op = |_| op.to_string();
@@ -399,7 +401,7 @@ impl Checker<'_> {
             };
             let ty = type_of(&checked).map(|ty| match payload(ty) {
                 Type::CHAR if !arithmetic => Type::CHAR,
-                Type::STRING if operator != Operator::Arithmetic => Type::STRING,
+                Type::STRING if !matches!(operator, Operator::Arithmetic { .. }) => Type::STRING,
                 Type::F64 if wants_i64 => Type::I64,
                 _ => literal_type(Some(ty)),
             });
@@ -617,6 +619,34 @@ impl Checker<'_> {
                 let reported = self.reject_leader(operands[k], &mut checked[k], Type::CHAR);
                 want = None;
                 (Err(Poisoned::untyped(reported)), true)
+            } else if let Some(k) = (leader.filter(|&k| k < i))
+                .or_else(|| (operator.compound() && i == 1).then_some(0))
+                .filter(|&k| {
+                    (expected.ty().is_none() || operator.compound())
+                        && value.is_ok()
+                        && plain_numbers(type_of(&checked[k]), got)
+                        && self.closed(operands[k])
+                        && self.closed(operands[i])
+                })
+            {
+                // Two closed numbers of types that do not convert: neither is the mistake, so the
+                // join of the operands reports at the operator (ADR 0052).
+                let mut value = value;
+                let start = self.diagnostics.mark();
+                let joined = self.operands_conflict(
+                    operator.join_form(),
+                    (
+                        [operands[k].span, operands[i].span],
+                        &operator_text(operator, op(i)),
+                    ),
+                    Place::Whole,
+                    [&mut checked[k], &mut value],
+                );
+                deferred.absorb(self.diagnostics.take_since(start));
+                match joined {
+                    Some(reported) => (Err(Poisoned::untyped(reported)), true),
+                    None => (value, false),
+                }
             } else if let Some(k) = leader.filter(|_| {
                 got == Some(Type::F64) && matches!(want, Some(Type::I64 | Type::U8)) && !wants_i64
             }) {
@@ -722,6 +752,61 @@ impl Checker<'_> {
             self.diagnostics.restore(deferred);
         }
         (checked, ty, mismatched)
+    }
+
+    /// The report of the operands at `left` and `right`, checked as `values`. The first is at
+    /// `first_at` of its join. They are closed values whose types do not convert, so neither is
+    /// the mistake: their join reports, as `form`, at the operator `text` between them (ADR 0052).
+    /// `None` when they join.
+    fn operands_conflict(
+        &mut self,
+        form: JoinForm,
+        ([left, right], text): ([Span; 2], &str),
+        first_at: Place,
+        [first, second]: [&mut Checked; 2],
+    ) -> Option<Reported> {
+        let gap = Span::new(left.end(), right.start());
+        let head = (self.source.text(gap).find(text)).map_or(gap, |at| {
+            Span::new(gap.start() + at, gap.start() + at + text.len())
+        });
+        let heading = Heading {
+            head,
+            whole: left.to(right),
+            returns: None,
+        };
+        let mut members = [
+            JoinMember {
+                value: first,
+                at: first_at,
+                label: left,
+            },
+            JoinMember {
+                value: second,
+                at: Place::Whole,
+                label: right,
+            },
+        ];
+        (self.join_form(form, heading, &mut members, Expectation::None, None))
+            .err()
+            .map(|failed| failed.reported())
+    }
+
+    /// Whether `e` is a closed value whose type comes from a declaration or from its own form: a
+    /// name, a field, an element, or a literal that is not an integer. No context changes its
+    /// type, so beside another closed value it is a member of a join that reports at its head.
+    fn closed(&mut self, e: &ast::Expr) -> bool {
+        matches!(
+            e.kind,
+            ExprKind::Name(_)
+                | ExprKind::SelfValue
+                | ExprKind::Field { .. }
+                | ExprKind::Index { .. }
+                | ExprKind::Float(_)
+                | ExprKind::Bool(_)
+                | ExprKind::Char(_)
+                | ExprKind::Str(_)
+                | ExprKind::Interpolate(_)
+        ) && self.rank_value(e, &mut true).rank == Rank::Concrete
     }
 
     /// The operands of a comparison whose leader, at `k` and checked as `leader`, is a `unit`, with
@@ -885,7 +970,7 @@ impl Checker<'_> {
         let swapped = self.sibling_rank(rhs) < self.sibling_rank(lhs)
             || (self.none_written(lhs) && !self.none_written(rhs));
         let (first, second) = if swapped { (rhs, lhs) } else { (lhs, rhs) };
-        let checked = self.value(first, Expectation::None);
+        let mut checked = self.value(first, Expectation::None);
         // The first side's type is a hint to the second, as a sibling's is (see
         // `Expectation::Hint`): an `if` there reports a branch against it, as one checked first
         // reports against its first branch.
@@ -894,7 +979,7 @@ impl Checker<'_> {
             siblings: ty,
             origin: Origin::None,
         });
-        let other = self.value(second, want);
+        let mut other = self.value(second, want);
         // A `unit` beside a value of another type has no value to compare.
         if let (Some(a), Some(b)) = (type_of(&checked), type_of(&other))
             && let Some((side, value, beside)) = [(first, &checked, a, b), (second, &other, b, a)]
@@ -934,6 +1019,29 @@ impl Checker<'_> {
             && number(payload(got))
             && payload(want) != payload(got)
         {
+            // Two closed integers: neither is the mistake, so the join of the sides reports at the
+            // operator (ADR 0052).
+            if checked.is_ok()
+                && other.is_ok()
+                && plain_numbers(Some(payload(want)), Some(payload(got)))
+                && self.closed(lhs)
+                && self.closed(rhs)
+            {
+                let text = if negated { "!=" } else { "==" };
+                let values = if swapped {
+                    [&mut other, &mut checked]
+                } else {
+                    [&mut checked, &mut other]
+                };
+                if let Some(reported) = self.operands_conflict(
+                    JoinForm::Compare,
+                    ([lhs.span, rhs.span], text),
+                    Place::Whole,
+                    values,
+                ) {
+                    return Err(Poisoned::untyped(reported));
+                }
+            }
             // A number beside a `char` is the one converted, and an integer beside an `f64`; else
             // the second is held to the first.
             let d = if payload(got) == Type::CHAR
@@ -1254,7 +1362,7 @@ impl Checker<'_> {
         (lhs, rhs): (&ast::Expr, &ast::Expr),
         expected: Expectation,
     ) -> Checked {
-        let scrutinee = self.value(lhs, Expectation::None);
+        let mut scrutinee = self.value(lhs, Expectation::None);
         let Some(TypeKind::Optional(payload)) = type_of(&scrutinee).map(Type::kind) else {
             let before = self.diagnostics.len();
             let default = self.fallback(rhs, Expectation::Poisoned);
@@ -1310,12 +1418,15 @@ impl Checker<'_> {
         // one `?` only. That is a hint (see `Expectation::Hint`), unless that type is written. Then
         // the right side is checked against it, so `let r: any I = oa ?? None` reports at the
         // `None`, and an optional value there at the whole `??`.
-        let other = match written {
+        let mut other = match written {
             Some(want)
                 if is_target(payload) && (want == payload || want == as_optional(payload)) =>
             {
                 self.fallback(rhs, Expectation::Required(want, Origin::None))
             }
+            // A value whose type comes from its declaration joins the payload, and is no mistake
+            // of its own when they conflict: the join reports.
+            _ if self.closed(lhs) && self.closed(rhs) => self.fallback(rhs, Expectation::None),
             _ => {
                 let hint = Expectation::Hint {
                     want: as_optional(payload),
@@ -1325,6 +1436,35 @@ impl Checker<'_> {
                 self.fallback(rhs, hint)
             }
         };
+        // Two closed sides whose types do not convert: neither is the mistake, so the join of the
+        // payload and the default reports at the `??` (ADR 0052).
+        if let (true, Ok(_), Some(got)) = (written.is_none(), &scrutinee, type_of(&other))
+            && !matches!(expected, Expectation::Required(..))
+            && self.closed(lhs)
+            && self.closed(rhs)
+            && other.is_ok()
+            && !got.holds_infer()
+            && ![payload, optional_of(payload)].contains(&got)
+            && optional_of(got) != payload
+            && got != Type::NEVER
+            && !is_target(payload)
+            && !is_target(got)
+            && self.any_join(payload, got).is_none()
+        {
+            let v = self.table.fresh(Kind::Any, lhs.span);
+            let left = Place::Part {
+                place: Type::optional(v),
+                argument: lhs.span,
+            };
+            if let Some(reported) = self.operands_conflict(
+                JoinForm::Coalesce,
+                ([lhs.span, rhs.span], "??"),
+                left,
+                [&mut scrutinee, &mut other],
+            ) {
+                return Err(Poisoned::untyped(reported));
+            }
+        }
         // A value converts to an `any` payload, unless it is a wider `any` type, which the
         // payload converts to.
         let other = match type_of(&other) {
@@ -1358,6 +1498,7 @@ impl Checker<'_> {
                             .find(|&(_, t)| !fits(want, t) && !self.converts_to_any(t, want))
                             .map(|(e, t)| (want, e, t))
                     });
+                    let class = is_target(ty) && matches!(payload.kind(), TypeKind::Class(..));
                     let d = match (leaves, object) {
                         // With a written type, the first side that leaves it, as in a join.
                         (Some((want, e, t)), _) => {
@@ -1365,9 +1506,7 @@ impl Checker<'_> {
                             self.leaves_any(e.span, source, want, t, Origin::None)
                         }
                         // A class payload leaves an `any` default, as a member leaves a join.
-                        _ if is_target(ty) && matches!(payload.kind(), TypeKind::Class(..)) => {
-                            self.leaves_any(lhs.span, None, ty, payload, Origin::None)
-                        }
+                        _ if class => self.leaves_any(lhs.span, None, ty, payload, Origin::None),
                         (None, Some((at, want, object))) => {
                             self.leaves_any(at, None, want, object, Origin::None)
                         }
@@ -1412,19 +1551,48 @@ pub(super) enum Operator {
     Compare,
     /// `+`, which also joins `string`s; `compound` for a compound assignment's.
     Plus { compound: bool },
-    /// `- * / %`.
-    Arithmetic,
+    /// `- * / %`; `compound` for a compound assignment's.
+    Arithmetic { compound: bool },
 }
 
 impl Operator {
+    /// Whether the operator is that of a compound assignment, whose left side is its place.
+    fn compound(self) -> bool {
+        matches!(
+            self,
+            Operator::Plus { compound: true } | Operator::Arithmetic { compound: true }
+        )
+    }
+
+    /// The form of the join of its two operands.
+    fn join_form(self) -> JoinForm {
+        match self {
+            Operator::Compare => JoinForm::Compare,
+            op if op.compound() => JoinForm::Compound { op, assigned: 0 },
+            op => JoinForm::Operator(op),
+        }
+    }
+
     /// The types the operator takes, in the order a mismatch lists them.
     pub(super) fn takes(self) -> &'static [Type] {
         match self {
             Operator::Compare => &[Type::I64, Type::U8, Type::F64, Type::CHAR, Type::STRING],
             Operator::Plus { .. } => &[Type::I64, Type::U8, Type::F64, Type::STRING],
-            Operator::Arithmetic => &[Type::I64, Type::U8, Type::F64],
+            Operator::Arithmetic { .. } => &[Type::I64, Type::U8, Type::F64],
         }
     }
+}
+
+/// Whether `a` and `b` are the two integer types, which do not convert to each other. An `f64`
+/// beside an integer has its own rule: the integer converts.
+fn plain_numbers(a: Option<Type>, b: Option<Type>) -> bool {
+    let integer = |ty: Option<Type>| matches!(ty, Some(Type::I64 | Type::U8));
+    integer(a) && integer(b) && a != b
+}
+
+/// The text of `operator`'s token, which `op` spells: a compound assignment's ends in `=`.
+fn operator_text(operator: Operator, op: String) -> String {
+    if operator.compound() { op + "=" } else { op }
 }
 
 /// The types unary `-` takes. A `u8` is its own error: it cannot be negative.

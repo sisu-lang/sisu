@@ -952,7 +952,7 @@ impl Checker<'_> {
         let operator = if op == tir::BinaryOp::Add {
             Operator::Plus { compound: true }
         } else {
-            Operator::Arithmetic
+            Operator::Arithmetic { compound: true }
         };
         if payload(ty) == Type::STRING && op == tir::BinaryOp::Add {
             let start = self.diagnostics.len();
