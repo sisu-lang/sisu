@@ -986,12 +986,16 @@ impl Checker<'_> {
                             ty
                         };
                         // A nested member converts at its top, as in `candidates`. A nested leaf
-                        // with no part at the hole, as `None` at `[Two<U, V>?]`, gives it no type.
+                        // with no part at the hole that can fit the place, as `None` at
+                        // `[Two<U, V>?]`, gives it no type. One that cannot, as `0` at `[T]`, does
+                        // not fit.
                         let part = (part_at(place, hole, ty))
                             .or_else(|| leaf_part(place, hole, ty, leaf.depth));
                         match part {
                             Some(part) => part,
-                            None if !top => continue,
+                            None if !top && leaf_fits(place, self.table.default_open(ty)) => {
+                                continue;
+                            }
                             None => {
                                 misfit = true;
                                 ty
@@ -1323,6 +1327,26 @@ fn leaf_part(place: Type, hole: Symbol, ty: Type, depth: usize) -> Option<Type> 
         }
         (TypeKind::Optional(ours), _) => leaf_part(ours, hole, ty, depth),
         _ => None,
+    })
+}
+
+/// Whether a leaf of type `ty` fits `place` for some type of the parameters of `place`, by its
+/// shape. An open variable fits each place: an integer literal is `i64` in `ty`, so it fits no
+/// array place and no place of another nominal type.
+fn leaf_fits(place: Type, ty: Type) -> bool {
+    if !place.has_param() {
+        return true;
+    }
+    ensure_stack(|| match (place.kind(), ty.kind()) {
+        (TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..), _)
+        | (_, TypeKind::Infer(_)) => true,
+        (TypeKind::Array(ours), TypeKind::Array(theirs))
+        | (TypeKind::Optional(ours), TypeKind::Optional(theirs)) => leaf_fits(ours, theirs),
+        (TypeKind::Optional(ours), _) => leaf_fits(ours, ty),
+        (TypeKind::Class(ours, _), TypeKind::Class(theirs, _)) => ours == theirs,
+        (TypeKind::Struct(ours, _), TypeKind::Struct(theirs, _)) => ours == theirs,
+        (TypeKind::Enum(ours, _), TypeKind::Enum(theirs, _)) => ours == theirs,
+        _ => false,
     })
 }
 
