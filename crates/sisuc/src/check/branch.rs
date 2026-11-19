@@ -212,14 +212,8 @@ impl Checker<'_> {
             c.body.dropped = dropped.then_some(else_block.span);
             c.block(else_block, branch_expectation(inner, tail(else_block)))
         });
-        // The parentheses around an `if` are part of its span (see the parser), not of its head.
-        let text = self.source.text(span);
-        let parens = text.len()
-            - text
-                .trim_start_matches(|c: char| c == '(' || c.is_whitespace())
-                .len();
         let heading = Heading {
-            head: Span::new(span.start() + parens, span.start() + parens + "if".len()),
+            head: self.source.head(span, "if".len()),
             whole: span,
             returns: None,
         };

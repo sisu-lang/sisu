@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use rustc_hash::FxHashMap;
+
 use crate::lexer::Float;
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -20,6 +22,9 @@ pub(crate) struct Program {
     pub(crate) breaks: Vec<usize>,
     /// Where each line break that ends a statement is, so that a help keeps a block as written.
     pub(crate) newlines: Vec<usize>,
+    /// Where the expression in parentheses starts, by where its `(` starts: the span of the
+    /// expression holds the parentheses. In `((x))` both find `x`.
+    pub(crate) parens: FxHashMap<usize, usize>,
 }
 
 /// A function, class, enum, constant, alias, interface or `extend` block that holds a syntax
@@ -1652,6 +1657,7 @@ mod tests {
             quotes: Vec::new(),
             breaks: Vec::new(),
             newlines: Vec::new(),
+            parens: FxHashMap::default(),
         };
         assert_eq!(
             program.to_string(),

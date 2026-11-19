@@ -7,6 +7,8 @@ use std::iter;
 use std::mem;
 use std::ops::Range;
 
+use rustc_hash::FxHashMap;
+
 use crate::ast::{
     AliasDecl, Align, Applied, Arg, Arm, AssocChoice, AssocType, BinaryOp, Block, Bound, Broken,
     BrokenKind, Class, CompareOp, Const, Enum, Expr, ExprKind, Extend, FieldDecl, ForSource,
@@ -76,6 +78,7 @@ pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
         loops: Vec::new(),
         prelude,
         checked_self: false,
+        parens: FxHashMap::default(),
     }
     .program()
 }
@@ -678,6 +681,8 @@ struct Parser<'a> {
     /// While a `match` reads its scrutinee: the index of its first token. A jump at the end of
     /// the scrutinee that takes the body's `{` as its value reports that (`jump_value`).
     scrutinee: Option<usize>,
+    /// Where the expression in each pair of parentheses so far starts (`Program::parens`).
+    parens: FxHashMap<usize, usize>,
 }
 
 /// An open loop, and whether the parser is in its header or in its body.
@@ -1372,6 +1377,7 @@ impl<'a> Parser<'a> {
                     .filter(|t| t.is_line_break())
                     .map(|t| t.span.start())
                     .collect(),
+                parens: mem::take(&mut self.parens),
             },
             diagnostics,
             checkable,
@@ -2041,6 +2047,7 @@ impl<'a> Parser<'a> {
             halves: self.halves,
             halved: None,
             scrutinee: None,
+            parens: FxHashMap::default(),
         };
         let mutable = rest.eat(&TokenKind::Mut).is_some();
         let mut field = || -> Result<String, Diagnostic> {
@@ -4851,6 +4858,9 @@ impl<'a> Parser<'a> {
                 self.bump();
                 let inner = self.headed(false, Self::expr)?;
                 let close = self.expect(&TokenKind::RParen)?;
+                let start = inner.span.start();
+                let head = self.parens.get(&start).copied().unwrap_or(start);
+                self.parens.insert(token.span.start(), head);
                 // The parentheses are part of the span, so diagnostics underline them.
                 return Ok(Expr {
                     span: token.span.to(close.span),
@@ -7688,6 +7698,7 @@ mod tests {
             halves: &OnceCell::new(),
             halved: None,
             scrutinee: None,
+            parens: FxHashMap::default(),
         })
     }
 

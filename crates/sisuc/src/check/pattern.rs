@@ -290,7 +290,7 @@ impl Checker<'_> {
             })
         };
         // shortcut: an arm that gives a made value joins by rank, as on `main`, until the forms
-        // of `made_value` are members (Tasks 5c to 5e).
+        // of `made_value` are members (Tasks 5d and 5e).
         let inner = self.branches_expect(whole);
         let (blocks, ty) = if matches!(inner, Expectation::None | Expectation::Poisoned)
             && arms.iter().any(|arm| gives_made_value(&arm.body))

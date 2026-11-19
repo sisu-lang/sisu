@@ -581,9 +581,19 @@ struct Source<'src> {
     breaks: &'src [usize],
     /// Where each line break that ends a statement is, in order.
     newlines: &'src [usize],
+    /// Where the expression in parentheses starts, by where its `(` starts.
+    parens: &'src FxHashMap<usize, usize>,
 }
 
 impl<'src> Source<'src> {
+    /// The span of `len` bytes at the head of the expression `span`, past the parentheses that
+    /// its span holds (see the parser): the `[` of an array literal, the `if` of an `if`.
+    fn head(&self, span: Span, len: usize) -> Span {
+        let start = span.start();
+        let start = self.parens.get(&start).copied().unwrap_or(start);
+        Span::new(start, start + len)
+    }
+
     /// The text that `span` covers.
     fn text(&self, span: Span) -> &'src str {
         self.holding(span.start()).text(span)
@@ -1531,6 +1541,7 @@ impl<'src> Checker<'src> {
                 quotes: &program.quotes,
                 breaks: &program.breaks,
                 newlines: &program.newlines,
+                parens: &program.parens,
             },
             names: NameMaps::default(),
             prelude_functions: FxHashSet::default(),

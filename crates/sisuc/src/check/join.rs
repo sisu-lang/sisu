@@ -865,7 +865,9 @@ impl Checker<'_> {
     /// Gives the open variable of `target` the type of `e`, an array or a `Some`, so that the
     /// walk enters `e`: the element `X` of a nested array, `[X]`, is open until its elements
     /// settle to it. An array takes the variable under the optionals of `target` too, as it is no
-    /// optional itself: `[X]` meets `V?` as `V = [X]`, with one wrap.
+    /// optional itself: `[X]` meets `V?` as `V = [X]`, with one wrap. It binds: under
+    /// `converts_at` the caller holds a snapshot (the test of a candidate, `fails`,
+    /// `settled_type`, `closed_takes`, `drop_held_if_opened`), and `settle_at` keeps the bind.
     fn open_target(&mut self, e: &tir::Expr, target: Type) {
         // Only the head of `target` counts, so each layer of a nested array reads one layer.
         let mut open = match e.kind {

@@ -1390,7 +1390,49 @@ pub(super) fn branch_free(e: &tir::Expr, known: &FxHashSet<Span>) -> bool {
         tir::ExprKind::If { .. } | tir::ExprKind::IfSome { .. } | tir::ExprKind::Match { .. } => {
             false
         }
-        _ => true,
+        // The nodes that `without_value` does not enter: each gives its own value.
+        tir::ExprKind::Int(_)
+        | tir::ExprKind::Float(_)
+        | tir::ExprKind::Bool(_)
+        | tir::ExprKind::Char(_)
+        | tir::ExprKind::Str(_)
+        | tir::ExprKind::None
+        | tir::ExprKind::Unit
+        | tir::ExprKind::Local(_)
+        | tir::ExprKind::Call { .. }
+        | tir::ExprKind::InterfaceCall { .. }
+        | tir::ExprKind::New { .. }
+        | tir::ExprKind::Variant { .. }
+        | tir::ExprKind::Field { .. }
+        | tir::ExprKind::Struct { .. }
+        | tir::ExprKind::StructField { .. }
+        | tir::ExprKind::ToAny(_)
+        | tir::ExprKind::DynCall { .. }
+        | tir::ExprKind::Convert(_)
+        | tir::ExprKind::Print { .. }
+        | tir::ExprKind::Dbg { .. }
+        | tir::ExprKind::Panic(_)
+        | tir::ExprKind::ReadLine
+        | tir::ExprKind::Index { .. }
+        | tir::ExprKind::Slice { .. }
+        | tir::ExprKind::Len(_)
+        | tir::ExprKind::Chars(_)
+        | tir::ExprKind::Bytes(_)
+        | tir::ExprKind::Words(_)
+        | tir::ExprKind::FromChars(_)
+        | tir::ExprKind::Math { .. }
+        | tir::ExprKind::Unary { .. }
+        | tir::ExprKind::Binary { .. }
+        | tir::ExprKind::Interpolate { .. }
+        | tir::ExprKind::Concat { .. }
+        | tir::ExprKind::Compare { .. }
+        | tir::ExprKind::Equal { .. }
+        | tir::ExprKind::Is { .. }
+        | tir::ExprKind::Loop(_)
+        | tir::ExprKind::Break { .. }
+        | tir::ExprKind::Continue { .. }
+        | tir::ExprKind::Return(_)
+        | tir::ExprKind::MutCall { .. } => true,
     }
 }
 

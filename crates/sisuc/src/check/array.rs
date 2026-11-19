@@ -78,14 +78,8 @@ impl Checker<'_> {
             })
             .collect();
         let spans: Vec<Span> = elements.iter().map(|e| e.span).collect();
-        // The parentheses around an array are part of its span (see the parser), not of its head.
-        let text = self.source.text(span);
-        let parens = text.len()
-            - text
-                .trim_start_matches(|c: char| c == '(' || c.is_whitespace())
-                .len();
         let heading = Heading {
-            head: Span::new(span.start() + parens, span.start() + parens + 1),
+            head: self.source.head(span, "[".len()),
             whole: span,
             returns: None,
         };
