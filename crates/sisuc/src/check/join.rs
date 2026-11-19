@@ -35,6 +35,8 @@ thread_local! {
     /// How many times `part_in` has compared a part of a place with a part of a type, on this
     /// thread.
     pub(super) static PART_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many value positions `converts_at` has visited, on this thread.
+    pub(super) static CONVERTS_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A member of a join: a checked value, where it stands, and the span of the label of an E0043
@@ -670,6 +672,8 @@ impl Checker<'_> {
     /// has value positions converts at each of them. It unifies what `settle_at` unifies, in the
     /// same order, so that `settle_at` takes the steps that this counts.
     pub(super) fn converts_at(&mut self, e: &mut tir::Expr, target: Type) -> Option<usize> {
+        #[cfg(test)]
+        CONVERTS_STEPS.set(CONVERTS_STEPS.get() + 1);
         if e.ty == Type::NEVER || self.settled_as(e, target) {
             return Some(0);
         }

@@ -1215,29 +1215,142 @@ fn a_conflict_in_array_elements_should_report_once_at_the_call() {
     }
 }
 
-/// The expressions that `gives_made_value` and `without_value` visit when `main` is checked,
-/// whose `let` takes an array literal of `n` nested layers around `1`.
-fn nested_array_walk_steps(n: usize) -> usize {
-    let src = format!(
+/// The source of `main`, whose `let` takes `n` layers of `open`, `1` and `close` around `1`.
+fn nested_layers(n: usize, (open, close): (&str, &str)) -> String {
+    format!(
         "fn main() {{\n    let a = {}1{}\n    print(\"{{a.len()}}\")\n}}\n",
-        "[".repeat(n),
-        "]".repeat(n)
-    );
+        open.repeat(n),
+        close.repeat(n)
+    )
+}
+
+/// The expressions that `gives_made_value` and `without_value` visit when `main` is checked,
+/// whose `let` takes `n` nested layers of `layer` around `1`.
+fn nested_array_walk_steps(n: usize, layer: (&str, &str)) -> usize {
+    let src = nested_layers(n, layer);
     VALUE_WALK_STEPS.set(0);
     let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
-    assert!(errors(&src, &ds).is_empty(), "{n} layers");
+    assert!(errors(&src, &ds).is_empty(), "{n} layers of {layer:?}");
     VALUE_WALK_STEPS.get()
 }
 
 #[test]
 fn nested_array_literal_should_cost_linear_value_walk_steps() {
-    // GIVEN `let a = [[...[1]...]]` of 48, 96 and 144 layers
+    // GIVEN `let a = [[...[1]...]]` and `let a = [[...[1; 2]...; 2]; 2]` of 48, 96 and 144 layers
+    for (row, layer) in [("literal", ("[", "]")), ("fill", ("[", "; 2]"))] {
+        // WHEN each is checked
+        let steps = [48, 96, 144].map(|n| nested_array_walk_steps(n, layer));
+        // THEN no layer walks the layers inside it again, so the steps grow linearly
+        assert_near_linear_for(&format!("row `{row}`: "), steps[0], steps[1], steps[2]);
+    }
+}
+
+/// The value positions that `converts_at` visits when `main` is checked, whose `let` takes `n`
+/// nested layers around `[1]`, each beside a `[]`.
+fn beside_empty_converts_steps(n: usize) -> usize {
+    let mut value = "[1]".to_string();
+    for _ in 0..n {
+        value = format!("[{value}, []]");
+    }
+    let src = format!("fn main() {{\n    let a = {value}\n    print(\"{{a.len()}}\")\n}}\n");
+    join::CONVERTS_STEPS.set(0);
+    let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+    assert!(errors(&src, &ds).is_empty(), "{n} layers");
+    join::CONVERTS_STEPS.get()
+}
+
+#[test]
+fn nested_array_beside_an_empty_array_should_cost_linear_converts_steps() {
+    // GIVEN `let a = [[[[1], []], []], ...]` of 40, 80 and 120 layers
     // WHEN each is checked
-    let steps = [
-        nested_array_walk_steps(48),
-        nested_array_walk_steps(96),
-        nested_array_walk_steps(144),
-    ];
-    // THEN no layer walks the layers inside it again, so the steps grow linearly
+    let steps = [40, 80, 120].map(beside_empty_converts_steps);
+    // THEN the join tests one candidate, not one for each `[]`, so the steps grow linearly
     assert_near_linear(steps[0], steps[1], steps[2]);
+}
+
+/// GIVEN a generic call whose argument holds a nested leaf that fits no type of the parameter
+/// AND the leaf is `0` in `if c { row } else { 0 }` at `[T]`, or `1` in `[[None], 1]` at `[[T?]]`
+/// WHEN the program is checked
+/// THEN the call gives one E0032 at its head, with a label at the leaves, and no E0050
+#[test]
+fn a_nested_leaf_that_fits_no_type_of_the_parameter_should_give_e0032_at_the_call() {
+    let decls = "struct P<A> {\n    a: A\n}\n\
+                 fn flat<T>(xs: [[T]]) -> i64 { xs.len() }\n\
+                 fn one<T>(xs: [T]) -> i64 { xs.len() }\n\
+                 fn oner<T>(xs: [T]) -> [T] { xs }\n\
+                 fn two<T>(xs: [T], y: T) -> i64 { xs.len() }\n\
+                 fn opt<T>(xs: [T?]) -> i64 { xs.len() }\n\
+                 fn bx<T>(xs: [P<T>]) -> i64 { xs.len() }\n\
+                 fn g4<T>(xs: [[T?]]) -> i64 { xs.len() }\n\
+                 fn main() {\n    let row = [1, 2]\n    let o: i64? = None\n\
+                 \x20   let c = [1].len() == 2\n    let d = [1].len() == 3\n";
+    // Each row, with the columns of the labels on its line.
+    let rows: [(&str, &[usize]); 25] = [
+        ("one(if c { row } else { 0 })", &[22]),
+        ("flat([row, 3])", &[17, 22]),
+        ("one(if c { [1] } else { None })", &[23, 35]),
+        ("flat([[1, 2], [3], 4])", &[18, 21, 26, 30]),
+        ("flat([[1], \"s\"])", &[18, 22]),
+        ("one(if c { [1] } else { 2 })", &[23, 35]),
+        ("one(if c { row } else if c { [1] } else { 2 })", &[22]),
+        ("flat([row, row, None])", &[17, 22, 27]),
+        ("flat([row, Some(row)])", &[17, 27]),
+        ("one(if c { row } else { None })", &[22, 35]),
+        ("one({ if c { row } else { 0 } })", &[24]),
+        ("flat([if c { row } else { 0 }, row])", &[24, 37, 42]),
+        ("flat([row, Some(3)])", &[17, 27]),
+        ("oner(if c { row } else { 0 }).len()", &[23]),
+        ("one(dbg(if c { row } else { 0 }))", &[26]),
+        ("flat([dbg(row), 0])", &[21, 27]),
+        ("two(if c { row } else { 0 }, 1)", &[22]),
+        ("opt(if c { [o] } else { o })", &[23, 35]),
+        ("bx([P(a: 1), 2])", &[15, 24]),
+        ("bx(if c { [P(a: 1)] } else { P(a: 2) })", &[22, 40]),
+        ("g4([[None], 1])", &[16, 23]),
+        ("g4([1, [None]])", &[15, 19]),
+        ("g4([[None], [1], 1])", &[16, 24, 28]),
+        (
+            "g4([if c { [None] } else if d { [1] } else { 1 }])",
+            &[23, 44, 56],
+        ),
+        (
+            "opt(if c { [None] } else if d { [1] } else { 1 })",
+            &[23, 44, 56],
+        ),
+    ];
+    let mut red = Vec::new();
+    for (row, labels) in rows {
+        let src = format!("{decls}    print({row})\n}}\n");
+        let wanted = vec![(
+            Code::Mismatch,
+            (16, 11),
+            labels.iter().map(|&col| (16, col)).collect::<Vec<_>>(),
+        )];
+        let found = found(&src);
+        if found != wanted {
+            red.push(format!("row `{row}`: found {found:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+/// GIVEN an array literal and an `if` whose values differ, each in parentheses with a comment
+/// before its head
+/// WHEN the program is checked
+/// THEN the E0032 of each is at its `[` or its `if`, not at the comment
+#[test]
+fn the_head_of_a_join_in_parentheses_should_be_its_bracket_or_keyword() {
+    let src = "fn main() {\n    let c = [1].len() == 2\n    let x = (\n        // the rows\n        \
+               [1, \"s\"])\n    let y = (\n        // the branches\n        \
+               (if c { 1 } else { \"s\" }))\n    print(x.len())\n}\n";
+    let heads: Vec<_> = found(src)
+        .iter()
+        .map(|(code, at, _)| (*code, *at))
+        .collect();
+    assert_eq!(heads, [(Code::Mismatch, (5, 9)), (Code::Mismatch, (8, 10))]);
 }

@@ -238,6 +238,8 @@ fn mfirst<T>(mut xs: [T]) -> T { xs[0] }
 fn mput<T>(mut xs: [T], x: T) -> T { x }
 // A join of a call under a required type, beside a member that takes it (`None`).
 fn both<T>(a: T, b: T) -> [T] { [a, b] }
+fn count<T>(xs: [T]) -> i64 { xs.len() }
+fn flat<T>(xs: [[T]]) -> i64 { xs.len() }
 // A bounded call at a part and at the whole place, a call that gives an open variable, and a
 // bound of a closed parameter that names an open one (`fk`).
 fn eo<T>() -> [T?] { [] }
@@ -894,3 +896,15 @@ let _a = pick([$, if true { $ } else { $ }], [])
 let _a = pick([match true { true => $; _ => $ }], [nothing()])
 # A held conflict in a join that a candidate of the failed join can open.
 let _a = pick(if true { pick($, $) } else { 1 }, $)
+# A nested leaf of a generic argument that fits no type of the parameter, as `0` at `[T]` and at
+# `[[T]]`, beside the value: one E0032 at the head of the call.
+let _a = count(if c { $ } else { 0 })
+let _a = flat([$, 0])
+let _a = flat([if c { $ } else { 0 }, [1]])
+# A generic call whose argument is an array under a written type: the report names the closed
+# form of the array.
+let _a: i64 = id([$, 1])
+let _a: i64 = id([1, $])
+# A nested array with a `[]` beside each layer, and a nested fill.
+let _a = [[[$], []], []]
+let _a = [[[$; 2]; 2]; 2]

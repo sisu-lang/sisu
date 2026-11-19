@@ -1,14 +1,112 @@
 error[E0032]: expected `string`, found `i64`
- --> E0032-generic-call.sisu:7:24
-  |
-7 |     let a: string = id(n)
-  |                        ^
+  --> E0032-generic-call.sisu:26:24
+   |
+26 |     let a: string = id(n)
+   |                        ^
 
 error[E0032]: expected `i64`, found `string`
- --> E0032-generic-call.sisu:8:37
-  |
-8 |     let r: Result<i64, string> = Ok("x")
-  |                                     ^^^
+  --> E0032-generic-call.sisu:27:37
+   |
+27 |     let r: Result<i64, string> = Ok("x")
+   |                                     ^^^
 
-sisu: 2 errors
+error[E0032]: expected `i64`, found `[i64]`
+  --> E0032-generic-call.sisu:31:21
+   |
+31 |     let x: i64 = id([1, 2])
+   |                     ^^^^^^
+
+error[E0032]: expected `string`, found `[string]`
+  --> E0032-generic-call.sisu:32:24
+   |
+32 |     let y: string = id(["a", "b"])
+   |                        ^^^^^^^^^^
+
+error[E0032]: expected `i64`, found `[i64]`
+  --> E0032-generic-call.sisu:33:14
+   |
+33 |     takes(id([1, 2]))
+   |              ^^^^^^
+
+error[E0032]: expected `i64`, found `[i64]`
+  --> E0032-generic-call.sisu:34:25
+   |
+34 |     let d: i64 = first([[1], [2]])
+   |                         ^^^
+
+error[E0032]: expected `i64`, found `[i64]`
+  --> E0032-generic-call.sisu:34:30
+   |
+34 |     let d: i64 = first([[1], [2]])
+   |                              ^^^
+
+error[E0032]: expected `i64`, found `[i64]`
+  --> E0032-generic-call.sisu:35:18
+   |
+35 |     let e: i64 = pick([1], [2])
+   |                  ^^^^^^^^^^^^^^
+
+error[E0032]: expected `i64`, found `[i64]`
+  --> E0032-generic-call.sisu:36:24
+   |
+36 |     let f: [i64] = id([[1, 2]])
+   |                        ^^^^^^
+
+error[E0032]: expected `i64`, found `[i64?]`
+  --> E0032-generic-call.sisu:37:21
+   |
+37 |     let g: i64 = id([None, Some(1)])
+   |                     ^^^^^^^^^^^^^^^
+
+error[E0032]: expected `u8`, found `[i64]`
+  --> E0032-generic-call.sisu:38:34
+   |
+38 |     let p: Pair<u8, string> = mk([1], "s")
+   |                                  ^^^
+
+error[E0032]: expected `i64?`, found `[i64]`
+  --> E0032-generic-call.sisu:39:27
+   |
+39 |     let h: i64? = id(Some([1]))
+   |                           ^^^
+
+error[E0032]: expected `i64`, found `[i64]`
+  --> E0032-generic-call.sisu:40:28
+   |
+40 |     let i: i64 = id(if c { [1] } else { ["s"] })
+   |                            ^^^
+
+error[E0032]: expected `i64`, found `[string]`
+  --> E0032-generic-call.sisu:40:41
+   |
+40 |     let i: i64 = id(if c { [1] } else { ["s"] })
+   |                                         ^^^^^
+
+error[E0032]: expected `i64`, found `[i64?]`
+  --> E0032-generic-call.sisu:41:21
+   |
+41 |     let j: i64 = id([1, Some(2)])
+   |                     ^^^^^^^^^^^^
+
+error[E0032]: expected `i64`, found `[i64]`
+  --> E0032-generic-call.sisu:42:21
+   |
+42 |     let k: i64 = id([1; 3])
+   |                     ^^^^^^
+
+error[E0032]: expected `i64`, found `[i64]?`
+  --> E0032-generic-call.sisu:43:21
+   |
+43 |     let m: i64 = id(Some([1]))
+   |                     ^^^^^^^^^
+
+error[E0032]: the arguments for `T` of this call have different types
+  --> E0032-generic-call.sisu:45:18
+   |
+45 |     let l: i64 = id([1, "s"])
+   |                  ^^  -  --- `[string]`
+   |                      |
+   |                      this argument gives `T` the type `[i64]`
+
+sisu: 18 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032
