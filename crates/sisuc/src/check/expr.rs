@@ -1147,9 +1147,10 @@ pub(super) fn branch_join(e: &ast::Expr) -> bool {
     })
 }
 
-/// Whether `e` gives a made value (see `made_value`) at its value. Its value is that of its block,
-/// branches and arms, and the argument of a `dbg` or a `Some`. Then the branches of `e` join by
-/// the order of their ranks, not as members of one join (see `Checker::branches`).
+/// Whether `e` gives a made value (see `made_value`) at its value, or at an argument of a call in
+/// it. Its value is that of its block, branches and arms. A call with such an argument waits for
+/// its join, as the made value does (see `takes_member`). Then the branches of `e` join by the
+/// order of their ranks, not as members of one join (see `Checker::branches`).
 pub(super) fn gives_made_value(e: &ast::Expr) -> bool {
     ensure_stack(|| {
         made_value(e)
@@ -1168,18 +1169,8 @@ pub(super) fn gives_made_value(e: &ast::Expr) -> bool {
                     .any(gives_made_value),
                 ExprKind::Match { arms, .. } => arms.iter().any(|arm| gives_made_value(&arm.body)),
                 ExprKind::Block(block) => super::tail(block).is_some_and(gives_made_value),
-                ExprKind::Call { callee, args, .. }
-                    if callee.name.as_str() == "dbg" || callee.name == Symbol::SOME =>
-                {
-                    matches!(args.as_slice(), [arg] if gives_made_value(&arg.value))
-                }
-                ExprKind::MethodCall {
-                    method,
-                    args,
-                    safe: false,
-                    ..
-                } if method.name == Symbol::SOME => {
-                    matches!(args.as_slice(), [arg] if gives_made_value(&arg.value))
+                ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. } => {
+                    args.iter().any(|arg| gives_made_value(&arg.value))
                 }
                 _ => false,
             }
