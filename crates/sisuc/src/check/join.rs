@@ -866,15 +866,16 @@ impl Checker<'_> {
     /// optional itself: `[X]` meets `V?` as `V = [X]`, with one wrap.
     fn open_target(&mut self, e: &tir::Expr, target: Type) {
         // Only the head of `target` counts, so each layer of a nested array reads one layer.
-        let mut open = self.table.shallow(target);
-        match e.kind {
-            ExprKind::ArrayLit(_) | ExprKind::ArrayFill { .. } => {
-                while let TypeKind::Optional(payload) = open.kind() {
-                    open = self.table.shallow(payload);
-                }
+        let mut open = match e.kind {
+            ExprKind::ArrayLit(_) | ExprKind::ArrayFill { .. } | ExprKind::Wrap(_) => {
+                self.table.shallow(target)
             }
-            ExprKind::Wrap(_) => {}
             _ => return,
+        };
+        if matches!(e.kind, ExprKind::ArrayLit(_) | ExprKind::ArrayFill { .. }) {
+            while let TypeKind::Optional(payload) = open.kind() {
+                open = self.table.shallow(payload);
+            }
         }
         if matches!(open.kind(), TypeKind::Infer(_)) {
             // A variable that does not take `e` stays open: the conversion fails at the top.
