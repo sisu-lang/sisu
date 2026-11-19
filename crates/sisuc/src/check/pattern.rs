@@ -316,7 +316,7 @@ impl Checker<'_> {
             self.join_blocks(
                 (JoinForm::Match, heading, binding),
                 blocks,
-                (&spans, dropped),
+                (&spans, dropped, unmatched.is_some()),
                 whole,
             )
         };

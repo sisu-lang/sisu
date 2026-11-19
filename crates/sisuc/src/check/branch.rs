@@ -67,17 +67,10 @@ impl Checker<'_> {
     ) -> Checked {
         let dropped = self.body.dropped == Some(span);
         let (cond, _) = self.operand(cond, Expectation::Required(Type::BOOL, Origin::Condition));
-        // A failed condition makes the `if` a poisoned member, which the join around it does not
-        // convert. So its branches join by themselves in a failed context: its type stays known,
-        // and a type that stays open reports nothing (ADR 0049).
-        let expected = match expected {
-            Expectation::Member if cond.is_err() => Expectation::Poisoned,
-            _ => expected,
-        };
         let (then, other, ty) = self.branches(
             span,
             (then_block, else_block),
-            (expected, dropped),
+            (expected, dropped, cond.is_err()),
             |_| None,
             |c, expected| c.block(then_block, expected),
         );
@@ -130,7 +123,7 @@ impl Checker<'_> {
         let (then, other, ty) = self.branches(
             span,
             (then_block, else_block),
-            (expected, dropped),
+            (expected, dropped, scrutinee.is_err()),
             bind,
             |c, expected| {
                 let (bound, block) =
@@ -182,14 +175,15 @@ impl Checker<'_> {
 
     /// The blocks of the `if` or `if let` at `span`, `then` checking the first, and their type:
     /// `unit` without an `else`; else their join (see `join_blocks`). With `dropped`, no code uses
-    /// the value (see `Body::dropped`). A branch that gives a made value with no type to meet
+    /// the value (see `Body::dropped`). `head_failed` says that the condition or the value of an
+    /// `if let` failed (see `join_blocks`). A branch that gives a made value with no type to meet
     /// (see `gives_made_value`) makes the branches join by their ranks (see `join`). Then `bind`
     /// binds what the first block sees, for the ranking of its value.
     fn branches(
         &mut self,
         span: Span,
         (then_block, else_block): (&ast::Block, Option<&ast::Block>),
-        (expected, dropped): (Expectation, bool),
+        (expected, dropped, head_failed): (Expectation, bool, bool),
         bind: impl FnOnce(&mut Self) -> Option<(LetPattern, Option<Checked>)>,
         then: impl FnOnce(&mut Self, Expectation) -> CheckedBlock,
     ) -> (CheckedBlock, Option<CheckedBlock>, Result<Type, Poisoned>) {
@@ -232,7 +226,7 @@ impl Checker<'_> {
         let (blocks, ty) = self.join_blocks(
             (JoinForm::If, heading, binding),
             vec![first, other],
-            (&spans, dropped),
+            (&spans, dropped, head_failed),
             expected,
         );
         let [first, other] =
@@ -277,14 +271,18 @@ impl Checker<'_> {
     /// values are at `spans`: `join_form` with the `form`, its `heading` and the name `binding` of
     /// the `let` it is the value of. With `dropped`, no code uses the value (see
     /// `Body::dropped_join`). Under `Member` it is a nested join, which has no type of its own:
-    /// its branches are members of the join around it, which settles them. A join with no type to
-    /// meet closes its open variables (see `close_join`). A join of `never` branches of which one
-    /// is a failed `break` or `continue` keeps that mark (see `Poisoned::jumped`).
+    /// its branches are members of the join around it, which settles them. With `head_failed`, a
+    /// failed condition or scrutinee makes the nested join a poisoned member, which the join around
+    /// it does not settle. So its branches join by themselves in a failed context, and their
+    /// conflict is reported. Its type is not closed: a literal keeps an open type, which the
+    /// poison silences, and the join around it gives no report for it (ADR 0049). A join with no
+    /// type to meet closes its open variables (see `close_join`). A join of `never` branches of
+    /// which one is a failed `break` or `continue` keeps that mark (see `Poisoned::jumped`).
     pub(super) fn join_blocks(
         &mut self,
         (form, heading, binding): (JoinForm, Heading, Option<Span>),
         blocks: Vec<CheckedBlock>,
-        (spans, dropped): (&[Span], bool),
+        (spans, dropped, head_failed): (&[Span], bool, bool),
         expected: Expectation,
     ) -> (Vec<CheckedBlock>, Result<Type, Poisoned>) {
         let mut values: Vec<Checked> = (blocks.into_iter().zip(spans))
@@ -305,6 +303,13 @@ impl Checker<'_> {
             let never = (values.iter()).all(|v| v.as_ref().is_ok_and(|e| e.ty == Type::NEVER));
             if never {
                 Ok(Type::NEVER)
+            } else if head_failed {
+                let mut members = whole_members(&mut values, spans);
+                let outer = std::mem::replace(&mut self.body.dropped_join, dropped);
+                let ty =
+                    self.join_form(form, heading, &mut members, Expectation::Poisoned, binding);
+                self.body.dropped_join = outer;
+                ty.map_err(Some)
             } else if values.iter().all(Result::is_ok) {
                 Ok(self.table.fresh(Kind::Any, heading.whole))
             } else {
