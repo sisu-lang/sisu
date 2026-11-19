@@ -462,9 +462,11 @@ fn a_call_should_open_at_an_any_context_that_its_arguments_convert_to() {
             vec![],
         ),
         (
-            "an argument that the other argument rejects",
+            // The call opens at `any Display`, its only candidate, and each argument converts:
+            // the literal as `i64` (Q19).
+            "an argument that the other argument converts with",
             "fn pair<T>(a: T, b: T) -> T { a }\nfn main() {\n    let d: any Display = pair(1, \"x\")\n}",
-            vec![(Code::Mismatch, (3, 31))],
+            vec![],
         ),
     ] {
         codes_after(row, src, &expected);

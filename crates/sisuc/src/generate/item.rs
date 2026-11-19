@@ -1997,8 +1997,7 @@ impl Gen<'_> {
     /// - the forms of `ANY_GAP_ITEMS`, each for the points of the checker in `GAP_POINTS`. Each
     ///   value is on the branch that runs:
     ///   - `is` with an `any` on each side;
-    ///   - `gap_none`: a `Some` and a `None` before an `any` branch. The `any` branch must come
-    ///     last, or the hint converts them and nothing unwraps;
+    ///   - `gap_none`: a `Some` and a `None` before an `any` branch;
     ///   - `gap_kept`: a `Some` of an object under a hint of a `Some` of another object;
     ///   - `gap_looped`: a loop of two objects beside an `any`;
     ///   - `gap_hinted`: a branch that joins an array of two objects with an array of `any`;

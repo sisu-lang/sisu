@@ -103,8 +103,6 @@ impl Checker<'_> {
                                 && is_target(payload))
                             && !self.converts_to_any(got, payload) =>
                     {
-                        #[cfg(test)]
-                        super::reached("a hinted Some keeps its type");
                         (checked, optional_of(got), TypeArgs::NONE)
                     }
                     _ => (

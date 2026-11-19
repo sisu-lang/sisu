@@ -192,10 +192,6 @@ impl Checker<'_> {
     /// type that a member does not take, is reported here: a conflict is untyped poison (typed by
     /// a required type). When an untyped poisoned member is left out, a typed join is poison of its
     /// type (ADR 0049).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the other forms come in Task 5")
-    )]
     pub(super) fn join_form(
         &mut self,
         form: JoinForm,

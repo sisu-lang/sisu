@@ -12,6 +12,7 @@ use super::{
     type_of, wrap, wrap_block,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
+use crate::conformance::ensure_stack;
 use crate::diagnostic::{
     Code, Definition, Diagnostic, DiagnosticKind, Expected, Literal, NoValueCause, RangePlace,
     suggestion,
@@ -211,6 +212,11 @@ impl Checker<'_> {
     )]
     fn expr_kind(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
         let node = |kind, ty| Ok(tir::Expr::new(kind, ty, e.span));
+        // A form that no join converts yet is a made value: it is not a member.
+        let expected = match expected {
+            Expectation::Member if made_value(e) => Expectation::None,
+            expected => expected,
+        };
         match &e.kind {
             ExprKind::Int { value, literal } => self.integer(e.span, *value, *literal, expected),
             ExprKind::Float(x) => node(tir::ExprKind::Float(x.0), Type::F64),
@@ -735,7 +741,7 @@ impl Checker<'_> {
     /// `close` with no type to meet: the type of `checked` with each open `Int` as `i64`, or
     /// E0050 at the first source of each open `Any`. A failed context reports none: its own
     /// report covers it. A value that it leaves open fails with no type, as a `None` does there.
-    fn close_open(&mut self, checked: Checked, expected: Expectation) -> Checked {
+    pub(super) fn close_open(&mut self, checked: Checked, expected: Expectation) -> Checked {
         let Ok(mut value) = checked else {
             return checked;
         };
@@ -989,7 +995,6 @@ impl Checker<'_> {
 
     /// The name of the `let` whose whole initializer is at `span`, if any: the fix of a join
     /// writes its type after it.
-    #[expect(dead_code, reason = "the join of an `if` uses it from the next commit")]
     pub(super) fn let_name(&self, span: Span) -> Option<Span> {
         let (init, name, _, at) = self.body.let_init?;
         (init == span && name.as_str() != "_").then_some(at)
@@ -1098,6 +1103,59 @@ pub(super) fn if_some(
         ty,
         span,
     )
+}
+
+/// Whether `e` is a form that a join does not convert yet: an array literal with elements,
+/// `[v; n]`, an operator, a `??` or a loop. As a member, it is checked as a made value, with no
+/// type expected.
+pub(super) fn made_value(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ExprKind::ArrayLit(elements) => !elements.is_empty(),
+        ExprKind::ArrayFill { .. }
+        | ExprKind::Binary { .. }
+        | ExprKind::Coalesce { .. }
+        | ExprKind::Loop { .. } => true,
+        _ => false,
+    }
+}
+
+/// Whether `e` gives a made value (see `made_value`) at its value. Its value is that of its block,
+/// branches and arms, and the argument of a `dbg` or a `Some`. Then the branches of `e` join by
+/// the order of their ranks, not as members of one join (see `Checker::branches`).
+pub(super) fn gives_made_value(e: &ast::Expr) -> bool {
+    ensure_stack(|| {
+        made_value(e)
+            || match &e.kind {
+                ExprKind::If {
+                    then_block,
+                    else_block,
+                    ..
+                }
+                | ExprKind::IfLet {
+                    then_block,
+                    else_block,
+                    ..
+                } => (std::iter::once(then_block).chain(else_block))
+                    .filter_map(super::tail)
+                    .any(gives_made_value),
+                ExprKind::Match { arms, .. } => arms.iter().any(|arm| gives_made_value(&arm.body)),
+                ExprKind::Block(block) => super::tail(block).is_some_and(gives_made_value),
+                ExprKind::Call { callee, args, .. }
+                    if callee.name.as_str() == "dbg" || callee.name == Symbol::SOME =>
+                {
+                    matches!(args.as_slice(), [arg] if gives_made_value(&arg.value))
+                }
+                ExprKind::MethodCall {
+                    method,
+                    args,
+                    safe: false,
+                    ..
+                } if method.name == Symbol::SOME => {
+                    matches!(args.as_slice(), [arg] if gives_made_value(&arg.value))
+                }
+                _ => false,
+            }
+    })
 }
 
 /// Whether a context that wants `want` takes a `unit`: it wants `unit` or an optional `unit`, or

@@ -377,9 +377,6 @@ const GAP_POINTS: &[&str] = &[
     "seeded_join for a loop",
     "hinted_elements",
     "value_beside",
-    "unwrap_some_object of a Some",
-    "unwrap_some_object of a None",
-    "a hinted Some keeps its type",
     "a dbg in a generic function",
     "a dbg of an enum in a generic function",
     "an any conversion in a generic function",
@@ -7081,7 +7078,7 @@ fn main() { let a: any Heard = Ear(); print(a is a) }",
 class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { Some(Eye(v: 2)) } else { a }; print((j ?? a).seen()) }",
-            &["unwrap_some_object of a Some"],
+            &[],
         ),
         (
             "a `Some` of an object after an `any` branch",
@@ -7105,10 +7102,7 @@ fn main() {
     }
     print((j ?? a).seen())
 }",
-            &[
-                "unwrap_some_object of a None",
-                "unwrap_some_object of a Some",
-            ],
+            &[],
         ),
         (
             "a `None` after an `any` branch",
@@ -7132,10 +7126,7 @@ fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { 
 class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { Some(Eye(v: 2)) } else { if c { Some(Lid(v: 3)) } else { a } }; print((j ?? a).seen()) }",
-            &[
-                "a hinted Some keeps its type",
-                "unwrap_some_object of a Some",
-            ],
+            &[],
         ),
         (
             "branches of two objects beside an `any` branch",
@@ -7143,7 +7134,7 @@ fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { 
 class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { a } else { if c { Eye(v: 2) } else { Lid(v: 3) } }; print(j.seen()) }",
-            &["seeded_join for a branch"],
+            &[],
         ),
         (
             "branches of one object beside an `any` branch",

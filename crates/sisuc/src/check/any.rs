@@ -478,9 +478,10 @@ impl Checker<'_> {
     /// The steps that make a value of type `from` a value of type `to` at its top, or `None`.
     /// It unifies before it wraps: a value whose type unifies with `to` takes no step. Else an
     /// optional `to` wraps a value whose type unifies with its payload. An `any` type takes a
-    /// value whose type conforms to its interface. A value of an `Int` or `Any` variable does not
-    /// convert to an `any` type: it unifies. It binds what it unifies, so a caller that only
-    /// tests asks under a snapshot.
+    /// value whose type conforms to its interface. A value of an `Any` variable does not convert to
+    /// an `any` type: it unifies. A value of an `Int` variable converts as `i64`, the type that a
+    /// literal takes under an `any` type. It binds what it unifies, so a caller that only tests
+    /// asks under a snapshot.
     pub(super) fn conversion(&mut self, from: Type, to: Type) -> Option<Vec<Conversion>> {
         if self.unify(from, to) {
             return Some(Vec::new());
@@ -498,8 +499,15 @@ impl Checker<'_> {
         let TypeKind::Any(interface, args) = target.kind() else {
             return None;
         };
-        let open = matches!(from.kind(), TypeKind::Infer(_));
-        if open || !can_convert(from) || !self.conforms(from, interface, args) {
+        let open = from;
+        let from = match from.kind() {
+            TypeKind::Infer(_) => self.table.default_open(from),
+            _ => from,
+        };
+        if from.holds_infer() || !can_convert(from) || !self.conforms(from, interface, args) {
+            return None;
+        }
+        if open != from && !self.unify(open, from) {
             return None;
         }
         Some(if wrapped {
