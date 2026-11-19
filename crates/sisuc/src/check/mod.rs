@@ -1090,9 +1090,10 @@ struct Body {
     /// report that uses the result takes its entry. Each entry left is pushed when the body ends.
     misfits: Vec<Option<Diagnostic>>,
     /// The E0050 of each generic call that a join took as a member with a parameter left open,
-    /// by the call's span: each such parameter's variable and its report. The call around it
-    /// gives the report when it settles no type for the parameter (see `report_waiting_calls`).
-    waits: FxHashMap<Span, Vec<(Type, DiagnosticKind)>>,
+    /// by the call's span: each such parameter's variable and what its report reads (see
+    /// `OpenParam`). The call around it makes and gives the report when it settles no type for
+    /// the parameter (see `report_waiting_calls`).
+    waits: FxHashMap<Span, Vec<(Type, generic::OpenParam)>>,
     /// The spans of the calls in `waits` with a labeled argument: each reports its wait at any
     /// place of the call around it, as on `main`.
     labeled_waits: FxHashSet<Span>,

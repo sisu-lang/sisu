@@ -1285,6 +1285,87 @@ pub(super) struct GenericSig<'a> {
     pub(super) declarer: Declarer,
 }
 
+/// What the E0050 of a parameter that a call cannot infer reads of the callee (see
+/// `GenericSig`). A call keeps it, and makes the text of the report only when it reports.
+#[derive(Clone)]
+pub(super) struct OpenParam {
+    name: ast::Ident,
+    variant: Option<ast::Ident>,
+    /// The parameter's name.
+    param: Symbol,
+    /// The type parameters of the callee after the receiver's: one `...` each in the example.
+    count: usize,
+    /// Whether the variant has a payload.
+    payload: bool,
+}
+
+impl OpenParam {
+    /// The parameter at `param` of `sig`.
+    pub(super) fn of(sig: &GenericSig<'_>, param: usize) -> Self {
+        Self {
+            name: sig.name.clone(),
+            variant: sig.variant.cloned(),
+            param: sig.declared[param],
+            count: sig.declared.len() - sig.owner.len(),
+            payload: !sig.params.is_empty(),
+        }
+    }
+
+    /// The E0050. `in_result` tells whether the result type names the parameter other than
+    /// under an associated type.
+    pub(super) fn kind(&self, in_result: bool) -> DiagnosticKind {
+        let name = &self.name;
+        let variant = self.variant.as_ref();
+        // `Some(...)`, or `Option.Some(...)`. A user variant `Some`, which E0026 reports, is
+        // neither.
+        let option = variant.is_none_or(|_| name.name == Symbol::OPTION);
+        if option && variant.unwrap_or(name).name == Symbol::SOME {
+            let (callee, at) = match variant {
+                Some(variant) => (
+                    format!("{}.{}", name.name, variant.name),
+                    name.span.to(variant.span),
+                ),
+                None => (name.name.to_string(), name.span),
+            };
+            return DiagnosticKind::CannotInferSome { callee, at };
+        }
+        // `Ok(...)` and `Err(...)` write the variant as the callee and the enum not at all.
+        // `qualifier` (enums.rs) tests for a bare variant in the same way; change both.
+        if let Some(variant) = variant.filter(|v| v.span == name.span) {
+            return DiagnosticKind::CannotInferResult {
+                param: self.param.to_string(),
+                variant: variant.name.to_string(),
+                at: name.span,
+            };
+        }
+        #[cfg(test)]
+        EXAMPLE_DOTS.set(EXAMPLE_DOTS.get() + self.count);
+        let dots = vec!["..."; self.count].join(", ");
+        let (callee, example, at) = match variant {
+            Some(variant) => {
+                let payload = if self.payload { "(...)" } else { "" };
+                (
+                    format!("{}.{}", name.name, variant.name),
+                    format!("{}<{dots}>.{}{payload}", name.name, variant.name),
+                    name.span.to(variant.span),
+                )
+            }
+            None => (
+                name.name.to_string(),
+                format!("{}<{dots}>(...)", name.name),
+                name.span,
+            ),
+        };
+        DiagnosticKind::CannotInferParam {
+            param: self.param.to_string(),
+            callee,
+            example,
+            at,
+            in_result,
+        }
+    }
+}
+
 /// What declares the parameters of a generic callee. It gives the origin and the shown text of
 /// the type of each argument: argument `i` is parameter `i` of a function, field `i` of a class
 /// or a struct, or payload field `i` of a variant. A call writes the fields and the payload in
@@ -4304,9 +4385,9 @@ impl Checker<'_> {
             let in_result = result_names(sig);
             // A parameter that the result names and that is still open waits for the outer call.
             // That call reports it when it settles no type for it.
-            let waits: Vec<(Type, DiagnosticKind)> = (decided.iter())
+            let waits: Vec<(Type, OpenParam)> = (decided.iter())
                 .filter(|&&(t, var)| in_result[t] && self.table.resolve(var).holds_infer())
-                .map(|&(t, var)| (var, Self::cannot_infer_kind(sig, t, true)))
+                .map(|&(t, var)| (var, OpenParam::of(sig, t)))
                 .collect();
             if waits.is_empty() {
                 self.body.waits.remove(&call.at);
@@ -4455,9 +4536,9 @@ impl Checker<'_> {
             let Some(waits) = self.body.waits.remove(&span) else {
                 continue;
             };
-            if let Some((_, kind)) = waits.into_iter().find(|&(var, _)| holds(&self.table, var)) {
+            if let Some((_, open)) = waits.into_iter().find(|&(var, _)| holds(&self.table, var)) {
                 // Each waiting call reports, as on `main`; the first is the call's report.
-                let reported = self.error(kind);
+                let reported = self.error(open.kind(true));
                 first.get_or_insert(reported);
             }
         }
@@ -4937,7 +5018,7 @@ impl Checker<'_> {
         };
         let entry = self.body.misfits.len();
         let in_result = sig.ret.is_some_and(|ret| names_outside_assoc(ret, param));
-        let d = Self::cannot_infer_kind(sig, param, in_result).into();
+        let d = OpenParam::of(sig, param).kind(in_result).into();
         self.body.misfits.push(Some(d));
         let reported = self.proof(call.at); // proof: held misfit
         Poisoned {
@@ -4949,62 +5030,8 @@ impl Checker<'_> {
     /// Reports the call of `sig` that binds nothing to its parameter at `param`.
     fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: usize) -> Reported {
         let in_result = sig.ret.is_some_and(|ret| names_outside_assoc(ret, param));
-        let kind = Self::cannot_infer_kind(sig, param, in_result);
+        let kind = OpenParam::of(sig, param).kind(in_result);
         self.error(kind)
-    }
-
-    /// The E0050 of `cannot_infer`. `in_result` tells whether the result type names the parameter
-    /// other than under an associated type.
-    fn cannot_infer_kind(sig: &GenericSig<'_>, param: usize, in_result: bool) -> DiagnosticKind {
-        let name = sig.name;
-        // `Some(...)`, or `Option.Some(...)`. A user variant `Some`, which E0026 reports, is
-        // neither.
-        let option = sig.variant.is_none_or(|_| name.name == Symbol::OPTION);
-        if option && sig.variant.unwrap_or(name).name == Symbol::SOME {
-            let (callee, at) = match sig.variant {
-                Some(variant) => (
-                    format!("{}.{}", name.name, variant.name),
-                    name.span.to(variant.span),
-                ),
-                None => (name.name.to_string(), name.span),
-            };
-            return DiagnosticKind::CannotInferSome { callee, at };
-        }
-        // `Ok(...)` and `Err(...)` write the variant as the callee and the enum not at all.
-        // `qualifier` (enums.rs) tests for a bare variant in the same way; change both.
-        if let Some(variant) = sig.variant.filter(|v| v.span == name.span) {
-            return DiagnosticKind::CannotInferResult {
-                param: sig.declared[param].to_string(),
-                variant: variant.name.to_string(),
-                at: name.span,
-            };
-        }
-        let count = sig.declared.len() - sig.owner.len();
-        #[cfg(test)]
-        EXAMPLE_DOTS.set(EXAMPLE_DOTS.get() + count);
-        let dots = vec!["..."; count].join(", ");
-        let (callee, example, at) = match sig.variant {
-            Some(variant) => {
-                let payload = if sig.params.is_empty() { "" } else { "(...)" };
-                (
-                    format!("{}.{}", name.name, variant.name),
-                    format!("{}<{dots}>.{}{payload}", name.name, variant.name),
-                    name.span.to(variant.span),
-                )
-            }
-            None => (
-                name.name.to_string(),
-                format!("{}<{dots}>(...)", name.name),
-                name.span,
-            ),
-        };
-        DiagnosticKind::CannotInferParam {
-            param: sig.declared[param].to_string(),
-            callee,
-            example,
-            at,
-            in_result,
-        }
     }
 
     /// How much `e` needs the context of its call, and whether it can make an optional by itself
