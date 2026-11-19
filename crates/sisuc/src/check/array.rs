@@ -1,7 +1,7 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
 use super::branch::branch_expectation;
-use super::expr::{gives_made_value, no_member, path, read_jump, typed};
+use super::expr::{branch_free, gives_made_value, no_member, path, read_jump, typed};
 use super::generic::{mismatch_poison, mismatched};
 use super::infer::Kind;
 use super::join::{Heading, JoinForm, JoinMember, Place};
@@ -40,15 +40,23 @@ impl Checker<'_> {
         // shortcut: an element that gives a made value is checked after the others, against their
         // type as a hint, as on `main`. Upgrade when the forms of `made_value` are members (Tasks
         // 5d and 5e).
-        let late = |e: &ast::Expr| {
-            matches!(
-                inner,
-                Expectation::None | Expectation::Member | Expectation::Poisoned
-            ) && gives_made_value(e)
-        };
+        let looks = matches!(
+            inner,
+            Expectation::None | Expectation::Member | Expectation::Poisoned
+        );
+        let free = self.body.made_free.take() == Some(span);
         let member = branch_expectation(inner, None);
         let mut values: Vec<Option<Checked>> = (elements.iter())
-            .map(|e| (!late(e)).then(|| self.element_value(e, member)))
+            .map(|e| {
+                let unmade = free || looks && !gives_made_value(e);
+                if looks && !unmade {
+                    return None;
+                }
+                if unmade && matches!(e.kind, ast::ExprKind::ArrayLit(_)) {
+                    self.body.made_free = Some(e.span);
+                }
+                Some(self.element_value(e, member))
+            })
             .collect();
         if values.iter().any(Option::is_none) {
             let hint = self.late_hint(&mut values, elements, inner);
@@ -102,7 +110,13 @@ impl Checker<'_> {
             // the type of an `if` rejects makes the `if` one: no report follows from its type.
             Ok(element) => {
                 let rejected = checked.iter().any(mismatched);
-                self.array(span, element, checked, rejected)
+                let array = self.array(span, element, checked, rejected);
+                if let Ok(e) = &array
+                    && branch_free(e, &self.body.branch_free)
+                {
+                    self.body.branch_free.insert(span);
+                }
+                array
             }
             Err(poisoned) => Err(Poisoned {
                 ty: poisoned.ty.map(Type::array),

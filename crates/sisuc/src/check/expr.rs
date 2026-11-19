@@ -2,6 +2,8 @@
 
 use std::ops::Range;
 
+use rustc_hash::FxHashSet;
+
 use super::generic::{Site, mismatch_poison};
 use super::infer::{Kind, LiteralCheck};
 use super::names::{self, Resolved};
@@ -1250,35 +1252,34 @@ impl Checker<'_> {
     /// second part says that the `if` is an `if let`. A nested join leaves an inference variable
     /// in its nodes, so each type is read through the table.
     pub(super) fn valueless(&self, e: &tir::Expr) -> Option<(Span, bool)> {
-        without_value(e, false, &|ty| self.table.resolve(ty))
+        without_value(e, false, self)
     }
 
     /// `valueless` of `e`, a `unit` that lifts to `unit?`. There each `if` without an `else` has
     /// no value, whatever its branch has, as for an `i64?`.
     fn unlifted(&self, e: &tir::Expr) -> Option<(Span, bool)> {
-        without_value(e, true, &|ty| self.table.resolve(ty))
+        without_value(e, true, self)
     }
 }
 
 /// The walk of `valueless`; with `lifted`, an `if` without an `else` has no value by itself.
-/// `resolve` gives the type of an inference variable.
-fn without_value(
-    e: &tir::Expr,
-    lifted: bool,
-    resolve: &dyn Fn(Type) -> Type,
-) -> Option<(Span, bool)> {
+/// The table of `checker` gives the type of an inference variable, and its body the arrays
+/// whose elements no `if` gives (see `branch_free`).
+fn without_value(e: &tir::Expr, lifted: bool, checker: &Checker<'_>) -> Option<(Span, bool)> {
+    let table = &checker.table;
     #[cfg(test)]
     super::VALUE_WALK_STEPS.set(super::VALUE_WALK_STEPS.get() + 1);
-    // An element is a value of its own: the join of a nested array settles it late, so the walk
-    // looks into the elements of an array of any type.
+    // An element is a value of its own: the join of a nested array settles it late. So the walk
+    // looks into the elements of an array of any type, unless no `if` is there to find.
     match &e.kind {
+        tir::ExprKind::ArrayLit(_) if checker.body.branch_free.contains(&e.span) => return None,
         tir::ExprKind::ArrayLit(elements) => {
-            return (elements.iter()).find_map(|element| without_value(element, lifted, resolve));
+            return (elements.iter()).find_map(|element| without_value(element, lifted, checker));
         }
-        tir::ExprKind::ArrayFill { value, .. } => return without_value(value, lifted, resolve),
+        tir::ExprKind::ArrayFill { value, .. } => return without_value(value, lifted, checker),
         _ => {}
     }
-    let ty = resolve(e.ty);
+    let ty = table.resolve(e.ty);
     let unit = ty == Type::UNIT;
     if !unit && !optional_unit(ty) && !matches!(ty.kind(), TypeKind::Array(_)) {
         return None;
@@ -1287,10 +1288,11 @@ fn without_value(
     let tail = |block: &tir::Block| {
         (block.value.as_deref())
             .filter(|_| block.ty != Type::NEVER)
-            .and_then(|value| without_value(value, lifted, resolve))
+            .and_then(|value| without_value(value, lifted, checker))
     };
     // A branch with a value beside no `else`: an `if let` on an enum is a `match` of two arms.
-    let has_value = |block: &tir::Block| !matches!(resolve(block.ty), Type::UNIT | Type::NEVER);
+    let has_value =
+        |block: &tir::Block| !matches!(table.resolve(block.ty), Type::UNIT | Type::NEVER);
     match &e.kind {
         tir::ExprKind::If {
             then_block,
@@ -1317,7 +1319,7 @@ fn without_value(
             arms.iter().find_map(|arm| tail(&arm.body))
         }
         tir::ExprKind::Block(block) => tail(block),
-        tir::ExprKind::Wrap(inner) => without_value(inner, lifted, resolve),
+        tir::ExprKind::Wrap(inner) => without_value(inner, lifted, checker),
         // Each of these gives its own value, which no `if` gives.
         tir::ExprKind::Int(_)
         | tir::ExprKind::Float(_)
@@ -1363,6 +1365,27 @@ fn without_value(
         | tir::ExprKind::Continue { .. }
         | tir::ExprKind::Return(_)
         | tir::ExprKind::MutCall { .. } => None,
+    }
+}
+
+/// Whether no `if` and no `match` can give the value of `e` through the nodes that
+/// `without_value` walks, whatever their types are. An array literal in `known` holds none, so
+/// the walk of a nested array reads each layer once.
+pub(super) fn branch_free(e: &tir::Expr, known: &FxHashSet<Span>) -> bool {
+    match &e.kind {
+        tir::ExprKind::ArrayLit(elements) => {
+            known.contains(&e.span) || elements.iter().all(|element| branch_free(element, known))
+        }
+        tir::ExprKind::ArrayFill { value, .. } | tir::ExprKind::Wrap(value) => {
+            branch_free(value, known)
+        }
+        tir::ExprKind::Block(block) => {
+            (block.value.as_deref()).is_none_or(|value| branch_free(value, known))
+        }
+        tir::ExprKind::If { .. } | tir::ExprKind::IfSome { .. } | tir::ExprKind::Match { .. } => {
+            false
+        }
+        _ => true,
     }
 }
 

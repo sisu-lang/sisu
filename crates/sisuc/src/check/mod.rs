@@ -1209,6 +1209,13 @@ struct Body {
     /// What `int_literal` answered for each unary `-` and operator, by its span. The answer
     /// depends only on the node, and no two operator nodes have one span.
     int_literals: FxHashMap<Span, bool>,
+    /// The span of the array literal that `array_lit` checks next as an element, when no element
+    /// inside it gives a made value (see `gives_made_value`). Then that literal does not walk its
+    /// elements again: each layer of a nested array asks this once.
+    made_free: Option<Span>,
+    /// The span of each array literal whose value no `if` and no `match` gives through its
+    /// elements (see `branch_free`). The walk of `without_value` does not enter it.
+    branch_free: FxHashSet<Span>,
     /// The return type of a generic call, by the call's span. With it, the parameter, span and
     /// type of each argument that alone decides its bare type parameter. The directed report of
     /// a call whose result misfits goes to such an argument, as on `main`. In `id(id(mk2()))`, it
