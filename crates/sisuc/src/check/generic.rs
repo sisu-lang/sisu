@@ -4364,12 +4364,15 @@ impl Checker<'_> {
             .collect();
         let ret = ret.subst(&with);
         // Unify before wrap. The arguments can decide each parameter that the result names, as
-        // `X?` for `id(None)`. Then the result meets a required type whole first: no wrap.
-        // A parameter that no argument decides, as the `T` of `none()`, meets the payload first.
+        // `X?` for `id(None)`. Then the result meets a required type whole first: no wrap. A
+        // parameter that no argument decides meets the payload first, as on `main`. Examples are
+        // the `T` of `none()` and of `id(none())`.
         let unifies_first = matches!(expected, Expectation::Required(..)) && {
             let in_result = result_names(sig);
             (decided.iter()).all(|&(t, var)| {
-                !in_result[t] || !matches!(self.table.resolve(var).kind(), TypeKind::Infer(_))
+                !in_result[t]
+                    || !self.table.resolve(var).holds_infer()
+                    || self.decided_by_arguments(call, sig, t, var)
             })
         };
         let mut meets = |want: Type| {
@@ -4381,6 +4384,34 @@ impl Checker<'_> {
             }
         };
         Some(meets(first) || first != want && meets(want))
+    }
+
+    /// Whether the arguments of `call` decide a part of its parameter `t`, whose variable is
+    /// `var`. Then `var` is not open as a whole. Also, an argument at a place of `t` is not a call
+    /// that waits with a parameter that no argument decides (`Body::undecided_waits`). So
+    /// `id(None)` and `id(id(None))` decide `T`, and `none()` and `id(none())` do not.
+    fn decided_by_arguments(
+        &self,
+        call: &Inference<'_>,
+        sig: &GenericSig<'_>,
+        t: usize,
+        var: Type,
+    ) -> bool {
+        if matches!(self.table.resolve(var).kind(), TypeKind::Infer(_)) {
+            return false;
+        }
+        (call.slots.iter().zip(sig.params)).any(|(slot, param)| {
+            param.is_some_and(|param| names_outside_assoc(param, t))
+                && slot.as_ref().is_some_and(|slot| {
+                    slot.as_ref().is_ok_and(|mut e| {
+                        // `dbg(x)` waits in the place of `x`.
+                        while let tir::ExprKind::Dbg { operand, .. } = &e.kind {
+                            e = operand;
+                        }
+                        !self.body.undecided_waits.contains(&e.span)
+                    })
+                })
+        })
     }
 
     /// Closes the decided parameters of `call` at the top. A member of an outer join leaves them
@@ -4403,6 +4434,16 @@ impl Checker<'_> {
                 .filter(|&&(t, var)| in_result[t] && self.table.resolve(var).holds_infer())
                 .map(|&(t, var)| (var, OpenParam::of(sig, t)))
                 .collect();
+            let undecided = (decided.iter()).any(|&(t, var)| {
+                in_result[t]
+                    && self.table.resolve(var).holds_infer()
+                    && !self.decided_by_arguments(call, sig, t, var)
+            });
+            if undecided {
+                self.body.undecided_waits.insert(call.at);
+            } else {
+                self.body.undecided_waits.remove(&call.at);
+            }
             if waits.is_empty() {
                 self.body.waits.remove(&call.at);
             } else {

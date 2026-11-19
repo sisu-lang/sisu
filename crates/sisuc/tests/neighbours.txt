@@ -216,6 +216,12 @@ fn keep<T>(mut x: T?) -> T? { x }
 fn opt<T>(v: T?) -> T? { v }
 fn g() {}
 fn pick<T>(a: T, b: T) -> T { a }
+// A field and a parameter of a nested optional, which a call whose arguments leave a part open
+// meets whole, with no wrap.
+struct Nq {
+    v: i64??
+}
+fn nq(_v: i64??) {}
 // A place that names two parameters (Q28): `outer` decides `T` and `U` from its other arguments.
 struct Two<A, B> {
     a: A
@@ -432,6 +438,12 @@ nothing[0]
 zz.x
 i64.x
 E.A
+# Calls whose arguments leave a part of their result open: a `None`, an open call and a call that
+# waits, with one and two arguments.
+id(nothing())
+id(id(None))
+pick(None, None)
+pick(None, nothing())
 # Values that fail to give a range to a string's `get`, with a mistake of their own or none.
 id(None)
 id([])
@@ -560,6 +572,15 @@ let _l = $ ?? 0 else { return }
 # Written types.
 let _a: (any Pet)? = $
 let _a: [(any Pet)?] = [$]
+# Nested optional types, which a closed call with an open result meets whole, also as a field, as
+# an argument and in a branch.
+let _a: i64?? = $
+let _a: i64??? = $
+let _a: [i64?]? = $
+let _a: Result<i64?, bool>? = $
+Nq(v: $)
+nq($)
+let _a: i64?? = if c { Some(Some(1)) } else { $ }
 let _v: any Pet = $
 let _k: any Km = $
 # A loop over a join.
