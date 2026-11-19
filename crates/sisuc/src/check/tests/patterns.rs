@@ -646,6 +646,187 @@ fn a_non_exhaustive_match_should_get_a_note_and_an_arm_fix() {
     applied(&src, &d);
 }
 
+/// One row of `open_range_rows`: its name and its program. Then the diagnostics of the program.
+/// Last, the place of the `match` keyword of the E0130 that must have no fix.
+type OpenRangeRow = (&'static str, String, Vec<Wanted>, (usize, usize));
+
+/// Programs whose last `match` arm ends in an open range, `..` or `..=`. A line break after
+/// an open range does not end the arm. The arm of the E0130 fix would then become the range's
+/// end.
+fn open_range_rows() -> Vec<OpenRangeRow> {
+    let same_line =
+        "fn g(s: i64?) -> i64 {\n    match s {\n        Some(_) => 1..   }\n}\nfn main() {}";
+    let own_line =
+        "fn g(s: i64?) -> i64 {\n    match s {\n        Some(_) => 1..\n    }\n}\nfn main() {}";
+    let e130 = (Code::NonExhaustive, (2, 5));
+    let e23 = (Code::RangeOutsideFor, (3, 20));
+    vec![
+        ("same-line `}`", same_line.to_string(), vec![e130, e23], (2, 5)),
+        ("`}` on its own line", own_line.to_string(), vec![e130, e23], (2, 5)),
+        (
+            "one-line `match`",
+            "fn g(s: i64?) -> i64 {\n    match s { Some(_) => 1.. }\n}\nfn main() {}".to_string(),
+            vec![e130, (Code::RangeOutsideFor, (2, 26))],
+            (2, 5),
+        ),
+        (
+            "`;` between arms",
+            "fn g(s: i64?) -> i64 {\n    match s {\n        Some(_) => 0; Some(_) => 1..   }\n}\nfn main() {}".to_string(),
+            vec![e130, (Code::UnreachableArm, (3, 23)), (Code::RangeOutsideFor, (3, 34))],
+            (2, 5),
+        ),
+        (
+            "`..` alone",
+            same_line.replace("1..", ".."),
+            vec![e130, e23],
+            (2, 5),
+        ),
+        (
+            "`return`",
+            same_line.replace("=> 1..", "=> return 1.."),
+            vec![e130, (Code::RangeOutsideFor, (3, 27))],
+            (2, 5),
+        ),
+        ("negative start", same_line.replace("1..", "-1.."), vec![e130, e23], (2, 5)),
+        (
+            "`let` value",
+            "fn g(s: i64?) -> i64 {\n    let x = match s {\n        Some(_) => 1..   }\n    x\n}\nfn main() {}".to_string(),
+            vec![(Code::NonExhaustive, (2, 13)), e23],
+            (2, 13),
+        ),
+        (
+            "comment before `}`",
+            "fn g(s: i64?) -> i64 {\n    match s {\n        Some(_) => 1..\n        // c\n    }\n}\nfn main() {}".to_string(),
+            vec![e130, e23],
+            (2, 5),
+        ),
+        ("`..=` same-line `}`", same_line.replace("1..", "1..="), vec![e130, e23], (2, 5)),
+        ("`..=` own-line `}`", own_line.replace("1..", "..="), vec![e130, e23], (2, 5)),
+        (
+            "binary before the range",
+            same_line.replace("1..", "x + 1..").replace("Some(_)", "Some(x)"),
+            vec![e130, e23],
+            (2, 5),
+        ),
+        (
+            "guard",
+            same_line.replace("Some(_)", "Some(x) if x > 0"),
+            vec![e130, (Code::RangeOutsideFor, (3, 29))],
+            (2, 5),
+        ),
+        (
+            "`_` gap, same-line `}`",
+            "fn g(i: i64) -> i64 {\n    match i {\n        0 => 1..   }\n}\nfn main() {}".to_string(),
+            vec![e130, (Code::RangeOutsideFor, (3, 14))],
+            (2, 5),
+        ),
+        (
+            "`_` gap, own-line `}`",
+            "fn g(i: i64) -> i64 {\n    match i {\n        0 => 1..\n    }\n}\nfn main() {}".to_string(),
+            vec![e130, (Code::RangeOutsideFor, (3, 14))],
+            (2, 5),
+        ),
+        (
+            "comment on the arm's line",
+            own_line.replace("1..", "1.. // c"),
+            vec![e130, e23],
+            (2, 5),
+        ),
+        ("CRLF, same-line `}`", same_line.replace('\n', "\r\n"), vec![e130, e23], (2, 5)),
+        ("CRLF, own-line `}`", own_line.replace('\n', "\r\n"), vec![e130, e23], (2, 5)),
+        (
+            "nested `match` as the last body",
+            "fn g(s: i64?) -> i64 {\n    match s {\n        Some(_) => match s { Some(_) => 1.. }   }\n}\nfn main() {}".to_string(),
+            vec![e130, (Code::NonExhaustive, (3, 20)), (Code::RangeOutsideFor, (3, 41))],
+            (3, 20),
+        ),
+    ]
+}
+
+/// An E0130 has no fix after an arm that ends in an open range, as the program of the fix would
+/// not parse. The E0023 of the range stays.
+#[test]
+fn an_e0130_fix_should_not_be_offered_after_an_arm_that_ends_in_an_open_range() {
+    let mut red = Vec::new();
+    for (row, src, wanted, place) in open_range_rows() {
+        codes_row(row, &src, &wanted);
+        let ds = diags(&src);
+        let Some(d) = ds
+            .iter()
+            .find(|d| d.code() == Code::NonExhaustive && at(&src, d.span()) == place)
+        else {
+            red.push(format!("row `{row}`: no E0130 at {place:?}"));
+            continue;
+        };
+        let found = fixes(&src, d);
+        if !found.is_empty() {
+            red.push(format!("row `{row}`: the E0130 has fixes {found:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+/// An E0130 keeps its fix after an arm that ends in a closing bracket or a quote, also when a
+/// `..` is inside it. The check looks at the end of the body only.
+#[test]
+fn an_e0130_fix_should_stay_after_an_arm_that_ends_in_a_closed_bracket_or_quote() {
+    let arm = "\n        None => todo\n    ".to_string();
+    // The fix replaces the three spaces before the `}`: its place in line 3.
+    let rows = [
+        (
+            "block body",
+            "fn g(s: i64?) -> i64 {\n    match s {\n        Some(_) => { 1.. }   }\n}\nfn main() {}",
+            27,
+        ),
+        (
+            "index",
+            "fn g(s: i64?, xs: [i64]) -> [i64] {\n    match s {\n        Some(_) => xs[1..]   }\n}\nfn main() {}",
+            27,
+        ),
+        (
+            "string",
+            "fn g(s: i64?) -> string {\n    match s {\n        Some(_) => \"a..\"   }\n}\nfn main() {}",
+            25,
+        ),
+        (
+            "parenthesised",
+            "fn g(s: i64?) -> i64 {\n    match s {\n        Some(_) => (1..)   }\n}\nfn main() {}",
+            25,
+        ),
+        (
+            "`get`",
+            "fn g(s: i64?, t: string) -> string? {\n    match s {\n        Some(_) => t.get(1..)   }\n}\nfn main() {}",
+            30,
+        ),
+        (
+            "outer `match` of a nested one",
+            "fn g(s: i64?) -> i64 {\n    match s {\n        Some(_) => match s { Some(_) => 1.. }   }\n}\nfn main() {}",
+            46,
+        ),
+    ];
+    for (row, src, col) in rows {
+        let ds = diags(src);
+        let found: Vec<_> = ds
+            .iter()
+            .filter(|d| d.code() == Code::NonExhaustive && at(src, d.span()) == (2, 5))
+            .collect();
+        let [d] = found[..] else {
+            panic!("row `{row}`: {found:?}");
+        };
+        assert_eq!(
+            fixes(src, d),
+            [(false, vec![(3, col, "   ", arm.clone())])],
+            "row `{row}`"
+        );
+        applied(src, d);
+    }
+}
+
 /// How the arm of an E0130 fix relates to the value that the error names, in a row of
 /// `an_e0130_fix_should_add_an_arm_that_covers_the_missing_value`.
 enum Added {
