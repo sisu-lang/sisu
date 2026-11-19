@@ -280,7 +280,10 @@ impl Checker<'_> {
             Err(conflict) => {
                 // A call that waits with a held conflict reports it, and the join reports nothing
                 // more (S26).
-                if let Some(reported) = self.held_conflicts(members) {
+                let candidates: Vec<Type> = (conflict.groups.iter().map(|group| group.ty))
+                    .chain(required.map(|(ty, _)| ty))
+                    .collect();
+                if let Some(reported) = self.held_conflicts(members, &candidates) {
                     let poisoned = match required {
                         Some((ty, _)) => Poisoned::typed(ty, reported),
                         None => Poisoned::untyped(reported),
@@ -318,8 +321,18 @@ impl Checker<'_> {
     }
 
     /// Reports the held conflict of each call in `members` that waits with one (see
-    /// `OpenEntry`), and gives the first report.
-    fn held_conflicts(&mut self, members: &mut [JoinMember<'_>]) -> Option<Reported> {
+    /// `OpenEntry`), and gives the first report. A call that one of `candidates`, the types of the
+    /// failed join, opens is no mistake: its held conflict is dropped, and the join reports.
+    fn held_conflicts(
+        &mut self,
+        members: &mut [JoinMember<'_>],
+        candidates: &[Type],
+    ) -> Option<Reported> {
+        for member in members.iter_mut() {
+            if let Ok(e) = &mut *member.value {
+                self.drop_opened(e, candidates);
+            }
+        }
         let mut first = None;
         for member in members.iter_mut() {
             if let Ok(e) = &mut *member.value
@@ -342,6 +355,17 @@ impl Checker<'_> {
             value_positions(e, &mut |child| found = found || self.holds_conflict(child));
         });
         found
+    }
+
+    /// Drops the held conflict of each call at a value position of `e` that one of `candidates`
+    /// opens. Each test runs under a snapshot, which it rolls back.
+    fn drop_opened(&mut self, e: &mut tir::Expr, candidates: &[Type]) {
+        if let Some(call) = self.table.open_call(e)
+            && !self.table.settled(e.span)
+        {
+            self.drop_held_if_opened(call, e, candidates);
+        }
+        ensure_stack(|| value_positions(e, &mut |child| self.drop_opened(child, candidates)));
     }
 
     /// Reports the held conflict of each call at a value position of `e` that waits with one, and

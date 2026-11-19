@@ -3925,6 +3925,28 @@ impl Checker<'_> {
         Some(wraps)
     }
 
+    /// Drops the held conflict of `call`, at `e`, when one of `candidates` opens it. Each test runs
+    /// under a snapshot, which it rolls back.
+    pub(super) fn drop_held_if_opened(
+        &mut self,
+        call: OpenCall,
+        e: &mut tir::Expr,
+        candidates: &[Type],
+    ) {
+        if self.table.open_entry(call).conflict.is_none() {
+            return;
+        }
+        let opens = candidates.iter().any(|&candidate| {
+            let snapshot = self.table.snapshot();
+            let opens = self.open_at(call, e, candidate).is_some();
+            self.table.rollback(snapshot);
+            opens
+        });
+        if opens {
+            self.table.open_entry_mut(call).conflict = None;
+        }
+    }
+
     /// Reports the held conflict of `call` once (see `OpenEntry`), and gives its proof. A rollback
     /// does not hold it again: a check of the call again makes a new entry.
     pub(super) fn report_held(&mut self, call: OpenCall) -> Option<Reported> {
