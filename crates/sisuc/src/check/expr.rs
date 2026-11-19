@@ -549,7 +549,7 @@ impl Checker<'_> {
         expected: Expectation,
         returning: bool,
     ) -> Option<(Span, NoValueCause)> {
-        if let Some((at, if_let)) = valueless_value(checked) {
+        if let Some((at, if_let)) = self.valueless_value(checked) {
             return Some((at, NoValueCause::NoElse { if_let, returning }));
         }
         // An open `Any` variable takes the `unit`, as a type parameter does (`unit` is a value).
@@ -569,7 +569,7 @@ impl Checker<'_> {
     /// outer join has settled (see `valueless`). Then `checked` is poisoned.
     pub(super) fn refuse_settled_valueless(&mut self, checked: &mut Checked) -> Option<Reported> {
         let e = checked.as_ref().ok()?;
-        let (at, if_let) = without_value(e, false, &|ty| self.table.resolve(ty))?;
+        let (at, if_let) = self.valueless(e)?;
         let reported = self.no_value(at, no_else(if_let));
         *checked = Err(Poisoned::untyped(reported));
         Some(reported)
@@ -577,7 +577,7 @@ impl Checker<'_> {
 
     /// `checked`, or E0043 at the valueless `if` that gives its value (see `valueless`).
     pub(super) fn refuse_valueless(&mut self, checked: Checked) -> Checked {
-        match valueless_value(&checked) {
+        match self.valueless_value(&checked) {
             Some((at, if_let)) => Err(Poisoned::untyped(self.no_value(at, no_else(if_let)))),
             None => checked,
         }
@@ -614,7 +614,8 @@ impl Checker<'_> {
                     want.is_some_and(|want| matches!(want.kind(), TypeKind::Optional(_)));
                 return match missing_else(e) {
                     Some(if_let)
-                        if !optional && value.is_some_and(|value| valueless(value).is_none()) =>
+                        if !optional
+                            && value.is_some_and(|value| self.valueless(value).is_none()) =>
                     {
                         NoValueCause::UnitIf {
                             if_let,
@@ -655,7 +656,7 @@ impl Checker<'_> {
     /// `else` gives has no value to wrap: E0043 at that `if` (see `unlifted`), unless no code uses
     /// the value of the join being settled (see `Body::dropped_join`).
     pub(super) fn lift(&mut self, e: tir::Expr, want: Type) -> Checked {
-        match unlifted(&e).filter(|_| !self.body.dropped_join) {
+        match self.unlifted(&e).filter(|_| !self.body.dropped_join) {
             Some((at, if_let)) => Err(Poisoned::typed(want, self.no_value(at, no_else(if_let)))),
             None => Ok(wrap(e, want)),
         }
@@ -667,7 +668,7 @@ impl Checker<'_> {
         match checked
             .as_ref()
             .ok()
-            .and_then(|e| Some((unlifted(e)?, e.ty)))
+            .and_then(|e| Some((self.unlifted(e)?, e.ty)))
         {
             Some(((at, if_let), ty)) => {
                 Err(Poisoned::typed(ty, self.no_value(at, no_else(if_let))))
@@ -681,7 +682,7 @@ impl Checker<'_> {
     pub(super) fn lift_block(&mut self, block: &mut CheckedBlock, want: Type, span: Span) {
         let at = (block.as_ref().ok())
             .and_then(|block| block.value.as_deref())
-            .and_then(unlifted);
+            .and_then(|e| self.unlifted(e));
         match at {
             Some((at, if_let)) => {
                 *block = Err(Poisoned::typed(want, self.no_value(at, no_else(if_let))));
@@ -1216,29 +1217,32 @@ pub(super) fn no_else(if_let: bool) -> NoValueCause {
     }
 }
 
-/// `valueless` of `checked`, or the failed valueless `if` it is (see `Poisoned::valueless`).
-fn valueless_value(checked: &Checked) -> Option<(Span, bool)> {
-    checked
-        .as_ref()
-        .map_or_else(|failed| failed.valueless, valueless)
-}
+impl Checker<'_> {
+    /// `valueless` of `checked`, or the failed valueless `if` it is (see `Poisoned::valueless`).
+    fn valueless_value(&self, checked: &Checked) -> Option<(Span, bool)> {
+        checked
+            .as_ref()
+            .map_or_else(|failed| failed.valueless, |e| self.valueless(e))
+    }
 
-/// The span of the `if` without an `else` whose branch has a value, when `e` is one or gives the
-/// value of one: through a block's value, a branch, an arm or a wrap. Such an `if` has no value.
-/// Only a `unit` or a `unit?` can give one, so the walk stops at any other type. The second part
-/// says that the `if` is an `if let`.
-pub(super) fn valueless(e: &tir::Expr) -> Option<(Span, bool)> {
-    without_value(e, false, &|ty| ty)
-}
+    /// The span of the `if` without an `else` whose branch has a value, when `e` is one or gives
+    /// the value of one: through a block's value, a branch, an arm or a wrap. Such an `if` has no
+    /// value. Only a `unit` or a `unit?` can give one, so the walk stops at any other type. The
+    /// second part says that the `if` is an `if let`. A nested join leaves an inference variable
+    /// in its nodes, so each type is read through the table.
+    pub(super) fn valueless(&self, e: &tir::Expr) -> Option<(Span, bool)> {
+        without_value(e, false, &|ty| self.table.resolve(ty))
+    }
 
-/// `valueless` of `e`, a `unit` that lifts to `unit?`. There each `if` without an `else` has no
-/// value, whatever its branch has, as for an `i64?`.
-fn unlifted(e: &tir::Expr) -> Option<(Span, bool)> {
-    without_value(e, true, &|ty| ty)
+    /// `valueless` of `e`, a `unit` that lifts to `unit?`. There each `if` without an `else` has
+    /// no value, whatever its branch has, as for an `i64?`.
+    fn unlifted(&self, e: &tir::Expr) -> Option<(Span, bool)> {
+        without_value(e, true, &|ty| self.table.resolve(ty))
+    }
 }
 
 /// The walk of `valueless`; with `lifted`, an `if` without an `else` has no value by itself.
-/// `resolve` gives the type of an inference variable, which a nested join leaves in its nodes.
+/// `resolve` gives the type of an inference variable.
 fn without_value(
     e: &tir::Expr,
     lifted: bool,

@@ -2718,7 +2718,7 @@ impl Checker<'_> {
                 // value is E0043 (see `lift_block`).
                 let valueless = (body.as_ref().ok())
                     .and_then(|block| block.value.as_deref())
-                    .and_then(expr::valueless);
+                    .and_then(|e| c.valueless(e));
                 if let Some((at, if_let)) = valueless {
                     body = Err(Poisoned::untyped(c.no_value(at, expr::no_else(if_let))));
                 } else if payload != Type::UNIT || tail(&f.body).is_some_and(|e| !without_else(e)) {

@@ -13,7 +13,7 @@ use super::{
     part_at, target, tir, value_positions,
 };
 use crate::check::expectation::{Origin, own_name};
-use crate::check::expr::{callee, takes_unit, valueless};
+use crate::check::expr::{callee, takes_unit};
 use crate::check::{beyond_one_layer, number_conversion};
 use crate::diagnostic::{
     Conversion, DiagnosticKind, Expected, JoinFix, JoinFormName, MismatchFix, NoValueCause,
@@ -594,7 +594,7 @@ impl Checker<'_> {
             } => {
                 let if_let = matches!(e.kind, ExprKind::IfSome { .. });
                 let optional = want.is_some_and(|ty| matches!(ty.kind(), TypeKind::Optional(_)));
-                if !optional && valueless(e).is_none() {
+                if !optional && self.valueless(e).is_none() {
                     NoValueCause::UnitIf {
                         if_let,
                         want: want.map(|ty| self.type_name(ty)),
