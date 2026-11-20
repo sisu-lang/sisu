@@ -1662,6 +1662,7 @@ impl Checker<'_> {
             (Ok(scrutinee), Ok(mut value), Ok(other)) => {
                 // The node takes the type of the read, which the join may have closed.
                 value.ty = self.table.resolve(value.ty);
+                self.body.settled_joins.insert(span);
                 Ok(if_some(bind, scrutinee, value, Some(other), span))
             }
             (Err(failed), ..) | (_, Err(failed), _) | (.., Err(failed)) => {

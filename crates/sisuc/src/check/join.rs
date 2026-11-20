@@ -613,7 +613,10 @@ impl Checker<'_> {
             match &mut *member.value {
                 Ok(e) => {
                     leaves.push(Leaf::of(e));
-                    nested_leaves(e, &mut leaves);
+                    // A settled `??` has the type that its leaves join to: they add no candidate.
+                    if !self.settled_coalesce(e) {
+                        nested_leaves(e, &mut leaves);
+                    }
                 }
                 Err(poisoned) => leaves.extend(poisoned.ty.map(|ty| Leaf::new(member.label, ty))),
             }
@@ -781,7 +784,7 @@ impl Checker<'_> {
     pub(super) fn converts_at(&mut self, e: &mut tir::Expr, target: Type) -> Option<usize> {
         #[cfg(test)]
         CONVERTS_STEPS.set(CONVERTS_STEPS.get() + 1);
-        if e.ty == Type::NEVER || self.settled_as(e, target) {
+        if e.ty == Type::NEVER || self.settled_as(e, target) || self.settled_join(e, target) {
             return Some(0);
         }
         self.open_target(e, target);
@@ -864,7 +867,7 @@ impl Checker<'_> {
     pub(super) fn settle_at(&mut self, e: &mut tir::Expr, target: Type) -> Result<(), Reported> {
         #[cfg(test)]
         SETTLED.set(SETTLED.get() + 1);
-        if e.ty == Type::NEVER || self.settled_as(e, target) {
+        if e.ty == Type::NEVER || self.settled_as(e, target) || self.settled_join(e, target) {
             return Ok(());
         }
         self.open_target(e, target);
@@ -939,6 +942,30 @@ impl Checker<'_> {
     /// that the outer join bound does not count: the members under it are not settled yet.
     fn settled_as(&self, e: &tir::Expr, target: Type) -> bool {
         !e.ty.holds_infer() && e.ty == self.table.resolve(target)
+    }
+
+    /// Whether `e` is a `??` whose own join settled its sides to its type, and that type takes
+    /// `target` as it is: then it binds that type to `target`, and each side has the type with
+    /// no walk into `e`. This keeps a chain of `??` with an open type linear, as
+    /// `Some(1) ?? (Some(1) ?? 2)`. A type that takes `target` only through a conversion converts
+    /// at the sides.
+    fn settled_join(&mut self, e: &tir::Expr, target: Type) -> bool {
+        if !self.settled_coalesce(e) {
+            return false;
+        }
+        let snapshot = self.table.snapshot();
+        let as_it_is = (self.conversion(e.ty, target)).is_some_and(|steps| steps.is_empty());
+        if as_it_is {
+            self.keep_snapshot(snapshot);
+        } else {
+            self.table.rollback(snapshot);
+        }
+        as_it_is
+    }
+
+    /// Whether `e` is a `??` whose own join settled each side to its type.
+    fn settled_coalesce(&self, e: &tir::Expr) -> bool {
+        matches!(e.kind, ExprKind::IfSome { .. }) && self.body.settled_joins.contains(&e.span)
     }
 
     /// Applies `steps` to `e` in place.
