@@ -753,6 +753,20 @@ impl Checker<'_> {
     /// reports that conflict in place of E0050. A failed context reports none: its own
     /// report covers it. A value that it leaves open fails with no type, as a `None` does there.
     pub(super) fn close_open(&mut self, checked: Checked, expected: Expectation) -> Checked {
+        let Ok(value) = &checked else {
+            return checked;
+        };
+        let within = value.span;
+        self.close_open_in(checked, within, expected)
+    }
+
+    /// `close_open`, where the calls that wait inside `within` report their open parameters.
+    pub(super) fn close_open_in(
+        &mut self,
+        checked: Checked,
+        within: Span,
+        expected: Expectation,
+    ) -> Checked {
         let Ok(mut value) = checked else {
             return checked;
         };
@@ -766,7 +780,7 @@ impl Checker<'_> {
         // A call that waits with a parameter left open reports it, in place of the `None` that
         // stands for the parameter.
         let waited = (expected != Expectation::Poisoned)
-            .then(|| self.open_waits(value.ty))
+            .then(|| self.open_waits(value.ty, within))
             .flatten();
         let unsettled = self.table.unsettled(value.ty);
         if expected == Expectation::Poisoned {

@@ -5,6 +5,8 @@
 //! settles each member to it: it writes each `Wrap` and `ToAny` at the value positions of the
 //! member, through `conversion` and `apply`.
 
+use std::cmp::Reverse;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 mod join_report;
@@ -13,7 +15,7 @@ use super::any::Conversion;
 use super::infer::Table;
 use super::operator::Operator;
 use super::reports::{Held, Reported};
-use super::{Checked, Checker, Expectation, Poisoned};
+use super::{Checked, Checker, Expectation, Poisoned, WaitKey};
 use crate::conformance::ensure_stack;
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -507,32 +509,43 @@ impl Checker<'_> {
         first
     }
 
-    /// E0050 at each call that waits with a parameter that `ty` leaves open with no type, as on
-    /// `main`: `cannot infer` that parameter, not the type of a `None`. The outer call reports
-    /// first, then the calls in source order. A report poisons the open type, so a call inside it
-    /// that shares the type reports nothing. It gives the first report. The walk of the waiting
-    /// calls runs only for a value that reports E0050.
-    pub(super) fn open_waits(&mut self, ty: Type) -> Option<Reported> {
+    /// E0050 at each call inside `within` that waits with a parameter that `ty` leaves open with
+    /// no type, as on `main`: `cannot infer` that parameter, not the type of a `None`. The outer
+    /// call reports first, then the calls in source order. A report poisons the open type, so a
+    /// call inside it that shares the type reports nothing. It gives the first report. A call
+    /// that reports, or that has no open parameter left, leaves `waits`: each call is reported
+    /// once, and a later value does not read it again.
+    pub(super) fn open_waits(&mut self, ty: Type, within: Span) -> Option<Reported> {
         let mut roots = self.table.unsettled_roots(ty);
         if roots.is_empty() {
             return None;
         }
-        let mut calls: Vec<(Span, usize)> = (self.body.waits.iter())
-            .flat_map(|(&span, waits)| (0..waits.len()).map(move |k| (span, k)))
+        let (start, end) = (within.start(), within.end());
+        let keys: Vec<WaitKey> = (self.body.waits.range((start, Reverse(usize::MAX))..))
+            .map(|(&key, _)| key)
+            .take_while(|&(at, _)| at < end)
+            .filter(|&(_, Reverse(to))| to <= end)
             .collect();
-        calls.sort_unstable_by_key(|&(span, k)| (span.start(), std::cmp::Reverse(span.end()), k));
         let mut first = None;
-        for (span, k) in calls {
-            #[cfg(test)]
-            WAITS_READ.set(WAITS_READ.get() + 1);
-            let var = self.body.waits[&span][k].0;
-            let open_here = self.table.open_roots(var);
-            if open_here.iter().any(|r| roots.contains(r)) {
-                let kind = self.body.waits[&span][k].1.kind(true);
-                let reported = self.error(kind);
-                self.table.poison(var);
-                roots.retain(|r| !open_here.contains(r));
-                first.get_or_insert(reported);
+        for key in keys {
+            let Some(mut waits) = self.body.waits.remove(&key) else {
+                continue;
+            };
+            waits.retain(|&(var, ref open)| {
+                #[cfg(test)]
+                WAITS_READ.set(WAITS_READ.get() + 1);
+                let open_here = self.table.open_roots(var);
+                if open_here.iter().any(|r| roots.contains(r)) {
+                    let reported = self.error(open.kind(true));
+                    self.table.poison(var);
+                    roots.retain(|r| !open_here.contains(r));
+                    first.get_or_insert(reported);
+                    return false;
+                }
+                !open_here.is_empty()
+            });
+            if !waits.is_empty() {
+                self.body.waits.insert(key, waits);
             }
         }
         first

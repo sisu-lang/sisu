@@ -38,6 +38,8 @@ mod structs;
 mod unused_names;
 
 use std::borrow::Cow;
+use std::cmp::Reverse;
+use std::collections::BTreeMap;
 use std::iter::Peekable;
 use std::ops::Range;
 use std::rc::Rc;
@@ -985,6 +987,15 @@ impl SelfType {
 type LoneArgs = (Type, Vec<Option<(Span, Type)>>);
 
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
+/// The key of a call in `Body::waits`: its start, then its end from the last. A call inside
+/// another call sorts after it.
+type WaitKey = (usize, Reverse<usize>);
+
+/// The `WaitKey` of the call at `span`.
+fn wait_key(span: Span) -> WaitKey {
+    (span.start(), Reverse(span.end()))
+}
+
 #[derive(Default)]
 #[expect(
     clippy::zero_sized_map_values,
@@ -1064,8 +1075,9 @@ struct Body {
     /// The E0050 of each generic call that a join took as a member with a parameter left open,
     /// by the call's span: each such parameter's variable and what its report reads (see
     /// `OpenParam`). The call around it makes and gives the report when it settles no type for
-    /// the parameter (see `report_waiting_calls`).
-    waits: FxHashMap<Span, Vec<(Type, generic::OpenParam)>>,
+    /// the parameter (see `report_waiting_calls`). The key is `wait_key` of the span: the calls
+    /// inside a span are a range of it, the outer call first, then in source order.
+    waits: BTreeMap<WaitKey, Vec<(Type, generic::OpenParam)>>,
     /// The spans of the calls in `waits` with a labeled argument: each reports its wait at any
     /// place of the call around it, as on `main`.
     labeled_waits: FxHashSet<Span>,

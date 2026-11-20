@@ -359,7 +359,7 @@ impl Checker<'_> {
                     }
                     expected => expected,
                 };
-                self.close_join(ty, heading.whole, close)
+                self.close_join(ty, (heading.whole, heading.whole), close)
             }
             ty => ty,
         };
@@ -500,10 +500,11 @@ impl Checker<'_> {
     /// Closes the open variables of `ty`, the type of a join at `at` that is no member. A value
     /// with no type to meet closes them so (see `close_open`). A hint first gives an open `Int` its
     /// type, as it gives a literal. Each variable that the close defaults is bound to its default.
+    /// `whole` is the span of the join's members: a call inside it that waits reports there.
     pub(super) fn close_join(
         &mut self,
         ty: Type,
-        at: Span,
+        (at, whole): (Span, Span),
         expected: Expectation,
     ) -> Result<Type, Poisoned> {
         match expected {
@@ -519,7 +520,7 @@ impl Checker<'_> {
             Expectation::None | Expectation::Poisoned => {}
         }
         let open = tir::Expr::new(tir::ExprKind::Unit, self.table.resolve(ty), at);
-        let closed = self.close_open(Ok(open), expected)?.ty;
+        let closed = self.close_open_in(Ok(open), whole, expected)?.ty;
         self.unify(ty, closed);
         Ok(closed)
     }

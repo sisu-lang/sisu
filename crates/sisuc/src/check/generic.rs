@@ -4625,9 +4625,9 @@ impl Checker<'_> {
                 .map(|&(t, var)| (var, OpenParam::of(sig, t)))
                 .collect();
             if waits.is_empty() {
-                self.body.waits.remove(&call.at);
+                self.body.waits.remove(&super::wait_key(call.at));
             } else {
-                self.body.waits.insert(call.at, waits);
+                self.body.waits.insert(super::wait_key(call.at), waits);
                 // A function call with a labeled argument failed (E0055). On `main` it is then
                 // checked as alone, so it reports its own parameter at any place.
                 if matches!(call.declarer, Declarer::Function(_))
@@ -4768,7 +4768,7 @@ impl Checker<'_> {
         let waiting: Vec<Span> = labeled.chain(waiting).collect();
         let mut first = None;
         for span in waiting {
-            let Some(waits) = self.body.waits.remove(&span) else {
+            let Some(waits) = self.body.waits.remove(&super::wait_key(span)) else {
                 continue;
             };
             if let Some((_, open)) = waits.into_iter().find(|&(var, _)| holds(&self.table, var)) {

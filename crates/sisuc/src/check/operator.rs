@@ -121,7 +121,7 @@ impl Checker<'_> {
                     self.unify(ty, int);
                     int
                 };
-                let ty = self.close_number(ty, span, expected)?;
+                let ty = self.close_number(ty, (span, span), expected)?;
                 return Ok((ty, (checked, false)));
             }
         }
@@ -196,11 +196,11 @@ impl Checker<'_> {
     /// Closes `ty`, the open type of the number that an operator at `at` gives. A member keeps it
     /// open. A required number gives it that number, so that a literal check that waits on it is
     /// reported. Any other context closes it as a join does (see `close_join`), and the caller
-    /// takes the value to a required type.
+    /// takes the value to a required type. `whole` is the span of the operands.
     fn close_number(
         &mut self,
         ty: Type,
-        at: Span,
+        (at, whole): (Span, Span),
         expected: Expectation,
     ) -> Result<Type, Poisoned> {
         match expected {
@@ -208,8 +208,8 @@ impl Checker<'_> {
             Expectation::Required(want, _) if self.unify(ty, payload(want)) => {
                 Ok(self.table.resolve(ty))
             }
-            Expectation::Required(..) => self.close_join(ty, at, Expectation::None),
-            _ => self.close_join(ty, at, expected),
+            Expectation::Required(..) => self.close_join(ty, (at, whole), Expectation::None),
+            _ => self.close_join(ty, (at, whole), expected),
         }
     }
 
@@ -497,6 +497,8 @@ impl Checker<'_> {
         (op, mut read): (&dyn Fn(usize) -> String, Option<Checked>),
     ) -> (Vec<Checked>, Option<Type>, bool) {
         let arithmetic = operator != Operator::Compare;
+        let whole =
+            (operands.first().zip(operands.last())).map_or(head, |(a, b)| a.span.to(b.span));
         // A compound assignment's conflict reports at its operator: its place does not convert.
         let number = match expected {
             Expectation::Required(ty, origin)
@@ -701,12 +703,12 @@ impl Checker<'_> {
                 }
                 return (checked, None, true);
             }
-            return match self.close_number(ty, head, expected) {
+            return match self.close_number(ty, (head, whole), expected) {
                 Ok(ty) => (checked, Some(ty), false),
                 Err(failed) => (fail_all(checked, failed.reported()), None, true),
             };
         }
-        let ty = match self.close_join(ty, head, Expectation::None) {
+        let ty = match self.close_join(ty, (head, whole), Expectation::None) {
             Ok(ty) => ty,
             Err(failed) => return (fail_all(checked, failed.reported()), None, true),
         };
@@ -917,7 +919,7 @@ impl Checker<'_> {
                 }),
                 // A number literal is its default type: `g() < 1` compares an `i64`.
                 Some(ty) if !self.table.default_open(ty).holds_infer() => {
-                    let closed = self.close_join(ty, e.span, Expectation::None);
+                    let closed = self.close_join(ty, (e.span, e.span), Expectation::None);
                     c.and_then(|mut value| {
                         value.ty = closed?;
                         Ok(value)
@@ -1154,7 +1156,7 @@ impl Checker<'_> {
             Expectation::None
         };
         let ty = match joined.map(|ty| self.table.resolve(ty)) {
-            Ok(ty) => self.close_join(ty, head, close)?,
+            Ok(ty) => self.close_join(ty, (head, span), close)?,
             Err(reported) => {
                 self.poison_open(&values);
                 return Err(Poisoned::untyped(reported));
@@ -1474,7 +1476,7 @@ impl Checker<'_> {
                 || self.table.default_open(open).holds_infer())
             // A failed left side has reported: its close is silent.
             && let close = if scrutinee.is_err() { Expectation::Poisoned } else { Expectation::None }
-            && let Err(failed) = self.close_join(ty, lhs.span, close)
+            && let Err(failed) = self.close_join(ty, (lhs.span, lhs.span), close)
         {
             scrutinee = Err(failed);
         }
@@ -1593,7 +1595,7 @@ impl Checker<'_> {
             _ => Expectation::Member,
         };
         let ty = (self.join_form(JoinForm::Coalesce, heading, &mut members, given, None))
-            .and_then(|ty| self.close_join(ty, span, expected))?;
+            .and_then(|ty| self.close_join(ty, (span, span), expected))?;
         match (scrutinee, read, other) {
             (Ok(scrutinee), Ok(mut value), Ok(other)) => {
                 // The node takes the type of the read, which the join may have closed.
