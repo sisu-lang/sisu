@@ -246,6 +246,23 @@ impl Checker<'_> {
         {
             return self.valued(values, *first);
         }
+        // Operands of one closed number type and open `Int`s, as `i + 1`, join as they unify. A
+        // literal that does not fit reports when its variable settles, as in the join.
+        let closed = |ty: &Option<Type>| matches!(*ty, Some(Type::I64 | Type::U8 | Type::F64));
+        let int = |c: &Self, ty: &Option<Type>| {
+            ty.is_some_and(|ty| {
+                matches!(ty.kind(), TypeKind::Infer(_)) && c.table.default_open(ty) == Type::I64
+            })
+        };
+        if let Some(Some(target)) = (types.iter().find(|ty| closed(ty))).or_else(|| types.first())
+            && (types.iter()).all(|ty| (*ty == Some(*target) && closed(ty)) || int(self, ty))
+        {
+            for ty in (types.iter().flatten()).filter(|ty| *ty != target) {
+                let unified = self.unify(*ty, *target);
+                debug_assert!(unified, "an `Int` should unify with a number or an `Int`");
+            }
+            return self.valued(values, self.table.resolve(*target));
+        }
         let spans: Vec<Span> = es.iter().map(|e| e.span).collect();
         let heading = Heading {
             head,
