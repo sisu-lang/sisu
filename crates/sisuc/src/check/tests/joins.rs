@@ -2498,22 +2498,26 @@ fn held_arguments_with_no_type_should_keep_the_check_linear() {
     }
 }
 
-/// A side of `==` or a default of `??` that needs its sibling's type is checked again with it.
-/// Each nested side is checked a fixed number of times, so the expressions checked grow in step
-/// with the depth. A side that each level checks two times would double them at each level. The
-/// first sizes fail fast on a count that doubles; the parser takes nesting up to 256, and a level
-/// of `put2((ob ?? ...) == ob, true)` is four.
+/// A side of `==` or a default of `??` that needs its sibling's type is checked one time: a call in
+/// it that cannot infer alone stays open for the join of the operator. So the expressions checked
+/// grow in step with the depth. A side that each level checks two times would double them at each
+/// level. The first sizes fail fast on a count that doubles; the parser takes nesting up to 256,
+/// and a level of `(o ?? first(b.make(...))) == o` is six.
 #[test]
 fn a_side_checked_again_should_keep_the_checks_linear_in_depth() {
     const SOURCE: &str = "interface Source {\n    type Item\n    fn first(self) -> Item\n}\n\
         struct Pair: Source, Eq {\n    type Item = bool\n    v: bool\n    fn first(self) -> bool { self.v }\n}\n\
         fn put<S: Source>(v: S.Item) -> S? { None }\nfn zu<T>() -> u8 { 1 }\nfn zb<T>() -> bool { true }\n\
         fn put2<S: Source>(a: bool, v: S.Item) -> S? { None }\n\
-        fn putb<S: Source>(v: S.Item, a: bool) -> S? { None }\n";
+        fn putb<S: Source>(v: S.Item, a: bool) -> S? { None }\n\
+        struct B {\n    v: bool\n    fn make<T>(self, c: bool) -> [T] { [] }\n    fn none<T>(self) -> [T] { [] }\n}\n\
+        fn first<T>(xs: [T]) -> T? { None }\nfn first2<T>(xs: [T], c: bool) -> T? { None }\n\
+        fn zb1<T>(a: bool) -> bool { a }\nfn make<T>(a: bool) -> [T] { [] }\n\
+        fn mk2<T>(b: bool) -> T? { None }\nfn mk<T, U>(b: U) -> T? { None }\n";
     let nest = |depth: usize, inner: &str, wrap: &dyn Fn(&str) -> String| {
         (0..depth).fold(inner.to_owned(), |side, _| wrap(&side))
     };
-    let rows: [(&str, &dyn Fn(usize) -> String); 8] = [
+    let rows: [(&str, &dyn Fn(usize) -> String); 18] = [
         ("`put(...) == ob`", &|d| {
             nest(d, "true", &|s| format!("put({s}) == ob"))
         }),
@@ -2543,6 +2547,44 @@ fn a_side_checked_again_should_keep_the_checks_linear_in_depth() {
         ("a string join under `u8`", &|d| {
             nest(d, "\"z\"", &|s| format!("\"a\" + ({s})"))
         }),
+        // A call that cannot infer alone stays open for the join of the operator around it.
+        ("`first2(b.none(), ... == o) == o`", &|d| {
+            nest(d, "true", &|s| {
+                format!("first2(B(v: true).none(), {s}) == o")
+            })
+        }),
+        ("`(o ?? first2(b.none(), ...)) == o`", &|d| {
+            nest(d, "true", &|s| {
+                format!("(o ?? first2(B(v: true).none(), {s})) == o")
+            })
+        }),
+        ("`zb1(... == true) == true`", &|d| {
+            nest(d, "true", &|s| format!("zb1({s}) == true"))
+        }),
+        ("`first(b.make(...)) == o`", &|d| {
+            nest(d, "true", &|s| format!("first(B(v: true).make({s})) == o"))
+        }),
+        ("`(o ?? first(b.make(...))) == o`", &|d| {
+            nest(d, "true", &|s| {
+                format!("(o ?? first(B(v: true).make({s}))) == o")
+            })
+        }),
+        ("`first(make(...)) == o`", &|d| {
+            nest(d, "true", &|s| format!("first(make({s})) == o"))
+        }),
+        ("`mk2(...) == o`", &|d| {
+            nest(d, "true", &|s| format!("mk2({s}) == o"))
+        }),
+        ("`mk(...) == o`", &|d| {
+            nest(d, "true", &|s| format!("mk({s}) == o"))
+        }),
+        ("`mk([..., o]) == o`", &|d| {
+            let side = nest(d, "mk(true)", &|s| format!("mk([{s}, o])"));
+            format!("{side} == o")
+        }),
+        ("`o ?? mk(o ?? ...)`", &|d| {
+            nest(d, "mk(true)", &|s| format!("o ?? mk({s})"))
+        }),
     ];
     for (row, side) in rows {
         let checks = |depth: usize| {
@@ -2555,6 +2597,6 @@ fn a_side_checked_again_should_keep_the_checks_linear_in_depth() {
             EXPR_CHECKS.get()
         };
         assert_near_linear_for(&format!("{row}: "), checks(2), checks(4), checks(6));
-        assert_near_linear_for(&format!("{row}: "), checks(20), checks(40), checks(60));
+        assert_near_linear_for(&format!("{row}: "), checks(14), checks(28), checks(42));
     }
 }

@@ -42,13 +42,13 @@ error[E0032]: expected `i64`, `u8` or `f64`, found `Two<_, bool>`
 22 | fn subtract_calls() { let z = id(mk2()) - id(mk2()) }
    |                               ^^^^^^^^^
 
-error[E0050]: cannot infer the type of `None`
-  --> E0050-generic-hint.sisu:23:33
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:23:30
    |
 23 | fn compare_calls() { let z = id(mk2()) < id(mk2()) }
-   |                                 ^^^^^
+   |                              ^^
    |
-   = help: write the type: `let x: ...? = None`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:24:28
@@ -76,13 +76,13 @@ error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `Two<_, bool>`
 27 | fn string_sum() { let z: string = id(mk2()) + id(mk2()) }
    |                                   ^^^^^^^^^
 
-error[E0050]: cannot infer the type of `None`
-  --> E0050-generic-hint.sisu:28:38
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-generic-hint.sisu:28:35
    |
 28 | fn bool_compare() { let z: bool = id(mk2()) < id(mk2()) }
-   |                                      ^^^^^
+   |                                   ^^
    |
-   = help: write the type: `let x: ...? = None`
+   = help: annotate the result, or write the type: `id<...>(...)`
 
 error[E0032]: expected `i64`, `u8` or `f64`, found `Two<_, bool>`
   --> E0050-generic-hint.sisu:29:31
