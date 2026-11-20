@@ -578,6 +578,18 @@ impl Expr {
         }
     }
 
+    /// A `None` of `ty` at `span` that keeps the place of a value checked out of the tree, with
+    /// the exit flag of that value. Its parents then see a jump in the value before it goes back
+    /// (see `check::join::put_back`).
+    pub(crate) fn placeholder(ty: Type, span: Span, exits: bool) -> Self {
+        Self {
+            kind: ExprKind::None,
+            ty,
+            span,
+            exits,
+        }
+    }
+
     /// Whether a `Return`, `Break` or `Continue` sits anywhere inside, a nested loop included.
     pub(crate) fn exits(&self) -> bool {
         #[cfg(test)]

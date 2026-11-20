@@ -3196,8 +3196,9 @@ impl Checker<'_> {
                         // now, and meets its type when the join gives it (see `settle_held`).
                         let at = arg.value.span;
                         let value = self.value(&arg.value, Expectation::Member);
+                        let exits = value.as_ref().is_ok_and(tir::Expr::exits);
                         self.table.hold(at, want, value);
-                        Ok(tir::Expr::new(tir::ExprKind::None, want, at))
+                        Ok(tir::Expr::placeholder(want, at, exits))
                     } else {
                         mark(self.operand(&arg.value, Expectation::Poisoned))
                     }
