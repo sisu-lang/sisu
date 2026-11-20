@@ -692,7 +692,13 @@ def never_built(k: int) -> str:
 
 
 def constructor_type_parameters(k: int) -> str:
-    """Return a program that builds a struct of `k + 1` type parameters under its written type."""
+    """Return a program that builds a struct of `k + 1` type parameters under its written type.
+
+    The row guards the join of a constructor under its written type: a join that walks the
+    result one time for each type parameter is quadratic in the parameters. The counter test
+    `a_constructor_of_many_type_parameters_should_note_each_lone_argument_once` guards the
+    notes of the lone arguments.
+    """
     params = ", ".join(["A", *(f"A{tag(i)}" for i in range(k))])
     fields = "    f: A\n" + "".join(f"    f{tag(i)}: A{tag(i)}\n" for i in range(k))
     written = ", ".join(["i64"] * (k + 1))
