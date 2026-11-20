@@ -16,7 +16,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::generic::OpenEntry;
 use super::reports::Reported;
-use super::{Checker, Poisoned};
+use super::{Checked, Checker, Poisoned};
 use crate::conformance::ensure_stack;
 use crate::diagnostic::{DiagnosticKind, Literal};
 use crate::source::Span;
@@ -155,6 +155,10 @@ enum Undo {
     Settled {
         at: Span,
     },
+    /// The argument at `at` was held (see `Table::hold`).
+    Held {
+        at: Span,
+    },
     /// The open call at `at` was dropped (`added` false) or added at the end of the list (`added`
     /// true). `was` is its index before.
     Open {
@@ -190,6 +194,8 @@ pub(super) struct Table {
     open_spans: FxHashMap<Span, usize>,
     /// The span of each call node whose open form settled: its closed form's checks are stale.
     settled: FxHashSet<Span>,
+    /// The arguments held out of their calls until a join settles their types (see `Table::hold`).
+    held: Vec<HeldArgument>,
     /// The types that `rebuild` made, one memo for each `Open`. Thus a walk at each level of a
     /// nested type, such as `[[[x]]]`, rebuilds each level once. Without it, the walk rebuilds a
     /// level again for each level above it. An entry is good while no variable that it read has
@@ -237,6 +243,16 @@ impl Reads {
     }
 }
 
+/// An argument at an associated type of a parameter that only a join decides, as `v` in
+/// `put(v) == ob` with `fn put<S: Source>(v: S.Item) -> S?`. It is checked by itself in place,
+/// and held out of its call: the call holds a `None` at its span. When a join gives `want` its
+/// type, the value meets it and goes back in place (see `Checker::settle_held`).
+pub(super) struct HeldArgument {
+    pub(super) at: Span,
+    pub(super) want: Type,
+    pub(super) value: Checked,
+}
+
 /// A generic call whose open form a join can try: an index into the table's list of such calls.
 #[derive(Clone, Copy)]
 pub(super) struct OpenCall(usize);
@@ -252,6 +268,26 @@ impl Table {
             was,
             added: true,
         });
+    }
+
+    /// Holds `value`, the argument at `at`, until `want` has a type. A rollback drops it, with the
+    /// check that made it.
+    pub(super) fn hold(&mut self, at: Span, want: Type, value: Checked) {
+        self.held.push(HeldArgument { at, want, value });
+        self.record(Undo::Held { at });
+    }
+
+    /// The held arguments whose types are known now, taken out of the list.
+    pub(super) fn take_held(&mut self) -> Vec<HeldArgument> {
+        if self.held.is_empty() {
+            return Vec::new();
+        }
+        let held = std::mem::take(&mut self.held);
+        let (known, open) = held
+            .into_iter()
+            .partition(|held| !self.resolve(held.want).holds_infer());
+        self.held = open;
+        known
     }
 
     /// Drops the open form of the call at `at`: the call is closed only.
@@ -478,6 +514,11 @@ impl Table {
                 }
                 Undo::Settled { at } => {
                     self.settled.remove(&at);
+                }
+                Undo::Held { at } => {
+                    if let Some(i) = self.held.iter().rposition(|held| held.at == at) {
+                        self.held.remove(i);
+                    }
                 }
                 Undo::Open { at, was, added } => {
                     if added {
@@ -1052,6 +1093,8 @@ impl Written {
 /// `Any` set that no type reached is E0050.
 pub(super) trait WriteBack {
     fn write_back_all(&mut self, table: &mut Table) -> Written;
+    /// Calls `f` on each expression at the top of the result.
+    fn each_root_mut(&mut self, f: &mut impl FnMut(&mut tir::Expr));
 }
 
 /// Each `Int` node whose type is `f64` becomes a `Float`, as the checker makes it for a literal
@@ -1077,6 +1120,10 @@ impl WriteBack for tir::Expr {
         float_literals(self);
         written
     }
+
+    fn each_root_mut(&mut self, f: &mut impl FnMut(&mut tir::Expr)) {
+        f(self);
+    }
 }
 
 impl WriteBack for tir::Function {
@@ -1086,12 +1133,22 @@ impl WriteBack for tir::Function {
         self.body.each_expr_mut(&mut float_literals);
         written
     }
+
+    fn each_root_mut(&mut self, f: &mut impl FnMut(&mut tir::Expr)) {
+        self.body.each_expr_mut(f);
+    }
 }
 
 impl<T: WriteBack> WriteBack for Option<T> {
     fn write_back_all(&mut self, table: &mut Table) -> Written {
         self.as_mut()
             .map_or_else(Written::default, |inner| inner.write_back_all(table))
+    }
+
+    fn each_root_mut(&mut self, f: &mut impl FnMut(&mut tir::Expr)) {
+        if let Some(inner) = self {
+            inner.each_root_mut(f);
+        }
     }
 }
 
@@ -1108,6 +1165,12 @@ impl WriteBack for Result<tir::Expr, Poisoned> {
                     each(&mut misfit.ty);
                 }
             }),
+        }
+    }
+
+    fn each_root_mut(&mut self, f: &mut impl FnMut(&mut tir::Expr)) {
+        if let Ok(expr) = self {
+            f(expr);
         }
     }
 }

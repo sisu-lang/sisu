@@ -1089,18 +1089,12 @@ impl Checker<'_> {
         let mut late: Vec<usize> = (0..2).filter(|&i| late_operand(sides[i])).collect();
         let mut values = [Ok(unit_value(lhs.span)), Ok(unit_value(rhs.span))];
         let early: Vec<usize> = (0..2).filter(|i| !late.contains(i)).collect();
-        let outer = (
-            std::mem::take(&mut self.body.needs_context),
-            std::mem::take(&mut self.body.rechecks),
-        );
+        let outer = std::mem::take(&mut self.body.needs_context);
         for i in early {
             let first = self.side_mark();
-            self.body.rechecks = late.is_empty();
             values[i] = self.value(sides[i], Expectation::Member);
-            self.body.rechecks = false;
             // A side that needs the type of the other is checked again after it, with that type:
-            // `put(true) == ob` takes the parameter of `put` from `ob`. This is new: `main`
-            // gives E0050.
+            // `first(b.make()) == o` takes the parameter of `make` from `o`.
             if std::mem::take(&mut self.body.needs_context) && late.is_empty() {
                 self.drop_side(first);
                 late.push(i);
@@ -1117,7 +1111,7 @@ impl Checker<'_> {
             };
             values[i] = self.value(sides[i], given);
         }
-        (self.body.needs_context, self.body.rechecks) = outer;
+        self.body.needs_context = outer;
         let types = [
             self.member_own_type(&mut values[0], lhs.span),
             self.member_own_type(&mut values[1], rhs.span),
@@ -1612,12 +1606,8 @@ impl Checker<'_> {
             _ => Expectation::Member,
         };
         let first = self.side_mark();
-        let outer = (
-            std::mem::take(&mut self.body.needs_context),
-            std::mem::replace(&mut self.body.rechecks, read.is_ok()),
-        );
+        let outer = std::mem::take(&mut self.body.needs_context);
         let mut other = self.fallback(rhs, inner);
-        self.body.rechecks = false;
         // A default that needs the payload's type is checked again with it, as on `main`.
         if std::mem::take(&mut self.body.needs_context) && read.is_ok() {
             self.drop_side(first);
@@ -1630,7 +1620,7 @@ impl Checker<'_> {
         } else {
             self.keep_snapshot(first.snapshot);
         }
-        (self.body.needs_context, self.body.rechecks) = outer;
+        self.body.needs_context = outer;
         // A failed default whose type is a nested join's variable lost the values that give it
         // its type: it has none.
         if let Err(failed) = &mut other

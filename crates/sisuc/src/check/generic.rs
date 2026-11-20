@@ -3213,17 +3213,16 @@ impl Checker<'_> {
                 Some(_) => self.known_argument(&call, i, &arg.value, param),
                 // An associated type of a parameter that nothing decides: the call reports
                 // that parameter (see `close_call`).
-                None if self
-                    .table
-                    .resolve(param.subst(&listed_all(&call)))
-                    .holds_infer() =>
+                None if let want = param.subst(&listed_all(&call))
+                    && self.table.resolve(want).holds_infer() =>
                 {
-                    let member = expected == Expectation::Member;
-                    self.body.needs_context |= member;
-                    // The side is checked again with its sibling's type, and the argument with
-                    // it: a check now would be dropped, and nested sides would double.
-                    if member && self.body.rechecks {
-                        Err(Poisoned::untyped(self.proof(arg.value.span))) // proof: dropped side
+                    if expected == Expectation::Member {
+                        // Only the join decides the parameter. The argument is checked by itself
+                        // now, and meets its type when the join gives it (see `settle_held`).
+                        let at = arg.value.span;
+                        let value = self.value(&arg.value, Expectation::Member);
+                        self.table.hold(at, want, value);
+                        Ok(tir::Expr::new(tir::ExprKind::None, want, at))
                     } else {
                         mark(self.operand(&arg.value, Expectation::Poisoned))
                     }

@@ -278,6 +278,15 @@ impl Checker<'_> {
                     let target = target(member.at, hole, ty);
                     self.settle_member(member, target, fixed == Some(i));
                 }
+                self.settle_held(&mut |at, value| {
+                    for member in members.iter_mut() {
+                        if let Ok(e) = &mut *member.value
+                            && put_back(e, at, value, false)
+                        {
+                            return;
+                        }
+                    }
+                });
                 let ty = self.table.resolve(ty);
                 match left_out {
                     Some(reported) => Err(Poisoned::typed(ty, reported)),
@@ -332,6 +341,43 @@ impl Checker<'_> {
             }
         };
         (joined, None)
+    }
+
+    /// Each held argument whose type is known now, met with that type and given to `put`, which
+    /// puts it back in its call. One that `put` leaves is held again, for a join around it or the
+    /// end of the function (see `Checker::with_table`).
+    pub(super) fn settle_held(&mut self, put: &mut dyn FnMut(Span, &mut Option<tir::Expr>)) {
+        for super::infer::HeldArgument {
+            at,
+            want,
+            mut value,
+        } in self.table.take_held()
+        {
+            let want = self.table.resolve(want);
+            let want = self.normalize(want).unwrap_or(want);
+            let heading = Heading {
+                head: at,
+                whole: at,
+                returns: None,
+            };
+            let mut member = [JoinMember {
+                value: &mut value,
+                at: Place::Whole,
+                label: at,
+            }];
+            let required = Expectation::Required(want, super::Origin::None);
+            // A value that does not take `want` is reported here, and its call keeps the `None`.
+            // One member under a required type has no conflict, so the form names nothing.
+            let _ = self.join_form(JoinForm::Loop, heading, &mut member, required, None);
+            let Ok(value) = value else {
+                continue;
+            };
+            let mut value = Some(value);
+            put(at, &mut value);
+            if let Some(value) = value {
+                self.table.hold(at, want, Ok(value));
+            }
+        }
     }
 
     /// The type that the join of `members` takes, with no report and no bind: `None` when it has
@@ -1267,6 +1313,31 @@ pub(super) fn waiting_call(table: &Table, e: &mut tir::Expr, ty: Type) -> bool {
         found
     }
     waits(table, e, &table.open_roots(ty))
+}
+
+/// Puts `value` in place of the `None` that a held argument at `at` left in `e` (see
+/// `Table::hold`). Returns whether it found that place. With `all` the walk enters each node, else
+/// only the nodes whose spans hold `at`.
+pub(super) fn put_back(
+    e: &mut tir::Expr,
+    at: Span,
+    value: &mut Option<tir::Expr>,
+    all: bool,
+) -> bool {
+    if value.is_none() {
+        return true;
+    }
+    if !(all || e.span.start() <= at.start() && at.end() <= e.span.end()) {
+        return false;
+    }
+    if e.span == at && matches!(e.kind, ExprKind::None) {
+        *e = value.take().expect("the value should not be put back yet");
+        return true;
+    }
+    e.each_child_mut(&mut |child| {
+        put_back(child, at, value, all);
+    });
+    value.is_none()
 }
 
 /// Calls `f` on each value position directly in `e`. These are each branch's value of an `if` or

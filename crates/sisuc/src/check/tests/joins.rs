@@ -11,6 +11,8 @@ impl<R> WriteBack for Nothing<R> {
     fn write_back_all(&mut self, _table: &mut infer::Table) -> Written {
         Written::default()
     }
+
+    fn each_root_mut(&mut self, _f: &mut impl FnMut(&mut tir::Expr)) {}
 }
 
 /// Runs `f` on a checker over `src`, whose names and interface signatures are collected, inside
