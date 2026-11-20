@@ -506,6 +506,14 @@ impl Checker<'_> {
             }
             _ => (target, got),
         };
+        // An open call shows its open parts as `want` gives them, not as the `None` that stands
+        // for them: `o ?? first(xs)` under `u8` is a `u8?`.
+        let got =
+            if matches!(e.kind, ExprKind::Call { .. }) && self.table.resolve(got).holds_infer() {
+                self.shown_against(got, want)
+            } else {
+                got
+            };
         let (want, got) = (self.table.default_open(want), self.table.default_open(got));
         if got == Type::UNIT && !takes_unit(want) {
             let cause = self.unit_cause(e, Some(want));
