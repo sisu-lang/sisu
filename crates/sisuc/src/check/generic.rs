@@ -199,6 +199,18 @@ fn result_names(sig: &GenericSig<'_>) -> Vec<bool> {
     named
 }
 
+/// The value of `e` through each block that has no statement but its value, `e` itself for any
+/// other expression.
+fn lone_value(mut e: &ast::Expr) -> &ast::Expr {
+    while let ast::ExprKind::Block(block) = &e.kind
+        && let [_] = block.stmts.as_slice()
+        && let Some(value) = tail(block)
+    {
+        e = value;
+    }
+    e
+}
+
 /// Whether `ty` names the type parameter at place `param` other than under an associated type:
 /// only such a name lets the type that a result is annotated with bind the parameter.
 fn names_outside_assoc(ty: Type, param: usize) -> bool {
@@ -5914,6 +5926,33 @@ impl Checker<'_> {
     fn picks_by_context(&mut self, e: &ast::Expr) -> bool {
         matches!(&e.kind, ast::ExprKind::MethodCall { receiver, method, safe, .. }
             if self.answered_by_several(receiver, method, *safe))
+    }
+
+    /// Whether the value of `e` is a call that holds, in an argument, a method call that several
+    /// methods answer. Only a type from outside picks that method (`id(s.name()) == "a"`). The
+    /// walk goes through each call between and each block that is only its value. A receiver
+    /// that is a place is no such call. A method call by itself is not one: its receiver is not
+    /// checked ahead for each comparison. A block with a statement is not looked into: its
+    /// receiver can read a binding of the block, which is not in scope ahead of the block's check.
+    pub(super) fn waits_for_pick(&mut self, e: &ast::Expr) -> bool {
+        match &lone_value(e).kind {
+            ast::ExprKind::Call { args, .. } => args.iter().any(|arg| {
+                let value = lone_value(&arg.value);
+                match &value.kind {
+                    ast::ExprKind::MethodCall {
+                        receiver,
+                        method,
+                        safe,
+                        ..
+                    } => {
+                        !self.parks_receiver(receiver, method.name, *safe)
+                            && self.picks_by_context(value)
+                    }
+                    _ => self.waits_for_pick(value),
+                }
+            }),
+            _ => false,
+        }
     }
 
     /// Whether several methods answer `receiver.method(...)`, or `receiver?.method(...)` with

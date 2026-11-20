@@ -744,6 +744,18 @@ impl Checker<'_> {
         }
     }
 
+    /// The expectation of the side `e` of `==`, `!=` or `??` beside a side of type `beside`. A
+    /// side that waits for a type to pick its method (`id(s.name())`) takes a closed `beside` as
+    /// its type, which picks the method. Any other side is as `beside_closed` says.
+    fn beside_side(&mut self, e: &ast::Expr, beside: Option<Type>) -> Expectation {
+        match beside.map(|ty| self.table.resolve(ty)) {
+            Some(ty) if !ty.holds_infer() && self.waits_for_pick(e) => {
+                Expectation::Required(ty, Origin::None)
+            }
+            _ => self.beside_closed(e, beside),
+        }
+    }
+
     /// Whether `e` is a `None`, or a block whose value is one: it waits for the operator's
     /// number, as `1 + None` does.
     fn none_operand(&self, e: &ast::Expr) -> bool {
@@ -1046,10 +1058,20 @@ impl Checker<'_> {
     ) -> Checked {
         let sides = [lhs, rhs];
         // Each side is checked once, as a member: a call that cannot infer its parameter there
-        // stays open, and the join of the two sides gives it the type of the other.
-        let first = self.value(lhs, Expectation::Member);
-        let expected = self.beside_closed(rhs, type_of(&first));
-        let mut values = [first, self.value(rhs, expected)];
+        // stays open, and the join of the two sides gives it the type of the other. A side that
+        // waits for a type to pick its method is checked last (see `beside_side`).
+        let mut values = self.ranked(|c| {
+            let late = c.waits_for_pick(lhs) && !c.waits_for_pick(rhs);
+            let (early, last) = if late { (rhs, lhs) } else { (lhs, rhs) };
+            let first = c.value(early, Expectation::Member);
+            let expected = c.beside_side(last, type_of(&first));
+            let second = c.value(last, expected);
+            if late {
+                [second, first]
+            } else {
+                [first, second]
+            }
+        });
         let types = [
             self.member_own_type(&mut values[0], lhs.span),
             self.member_own_type(&mut values[1], rhs.span),
@@ -1537,7 +1559,7 @@ impl Checker<'_> {
         // A context of another type blames the left side, which the open literal of the default
         // joins: the literal takes the payload's type only when the context agrees.
         let inner = if expected.ty().is_none_or(|ty| super::payload(ty) == payload) {
-            self.beside_closed(rhs, Some(payload))
+            self.beside_side(rhs, Some(payload))
         } else {
             Expectation::Member
         };

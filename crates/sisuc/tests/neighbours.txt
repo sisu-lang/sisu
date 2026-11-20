@@ -130,6 +130,21 @@ struct Bm {
     fn opt<T>(self, _c: bool) -> T? { None }
 }
 fn nfirst<T>(_xs: [T]) -> T? { None }
+// A method that two interfaces answer, each with its own type: only a type from outside picks it.
+interface Lb {
+    fn name(self) -> string
+}
+interface Cd {
+    fn name(self) -> i64
+}
+struct Tw {
+}
+extend Tw: Lb {
+    fn name(self) -> string { "a" }
+}
+extend Tw: Cd {
+    fn name(self) -> i64 { 7 }
+}
 class Sn {
     name: string?
 }
@@ -565,6 +580,10 @@ let _a = [id(nfirst(Bm(v: 1).make(c))), $]
 let _a = if c { id(nfirst(Bm(v: 1).make(c))) } else { $ }
 let _a = hpick(Bm(v: 1).opt(c), Bm(v: 1).opt(c)) == $
 let _a = id({ Bm(v: 1).opt(c) }) == $
+# A method that two interfaces answer, in a generic call in a side of `==` and `??`: the value
+# picks the method.
+let _a = id(Tw().name()) == $
+let _a = $ ?? id(Tw().name())
 # A call of a `mut self` method on each value: bare, on a `let mut` copy, on the binding of a
 # `let`-`else` and of an `if let`, in the argument of a generic call, of `Some` and of a join, on an
 # element, through `?.` and on a field. The last is a plain generic method that shares its name
