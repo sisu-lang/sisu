@@ -244,7 +244,9 @@ fn a_coalesce_should_be_reported_where_its_code_says() {
             "{PRE}{}",
             "fn main() {\n    let c: Circle? = None\n    let x: i64 = c ?? Rock(w: 1.0)\n    print(x)\n}\n"
         ),
-        &[(Mismatch, (38, 23))],
+        // The payload and the default are members, so the written `i64` reports each, as it
+        // does each branch of an `if` (Task 5d-2).
+        &[(Mismatch, (38, 18)), (Mismatch, (38, 23))],
     );
     codes_row(
         "`None` after an optional class",
@@ -252,7 +254,8 @@ fn a_coalesce_should_be_reported_where_its_code_says() {
             "{PRE}{}",
             "fn main() {\n    let c: Circle? = None\n    let r: any Shape = c ?? None\n    print(0)\n}\n"
         ),
-        &[(Mismatch, (38, 24))],
+        // The payload converts to the written type, and the `None` does not (Task 5d-2).
+        &[(Mismatch, (38, 29))],
     );
     codes_row(
         "`None` after an optional `any` of a child",
@@ -260,7 +263,7 @@ fn a_coalesce_should_be_reported_where_its_code_says() {
             "{PRE}{}",
             "interface Named {\n    fn name(self) -> string\n}\n\ninterface Both: Shape, Named {}\n\nfn main() {\n    let c: (any Both)? = None\n    let r: any Shape = c ?? None\n    print(0)\n}\n"
         ),
-        &[(Mismatch, (44, 24))],
+        &[(Mismatch, (44, 29))],
     );
     codes_row(
         "`None` after an optional `any`",
@@ -276,7 +279,9 @@ fn a_coalesce_should_be_reported_where_its_code_says() {
             "{PRE}{}",
             "fn main() {\n    let c: Circle? = None\n    let r: any Shape = c ?? Square(s: 2.0)\n    print(r.area())\n}\n"
         ),
-        &[(Mismatch, (38, 29))],
+        // valid: the written type wins over the members of the join (S3, S12), as over the
+        // branches of an `if`
+        &[],
     );
     codes_row(
         "a default that does not conform",

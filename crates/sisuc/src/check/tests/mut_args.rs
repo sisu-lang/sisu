@@ -2117,10 +2117,12 @@ fn mut_argument_against_a_written_context_should_be_e0170_only() {
             &[(E170, "names")],
         ),
         (
+            // The default is a member of the join of `??`, which no written type reaches: the
+            // join reports the call against the `i64` (Task 5d-2).
             "coal: the right side of `??`",
             "",
             "let n: i64 = o ?? first(mut names)",
-            &[(E170, "names")],
+            &[(E32, "first(mut names)")],
         ),
         (
             "ifb: a branch of `if`",

@@ -405,7 +405,6 @@ fn a_wrong_use_of_option_or_some_should_be_reported() {
             (2, 13, "Some(1, 2)"),
         ),
         ("let r = Some", Code::VariantForm, (2, 13, "Some")),
-        ("let r = x ?? Some(None)", Code::Mismatch, (2, 23, "None")),
         (
             "let r: Option<i64, i64> = None",
             Code::TypeArguments,
@@ -476,6 +475,12 @@ fn a_wrong_use_of_option_or_some_should_be_reported() {
         };
         diagnostic(&with_body(body), code, at, written);
     }
+    // The default joins the payload `i64?` of `x`: `Some(None)` is its optional, an `i64??`, as
+    // `o ?? Some(1)` is a `u8?` beside a `u8?` (Task 5d-2).
+    assert_eq!(
+        type_at(&with_body("let _r = x ?? Some(None)"), "x ?? Some(None)"),
+        "i64??"
+    );
 }
 
 /// A call of a name that is not `Some` and names nothing waits for no context: it is the one

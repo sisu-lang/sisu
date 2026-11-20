@@ -756,8 +756,8 @@ fn a_join_should_stay_a_mismatch_where_neither_side_converts_to_the_other() {
 /// A join with an `any` type in reach, its own or its siblings', reports the member that does not
 /// convert to the widest `any` type, whatever the order of the members and at every site: a class
 /// that does not conform gets `NotConform`, as a value does where the `any` type is expected. An
-/// `if`, a `match` or an array literal has no candidate then, and gives one E0032 at its head in
-/// each order.
+/// `if`, a `match`, an array literal or a `??` has no candidate then, and gives one E0032 at its
+/// head in each order.
 #[test]
 #[expect(
     clippy::too_many_lines,
@@ -802,14 +802,11 @@ fn a_join_should_report_the_member_that_leaves_its_any_type() {
             let src = format!(
                 "fn main() {{\n    let c = true\n    let d = false\n    let n = 1\n    let s: any Shape = Circle(r: 1.0)\n    let o: (any Shape)? = None\n    let r = {join}\n}}"
             );
-            // An `if`, a `match` or an array literal reports at its head, as its join has no
-            // direction (ADR 0052).
-            // deferred (Task 5d report): the plan gives E0032 at the `??`. Its default joins under
-            // a hint, so the `if` whose own join holds the `Cube` reports.
+            // An `if`, a `match`, an array literal or a `??` reports at its head, as its join has
+            // no direction (ADR 0052).
             let (code, at) = match site {
                 "a `loop`" => (Code::NotConform, src.find("Cube")),
-                "the default of `??`" if x != "Cube(s: 1.0)" => (Code::Mismatch, src.rfind("if ")),
-                "the default of `??`" => (Code::Mismatch, src.find("if ")),
+                "the default of `??`" => (Code::Mismatch, src.find("??")),
                 _ => (Code::Mismatch, src.find(&join)),
             };
             let at = at.expect("the program should hold the member or the head");
@@ -878,22 +875,23 @@ fn a_join_should_report_the_member_that_leaves_its_any_type() {
         (
             "an optional class that does not conform, then an optional `any` default",
             "fn main() {\n    let o: Circle? = None\n    let k: (any Named)? = None\n    let r = o ?? k\n}",
-            vec![(Code::NotConform, (4, 13))],
+            // The sides of `??` join as branches do: E0032 at `??` (Task 5d-2).
+            vec![(Code::Mismatch, (4, 15))],
         ),
         (
             "an optional value that is no object, then an `any` default",
             "fn main() {\n    let i: i64? = None\n    let s: any Shape = Circle(r: 1.0)\n    let r = i ?? s\n}",
-            vec![(Code::Mismatch, (4, 18))],
+            vec![(Code::Mismatch, (4, 15))],
         ),
         (
             "an optional class that does not conform, then an `any` default",
             "fn main() {\n    let s: any Shape = Circle(r: 1.0)\n    let o: Cube? = None\n    let r = o ?? s\n}",
-            vec![(Code::NotConform, (4, 13))],
+            vec![(Code::Mismatch, (4, 15))],
         ),
         (
             "an optional `any` value, then a default that does not conform",
             "fn main() {\n    let o: (any Shape)? = None\n    let r = o ?? Cube(s: 1.0)\n}",
-            vec![(Code::NotConform, (3, 18))],
+            vec![(Code::Mismatch, (3, 15))],
         ),
         (
             "an `any` value, then an object that does not conform to its interface",
@@ -988,11 +986,13 @@ fn a_join_should_report_the_member_that_leaves_it_against_the_written_type() {
             Code::NotConform,
         ),
         (
+            // With no written type, the payload and the default join, as the branches of an `if`
+            // do: E0032 at the `??` (ADR 0052).
             "a `??` default of a `Some` of a class that does not conform, with no written type",
             "",
             "os ?? Some(Kelvin(k: 1.0))",
-            (5, 24, "Kelvin(k: 1.0)"),
-            Code::NotConform,
+            (5, 16, "??"),
+            Code::Mismatch,
         ),
         (
             "a `??` default that is a join",
@@ -1019,10 +1019,11 @@ fn a_join_should_report_the_member_that_leaves_it_against_the_written_type() {
         let src = format!(
             "{DECLS}fn main() {{\n    let o: Circle? = None\n    let s: any Shape = Circle(r: 1.0)\n    let os: (any Shape)? = None\n    let r{written} = {join}\n}}"
         );
-        // A mismatch points at the written type of `r`, unless a `??` stands between them. A
-        // `??` default gets no label for a conformance (a later group redesigns the `??` rules).
+        // A mismatch, and each report under a `??`, points at the written type of `r` (Task
+        // 5d-2). With no written type, the join labels its members.
         let secondary: &[_] = match code {
-            Code::Mismatch if !join.starts_with("os ??") => &[(5 + LINES, 12)],
+            _ if written.is_empty() => &[(5 + LINES, 13), (5 + LINES, 24)],
+            _ if code == Code::Mismatch || join.starts_with("os ??") => &[(5 + LINES, 12)],
             _ => &[],
         };
         diagnostic_row(row, &src, code, (line + LINES, col, text), secondary);
@@ -1354,10 +1355,11 @@ fn coalesce_should_join_its_payload_and_its_default_to_the_any_type() {
     ] {
         clean_row(row, &format!("{DECLS}{src}"));
     }
+    // Two classes have no `any` type to join to: E0032 at `??`, as at the head of an `if`.
     codes_after(
         "two classes that both conform",
         "fn main() {\n    let c: Circle? = None\n    let r = c ?? Rect(w: 1.0)\n}",
-        &[(Code::Mismatch, (3, 18))],
+        &[(Code::Mismatch, (3, 15))],
     );
 }
 
@@ -1544,7 +1546,8 @@ fn an_optional_beside_an_any_value_should_stay_a_mistake_where_no_type_is_writte
         (
             "`??` of an optional `any` value and an optional number",
             "fn main() {\n    let x: i64? = Some(5)\n    let o: (any Display)? = None\n    let r = o ?? x\n    print(r)\n}",
-            vec![(Code::Mismatch, (4, 18))],
+            // The payload and the default join: E0032 at `??` (Task 5d-2).
+            vec![(Code::Mismatch, (4, 15))],
         ),
         (
             "`==` of an `any` value and an optional number",
@@ -1952,7 +1955,8 @@ fn a_hinted_some_should_not_box_an_optional_argument_into_a_bare_any() {
         (
             "the default of `??`",
             "    let r = o ?? Some(y)",
-            vec![(Code::Mismatch, (10, 18))],
+            // The payload and the default join: E0032 at `??` (Task 5d-2).
+            vec![(Code::Mismatch, (10, 15))],
         ),
         (
             "an array of a `Some` of a `Some`",
@@ -1991,11 +1995,11 @@ fn a_hinted_some_should_not_box_an_optional_argument_into_a_bare_any() {
 }
 
 /// Beside `h`, of an optional `any` type, a `Some` checks clean when its argument converts to
-/// the `any` type. It is a mismatch at the `Some` when its argument is an optional. This holds
-/// in the default of `??` and a `loop` of `break`s. An `if`, a `match` and an array in an `if`
-/// join by rule A (ADR 0052): the array is a nested join of the `if`. The candidate `h` with `?`
-/// added takes a `Some` whose argument converts to `h`, and the join is an optional of an
-/// optional. Any other value is a mismatch at the head.
+/// the `any` type. It is a mismatch at the `Some` when its argument is an optional, in a `loop`
+/// of `break`s. An `if`, a `match`, an array in an `if` and a `??` join by rule A (ADR 0052).
+/// The array is a nested join of the `if`. The candidate `h` with `?` added takes a `Some` whose
+/// argument converts to `h`. Then the join of the branches is an optional of an optional. Any
+/// other value is a mismatch at the head.
 #[test]
 fn a_hinted_some_should_build_only_when_its_argument_is_not_optional() {
     let builds: [(&str, &[&str], &[&str]); 2] = [
@@ -2037,9 +2041,12 @@ fn a_hinted_some_should_build_only_when_its_argument_is_not_optional() {
                 cases += 1;
                 let src = format!("{DECLS}{HINTED_SOME_LOCALS}    let r = {form}\n}}");
                 let clean = clean || branches && lifted.contains(&value);
-                // The join of an `if` or a `match` reports at its head, the first word of `form`.
+                // The join of an `if`, a `match` or a `??` reports at its head: the first word of
+                // `form`, or the `??` (Task 5d-2).
                 let (start, value) = if branches {
                     (src.rfind(&form), form.split(' ').next().unwrap_or_default())
+                } else if form.contains(" ?? ") {
+                    (src.rfind(" ?? ").map(|at| at + 1), "??")
                 } else {
                     (src.rfind(value), value)
                 };
@@ -2424,10 +2431,10 @@ fn label_rows() -> Vec<LabelRow<'static>> {
             vec![(8, 28, "break s")],
         ),
         (
-            "a `??` default, which has no label yet",
+            "a `??` join, at its operator",
             sh("fn main() {\n    let _x: any Sh = En.A\n    let o: (any Sh)? = None\n    let _a = o ?? 1\n}"),
-            (7, 19, "1"),
-            vec![],
+            (7, 16, "??"),
+            vec![(7, 14, "o"), (7, 19, "1")],
         ),
         (
             "an `if` under a written type",
@@ -2616,9 +2623,10 @@ fn label_rows() -> Vec<LabelRow<'static>> {
 
 /// Every conversion to an `any` type that fails with E0154 labels the place that the `any` type
 /// comes from: the same fact as the E0032 of the same place, or no label when that has none. It
-/// does not label the first place in the file that writes the same `any` type. An `if`, a `match`
-/// or an array literal whose members do not join gives E0032 at its head, with a label for each
-/// member; a nested join reports at the outer head (ADR 0052). A red run lists each red row.
+/// does not label the first place in the file that writes the same `any` type. An `if`, a
+/// `match`, an array literal or a `??` whose members do not join gives E0032 at its head. It has
+/// a label for each member, and a nested join reports at the outer head (ADR 0052). A red run lists
+/// each red row.
 #[test]
 fn a_conversion_that_fails_should_label_where_its_any_type_comes_from() {
     let mut red = Vec::new();
@@ -2638,9 +2646,9 @@ fn a_conversion_that_fails_should_label_where_its_any_type_comes_from() {
                 (d.code(), at(&src, d.span()), &src[d.span().range()], labels)
             })
             .collect();
-        // The join of an `if`, a `match` or an array literal has no direction: E0032 at its head
-        // (ADR 0052). A nested join reports at the head of the outer one.
-        let code = if matches!(text, "if" | "match" | "[") {
+        // The join of an `if`, a `match`, an array literal or a `??` has no direction: E0032 at
+        // its head (ADR 0052). A nested join reports at the head of the outer one.
+        let code = if matches!(text, "if" | "match" | "[" | "??") {
             Code::Mismatch
         } else {
             Code::NotConform

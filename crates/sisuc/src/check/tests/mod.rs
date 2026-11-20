@@ -2974,13 +2974,14 @@ fn less_should_report_no_operator_for_an_unordered_operand() {
 }
 
 /// An operand that fails first leaves the later ones unchecked: one error per operator. The
-/// leader `a` of `[] < a` has no `<`, so it is the operand reported, and the `[]` before it is
-/// held to its type, which it fits.
+/// leader `a` of `[] < a` has no `<`, so it is the operand reported. The `[]` before it is held
+/// to its type, which it fits. The `[]` of `[] - p` waits for a type, so the `bool` that the
+/// operator does not take is reported (call (b) of Task 5d-2).
 #[test]
 fn operator_should_report_once_after_a_failed_operand() {
     for (operator, code, column) in [
         ("None + p", Code::Mismatch, 46),
-        ("[] - p", Code::Mismatch, 46),
+        ("[] - p", Code::Mismatch, 51),
         ("[] < a", Code::NoOperator, 51),
     ] {
         let src = format!("fn main() {{ let p = true; let a = [1]; print({operator}) }}");

@@ -1,8 +1,10 @@
-error[E0032]: expected `i64`, found `u8`
- --> literal_plus_value_beside_u8.sisu:4:20
+error[E0032]: the operands of this comparison have different types
+ --> literal_plus_value_beside_u8.sisu:4:17
   |
 4 |     print(1 + n == b)
-  |                    ^
+  |           ----- ^^ - `u8`
+  |           |
+  |           `i64`
   |
 help: if the types are right, convert it with `i64(...)`
   |

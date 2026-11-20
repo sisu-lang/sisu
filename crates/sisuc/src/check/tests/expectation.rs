@@ -428,18 +428,22 @@ fn a_hint_should_reach_exactly_its_value() {
         (
             "coalesce neg",
             "let _a = o ?? -if d { None } else { \"a\" }",
-            e((6, 41)),
+            // An operand is a member, which no hint reaches (Task 5d-2): the `string?` of the
+            // `if` is reported at the `if`.
+            e((6, 20)),
         ),
         ("neg none", "let _a = if c { 1 } else { -None }", e((6, 33))),
         (
             "coalesce add",
             "let _a = o ?? 1 + if d { None } else { \"a\" }",
-            e((6, 44)),
+            // As `coalesce neg`.
+            e((6, 23)),
         ),
         (
+            // The payload and the default join: the report is at `??` (Task 5d-2).
             "coalesce dbg",
             "let _a = o ?? dbg(if d { None } else { \"a\" })",
-            e((6, 44)),
+            e((6, 16)),
         ),
         (
             "dbg none",
@@ -459,8 +463,9 @@ fn a_hint_should_reach_exactly_its_value() {
             e((6, 32)),
         ),
         ("coalesce none", "let _a = o ?? None", vec![]),
-        ("coalesce empty", "let _a = o ?? []", e((6, 19))),
-        ("eq empty", "let _a = o == []", e((6, 19))),
+        ("coalesce empty", "let _a = o ?? []", e((6, 16))),
+        // The sides join, and two other types are E0047 (Task 5d-2).
+        ("eq empty", "let _a = o == []", vec![(Code::CannotCompare, (6, 14))]),
         (
             "generic none",
             "let _a = if c { 1 } else { id(None) }",

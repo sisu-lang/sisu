@@ -472,32 +472,28 @@ fn an_operand_that_holds_a_literal_should_take_the_type_of_the_other_operand() {
     }
 }
 
-/// The rollback of the first check of a string join drops the locals that check declared, and
-/// the uninferred literals of them. Its work grows with the locals it drops, not with every
-/// uninferred literal of the function. Each `let tK = []` is a local of the first check with an
-/// uninferred literal, so the rollback removes a real entry. 100 joins is 10x the smallest size
-/// at which a walk of the whole map shows a quadratic count.
+/// A string join under an expected `u8` is checked once: its operands are members, and no
+/// rollback checks them again. Each `let tK = []` in an operand gives one E0050, and each `+`
+/// one E0032 against `u8`, beside the E0050 of each `let mut xK = []`.
 #[test]
-fn a_string_join_rollback_should_visit_only_the_locals_it_drops() {
-    let steps = |n: usize| {
-        let mut src = String::from("fn main() {\n");
-        for k in 0..n {
-            writeln!(src, "    let mut x{k} = []").expect("writing to a string should not fail");
-        }
-        for k in 0..n {
-            writeln!(
-                src,
-                "    let s{k}: u8 = {{ let t{k} = []\n \"a\" }} + \"b\""
-            )
-            .expect("writing to a string should not fail");
-        }
-        src.push_str("}\n");
-        ROLLBACK_STEPS.set(0);
-        let ds = diags(&src);
-        assert!(!ds.is_empty());
-        ROLLBACK_STEPS.get()
-    };
-    assert_near_linear(steps(100), steps(200), steps(300));
+fn a_string_join_under_u8_should_report_each_operand_once() {
+    let n = 5;
+    let mut src = String::from("fn main() {\n");
+    for k in 0..n {
+        writeln!(src, "    let mut x{k} = []").expect("writing to a string should not fail");
+    }
+    for k in 0..n {
+        writeln!(
+            src,
+            "    let s{k}: u8 = {{ let t{k} = []\n \"a\" }} + \"b\""
+        )
+        .expect("writing to a string should not fail");
+    }
+    src.push_str("}\n");
+    let ds = diags(&src);
+    let count = |code: Code| ds.iter().filter(|d| d.code() == code).count();
+    assert_eq!(count(Code::Mismatch), n, "{ds:?}");
+    assert_eq!(count(Code::CannotInfer), 2 * n, "{ds:?}");
 }
 
 /// GIVEN the negation of a `u8` that is no literal
@@ -539,16 +535,9 @@ fn a_negated_u8_should_offer_a_conversion() {
         ),
         row("N5", "let b: u8 = -a", none(("u8 = ", "-a"))),
         row("N6", "let b: u8 = -3", none(("u8 = ", "-3"))),
-        row(
-            "N7",
-            "print(-a + a)",
-            convert(
-                ("print(", "-a"),
-                "-a + a",
-                "-i64(a) + a",
-                After::Errors(&[Code::Mismatch]),
-            ),
-        ),
+        // The negation is a member of the sum's join (Task 5d-2), beside the `u8` `a`: no
+        // context expects an `i64`, so there is no fix, as for `a + -a`.
+        row("N7", "print(-a + a)", none(("print(", "-a"))),
         row("N8", "let b: i64? = -a", none(("i64? = ", "-a"))),
         // The fix stays inside a group.
         row(

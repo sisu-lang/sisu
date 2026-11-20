@@ -1,6 +1,6 @@
 // GIVEN a `unit?` value and a function `g` that returns `unit`
 // WHEN the program orders the `unit?` value with `<`
-// THEN E0032 lists the types that `<` takes, `unit` among them
+// THEN E0032 says that `<` expects a `unit`, in either order (Task 5d-2: a join has no direction)
 fn g() {}
 
 fn main() {

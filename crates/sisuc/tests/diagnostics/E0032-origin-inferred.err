@@ -42,9 +42,7 @@ error[E0032]: expected `i64`, found `None`
   --> E0032-origin-inferred.sisu:37:35
    |
 37 |     let a = if c { n } else { 1 + None }
-   |                    -              ^^^^
-   |                    |
-   |                    this branch gives the type `i64`
+   |                                   ^^^^
 
 error[E0032]: the arms of this `match` have different types
   --> E0032-origin-inferred.sisu:41:13

@@ -41,13 +41,11 @@ error[E0032]: expected `i64`, found `string`
 27 |     -"x"
    |      ^^^
 
-error[E0032]: expected `i64`, found `string`
+error[E0032]: expected `i64` or `f64`, found `string`
   --> E0032-origin-negated.sisu:30:21
    |
 30 |     let b: i64 = -(-"x")
-   |            ---      ^^^
-   |            |
-   |            declared as `i64` here
+   |                     ^^^
 
 error[E0032]: expected `i64`, found `bool`
   --> E0032-origin-negated.sisu:34:19

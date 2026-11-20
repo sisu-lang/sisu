@@ -1,8 +1,15 @@
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-blames-payload.sisu:12:16
+error[E0032]: the operands of this comparison have different types
+  --> E0032-hint-blames-payload.sisu:12:13
    |
 12 |     print(b == first(ys))
-   |                ^^^^^^^^^
+   |           - ^^ --------- `i64`
+   |           |
+   |           `u8`
+   |
+help: if the types are right, convert it with `i64(...)`
+   |
+12 |     print(i64(b) == first(ys))
+   |           ++++ +
 
 error[E0032]: the branches of this `if` have different types
   --> E0032-hint-blames-payload.sisu:19:11
@@ -15,11 +22,13 @@ help: if the types are right, convert it with `i64(...)`
 19 |     print(if c { i64(b) } else { first(ys) })
    |                  ++++ +
 
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-blames-payload.sisu:25:16
+error[E0032]: the two sides of `??` have different types
+  --> E0032-hint-blames-payload.sisu:25:13
    |
 25 |     print(o ?? first(ys))
-   |                ^^^^^^^^^
+   |           - ^^ --------- `i64`
+   |           |
+   |           `u8`
 
 error[E0032]: expected `[u8]`, found `[i64]`
   --> E0032-hint-blames-payload.sisu:30:24
@@ -43,11 +52,18 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
    |
    = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-blames-payload.sisu:48:18
+error[E0032]: the operands of this comparison have different types
+  --> E0032-hint-blames-payload.sisu:48:15
    |
 48 |     let x = v != first(ys)
-   |                  ^^^^^^^^^
+   |             - ^^ --------- `i64`
+   |             |
+   |             `u8`
+   |
+help: if the types are right, convert it with `i64(...)`
+   |
+48 |     let x = i64(v) != first(ys)
+   |             ++++ +
 
 error[E0032]: the arms of this `match` have different types
   --> E0032-hint-blames-payload.sisu:56:13
@@ -60,23 +76,44 @@ help: if the types are right, convert it with `i64(...)`
 56 |     let x = match k { 0 => i64(v); _ => first(ys) }
    |                            ++++ +
 
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-blames-payload.sisu:69:18
+error[E0032]: the operands of this comparison have different types
+  --> E0032-hint-blames-payload.sisu:69:15
    |
 69 |     let x = v == first(first([ys]))
-   |                  ^^^^^^^^^^^^^^^^^^
+   |             - ^^ ------------------ `i64`
+   |             |
+   |             `u8`
+   |
+help: if the types are right, convert it with `i64(...)`
+   |
+69 |     let x = i64(v) == first(first([ys]))
+   |             ++++ +
 
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-blames-payload.sisu:76:18
+error[E0032]: the operands of this comparison have different types
+  --> E0032-hint-blames-payload.sisu:76:15
    |
 76 |     let x = v == id(first(ys))
-   |                  ^^^^^^^^^^^^^
+   |             - ^^ ------------- `i64`
+   |             |
+   |             `u8`
+   |
+help: if the types are right, convert it with `i64(...)`
+   |
+76 |     let x = i64(v) == id(first(ys))
+   |             ++++ +
 
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-hint-blames-payload.sisu:95:18
+error[E0032]: the operands of this comparison have different types
+  --> E0032-hint-blames-payload.sisu:95:15
    |
 95 |     let x = v == first(mut ys)
-   |                  ^^^^^^^^^^^^^
+   |             - ^^ ------------- `i64`
+   |             |
+   |             `u8`
+   |
+help: if the types are right, convert it with `i64(...)`
+   |
+95 |     let x = i64(v) == first(mut ys)
+   |             ++++ +
 
 error[E0167]: the parameter `xs` of `first` is not `mut`
   --> E0032-hint-blames-payload.sisu:95:24
@@ -125,11 +162,13 @@ warning[W0015]: `x` can be `None`, and then this writes the word "None"
     |
     = help: use `if let`, give a default with `??`, or call `x.to_string()` to write "None" on purpose
 
-error[E0032]: expected `i64`, found `u8?`
-   --> E0032-hint-blames-payload.sisu:114:18
+error[E0032]: the operands of this comparison have different types
+   --> E0032-hint-blames-payload.sisu:114:15
     |
 114 |     let x = q == id(o)
-    |                  ^^^^^
+    |             - ^^ ----- `u8?`
+    |             |
+    |             `i64`
 
 error[E0032]: expected `i64`, found `u8`
    --> E0032-hint-blames-payload.sisu:120:22

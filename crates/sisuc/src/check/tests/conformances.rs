@@ -4412,12 +4412,14 @@ fn comparisons_should_report_operands_of_two_types_before_a_missing_operator() {
         (
             "order of an enum with no Ord and a number",
             "enum L {\n    A\n}\nfn f() -> bool { L.A < 5 }",
-            vec![(Code::Mismatch, "5")],
+            // The join of the operands reports at the operator (Task 5d-2).
+            vec![(Code::Mismatch, "< 5")],
         ),
         (
             "order of a bool and a number",
             "fn f() -> bool { true < 5 }",
-            vec![(Code::Mismatch, "5")],
+            // The join of the operands reports at the operator (Task 5d-2).
+            vec![(Code::Mismatch, "< 5")],
         ),
         (
             "order of a class of a parameter and a number",
@@ -4656,37 +4658,44 @@ fn operators_should_report_only_a_mismatch_inside_an_operand() {
         (
             "equality of arrays of two element types",
             "fn f() -> bool { [1] == [true] }",
-            vec![(Code::Mismatch, "true")],
+            // The operands join, and two other types are E0047 (Task 5d-2).
+            vec![(Code::CannotCompare, "[1] ==")],
         ),
         (
             "inequality of arrays of two element types",
             "fn f() -> bool { [1] != [true] }",
-            vec![(Code::Mismatch, "true")],
+            // The operands join, and two other types are E0047 (Task 5d-2).
+            vec![(Code::CannotCompare, "[1] !=")],
         ),
         (
             "order of arrays of two element types",
             "fn f() -> bool { [1] < [true] }",
-            vec![(Code::Mismatch, "true")],
+            // The join of the operands reports at the operator (Task 5d-2).
+            vec![(Code::Mismatch, "< [true]")],
         ),
         (
             "order of an array of a parameter and an array of a number",
             "fn f<T>(a: [T]) -> bool { a < [5] }",
-            vec![(Code::Mismatch, "5]")],
+            // A type parameter beside another type is E0047 (Task 5d-2), as `5 < a` is.
+            vec![(Code::CannotCompare, "a < [5]")],
         ),
         (
             "order of nested arrays of two element types",
             "fn f() -> bool { [[1]] < [[true]] }",
-            vec![(Code::Mismatch, "true")],
+            // The join of the operands reports at the operator (Task 5d-2).
+            vec![(Code::Mismatch, "< [[true]]")],
         ),
         (
             "a chain with an inner mismatch in the middle operand",
             "fn f<T>(a: [T]) -> bool { a < [5] < a }",
-            vec![(Code::Mismatch, "5]")],
+            // A type parameter beside another type is E0047 (Task 5d-2), as `5 < a` is.
+            vec![(Code::CannotCompare, "a < [5]")],
         ),
         (
             "a chain of three arrays with an inner mismatch in the middle operand",
             "fn f() -> bool { [1] < [true] < [2] }",
-            vec![(Code::Mismatch, "true")],
+            // The join of the operands reports at the operator (Task 5d-2).
+            vec![(Code::Mismatch, "< [true]")],
         ),
         (
             "arrays of another element type for arrays of numbers",
@@ -4701,12 +4710,14 @@ fn operators_should_report_only_a_mismatch_inside_an_operand() {
         (
             "equality of an array of a parameter and an array of a number",
             "fn f<T>(a: [T]) -> bool { a == [true] }",
-            vec![(Code::Mismatch, "true")],
+            // A type parameter beside another type is E0047 (Task 5d-2), as `5 < a` is.
+            vec![(Code::CannotCompare, "a == [true]")],
         ),
         (
             "order with a branch of another type",
             "fn f<T>(a: [T], c: bool) -> bool { a < if c { true } else { a } }",
-            vec![(Code::Mismatch, "true")],
+            // The branches are members of the operator's join (Task 5d-2).
+            vec![(Code::Mismatch, "< if")],
         ),
         (
             "order with a branch that holds a number that does not fit",
@@ -4792,7 +4803,8 @@ fn operators_should_report_a_missing_operator_beside_an_error_that_is_not_about_
         (
             "order of a class and a call with a wrong argument",
             format!("{node}fn g(x: i64) -> i64 {{ x }}\nfn f(a: Node) -> bool {{ a < g(true) }}"),
-            vec![(Code::Mismatch, "g(true)"), (Code::Mismatch, "true")],
+            // The join of the operands reports at the operator (Task 5d-2).
+            vec![(Code::Mismatch, "< g(true)"), (Code::Mismatch, "true")],
         ),
         (
             "contains of a parameter and a block with a wrong binding",

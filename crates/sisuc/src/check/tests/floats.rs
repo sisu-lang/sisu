@@ -82,24 +82,31 @@ fn exactness() {
     }
 }
 
+/// GIVEN an `i64` or a `u8` beside an `f64`, as the operands of one operator
+/// WHEN the program is checked
+/// THEN the operands join, and the conflict reports at the operator, with a label at each
+///   operand (Task 5d-2). An `i64` has no conversion fix, and a `u8` has the fix of the join
+///   report, `f64(i64(b))`.
 #[test]
-fn mixing() {
+fn mixing_should_report_the_join_at_the_operator() {
     let rows = [
-        ("n * x", (13, "n"), "f64(n) * x"),
-        ("x * n", (17, "n"), "x * f64(n)"),
-        ("n < x", (13, "n"), "f64(n) < x"),
-        ("n == x", (13, "n"), "f64(n) == x"),
-        ("x != n", (18, "n"), "x != f64(n)"),
-        ("b * x", (13, "b"), "f64(i64(b)) * x"),
+        ("n * x", (15, "*")),
+        ("x * n", (15, "*")),
+        ("n < x", (15, "<")),
+        ("n == x", (15, "==")),
+        ("x != n", (15, "!=")),
     ];
-    for (expr, (col, found), fixed) in rows {
+    for (expr, (col, head)) in rows {
         let src = scalars(expr);
-        let d = diagnostic(&src, Code::Mismatch, (2, col, found), &[]);
-        assert!(d.fixes().iter().all(|f| !f.safe()), "{src}");
-        let fixed = scalars(fixed);
-        assert_eq!(applied(&src, &d), fixed);
-        clean(&fixed);
+        let other = col + head.len() + 1;
+        let d = diagnostic(&src, Code::Mismatch, (2, col, head), &[(2, 13), (2, other)]);
+        assert_eq!(fixes(&src, &d), [], "{src}");
     }
+    let src = scalars("b * x");
+    let d = diagnostic(&src, Code::Mismatch, (2, 15, "*"), &[(2, 13), (2, 17)]);
+    let fixed = scalars("f64(i64(b)) * x");
+    assert_eq!(applied(&src, &d), fixed);
+    clean(&fixed);
     // The `string` drives `+`, as beside any other type, and is the secondary label.
     diagnostic(
         &scalars("x + \"a\""),
@@ -151,19 +158,22 @@ fn char_after_a_rejected_integer_adds_no_error() {
     );
 }
 
-/// Where the context wants an `i64`, the `f64` is the operand reported, with no fix: a compound
-/// assignment's target and a declared type are not what changes. The `f64` is reported in
-/// either order.
+/// Where the context wants an `i64`, the `f64` is the operand reported, with no fix: a declared
+/// type is not what changes. The `f64` is reported in either order. A compound assignment joins
+/// its place and its value, and reports the conflict at its operator, with no fix: its place is
+/// not what changes.
 #[test]
 fn an_f64_operand_under_an_integer_should_be_reported() {
     let rows = [
         (
             "fn main() {\n    let mut n = 1\n    n += 1.5\n    print(n)\n}",
-            (3, 10, "1.5"),
+            // A compound assignment joins its place and its value: the conflict is at its
+            // operator (Task 5d-2).
+            (3, 7, "+="),
         ),
         (
             "fn f(x: f64) {\n    let mut n = 1\n    n *= x\n    print(n)\n}\nfn main() {}",
-            (3, 10, "x"),
+            (3, 7, "*="),
         ),
         (
             "fn f(n: i64, x: f64) -> i64 {\n    n * x\n}\nfn main() {}",
@@ -193,7 +203,9 @@ fn an_f64_operand_under_an_integer_should_be_reported() {
     for (src, at) in rows {
         // The written `i64` is labelled: a return type or a `let`'s type. A compound assignment
         // has none.
-        let secondary: &[_] = if src.contains("-> i64") {
+        let secondary: &[_] = if src.contains("n += ") || src.contains("n *= ") {
+            &[(3, 5), (3, 10)]
+        } else if src.contains("-> i64") {
             &[(1, 25)]
         } else if src.contains("let y: i64") {
             &[(2, 12)]
@@ -205,31 +217,37 @@ fn an_f64_operand_under_an_integer_should_be_reported() {
     }
 }
 
-/// The `i64` the context wants reaches an operator inside the first operand, so the `f64` is
-/// reported however deep it sits. A `+` that a `string` makes a join is reported as before.
+/// A row of `a_nested_f64_operand_under_an_integer_should_be_reported`: a body, the line, column
+/// and text of its E0032, and the position of each label.
+type NestedRow<'a> = (&'a str, (usize, usize, &'a str), &'a [(usize, usize)]);
+
+/// An operator inside an operand is a member of the outer join, which the `i64` of the context
+/// does not reach. So the `f64` beside an `i64` in it is a conflict at that operator, however
+/// deep it sits (Task 5d-2). It has a label at each operand and no fix. A `+` that a `string`
+/// makes a join is reported as before.
 #[test]
 fn a_nested_f64_operand_under_an_integer_should_be_reported() {
     let function = |body: &str| {
         format!("fn f(x: f64, n: i64, s: string) -> i64 {{\n    {body}\n}}\nfn main() {{}}")
     };
-    let rows = [
-        ("x * n * n", (2, 5, "x")),
-        ("n * x * n", (2, 9, "x")),
-        ("n * x + n", (2, 9, "x")),
-        ("x * n + n", (2, 5, "x")),
-        ("(n + n * x) - n", (2, 14, "x")),
+    let rows: [NestedRow<'_>; 5] = [
+        ("x * n * n", (2, 7, "*"), &[(2, 5), (2, 9)]),
+        ("n * x * n", (2, 7, "*"), &[(2, 5), (2, 9)]),
+        ("n * x + n", (2, 7, "*"), &[(2, 5), (2, 9)]),
+        ("x * n + n", (2, 7, "*"), &[(2, 5), (2, 9)]),
+        ("(n + n * x) - n", (2, 12, "*"), &[(2, 10), (2, 14)]),
     ];
-    for (body, at) in rows {
+    for (body, at, labels) in rows {
         let src = function(body);
-        let d = diagnostic(&src, Code::Mismatch, at, &[(1, 36)]);
+        let d = diagnostic(&src, Code::Mismatch, at, labels);
         assert_eq!(fixes(&src, &d), [], "{src}");
     }
-    // An `i64?` wants an `i64` too.
+    // Under an `i64?` too.
     diagnostic(
         "fn f(x: f64, n: i64) {\n    let y: i64? = x * n * n\n    print(y ?? 0)\n}\nfn main() {}",
         Code::Mismatch,
-        (2, 19, "x"),
-        &[],
+        (2, 21, "*"),
+        &[(2, 19), (2, 23)],
     );
     // A `string` beside an `i64` is reported against `string`, with the unsafe fix to interpolate.
     for (body, at, other) in [
@@ -539,7 +557,7 @@ fn type_as_value() {
 /// A comparison with `f64.nan` is always false: the warning offers `is_nan` when the other side is
 /// an `f64`, and nothing when it is an `f64?`, which `is_nan` would not check.
 #[test]
-fn nan_comparison() {
+fn a_comparison_with_nan_should_offer_is_nan_only_beside_an_f64() {
     let program =
         |expr: &str| format!("fn f(x: f64, o: f64?) {{\n    let _ = {expr}\n}}\nfn main() {{}}");
     let rows = [
@@ -583,10 +601,11 @@ fn nan_comparison() {
         "fn f() {\n    let _ = y == f64.nan\n}\nfn main() {}",
         &[(Code::BindingNotFound, (2, 13))],
     );
-    // A comparison that is an error is not also a warning.
+    // A comparison that is an error is not also a warning. Its sides join, so the error is at
+    // `==` (Task 5d-2).
     codes(
         "fn f(n: i64) {\n    let _ = n == f64.nan\n}\nfn main() {}",
-        &[(Code::Mismatch, (2, 13))],
+        &[(Code::Mismatch, (2, 15))],
     );
 }
 

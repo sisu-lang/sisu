@@ -260,9 +260,10 @@ fn elements_that_do_not_join_should_report_once_at_the_array() {
         "fn main() { let a = [1, true] }",
         &[(Code::Mismatch, (1, 21))],
     );
+    // The sides of `==` join: two other types are E0047 at the comparison (Task 5d-2).
     codes(
         "fn main() { print([1] == [true]) }",
-        &[(Code::Mismatch, (1, 27))],
+        &[(Code::CannotCompare, (1, 19))],
     );
 }
 

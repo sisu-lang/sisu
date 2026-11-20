@@ -3,4 +3,4 @@ fn main() {
     print(r)
 }
 
-// deferred (Task 5d report): the plan gives "found `[u8]`" at 2:36, as main does
+// The operand of `-` is a member, which no required type reaches: it is `[i64]` (Task 5d-2).

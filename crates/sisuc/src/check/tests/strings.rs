@@ -33,16 +33,17 @@ fn chain_binds_each_operand() {
 }
 
 /// A `+` that an `i64` context wants and that has a `string` operand reports the nested `f64`
-/// sum against `i64`, at the sum's own operands, not the `string` at the sum.
+/// sum or join against the `string`: an operand is a member of the operator's join (Task 5d-2),
+/// so the context does not reach it.
 #[test]
-fn plus_wanting_i64_blames_the_nested_float() {
+fn plus_under_i64_should_report_the_nested_float_against_the_string() {
     codes(
         "fn main() {\n    let n: i64 = (1.0 + 2.0) + \"a\"\n    print(n)\n}",
-        &[(Code::Mismatch, (2, 19))],
+        &[(Code::Mismatch, (2, 18))],
     );
     codes(
         "fn main() {\n    let n: i64 = if true { 2.5 } else { 1 } + \"x\"\n    print(n)\n}",
-        &[(Code::Mismatch, (2, 28))],
+        &[(Code::Mismatch, (2, 18))],
     );
 }
 
@@ -398,8 +399,29 @@ fn concat_rows(rows: &[ConcatRow<'_>]) {
     }
 }
 
+/// GIVEN a `string` beside an `if` of numbers, which has an open type until the `+` joins it
+/// WHEN the program is checked
+/// THEN the `if` is reported against the `string`, with the interpolation fix
 #[test]
-fn concat_mismatch() {
+fn string_beside_a_nested_join_should_keep_the_interpolation_fix() {
+    let params = "b: bool";
+    let src = with_items(&body(params, "print(\"s\" + if b { 1 } else { 2 })"));
+    let d = diagnostic(
+        &src,
+        Code::Mismatch,
+        (2, 17, "if b { 1 } else { 2 }"),
+        &[(2, 11)],
+    );
+    let found = fixes(&src, &d);
+    assert_eq!(found.len(), 1, "{src}");
+    assert_eq!(
+        applied(&src, &d),
+        with_items(&body(params, "print(\"s{if b { 1 } else { 2 }}\")"))
+    );
+}
+
+#[test]
+fn a_concat_with_another_type_should_report_its_operand_and_fix() {
     concat_rows(&[
         (
             "print(s + c)",
@@ -469,7 +491,7 @@ fn concat_mismatch() {
         // A `[]` or a `None` has no type of its own: it is the literal that cannot be a
         // `string`, beside the `string` it would join, in either place.
         ("let b: u8 = [] + s", (2, 17, "[]"), &[(2, 22)], None),
-        ("let b: u8 = None + s", (2, 17, "None"), &[(2, 24)], None),
+        ("print(None + s)", (2, 11, "None"), &[(2, 18)], None),
         ("print(s + [])", (2, 15, "[]"), &[(2, 11)], None),
         ("print(s + None)", (2, 15, "None"), &[(2, 11)], None),
         (
@@ -605,25 +627,31 @@ fn nested_joins_check_in_quadratic_time() {
     assert!(ds.iter().all(|d| d.code() == Code::Mismatch), "{ds:?}");
 }
 
-/// A join with an unknown left operand, or with a mismatched operand in either place, is
-/// untyped. So an expected type, a `char` beside it and its uses report nothing more. The
-/// operand may have been meant as a number. A `string` left decides the join (the `+` row of
-/// S14). So a join with an unknown right operand is a `string`, and its uses are checked.
+/// A join with a mismatched operand in either place is untyped. So an expected type, a `char`
+/// beside it and its uses report nothing more. The operand may have been meant as a number. A
+/// `string` decides the join in either place ("Poisoned members": a join has no direction). So
+/// a join with an unknown operand beside a `string` is a `string`, and its uses are checked.
 #[test]
-fn a_join_with_a_failed_operand_should_be_typed_only_by_a_string_left() {
+fn a_join_with_a_failed_operand_should_be_typed_only_by_a_string() {
     let params = "s: string, xs: [i64]?, n: i64, c: char";
     for (statement, expected) in [
+        // The join has no direction (Task 5d-2): a `string` right decides it as a left does.
         (
             "let b: u8 = nope + s",
-            vec![(Code::BindingNotFound, (2, 17))],
+            vec![(Code::BindingNotFound, (2, 17)), (Code::Mismatch, (2, 17))],
+        ),
+        (
+            "let b: u8 = None + s",
+            vec![(Code::Mismatch, (2, 17)), (Code::Mismatch, (2, 17))],
         ),
         (
             "let b: u8 = s + nope",
             vec![(Code::Mismatch, (2, 17)), (Code::BindingNotFound, (2, 21))],
         ),
+        // The inner join is untyped, and the `string` beside it types the outer one.
         (
             "let b: u8 = ((1 + n) + s) + s",
-            vec![(Code::Mismatch, (2, 18))],
+            vec![(Code::Mismatch, (2, 17)), (Code::Mismatch, (2, 18))],
         ),
         ("print(s + 1 + c)", vec![(Code::Mismatch, (2, 15))]),
         (
@@ -643,7 +671,7 @@ fn a_join_with_a_failed_operand_should_be_typed_only_by_a_string_left() {
         &with_main(&format!(
             "fn f({params}) {{\n    let t = nope + s\n    print(t - 1)\n}}"
         )),
-        &[(Code::BindingNotFound, (2, 13))],
+        &[(Code::BindingNotFound, (2, 13)), (Code::Mismatch, (3, 11))],
     );
     codes(
         &with_main(&format!(
@@ -664,17 +692,19 @@ fn a_join_with_a_failed_operand_should_be_typed_only_by_a_string_left() {
     );
 }
 
-/// An ordering is held to its first operand's type; `==` reports the pair.
+/// The operands of an ordering join, and a conflict reports at the operator (Task 5d-2); `==`
+/// reports the pair.
 #[test]
-fn string_comparison_mismatch() {
+fn a_string_compared_with_another_type_should_report_at_the_operator() {
     let params = "s: string, n: i64";
-    for (statement, code, pos) in [
-        ("print(s < n)", Code::Mismatch, (2, 15, "n")),
-        ("print(n < s)", Code::Mismatch, (2, 15, "s")),
-        ("print(s == n)", Code::CannotCompare, (2, 11, "s == n")),
+    let operands: &[(usize, usize)] = &[(2, 11), (2, 15)];
+    for (statement, code, pos, labels) in [
+        ("print(s < n)", Code::Mismatch, (2, 13, "<"), operands),
+        ("print(n < s)", Code::Mismatch, (2, 13, "<"), operands),
+        ("print(s == n)", Code::CannotCompare, (2, 11, "s == n"), &[]),
     ] {
         let src = body(params, statement);
-        let d = diagnostic(&src, code, pos, &[]);
+        let d = diagnostic(&src, code, pos, labels);
         assert_eq!(fixes(&src, &d), [], "{src}");
     }
 }
@@ -984,7 +1014,8 @@ fn a_never_part_of_a_literal_as_an_argument_should_be_underlined_at_the_part() {
         (r#"let x = id(id("p{return 1}q"))"#, &[(T, "return 1")]),
         (r#"let x = "a{ id("b{return 1}c") }d""#, &[(T, "return 1")]),
         (r#"if let _l = Some("a{return 1}b") {}"#, &[(T, "return 1")]),
-        // deferred (Task 5d report): the plan gives [(V, "return 1")]
+        // The default is a member of the join of `??`, so the interpolation keeps its fix as
+        // under `id` alone (Task 5d-2).
         (
             r#"let x = Some(1) ?? id("a{return 1}b")"#,
             &[(T, "return 1")],

@@ -1222,14 +1222,8 @@ fn if_and_match_should_join_in_each_order() {
             "[u8?]",
         ),
     ]);
-    body_rows(&[
-        // deferred (Task 5d report): the plan gives no error, and `x` is `u8`
-        (
-            "let x = if c { id(1) + 0 } else { a }",
-            &[(Code::Mismatch, (1, 35))],
-        ),
-    ]);
     type_rows(&[
+        ("let x = if c { id(1) + 0 } else { a }", "u8"),
         ("let x: u8 = if c { a } else { 1 + 2 }", "u8"),
         ("let x: u8 = if c { 1 + 2 } else { a }", "u8"),
     ]);
@@ -1543,22 +1537,88 @@ fn operator_operands_should_join_in_each_order() {
     // THEN each is valid with the same type in each order
     type_rows(&[
         ("let x = a + loop { break 1 }", "u8"),
+        ("let x = loop { break 1 } + a", "u8"),
         ("let x = o == Some(1)", "bool"),
         ("let x = [a] == [1]", "bool"),
         ("let x = o ?? Some(1)", "u8?"),
+        ("let x = Some(1) == o", "bool"),
+        ("let x = [1] == [a]", "bool"),
+        ("let x = Some(1) ?? o", "u8?"),
     ]);
     // AND `??` with a right side that is not the payload of its left side reports one E0032
     body_rows(&[("let x = o ?? \"s\"", &[(Code::Mismatch, (1, 11))])]);
-    body_rows(&[
-        // interim: Task 5e gives no error, and `x` is `u8`
-        ("let x = loop { break 1 } + a", &[(Code::Mismatch, (1, 28))]),
-        // deferred (Task 5d report): the plan gives no error, and `x` is `bool`
-        ("let x = Some(1) == o", &[(Code::Mismatch, (1, 20))]),
-        // deferred (Task 5d report): the plan gives no error, and `x` is `bool`
-        ("let x = [1] == [a]", &[(Code::Mismatch, (1, 17))]),
-        // deferred (Task 5d report): the plan gives no error, and `x` is `u8?`
-        ("let x = Some(1) ?? o", &[(Code::Mismatch, (1, 20))]),
+}
+
+#[test]
+fn compound_on_a_field_should_join_as_on_a_name() {
+    // GIVEN a compound assignment to a name, a field and an element, with a value of another type
+    // WHEN each is checked
+    // THEN each gives one E0032 at the operator, with a label at each side
+    one_conflict_rows(&[
+        ("let mut s = n\ns += a", (2, 3), &[(2, 1), (2, 6)]),
+        ("let mut q = Eye(v: 3)\nq.v += a", (2, 5), &[(2, 1), (2, 8)]),
+        ("let mut ys = xs\nys[0] += n", (2, 7), &[(2, 1), (2, 10)]),
     ]);
+}
+
+#[test]
+fn operator_join_should_give_one_report_in_each_order() {
+    // GIVEN operators whose operands do not join, in each order
+    // WHEN each is checked
+    // THEN each gives one E0032 at the operator, with a label at each operand
+    one_conflict_rows(&[
+        ("let x = a + xs.len()", (1, 11), &[(1, 9), (1, 13)]),
+        ("let x = xs.len() + a", (1, 18), &[(1, 9), (1, 20)]),
+        (
+            "let ys = [1]\nlet x = a + last(ys)",
+            (2, 11),
+            &[(2, 9), (2, 13)],
+        ),
+        (
+            "let ys = [1]\nlet x = last(ys) + a",
+            (2, 18),
+            &[(2, 9), (2, 20)],
+        ),
+        (
+            "let ys = [1]\nlet x = a < last(ys)",
+            (2, 11),
+            &[(2, 9), (2, 13)],
+        ),
+        (
+            "let ys = [1]\nlet x = last(ys) < a",
+            (2, 18),
+            &[(2, 9), (2, 20)],
+        ),
+        (
+            "let ys = [1]\nlet x = a == last(ys)",
+            (2, 11),
+            &[(2, 9), (2, 14)],
+        ),
+        (
+            "let ys = [1]\nlet x = last(ys) == a",
+            (2, 18),
+            &[(2, 9), (2, 21)],
+        ),
+    ]);
+    // AND an operand that the operator does not take gives one E0032 at it in each order. The
+    //     fixture E0032-operator-types holds the text of both orders.
+    let message = |body: &str| {
+        let src = program(body);
+        let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+        let found: Vec<(Code, String)> = (ds.iter())
+            .filter(|d| d.code().severity() == Severity::Error)
+            .map(|d| (d.code(), src[d.span().start()..d.span().end()].to_owned()))
+            .collect();
+        found
+    };
+    for (left, right) in [
+        ("let x = 1 + true", "let x = true + 1"),
+        ("let x = a + true", "let x = true + a"),
+    ] {
+        let (l, r) = (message(left), message(right));
+        assert_eq!(l.len(), 1, "row `{left}`: {l:?}");
+        assert_eq!(l, r, "rows `{left}` and `{right}`");
+    }
 }
 
 #[test]
@@ -1641,6 +1701,50 @@ fn loop_under_a_required_type_should_report_once_when_the_break_values_agree() {
         (
             "let x: string = loop { if c { break a }; break b }",
             &[(Code::Mismatch, (1, 37)), (Code::Mismatch, (1, 48))],
+        ),
+    ]);
+}
+
+#[test]
+fn negation_of_an_open_integer_should_wait_for_its_type() {
+    // GIVEN a `-` of a loop, of a generic call and of a call that waits, under a required `u8`
+    // WHEN each is checked
+    // THEN each reports E0042 at its `-`, as `main` does: the operand waits for its type
+    codes(
+        concat!(
+            "fn id<T>(v: T) -> T { v }\n",
+            "fn mk<T>() -> T { panic(\"no\") }\n",
+            "fn main() {\n",
+            "    let r1: u8? = Some(-loop { break 2 })\n",
+            "    let r2: u8? = Some(-id(2))\n",
+            "    let r3: u8 = id(-mk())\n",
+            "    let r4: u8 = -id(2)\n",
+            "}\n",
+        ),
+        &[
+            (Code::NegatedU8, (4, 24)),
+            (Code::NegatedU8, (5, 24)),
+            (Code::NegatedU8, (6, 21)),
+            (Code::NegatedU8, (7, 18)),
+        ],
+    );
+}
+
+#[test]
+fn loop_three_operators_deep_should_take_i64_until_task_5e() {
+    // GIVEN a loop that is an operand two operators below the operand of a join
+    // WHEN it is checked
+    // THEN the loop takes `i64`: the test for a late operand looks one operator deep
+    body_rows(&[
+        // interim: Task 5e gives no error
+        (
+            "let s: f64 = 1 + (1 + (1 + loop { break 1 }))",
+            &[(Code::Mismatch, (1, 14))],
+        ),
+        // interim: Task 5e gives no error
+        (
+            "let x5 = a + (2 + (3 + loop { break 3 }))",
+            &[(Code::Mismatch, (1, 12))],
         ),
     ]);
 }
@@ -2077,33 +2181,30 @@ fn a_call_beside_a_hint_should_keep_the_type_that_main_gives() {
 }
 
 #[test]
-fn a_late_argument_beside_a_coalesce_should_give_its_deferred_report() {
-    // GIVEN programs that main accepts, where a late argument meets a form that a later task
-    // converts
+fn a_late_argument_beside_a_coalesce_should_take_the_type_of_the_coalesce() {
+    // GIVEN programs that main accepts: an argument of a generic call is a `??`, and its
+    // sibling is another `??` or an `if` of literals
     // WHEN each is checked
-    // THEN each gives the report that Task 5d leaves (see its report)
-    let row = |line: &str| {
-        format!(
-            "{SEED_FUNCTIONS}fn main() {{\n    let o: u8? = None\n    let p: u8 = 1\n    let c = [1].len() == 1\n    {line}\n    print(x)\n}}\n"
-        )
-    };
-    let at = |col: usize| (SEED_FUNCTIONS.lines().count() + 5, col + 4);
-    error_rows(&[
-        // deferred (Task 5d report): the plan gives no error, and `x` is `u8`
-        (
-            "coalesce beside an optional place",
-            row("let x = pick(o ?? p, o ?? p)"),
-            vec![(Code::Mismatch, at(14))],
-        ),
+    // THEN each is valid, and `x` is `u8`: each `??` is a member of its own join (Task 5d-2)
+    let rows = [
+        "let x = pick(o ?? p, o ?? p)",
         // An `if` of literals is a join of literals, so it meets the coalesce as `1` does in
         // `two(1, o ?? 5)`.
-        // deferred (Task 5d report): the plan gives no error, and `x` is `u8`
-        (
-            "if of literals beside a coalesce",
-            row("let x = two(if true { 1 } else { 2 }, o ?? 5)"),
-            vec![(Code::Mismatch, at(39))],
-        ),
-    ]);
+        "let x = two(if true { 1 } else { 2 }, o ?? 5)",
+    ];
+    for line in rows {
+        let src = format!(
+            "{SEED_FUNCTIONS}fn main() {{\n    let o: u8? = None\n    let p: u8 = 1\n    {line}\n    print(x)\n}}\n"
+        );
+        let (program, ds) = checked_with(PRELUDE_SOURCE, &src);
+        let codes: Vec<Code> = (ds.iter())
+            .map(Diagnostic::code)
+            .filter(|&c| c.severity() == Severity::Error)
+            .collect();
+        assert_eq!(codes, [], "row `{line}`");
+        let program = program.expect("a program with no error should have a `tir`");
+        assert_eq!(main_local_type(&program, "x"), "u8", "row `{line}`");
+    }
 }
 
 #[test]

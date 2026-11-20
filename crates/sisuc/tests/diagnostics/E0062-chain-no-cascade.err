@@ -162,6 +162,18 @@ help: if a `None` result is fine, use `?.`
 113 |     let x = c?.v + 1
     |              +
 
+error[E0048]: the left side of `??` is not optional
+   --> E0062-chain-no-cascade.sisu:118:11
+    |
+118 |     print((c.s + "x") ?? "")
+    |           ^^^^^^^^^^^
+    |
+help: remove the `??` and its default
+    |
+118 -     print((c.s + "x") ?? "")
+118 +     print((c.s + "x"))
+    |
+
 error[E0062]: `c` may be `None`
    --> E0062-chain-no-cascade.sisu:118:12
     |
@@ -1214,5 +1226,5 @@ help: if a `None` result is fine, use `?.`
 404 |     let y = Some(c?.v)
     |                   +
 
-sisu: 102 errors
+sisu: 103 errors
 sisu: for more on a code, run `sisu explain <code>`: E0048, E0062

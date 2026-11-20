@@ -2146,9 +2146,6 @@ fn type_parameters_should_be_found_in_one_step() {
 /// call's arguments, not with their square: one step per receiver and per block.
 #[test]
 fn work_kept_ahead_should_be_found_in_one_step() {
-    // The declarations hold one `xs.len() == 0`: the operator ranks its sides, which finds the
-    // receiver of `len` once.
-    const DECLARED: usize = 1;
     let inspected = |n: usize, arg: &str, ty: &str| {
         let params: Vec<_> = (0..n).map(|i| format!("x{i}: T")).collect();
         let src = with_generics(&format!(
@@ -2161,8 +2158,8 @@ fn work_kept_ahead_should_be_found_in_one_step() {
         generic::INSPECTED.get()
     };
     for (arg, ty) in [("b.make()", "[i64]"), ("{ let n = true; n }", "bool")] {
-        assert_eq!(inspected(64, arg, ty), 64 + DECLARED, "{arg}");
-        assert_eq!(inspected(128, arg, ty), 128 + DECLARED, "{arg}");
+        assert_eq!(inspected(64, arg, ty), 64, "{arg}");
+        assert_eq!(inspected(128, arg, ty), 128, "{arg}");
     }
 }
 
@@ -5091,11 +5088,11 @@ fn nested_some_context_should_cost_one_step_for_each_level() {
     assert_near_linear(steps(10), steps(20), steps(30));
 }
 
-/// A generic call nested `d` deep, as an argument of a generic call: the outer call ranks its
-/// arguments, and each inner call ranks its own again when it is checked. A join or an operator
-/// nested so ranks its siblings, and each inner one ranks its own again. `body.ranked` answers
-/// the second time, so `rank_value` walks each expression once and the work grows with the
-/// depth, not with its square. The depths are far below the nesting limit of the parser (256).
+/// A generic call nested `d` deep, as an argument of a generic call, and a join or an operator
+/// nested so. Each argument, element, branch and operand of these rows is a member of its join
+/// (Tasks 5c and 5d-2), so no level ranks its siblings: the count of rank steps is the same at
+/// each depth. `body.ranked` would answer a second rank of a span. The depths are far below the
+/// nesting limit of the parser (256).
 #[test]
 fn nested_generic_calls_should_rank_each_expression_once() {
     crate::on_compiler_stack(|| {
@@ -5122,38 +5119,37 @@ fn nested_generic_calls_should_rank_each_expression_once() {
             ("let r: u8 = ", "k2(x, ", "1", ")"),
             ("let r: u8 = ", "k2(", "1", ", 1)"),
         ] {
-            assert!(steps(row, 1) > 0, "the counter should count the walk");
-            assert_near_linear(steps(row, 20), steps(row, 40), steps(row, 60));
+            assert_eq!(steps(row, 60), steps(row, 1), "{row:?}");
         }
-        // Joins and operators rank their siblings too: an array in an array, an `if` in an `if`, an
-        // operator in an operator. Each level recurses deeper than a call does, and 60 levels
-        // overflow the stack of a debug test thread, so the depths are smaller.
+        // An array in an array, an `if` in an `if`, an operator in an operator. Each level recurses
+        // deeper than a call does, and 60 levels overflow the stack of a debug test thread, so the
+        // depths are smaller.
         for row in [
             ("let r = ", "[1, ", "1", "].len()"),
             ("let r = ", "if c { x } else { ", "1", " }"),
             ("let r = ", "x + (", "1", ")"),
             ("let r = ", "{ 1 } + (", "x", ")"),
         ] {
-            assert!(steps(row, 1) > 0, "the counter should count the walk");
-            assert_near_linear(steps(row, 10), steps(row, 20), steps(row, 30));
+            assert_eq!(steps(row, 30), steps(row, 1), "{row:?}");
         }
     });
 }
 
-/// An operator nested `d` deep, over integer literals: `int_literal` answers for the whole
-/// subtree at each level (the ranking of a sibling, and the first operand of an operator), so a
-/// walk that is not kept reads each operand again at each level, and the work grows with the
-/// square of the depth (#367). The leaf at the end can end the chain of literals, as a name, a
-/// float or a string, and the context can be a type. The depths are far below the nesting limit
-/// of the parser (256), and small enough for the stack of a debug test thread. One level has no
-/// operator inside an operand, so the counter is checked at two.
+/// An operator nested `d` deep, over integer literals, in an argument that ranks: `int_literal`
+/// answers for the whole subtree at each level. So a walk that is not kept reads each operand
+/// again at each level, and the work grows with the square of the depth (#367). The leaf at the
+/// end is a loop, so that no level is a member of the call's join and the ranking runs. The
+/// context can be a type. The depths are far below the nesting limit of the parser (256), and
+/// small enough for the stack of a debug test thread. One level has no operator inside an
+/// operand, so the counter is checked at two.
 #[test]
 fn nested_int_literals_should_be_walked_once() {
     crate::on_compiler_stack(|| {
-        // The statement is `before`, then `open` repeated `depth` times, `inner`, `close` likewise.
+        // The statement is `before`, then `open` repeated `depth` times, `inner`, `close` likewise,
+        // in an argument of `id`.
         let steps = |(before, open, inner, close): (&str, &str, &str, &str), depth: usize| {
             let src = format!(
-                "fn main() {{\n    let y = 1\n    {before}{}{inner}{}\n}}",
+                "fn id<T>(x: T) -> T {{ x }}\nfn main() {{\n    let y = 1\n    {before}id({}{inner}{})\n    print(y)\n}}",
                 open.repeat(depth),
                 close.repeat(depth),
             );
@@ -5162,12 +5158,10 @@ fn nested_int_literals_should_be_walked_once() {
             INT_LITERAL_STEPS.get()
         };
         for row in [
-            ("let r = ", "1 + (", "1", ")"),
-            ("let r = ", "(", "1", ") + 1"),
-            ("let r = ", "1 + (", "y", ")"),
-            ("let r = ", "(", "1.1", ") + 1.1"),
-            ("let r = ", "(", "\"a\"", ") + \"a\""),
-            ("let r: f64 = ", "1 + (", "1", ")"),
+            ("let r = ", "1 + (", "loop { break 1 }", ")"),
+            ("let r = ", "(", "loop { break 1 }", ") + 1"),
+            ("let r = ", "1 + (", "loop { break y }", ")"),
+            ("let r: i64 = ", "1 + (", "loop { break 1 }", ")"),
         ] {
             assert!(
                 steps(row, 2) > 0,
@@ -6770,6 +6764,11 @@ fn parity_program((decls, body): ParityRow<'_>, concrete: bool) -> String {
 /// The rows of `a_generic_call_that_cannot_meet_its_context_should_report_as_a_concrete_call_does`.
 const PARITY_ROWS: &[ParityRow<'static>] = &[
     // Comparisons.
+    // The operands of an ordering join (Task 5d-2): the conflict is at the operator.
+    ("", "print(mk2() < fi(1))"),
+    ("", "print(mk2() < 'a')"),
+    ("", "print(1 < mk2())"),
+    ("", "print(0 <= mk2() < 3)"),
     ("", "print(1 == mk2())"),
     ("", "print(mk2() != 1)"),
     ("", "print(Some(1) == mk2())"),
@@ -6891,19 +6890,21 @@ fn a_generic_call_that_cannot_meet_its_context_should_report_as_a_concrete_call_
 
 /// An outer generic call binds its parameter to what an argument gives. It does not pass on a
 /// type that the argument found and could not meet its context with. A sibling, such as the other
-/// side of `==`, gives a hint. Under a hint, the misfit keeps one E0050 at the inner call. When
-/// the user wrote the context (a `let` type), the argument gets one E0032 at the inner call.
+/// side of `==`, is a member of the same join: the comparison gives one E0047, as `1 == t` does
+/// for a closed `t` (Task 5d-2). When the user wrote the context (a `let` type), the argument
+/// gets one E0032 at the inner call.
 #[test]
 fn a_misfit_under_an_outer_generic_call_should_give_a_true_diagnostic() {
     with_prelude();
     // (the statement, the code that the one diagnostic has, the text at its place)
     let rows: &[(&str, Code, &str)] = &[
-        // deferred (Task 5d report): the plan gives the place of `mk2()`
-        ("print(1 == id(mk2()))", Code::CannotInfer, "id("),
-        // deferred (Task 5d report): the plan gives the place of `mk2()`
-        ("print(id(mk2()) == 1)", Code::CannotInfer, "id("),
-        // deferred (Task 5d report): the plan gives the place of `mk2()`
-        ("print(1 == id(id(mk2())))", Code::CannotInfer, "id(id("),
+        ("print(1 == id(mk2()))", Code::CannotCompare, "1 == id("),
+        ("print(id(mk2()) == 1)", Code::CannotCompare, "id(mk2()) =="),
+        (
+            "print(1 == id(id(mk2())))",
+            Code::CannotCompare,
+            "1 == id(id(",
+        ),
         ("let y: i64? = id(mk2())", Code::Mismatch, "mk2()"),
         ("let y: i64 = id(mk2())", Code::Mismatch, "mk2()"),
     ];
@@ -7023,11 +7024,14 @@ fn a_clash_with_an_unbound_shape_should_report_the_argument() {
 
 /// A misfit that reaches no code that reports it is not lost. The outer generic call drops the
 /// type that its argument found, so the inner call's E0050 is pushed when the body ends. The
-/// context is a hint, as it is not a type that the user wrote.
+/// context is a hint, as it is not a type that the user wrote: the payload of `??` for a loop
+/// default. Beside `==` the misfit is a member of the join, which reports E0047 (Task 5d-2).
 #[test]
 fn a_misfit_that_no_code_reports_should_give_e0050_at_the_call() {
     with_prelude();
-    let src = parity_program(("", "print(1 == id(mk2()))"), false);
+    // interim: Task 5e makes the loop a member, and the join reports.
+    let body = "let o: i64? = None\nprint(o ?? loop { break id(mk2()) })";
+    let src = parity_program(("", body), false);
     let (_, found) = parity_found(&src);
     let codes: Vec<_> = found.iter().map(|(code, ..)| *code).collect();
     assert_eq!(codes, [Code::CannotInfer], "{found:?}");
@@ -7134,10 +7138,6 @@ const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
         ("", "print(mk2() < mk2())"),
         &[(Code::CannotInfer, (2, 11))],
     ),
-    // The concrete leader holds the later operand to its own type. The generic call gives no
-    // whole type, so the later operand leads, and the call is held to the leader's type.
-    (("", "print(mk2() < fi(1))"), &[(Code::Mismatch, (2, 11))]),
-    (("", "print(mk2() < 'a')"), &[(Code::Mismatch, (2, 11))]),
     // No context at all: nothing to misfit.
     (
         ("", "print(mk2() == mk2())"),
@@ -7156,23 +7156,24 @@ const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
         ),
         &[(Code::BindingNotFound, (4, 14))],
     ),
-    // The side of the type parameter has no `==`, which is the first mistake.
+    // The sides join, and a type parameter beside another type cannot be compared, whatever its
+    // bounds (Task 5d-2): E0047 comes before the `Eq` of the type parameter.
     (
         (
             "fn h<X>(v: X) -> bool {\n    v == mk2()\n}\n",
             "print(h(1))",
         ),
-        &[(Code::ParamLacks, (2, 5)), (Code::CannotInfer, (2, 10))],
+        &[(Code::CannotCompare, (2, 5))],
     ),
     // The misfit joins by the type that it found, `Two<_, bool>`, whose unbound `X` has no
-    // `Display`, so the branches conflict.
+    // `Display`. The branches are members of the join of `==`, which reports at its head (ADR
+    // 0052).
     (
         (
             "",
             "let a: any Display = 1\nprint(1 == if true { a } else { mk2() })",
         ),
-        // deferred (Task 5d report): the plan gives [(CannotInfer, (3, 37))]
-        &[(Code::Mismatch, (3, 16))],
+        &[(Code::Mismatch, (3, 13))],
     ),
 ];
 
@@ -7204,9 +7205,6 @@ const DEPARTURE_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
         ("", "let xs: [i64] = [mk2(); 3]\nprint(xs)"),
         &[(Code::Mismatch, (1, 18))],
     ),
-    // The call gives no whole type, so the `1` leads and the call is held to `i64`.
-    (("", "print(1 < mk2())"), &[(Code::Mismatch, (1, 11))]),
-    (("", "print(0 <= mk2() < 3)"), &[(Code::Mismatch, (1, 12))]),
     // No side gives a type, so no class has a missing `!=`, and the call cannot infer `X`.
     (
         ("", "print(mk2() != mk2())"),
@@ -7976,28 +7974,25 @@ fn fill_or_sum_argument_should_take_the_written_context() {
 fn negated_or_later_argument_should_give_the_error_of_its_twin() {
     use Code::{IntegerDoesNotFit, Mismatch, NegatedU8};
     let rows: Vec<ErrorRow<'_>> = vec![
-        // deferred (Task 5d report): the plan gives [(NegatedU8, (7, 33))]
         (
             "n557_6",
             fill_program("let r: Result<u8, i64> = Ok(-loop { break 2 })"),
-            vec![(Mismatch, (7, 33))],
+            vec![(NegatedU8, (7, 33))],
         ),
         (
             "n557_20",
             fill_program("let r: Result<[u8], i64> = Ok([k, loop { break 2 }])"),
             vec![(Mismatch, (7, 36))],
         ),
-        // deferred (Task 5d report): the plan gives [(NegatedU8, (8, 33))]
         (
             "a6",
             fill_e_program("let r: Result<u8, i64> = Ok(-id(2))"),
-            vec![(Mismatch, (8, 33))],
+            vec![(NegatedU8, (8, 33))],
         ),
-        // deferred (Task 5d report): the plan gives [(NegatedU8, (8, 34))]
         (
             "a7",
             fill_e_program("let r: Result<i64, u8> = Err(-loop { break 2 })"),
-            vec![(Mismatch, (8, 34))],
+            vec![(NegatedU8, (8, 34))],
         ),
         (
             "a10",
@@ -8019,11 +8014,10 @@ fn negated_or_later_argument_should_give_the_error_of_its_twin() {
             fill_e_program("let r: Result<u8, i64> = Ok(1 + loop { break k })"),
             vec![(Mismatch, (8, 50))],
         ),
-        // deferred (Task 5d report): the plan gives [(NegatedU8, (7, 20))]
         (
             "d17",
             fill_mk_program("let r: u8 = id(-mk())"),
-            vec![(Code::CannotInfer, (7, 21))],
+            vec![(NegatedU8, (7, 20))],
         ),
     ];
     error_rows(&rows);
@@ -8032,8 +8026,8 @@ fn negated_or_later_argument_should_give_the_error_of_its_twin() {
 /// GIVEN a sum, a `-` or an array fill of calls that wait for their types
 /// AND the value is an argument of a generic call, or sits in one
 /// WHEN the program is checked
-/// THEN a sum takes its default type, as the same sum outside the call does, so no type is
-///   missing. A `-` or a fill has no default: the call that waits is the one that misses its type.
+/// THEN a sum or a `-` takes its default type, as the same value outside the call does, so no type
+///   is missing. A fill has no default: the call that waits is the one that misses its type.
 #[test]
 fn sum_of_waiting_calls_should_take_its_default_type() {
     use Code::CannotInfer;
@@ -8078,7 +8072,8 @@ fn sum_of_waiting_calls_should_take_its_default_type() {
         (
             "ctl-7",
             fill_mk_program("let r = id(-mk())"),
-            vec![(CannotInfer, (7, 17))],
+            // A `-` is a member (Task 5d-2): it takes its default type, as a sum does.
+            vec![],
         ),
     ];
     error_rows(&rows);
@@ -8124,12 +8119,12 @@ fn poisoned_join_should_take_the_anchor_type_for_a_sum_or_a_fill() {
 /// GIVEN a join whose context failed, with a fill or a `-` of a waiting call as a later branch
 /// AND a waiting branch of a nested join (`else if`) beside a literal
 /// WHEN the program is checked
-/// THEN the context is the only report. A branch that only waited holds no integer literal. So
-///   it is not a branch of literals, and neither is a join with such a branch: it does not take
-///   the type of the anchor, and no other report follows from that guess. A fill of a waiting
-///   call is a member: it is an array, which no other branch is, and the `if` reports that.
+/// THEN the join reports what it reports with no context, and nothing more. A `-` is a member
+///   (Task 5d-2): it takes the type that the join gives, so a `-` of `u8` is E0042. A fill of a
+///   waiting call is a member: it is an array, which no other branch is, and the `if` reports
+///   that at its head. So does a `-` beside a `string`.
 #[test]
-fn poisoned_join_should_add_no_report_for_a_waiting_fill_or_negation() {
+fn poisoned_join_should_report_as_the_join_with_no_context() {
     use Code::UnknownType;
     let rows: Vec<ErrorRow<'_>> = vec![
         // The fill is a member (Task 5c): `[_]` differs from `u8` for each type of its element,
@@ -8142,27 +8137,27 @@ fn poisoned_join_should_add_no_report_for_a_waiting_fill_or_negation() {
         (
             "p43",
             fill_mk_program("let r: Nope = if c == 1 { v } else { -mk() }"),
-            vec![(UnknownType, (7, 12))],
+            vec![(UnknownType, (7, 12)), (Code::NegatedU8, (7, 42))],
         ),
         (
             "p66",
             fill_mk_program("let r: Nope = if c == 1 { \"s\" } else { -mk() }"),
-            vec![(UnknownType, (7, 12))],
+            vec![(UnknownType, (7, 12)), (Code::Mismatch, (7, 19))],
         ),
         (
             "nested `-`",
             fill_mk_program("let r: Nope = if c == 1 { v } else { -(-mk()) }"),
-            vec![(UnknownType, (7, 12))],
+            vec![(UnknownType, (7, 12)), (Code::NegatedU8, (7, 43))],
         ),
         (
             "fill of `-`",
             fill_mk_program("let r: Nope = if c == 1 { v } else { [-mk(); 2] }"),
-            vec![(UnknownType, (7, 12))],
+            vec![(UnknownType, (7, 12)), (Code::Mismatch, (7, 19))],
         ),
         (
             "t3",
             fill_mk_program("let r: Nope = if c == 1 { v } else if c == 2 { -mk() } else { 3 }"),
-            vec![(UnknownType, (7, 12))],
+            vec![(UnknownType, (7, 12)), (Code::NegatedU8, (7, 52))],
         ),
         (
             "l6",
@@ -8179,7 +8174,8 @@ fn poisoned_join_should_add_no_report_for_a_waiting_fill_or_negation() {
 /// GIVEN the rows of the two tables above that report the same before and after the fix
 /// AND the rows of values that are `i64` or hold no loop
 /// WHEN the program is checked
-/// THEN the report is the one that the base gave
+/// THEN the report is the one that the base gave. A `-` beside a `u8` is the exception: it is a
+///   member, which takes the `u8` (Task 5d-2)
 #[test]
 #[expect(clippy::too_many_lines, reason = "a table of rows")]
 fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
@@ -8210,11 +8206,8 @@ fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
             fill_program("let r = if c == 1 { [5; 2] } else { [v; 2] }"),
             vec![],
         ),
-        (
-            "n509_22",
-            fill_program("let r = [5; 2] == [v]"),
-            vec![(Mismatch, (7, 24))],
-        ),
+        // The sides of `==` join (Task 5d-2): the literal `5` takes `u8` from `v`, as in n509_17.
+        ("n509_22", fill_program("let r = [5; 2] == [v]"), vec![]),
         (
             "n557_1",
             fill_program("let r: u8 = 1 + loop { break 2 }"),
@@ -8285,19 +8278,18 @@ fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
             fill_e_program("let r: Result<u8, i64> = Ok(k * loop { break 2 })"),
             vec![(Mismatch, (8, 33))],
         ),
-        // A `-` of a call leads, as the call beside it does not: the `u8` is held to `i64`.
+        // A `-` is a member (Task 5d-2): the negation takes the type `u8` of its sibling, as `-2`
+        // does in `[-2, v]`: E0042 at it. So does an element (Task 5c).
         (
             "`-` of a call leads a sum",
             fill_mk_program("let r = -id(2) + v"),
-            vec![(Mismatch, (7, 22))],
+            vec![(Code::NegatedU8, (7, 13))],
         ),
         (
             "`-` of a call leads a join",
             fill_program("let r = if c == 1 { -id(2) } else { v }"),
-            vec![(Mismatch, (7, 41))],
+            vec![(Code::NegatedU8, (7, 25))],
         ),
-        // The negation takes the type `u8` of the other element (Task 5c), as `-2` does in
-        // `[-2, v]`: E0042 at it.
         (
             "`-` of a call leads an array",
             fill_program("let r = [-id(2), v]"),
@@ -8342,21 +8334,29 @@ fn comparison_argument_should_join_as_a_bool_does() {
 
 /// GIVEN a join whose context failed, with a sum of two `-` of waiting calls as a later branch
 /// WHEN the program is checked
-/// THEN the sum is a value of its own, as it is outside the join: its first call cannot infer its
-///   type. The sum does not take the type of the first branch, so no `u8` is negated.
+/// THEN the sum is a member (Task 5d-2), as it is with no context: it takes the type `u8` of the
+///   first branch, so each `-` reports E0042.
 #[test]
-fn poisoned_join_should_report_the_unbound_call_of_a_waiting_sum() {
-    use Code::{CannotInfer, UnknownType};
+fn poisoned_join_should_negate_the_type_of_a_sum_member() {
+    use Code::{NegatedU8, UnknownType};
     let rows: Vec<ErrorRow<'_>> = vec![
         (
             "sum of `-`",
             fill_mk_program("let r: Nope = if c == 1 { v } else { -mk() + -mk() }"),
-            vec![(UnknownType, (7, 12)), (CannotInfer, (7, 43))],
+            vec![
+                (UnknownType, (7, 12)),
+                (NegatedU8, (7, 42)),
+                (NegatedU8, (7, 50)),
+            ],
         ),
         (
             "difference of `-`",
             fill_mk_program("let r: Nope = if c == 1 { v } else { -mk() - -mk() }"),
-            vec![(UnknownType, (7, 12)), (CannotInfer, (7, 43))],
+            vec![
+                (UnknownType, (7, 12)),
+                (NegatedU8, (7, 42)),
+                (NegatedU8, (7, 50)),
+            ],
         ),
     ];
     error_rows(&rows);
@@ -8379,11 +8379,10 @@ fn each_ranking_cause_should_take_the_written_context() {
             fill_program("let r: Result<u8, i64> = Ok(1 + loop { break 2 })"),
             vec![],
         ),
-        // deferred (Task 5d report): the plan gives [(NegatedU8, (7, 33))]
         (
             "n557_6",
             fill_program("let r: Result<u8, i64> = Ok(-loop { break 2 })"),
-            vec![(Code::Mismatch, (7, 33))],
+            vec![(Code::NegatedU8, (7, 33))],
         ),
         (
             "n557_17",
@@ -8892,11 +8891,12 @@ fn waiting_argument_should_keep_its_report_before_and_after() {
 /// GIVEN the hint of `==`, `if` or `??`, or a `mut` argument, that makes a generic call fail
 /// WHEN the program is checked
 /// THEN the code and the position are those of the base, and only the text changes.
-///   An `if` or a `match` whose values do not join reports at its head (ADR 0052).
+///   An `if` or a `match` whose values do not join reports at its head (ADR 0052). So does an
+///   operator whose operands do not join (Task 5d-2).
 #[test]
 #[expect(clippy::too_many_lines, reason = "a table of rows")]
 fn hint_blame_should_keep_its_code_and_position_before_and_after() {
-    use Code::{CoalesceNotOptional, Mismatch, MutArgumentType};
+    use Code::{CoalesceNotOptional, Mismatch};
     let rows: Vec<ErrorRow<'_>> = vec![
         (
             "n499_1",
@@ -8931,16 +8931,16 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
             blame_program("let x: u8 = first(ys)"),
             vec![(Mismatch, (8, 23))],
         ),
-        // deferred (Task 5d report): the plan gives [(Mismatch, (8, 24))]
+        // The sides of `==` join, as the branches of n499_10 do: the report is at `==` (ADR 0052).
         (
             "n499_8",
             blame_program("let x = v == first(ys)"),
-            vec![(Mismatch, (8, 18))],
+            vec![(Mismatch, (8, 15))],
         ),
         (
             "n499_9",
             blame_program("let x = first(ys) == v"),
-            vec![(Mismatch, (8, 26))],
+            vec![(Mismatch, (8, 23))],
         ),
         (
             "n499_10",
@@ -8953,11 +8953,11 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
             blame_program("let x = if c { v } else { id(loop { break 1 }) }"),
             vec![],
         ),
-        // deferred (Task 5d report): the plan gives [(Mismatch, (8, 24))]
+        // The payload and the default join: the report is at `??`, the operator (ADR 0052).
         (
             "n499_12",
             blame_program("let x = o ?? first(ys)"),
-            vec![(Mismatch, (8, 18))],
+            vec![(Mismatch, (8, 15))],
         ),
         // valid: the spec gives `pick(a, loop { break 1 })` no error (Generic calls in a join)
         (
@@ -8975,7 +8975,7 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
         (
             "n499_15",
             blame_program("let x = v + first(ys)"),
-            vec![(Mismatch, (8, 23))],
+            vec![(Mismatch, (8, 15))],
         ),
         (
             "n499_16",
@@ -8990,12 +8990,12 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
         (
             "b2",
             blame_b_program("let x = v < first(ys)"),
-            vec![(Mismatch, (10, 23))],
+            vec![(Mismatch, (10, 15))],
         ),
         (
             "b3",
             blame_b_program("let x = v >= first(ys)"),
-            vec![(Mismatch, (10, 24))],
+            vec![(Mismatch, (10, 15))],
         ),
         (
             "b7",
@@ -9018,15 +9018,15 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
             blame_b_program("let x = q == id(v) ?? q"),
             vec![(CoalesceNotOptional, (10, 18))],
         ),
-        // deferred (Task 5d report): the plan gives [(Mismatch, (7, 22))]
-        ("499", REPRO_499.to_string(), vec![(Mismatch, (7, 16))]),
+        ("499", REPRO_499.to_string(), vec![(Mismatch, (7, 13))]),
         ("499if", REPRO_499_IF.to_string(), vec![(Mismatch, (6, 11))]),
-        // deferred (Task 5d report): the plan gives [(Mismatch, (5, 22))]
-        ("499q", REPRO_499_Q.to_string(), vec![(Mismatch, (5, 16))]),
+        ("499q", REPRO_499_Q.to_string(), vec![(Mismatch, (5, 13))]),
+        // The sides join before the call binds `T`, so the join reports at `==`. It does not
+        // report the `mut` argument against a `T` that the other side gave.
         (
             "499mut",
             REPRO_499_MUT.to_string(),
-            vec![(MutArgumentType, (5, 26))],
+            vec![(Mismatch, (5, 13))],
         ),
     ];
     error_rows(&rows);
@@ -9035,7 +9035,8 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
 /// GIVEN the hint of `==`, `if`, `match` or `??` on a value that does not fit it
 /// WHEN the program is checked
 /// THEN the code and the position are those of the base, and only the text changes.
-///   An `if` or a `match` whose values do not join reports at its head (ADR 0052).
+///   An `if` or a `match` whose values do not join reports at its head (ADR 0052). So does an
+///   operator whose operands do not join (Task 5d-2).
 #[test]
 fn hint_report_should_keep_its_code_and_position_before_and_after() {
     use Code::{BlockAsStatement, Mismatch};
@@ -9112,7 +9113,7 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
         (
             "b12",
             blame_b_program("let x = q < id(v)"),
-            vec![(Mismatch, (10, 20))],
+            vec![(Mismatch, (10, 15))],
         ),
         (
             "b13",
@@ -9285,10 +9286,11 @@ fn an_ordering_with_a_type_parameter_should_report_that_the_operands_cannot_be_c
 /// GIVEN comparisons that the ordering rule for type parameters leaves as they were: an equality
 ///   of a parameter, an ordering with no parameter, and an operand whose type waits
 /// WHEN the program is checked
-/// THEN each report has the code and the place that it had before the rule. This test holds
-///   before and after the fix.
+/// THEN each report has the code that it had before the rule. The operands are members of one
+///   join (Task 5d-2), so a conflict of two types reports at the operator. An array beside a
+///   type parameter is E0047, as `5 < a` is.
 #[test]
-fn comparisons_that_the_ordering_rule_leaves_should_report_the_code_and_place_they_did_before() {
+fn comparisons_that_the_ordering_rule_leaves_should_keep_their_code() {
     use Code::{CannotCompare, Mismatch, NoOperator, ParamLacks};
     let mk = "fn mk<X>() -> [X] { [] }\n";
     let row = |name, program: &str, wanted: Vec<Wanted>| -> ErrorRow<'_> {
@@ -9313,12 +9315,12 @@ fn comparisons_that_the_ordering_rule_leaves_should_report_the_code_and_place_th
         row(
             "n512_1",
             "fn f(s: string) -> bool { 5 < s }",
-            vec![(Mismatch, (1, 27))],
+            vec![(Mismatch, (1, 29))],
         ),
         row(
             "n512_2",
             "fn f(s: string) -> bool { s < 5 }",
-            vec![(Mismatch, (1, 31))],
+            vec![(Mismatch, (1, 29))],
         ),
         row(
             "n512_3",
@@ -9328,7 +9330,7 @@ fn comparisons_that_the_ordering_rule_leaves_should_report_the_code_and_place_th
         row(
             "n512_8",
             "fn f(s: string) -> bool { 'a' < s }",
-            vec![(Mismatch, (1, 33))],
+            vec![(Mismatch, (1, 31))],
         ),
         row(
             "n512_9",
@@ -9338,7 +9340,7 @@ fn comparisons_that_the_ordering_rule_leaves_should_report_the_code_and_place_th
         row(
             "n512_10",
             &format!("{mk}fn f() -> bool {{ 5 < mk() }}"),
-            vec![(Mismatch, (2, 22))],
+            vec![(Mismatch, (2, 20))],
         ),
         row(
             "n512_11",
@@ -9348,7 +9350,7 @@ fn comparisons_that_the_ordering_rule_leaves_should_report_the_code_and_place_th
         row(
             "a waiting generic operand does not lead",
             &format!("{mk}fn f<T: Ord>(a: T) -> bool {{ a < mk() }}"),
-            vec![(Mismatch, (2, 34))],
+            vec![(CannotCompare, (2, 30))],
         ),
     ];
     error_rows(&rows);

@@ -164,11 +164,15 @@ fn a_break_origin_should_reach_each_operand_of_the_value() {
             "an operand of a nested `+`",
             "fn f(c: bool) {\n    let a = loop {\n        if c { break 1 }\n        break 1 + (2 + None)\n    }\n    print(a)\n}\nfn main() { f(true) }\n",
             (4, 24),
-            Explained::Label(3, 16),
+            // An operand is a member of its operator's join (Task 5d-2): the context reaches
+            // only the outer operator, so no label explains the type.
+            Explained::Nothing,
         ),
         (
             "an `f64` leader of `+` in an `i64` loop",
-            "fn f(c: bool, x: f64) {\n    let a = loop {\n        if c { break 1 }\n        break x + None\n    }\n    print(a)\n}\nfn main() { f(true, 1.5) }\n",
+            // The operands agree on `f64`, which the loop does not take: the whole operator is
+            // reported (call (c) of Task 5d-2). A `None` beside it is reported as well, below.
+            "fn f(c: bool, x: f64) {\n    let a = loop {\n        if c { break 1 }\n        break x + 1\n    }\n    print(a)\n}\nfn main() { f(true, 1.5) }\n",
             (4, 15),
             Explained::Label(3, 16),
         ),
@@ -191,10 +195,12 @@ fn a_break_origin_should_reach_each_operand_of_the_value() {
             Explained::Nothing,
         ),
         (
-            "the fallback of `??`, which takes the payload of its left side",
+            // The payload and the default join: the report is at `??`, with a label at each side
+            // and no origin (Task 5d-2).
+            "the fallback of `??`, which joins the payload of its left side",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break Some(1) ?? \"x\"\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
-            (4, 26),
-            Explained::Nothing,
+            (4, 23),
+            Explained::Labels(&[(4, 15), (4, 26)]),
         ),
         (
             "a `string` leader of `+`, whose join is the origin",
@@ -203,6 +209,12 @@ fn a_break_origin_should_reach_each_operand_of_the_value() {
             Explained::Label(4, 15),
         ),
     ]);
+    // The `None` meets the loop's `i64`, and the operands that are left agree on `f64`
+    // ("Poisoned members"), which the loop does not take.
+    codes(
+        "fn f(c: bool, x: f64) {\n    let a = loop {\n        if c { break 1 }\n        break x + None\n    }\n    print(a)\n}\nfn main() { f(true, 1.5) }\n",
+        &[(Code::Mismatch, (4, 15)), (Code::Mismatch, (4, 19))],
+    );
 }
 
 #[test]
@@ -224,6 +236,14 @@ fn a_declaration_should_explain_its_required_type() {
             "let",
             "fn main() {\n    let a: i64 = \"x\"\n    print(a)\n}\n",
             (2, 18),
+            Explained::Label(2, 12),
+        ),
+        // The default of `??` is a member of its join, and the written type is what the join is
+        // reported against (Task 5d-2).
+        (
+            "the fallback of `??` (opus-6)",
+            "fn f(o: i64?) {\n    let a: i64 = o ?? \"x\"\n    print(a)\n}\nfn main() {\n    f(None)\n}\n",
+            (2, 23),
             Explained::Label(2, 12),
         ),
         (
@@ -401,7 +421,9 @@ fn an_earlier_value_should_explain_the_type() {
             "an operand under the hint of a branch",
             "fn f(c: bool, n: i64) {\n    let a = if c { n } else { 1 + None }\n    print(a)\n}\nfn main() { f(true, 1) }\n",
             (2, 35),
-            Explained::Label(2, 20),
+            // An operand is a member of its operator's join (Task 5d-2): the context reaches
+            // only the outer operator, so no label explains the type.
+            Explained::Nothing,
         ),
         (
             "a later arm makes the join optional (opus-41)",
@@ -565,12 +587,6 @@ fn a_form_that_waits_should_have_no_origin() {
             Explained::Nothing,
         ),
         (
-            "the fallback of `??` (opus-6)",
-            "fn f(o: i64?) {\n    let a: i64 = o ?? \"x\"\n    print(a)\n}\nfn main() {\n    f(None)\n}\n",
-            (2, 23),
-            Explained::Nothing,
-        ),
-        (
             "a compound assignment (opus-6)",
             "fn main() {\n    let mut a = 1\n    a += \"x\"\n    print(a)\n}\n",
             (3, 10),
@@ -727,7 +743,9 @@ fn a_negated_operand_should_keep_the_origin_of_its_context() {
             "a negation of a negation",
             "fn main() {\n    let b: i64 = -(-\"x\")\n    print(b)\n}\n",
             (2, 21),
-            Explained::Label(2, 12),
+            // An operand is a member of its operator's join (Task 5d-2): the context reaches
+            // only the outer operator, so no label explains the type.
+            Explained::Nothing,
         ),
         (
             "an `f64` context, which names `i64` or `f64`",

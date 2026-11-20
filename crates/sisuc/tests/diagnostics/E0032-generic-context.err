@@ -70,23 +70,25 @@ error[E0032]: expected `i64`, found `Two<_, bool>`
 56 |     let a8: i64? = id(mk2())
    |                       ^^^^^
 
-error[E0032]: expected `i64`, found `Two<_, bool>`
-  --> E0032-generic-context.sisu:57:18
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `Two<_, bool>`
+  --> E0032-generic-context.sisu:57:15
    |
 57 |     print(1 + id(mk2()))
-   |                  ^^^^^
+   |               ^^^^^^^^^
 
-error[E0032]: expected `i64`, found `Two<_, bool>`
-  --> E0032-generic-context.sisu:58:18
+error[E0032]: expected `i64`, `u8` or `f64`, found `Two<_, bool>`
+  --> E0032-generic-context.sisu:58:15
    |
 58 |     print(1 * id(mk2()))
-   |                  ^^^^^
+   |               ^^^^^^^^^
 
-error[E0032]: expected `i64`, found `Two<_, bool>`
-  --> E0032-generic-context.sisu:59:18
+error[E0032]: the operands of this comparison have different types
+  --> E0032-generic-context.sisu:59:13
    |
 59 |     print(1 < id(mk2()))
-   |                  ^^^^^
+   |           - ^ --------- `Two<_, bool>`
+   |           |
+   |           `i64`
 
 error[E0032]: expected `i64`, found `Two<_, bool>`
   --> E0032-generic-context.sisu:60:28

@@ -16,4 +16,4 @@ fn main() {
     print(u == if b { x } else { 1 })
     print(s == if b { "a" } else { 1 })
 }
-// deferred (Task 5d report): the plan gives the report of main on line 16: "expected `u8`, found `i64`" at `x`
+// The sides of `==` join with the branches (Task 5d-2): lines 15 to 17 report at the `==`.
