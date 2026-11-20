@@ -730,26 +730,16 @@ impl Checker<'_> {
     }
 
     /// The expectation of the operand `e` beside an operand of type `beside`. An integer literal
-    /// that fits a closed number type `beside` takes that type: it needs no `Int` variable, and it
-    /// joins as the variable would. Any other operand is a member.
+    /// beside a closed number type takes that type: it needs no `Int` variable. It is checked as
+    /// a literal written for that type, which reports one that does not fit, as the join would.
+    /// Any other operand is a member.
     fn beside_closed(&self, e: &ast::Expr, beside: Option<Type>) -> Expectation {
-        let ExprKind::Int { value, .. } = e.kind else {
-            return Expectation::Member;
-        };
-        let fits = match beside.map(|ty| self.table.resolve(ty)) {
-            Some(Type::I64) => true,
-            Some(Type::U8) => (0..=i64::from(u8::MAX)).contains(&value),
-            // Through `i128`, as the literal's own check of an `f64`.
-            #[expect(
-                clippy::cast_precision_loss,
-                clippy::cast_possible_truncation,
-                reason = "the round trip is the check that the `f64` is exact"
-            )]
-            Some(Type::F64) => (value as f64) as i128 == i128::from(value),
-            _ => false,
-        };
-        match beside {
-            Some(ty) if fits => Expectation::Required(self.table.resolve(ty), Origin::None),
+        match beside.map(|ty| self.table.resolve(ty)) {
+            Some(ty @ (Type::I64 | Type::U8 | Type::F64))
+                if matches!(e.kind, ExprKind::Int { .. }) =>
+            {
+                Expectation::Required(ty, Origin::None)
+            }
             _ => Expectation::Member,
         }
     }
