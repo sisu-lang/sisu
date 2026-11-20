@@ -1,13 +1,13 @@
-error[E0032]: expected `string`, found `i64`
- --> E0032-break-nested.sisu:4:15
+error[E0032]: the `break` values of this loop have different types
+ --> E0032-break-nested.sisu:3:19
   |
-4 |           break loop {
-  |  _______________^
-5 | |             if c { break rows "s" }
-  | |                    -------------- this `break` gave the loop the type `string`
-6 | |             break 2
-7 | |         }
-  | |_________^
+3 |     let x = rows: loop {
+  |                   ^^^^
+4 |         break loop {
+5 |             if c { break rows "s" }
+  |                               --- `string`
+6 |             break 2
+  |                   - `i64`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

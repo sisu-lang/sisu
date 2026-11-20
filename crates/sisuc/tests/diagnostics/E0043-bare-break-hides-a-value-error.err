@@ -6,23 +6,13 @@ error[E0043]: `break` has no value, but this `loop` gives one
   |
   = help: give every `break` of this `loop` a value, or none
 
-error[E0032]: expected `string`, found `u8`
- --> E0043-bare-break-hides-a-value-error.sisu:5:57
-  |
-5 |     let x: string = loop { if c { break }; if d { break a }; break a }
-  |            ------ declared as `string` here             ^
-
-error[E0032]: expected `string`, found `u8`
- --> E0043-bare-break-hides-a-value-error.sisu:5:68
-  |
-5 |     let x: string = loop { if c { break }; if d { break a }; break a }
-  |            ------ declared as `string` here                        ^
-
-error[E0032]: the branches of this `if` have different types
- --> E0043-bare-break-hides-a-value-error.sisu:7:42
+error[E0043]: `break` has no value, but this `loop` gives one
+ --> E0043-bare-break-hides-a-value-error.sisu:7:27
   |
 7 |     let y = loop { if c { break }; break if d { 1 } else { "s" } }
-  |                                          ^^     - `i64`    --- `string`
+  |                           ^^^^^    ----------------------------- this `break` gives the loop a value
+  |
+  = help: give every `break` of this `loop` a value, or none
 
-sisu: 4 errors
-sisu: for more on a code, run `sisu explain <code>`: E0032, E0043
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0043

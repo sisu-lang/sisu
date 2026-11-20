@@ -13,4 +13,7 @@ fn main() {
     outer: loop { loop { if c { break outer o?.log() }; break }; break outer }
     let x = loop { if c { break o?.log() }; break }
     print(x)
+    let n: unit? = None
+    let v = a: loop { b: loop { loop { if c { break b }; if c { break a n }; break a } } }
+    print(v)
 }

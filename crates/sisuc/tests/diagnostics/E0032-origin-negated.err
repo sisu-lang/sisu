@@ -1,8 +1,6 @@
-error[E0032]: expected `i64`, found `string`
+error[E0032]: expected `i64` or `f64`, found `string`
   --> E0032-origin-negated.sisu:10:16
    |
- 9 |         if c { break 1 }
-   |                ------- this `break` gave the loop the type `i64`
 10 |         break -"x"
    |                ^^^
 

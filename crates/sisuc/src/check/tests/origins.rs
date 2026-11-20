@@ -73,92 +73,101 @@ fn origin_rows(rows: &[(&str, &str, (u32, u32), Explained)]) {
     );
 }
 
+/// The `break` values of a loop are the members of its join, and each leaf of a value is a
+/// member: an element, a branch or a payload. Members that do not join give E0032 at the `loop`,
+/// with a label at each member (ADR 0052). A `None` in a block joins with `1` to `i64?`.
 #[test]
-fn a_break_origin_should_reach_each_part_of_the_value() {
+fn a_break_value_that_does_not_join_should_be_reported_at_its_loop() {
+    codes(
+        "fn f(c: bool) {\n    let a = loop {\n        if c { break 1 }\n        break { None }\n    }\n    print(a)\n}\nfn main() {\n    f(true)\n}\n",
+        &[(Code::PrintsOptional, (6, 11))],
+    );
     origin_rows(&[
         (
             "an element of a `break` value",
             "fn f(c: bool) {\n    let a = loop {\n        if c { break [1] }\n        break [2, \"x\"]\n    }\n    print(a)\n}\nfn main() {\n    f(true)\n}\n",
-            (4, 19),
-            Explained::Label(3, 16),
-        ),
-        (
-            "a block of a `break` value",
-            "fn f(c: bool) {\n    let a = loop {\n        if c { break 1 }\n        break { None }\n    }\n    print(a)\n}\nfn main() {\n    f(true)\n}\n",
-            (4, 17),
-            Explained::Label(3, 16),
+            (2, 13),
+            Explained::Labels(&[(3, 23), (4, 16), (4, 19)]),
         ),
         (
             "a branch of a `break` value",
             "fn main() {\n    let a = loop {\n        if true { break 1 }\n        break if true { 1 } else { \"x\" }\n    }\n    print(a)\n}\n",
-            (4, 15),
-            Explained::Labels(&[(4, 25), (4, 36)]),
+            (2, 13),
+            Explained::Labels(&[(3, 25), (4, 25), (4, 36)]),
         ),
         (
             "a branch of a `break` value after a `string` branch",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break if d { \"x\" } else { 2 }\n    }\n    print(a)\n}\nfn main() {\n    f(true, true)\n}\n",
-            (4, 15),
-            Explained::Labels(&[(4, 22), (4, 35)]),
+            (2, 13),
+            Explained::Labels(&[(3, 22), (4, 22), (4, 35)]),
         ),
         (
             "a `break` value, the row of S21",
             "fn f(c: bool) {\n    let a = loop {\n        if c { break 1 }\n        break \"x\"\n    }\n    print(a)\n}\nfn main() {\n    f(true)\n}\n",
-            (4, 15),
-            Explained::Label(3, 16),
+            (2, 13),
+            Explained::Labels(&[(3, 22), (4, 15)]),
         ),
         (
             "a `Some` payload in a `break` value, a form that waits",
             "fn f(c: bool) {\n    let a = loop {\n        if c { break Some(1) }\n        break Some(\"x\")\n    }\n    print(a)\n}\nfn main() { f(true) }\n",
-            (4, 20),
-            Explained::Nothing,
+            (2, 13),
+            Explained::Labels(&[(3, 27), (4, 20)]),
         ),
         (
             "an `if` in a `break` value with a hint from its siblings",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break if d { [] } else { \"x\" }\n    }\n    print(a)\n}\nfn main() {\n    f(true, true)\n}\n",
-            (4, 22),
-            Explained::Label(3, 16),
+            (2, 13),
+            Explained::Labels(&[(3, 22), (4, 22), (4, 34)]),
         ),
     ]);
 }
 
+/// An operand of a `break` value is a member of its operator's join, which the loop's join does
+/// not reach (Task 5d-2): an E0032 at an operand has no label from the loop. A `??` and a
+/// `string` leader keep the labels of their own join. An `f64` operand gives its literal sibling
+/// `f64`, and the loop's `1` joins it, as in an `if`.
 #[test]
-fn a_break_origin_should_reach_each_operand_of_the_value() {
+fn an_operand_of_a_break_value_should_get_no_label_from_the_loop() {
+    codes(
+        "fn f(c: bool, x: f64) {\n    let a = loop {\n        if c { break 1 }\n        break x + 1\n    }\n    print(a)\n}\nfn main() { f(true, 1.5) }\n",
+        &[],
+    );
     origin_rows(&[
         (
             "the right operand of `+`",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break 1 + None\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
             (4, 19),
-            Explained::Label(3, 16),
+            Explained::Nothing,
         ),
         (
             "the left operand of `+`",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break None + 1\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
             (4, 15),
-            Explained::Label(3, 16),
+            Explained::Nothing,
         ),
         (
             "a block operand of `+`",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break 1 + { None }\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
             (4, 21),
-            Explained::Label(3, 16),
+            Explained::Nothing,
         ),
         (
             "the right operand of `-`",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break 1 - None\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
             (4, 19),
-            Explained::Label(3, 16),
+            Explained::Nothing,
         ),
         (
             "the left operand of `*`",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break None * 1\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
             (4, 15),
-            Explained::Label(3, 16),
+            Explained::Nothing,
         ),
         (
             "an operand of `+` in an `f64` loop",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1.0 }\n        break None + 1\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
             (4, 15),
-            Explained::Label(3, 16),
+            Explained::Nothing,
         ),
         (
             "an operand of a nested `+`",
@@ -167,14 +176,6 @@ fn a_break_origin_should_reach_each_operand_of_the_value() {
             // An operand is a member of its operator's join (Task 5d-2): the context reaches
             // only the outer operator, so no label explains the type.
             Explained::Nothing,
-        ),
-        (
-            "an `f64` leader of `+` in an `i64` loop",
-            // The operands agree on `f64`, which the loop does not take: the whole operator is
-            // reported (call (c) of Task 5d-2). A `None` beside it is reported as well, below.
-            "fn f(c: bool, x: f64) {\n    let a = loop {\n        if c { break 1 }\n        break x + 1\n    }\n    print(a)\n}\nfn main() { f(true, 1.5) }\n",
-            (4, 15),
-            Explained::Label(3, 16),
         ),
         (
             "an operand of `<`, which the loop does not reach: a comparison has no expected type",
@@ -209,11 +210,11 @@ fn a_break_origin_should_reach_each_operand_of_the_value() {
             Explained::Label(4, 15),
         ),
     ]);
-    // The `None` meets the loop's `i64`, and the operands that are left agree on `f64`
-    // ("Poisoned members"), which the loop does not take.
+    // The `None` is reported in the operator's own join. The operator fails, and a failed member
+    // reports nothing more in the loop's join, as in an `if` of `1` and `x + None`.
     codes(
         "fn f(c: bool, x: f64) {\n    let a = loop {\n        if c { break 1 }\n        break x + None\n    }\n    print(a)\n}\nfn main() { f(true, 1.5) }\n",
-        &[(Code::Mismatch, (4, 15)), (Code::Mismatch, (4, 19))],
+        &[(Code::Mismatch, (4, 19))],
     );
 }
 
@@ -709,23 +710,23 @@ fn an_index_on_a_base_with_no_element_should_state_no_rule() {
     }
 }
 
-/// A fixture in `tests/diagnostics` pins the wording "the outer loop". These rows pin where the
-/// label is: at the first `break` of the loop that gave the type.
+/// The `break` values of a loop in a `break` value are members of the outer loop's join: the
+/// outer loop reports, with a label at each member (ADR 0052). A loop in a `let` is no part of
+/// the value.
 #[test]
-fn a_loop_in_a_break_value_should_label_the_first_break_of_the_outer_loop() {
+fn a_loop_in_a_break_value_should_be_a_member_of_the_outer_loop() {
     origin_rows(&[
         (
             "a loop in the value of a `break`",
             "fn f(c: bool) {\n    let _a = loop {\n        if c { break 1 }\n        break loop { break \"x\" }\n    }\n}\nfn main() { f(true) }\n",
-            (4, 28),
-            Explained::Label(3, 16),
+            (2, 14),
+            Explained::Labels(&[(3, 22), (4, 28)]),
         ),
-        // A loop in a `let` is no part of the value: its `break` is of the loop that reports.
         (
             "a loop in a `let`",
             "fn f(c: bool) {\n    let _a = loop {\n        if c { break 1 }\n        let _y = loop { break \"x\" }\n        break \"y\"\n    }\n}\nfn main() { f(true) }\n",
-            (5, 15),
-            Explained::Label(3, 16),
+            (2, 14),
+            Explained::Labels(&[(3, 22), (5, 15)]),
         ),
     ]);
 }

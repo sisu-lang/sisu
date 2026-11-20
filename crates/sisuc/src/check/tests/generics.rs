@@ -3,6 +3,7 @@
 
 use super::parity::parity_found;
 use super::*;
+use crate::check::join::VALUE_STEPS;
 
 /// The classes the rows name, and an empty `main`, after the line a row tests.
 const DECLS: &str = "class Cell<T> {\n    value: T\n    next: Cell<T>?\n}\nclass Stack<T> {\n    mut top: Cell<T>?\n}\nclass Point {\n    x: i64\n}\nfn main() {}";
@@ -5135,13 +5136,12 @@ fn nested_generic_calls_should_rank_each_expression_once() {
     });
 }
 
-/// An operator nested `d` deep, over integer literals, in an argument that ranks: `int_literal`
-/// answers for the whole subtree at each level. So a walk that is not kept reads each operand
-/// again at each level, and the work grows with the square of the depth (#367). The leaf at the
-/// end is a loop, so that no level is a member of the call's join and the ranking runs. The
-/// context can be a type. The depths are far below the nesting limit of the parser (256), and
-/// small enough for the stack of a debug test thread. One level has no operator inside an
-/// operand, so the counter is checked at two.
+/// An operator nested `d` deep, over integer literals, in an argument of `id`, with a loop as
+/// its leaf. Before Task 5e the argument was ranked, and a walk that was not kept read each
+/// operand again at each level: the work grew with the square of the depth (#367). Now the loop
+/// is a member of the call's join, as each other form is (ADR 0052). So the join's walk of value
+/// positions (`VALUE_STEPS`) counts the work. The context can be a type. The depths are far below
+/// the nesting limit of the parser (256), and small enough for the stack of a debug test thread.
 #[test]
 fn nested_int_literals_should_be_walked_once() {
     crate::on_compiler_stack(|| {
@@ -5153,9 +5153,9 @@ fn nested_int_literals_should_be_walked_once() {
                 open.repeat(depth),
                 close.repeat(depth),
             );
-            INT_LITERAL_STEPS.set(0);
+            VALUE_STEPS.set(0);
             clean(&src);
-            INT_LITERAL_STEPS.get()
+            VALUE_STEPS.get()
         };
         for row in [
             ("let r = ", "1 + (", "loop { break 1 }", ")"),
@@ -6637,11 +6637,13 @@ fn rejecting_the_parameters_of_failed_arguments_should_visit_each_type_once() {
     assert_near_linear(visits(100), visits(150), visits(200));
 }
 
-/// The call is hinted, so each trailing argument reads the origins of its parameter to find out
-/// whether the context bound it. The lead arguments bound them all. Each trailing argument misfits
-/// and names one of n parameters. Reading every origin for each would cost n².
+/// The call is hinted. The lead arguments bind each of its n parameters, and each trailing
+/// argument misfits one of them. Before Task 5e each trailing argument read the origins of its
+/// parameter, and reading every origin for each would cost n². Now each trailing argument is a
+/// member of the call's join (ADR 0052). So the join's walk of value positions (`VALUE_STEPS`)
+/// counts the work, and it grows linearly with n.
 #[test]
-fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
+fn misfitting_arguments_should_be_joined_a_linear_number_of_times() {
     let reads = |n: usize| {
         let params: Vec<_> = (0..n)
             .map(|k| format!("T{k}"))
@@ -6651,12 +6653,10 @@ fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
         let trail: Vec<_> = (0..n).map(|k| format!("_b{k}: T{k}")).collect();
         let args: Vec<_> = (0..n)
             .map(|_| "one()")
-            .chain((0..n).map(|_| "loop { break mk() }"))
+            .chain((0..n).map(|_| "mk()"))
             .collect();
         // The call returns the type parameter `R`, so it waits for its context, and the other
-        // side of `==` hints it: only a hinted call reads the origins (see `Inference::hinted`).
-        // A late argument that waits is a loop: an `if` is a member of the call's join now, and
-        // Task 5e makes a loop one too.
+        // side of `==` hints it.
         let src = format!(
             "class Two<A, B> {{\n    a: A\n    b: B\n}}\nfn one() -> i64 {{ 1 }}\n\
              fn mk<X>() -> Two<X, bool> {{ panic(\"no\") }}\n\
@@ -6666,11 +6666,11 @@ fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
             trail.join(", "),
             args.join(", ")
         );
-        generic::ORIGINS.set(0);
+        VALUE_STEPS.set(0);
         let (_, ds) = checked(&src);
         assert_eq!(ds.len(), n, "{ds:?}");
         assert!(ds.iter().all(|d| d.code() == Code::Mismatch), "{ds:?}");
-        generic::ORIGINS.get()
+        VALUE_STEPS.get()
     };
     assert_near_linear(reads(20), reads(40), reads(60));
 }
@@ -6825,6 +6825,11 @@ const PARITY_ROWS: &[ParityRow<'static>] = &[
     ("", "print(1 + mk2())"),
     ("", "let a: [i64] = [1, mk2()]\nprint(a)"),
     ("", "let y: i64 = loop {\n    break mk2()\n}\nprint(y)"),
+    // The `break` values join: a misfit joins by the type that it found, as its twin does.
+    (
+        "",
+        "let b = true\nprint(loop { if b { break mk2() }; break 1 })",
+    ),
     (
         "",
         "let c = true\nlet y = loop {\n    if c {\n        break 1\n    }\n    break mk2()\n}\nprint(y)",
@@ -7022,19 +7027,16 @@ fn a_clash_with_an_unbound_shape_should_report_the_argument() {
     }
 }
 
-/// A misfit that reaches no code that reports it is not lost. The outer generic call drops the
-/// type that its argument found, so the inner call's E0050 is pushed when the body ends. The
-/// context is a hint, as it is not a type that the user wrote: the payload of `??` for a loop
-/// default. Beside `==` the misfit is a member of the join, which reports E0047 (Task 5d-2).
+/// A misfit in a loop that is the default of `??` is a member of the join of `??`. So is the same
+/// call without the loop. The join reports the two sides, not the inner call's E0050.
 #[test]
-fn a_misfit_that_no_code_reports_should_give_e0050_at_the_call() {
+fn a_misfit_in_a_loop_default_should_be_a_member_of_the_join() {
     with_prelude();
-    // interim: Task 5e makes the loop a member, and the join reports.
     let body = "let o: i64? = None\nprint(o ?? loop { break id(mk2()) })";
     let src = parity_program(("", body), false);
     let (_, found) = parity_found(&src);
     let codes: Vec<_> = found.iter().map(|(code, ..)| *code).collect();
-    assert_eq!(codes, [Code::CannotInfer], "{found:?}");
+    assert_eq!(codes, [Code::Mismatch], "{found:?}");
 }
 
 /// A parameter whose type is an alias that names no type parameter is shown as written, as in
@@ -7209,15 +7211,6 @@ const DEPARTURE_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
     (
         ("", "print(mk2() != mk2())"),
         &[(Code::CannotInfer, (1, 7))],
-    ),
-    // The first `break` gives the loop no type, and the later `break 1` does not report the
-    // misfit that came before it.
-    (
-        (
-            "",
-            "let b = true\nprint(loop { if b { break mk2() }; break 1 })",
-        ),
-        &[(Code::CannotInfer, (2, 27))],
     ),
 ];
 
@@ -7979,10 +7972,12 @@ fn negated_or_later_argument_should_give_the_error_of_its_twin() {
             fill_program("let r: Result<u8, i64> = Ok(-loop { break 2 })"),
             vec![(NegatedU8, (7, 33))],
         ),
+        // The loop takes the type of `k`, and each element is reported, as with an `if` there
+        // (ADR 0052).
         (
             "n557_20",
             fill_program("let r: Result<[u8], i64> = Ok([k, loop { break 2 }])"),
-            vec![(Mismatch, (7, 36))],
+            vec![(Mismatch, (7, 36)), (Mismatch, (7, 39))],
         ),
         (
             "a6",
@@ -8012,7 +8007,7 @@ fn negated_or_later_argument_should_give_the_error_of_its_twin() {
         (
             "a23",
             fill_e_program("let r: Result<u8, i64> = Ok(1 + loop { break k })"),
-            vec![(Mismatch, (8, 50))],
+            vec![(Mismatch, (8, 33))],
         ),
         (
             "d17",
@@ -9035,8 +9030,9 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
 /// GIVEN the hint of `==`, `if`, `match` or `??` on a value that does not fit it
 /// WHEN the program is checked
 /// THEN the code and the position are those of the base, and only the text changes.
-///   An `if` or a `match` whose values do not join reports at its head (ADR 0052). So does an
-///   operator whose operands do not join (Task 5d-2).
+///   An `if`, a `match` or a `loop` whose values do not join reports at its head (ADR 0052). A
+///   nested join reports at the head of the outer one. So does an operator whose operands do not
+///   join (Task 5d-2).
 #[test]
 fn hint_report_should_keep_its_code_and_position_before_and_after() {
     use Code::{BlockAsStatement, Mismatch};
@@ -9044,7 +9040,7 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
         (
             "n538_1",
             report_program("let x = if c == 1 { q } else { loop { break v } }"),
-            vec![(Mismatch, (7, 49))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_2",
@@ -9064,41 +9060,40 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
         (
             "n538_5",
             report_program("let x = match c { 1 => q; _ => loop { break v } }"),
-            vec![(Mismatch, (7, 49))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_6",
             report_program(
                 "let x = if c == 1 { q } else { loop { if c == 2 { break q }; break v } }",
             ),
-            vec![(Mismatch, (7, 72))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_7",
             report_program("let x = q == loop { break v }"),
-            vec![(Mismatch, (7, 31))],
+            vec![(Mismatch, (7, 15))],
         ),
         (
             "n538_8",
             report_program("let x = o ?? loop { break v }"),
-            vec![(Mismatch, (7, 31))],
+            vec![(Mismatch, (7, 15))],
         ),
-        // The loop takes the type `i64` of `q` (Task 5c): the E0032 is at `v`, as in
-        // `if c == 1 { q } else { loop { break v } }`.
+        // The `break` value is a member of the array's join: the E0032 is at the array's head.
         (
             "n538_9",
             report_program("let x = [q, loop { break v }]"),
-            vec![(Mismatch, (7, 30))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_10",
             report_program("let x = loop { if c == 1 { break q }; break loop { break v } }"),
-            vec![(Mismatch, (7, 62))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_11",
             report_program("let x = if c == 1 { o } else { loop { break v } }"),
-            vec![(Mismatch, (7, 49))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_12",
@@ -9108,7 +9103,7 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
         (
             "b10",
             blame_b_program("let x = q < loop { break v }"),
-            vec![(Mismatch, (10, 30))],
+            vec![(Mismatch, (10, 15))],
         ),
         (
             "b12",
@@ -9123,7 +9118,7 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
         (
             "b14",
             blame_b_program("let x: i64? = loop { break v }"),
-            vec![(Mismatch, (10, 32))],
+            vec![(Mismatch, (10, 19))],
         ),
         (
             "b16",
@@ -9132,7 +9127,7 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
         ),
         // valid: the spec gives `pick(a, loop { break 1 })` no error (Generic calls in a join)
         ("538a", REPRO_538_A.to_string(), vec![]),
-        ("538b", REPRO_538_B.to_string(), vec![(Mismatch, (5, 49))]),
+        ("538b", REPRO_538_B.to_string(), vec![(Mismatch, (5, 13))]),
     ];
     error_rows(&rows);
 }

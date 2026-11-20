@@ -1,7 +1,0 @@
-# The cases that a later task of the body-inference plan makes pass. Each line names a test of
-# the `cases` binary, a case under `tests/` and its task: `<test> <case> interim: Task 5<x>`.
-# A parked case still runs, and it must fail. When it passes, its test fails: its task then
-# removes its line. `memory` does not run a case that has a `run` line here.
-run run/generic_loop_argument_kept.sisu interim: Task 5e
-every_program_certifies run/generic_loop_argument_kept.sisu interim: Task 5e
-diagnostics diagnostics/E0043-bare-break-beside-optional-unit.sisu interim: Task 5e

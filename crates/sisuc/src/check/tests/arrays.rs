@@ -162,10 +162,15 @@ fn a_literal_in_a_failed_context_should_still_join_its_elements() {
             "fn main() {\n    let xs: Bad = [\"a\", true]\n}",
             vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (2, 19))],
         ),
-        // A loop in a statement before the element's value keeps its own rules.
+        // A loop in a statement before the element's value reports its own join, as an `if`
+        // there does (ADR 0052).
         (
             "fn main() {\n    let xs: Bad = [{\n        let y: Bad = loop {\n            if true { break 1 }\n            break true\n        }\n        1\n    }]\n}",
-            vec![(Code::UnknownType, (2, 13)), (Code::UnknownType, (3, 16))],
+            vec![
+                (Code::UnknownType, (2, 13)),
+                (Code::UnknownType, (3, 16)),
+                (Code::Mismatch, (3, 22)),
+            ],
         ),
     ] {
         codes(src, &expected);
@@ -174,22 +179,46 @@ fn a_literal_in_a_failed_context_should_still_join_its_elements() {
 
 #[test]
 fn a_part_that_fails_on_its_own_in_a_quiet_element_should_add_no_report() {
-    // GIVEN a loop whose values do not join, in a part of the element that failed first
+    // GIVEN a loop whose values do not join, in a part of the element that failed first, or as
+    // an operand or argument beside it
     let looped = "loop {\n        if true { break 1 }\n        break true\n    }";
-    for (element, at, code) in [
-        (format!("nope + {looped}"), (2, 20), Code::BindingNotFound),
-        (format!("nope ?? {looped}"), (2, 20), Code::BindingNotFound),
-        (format!("nope({looped})"), (2, 20), Code::FunctionNotFound),
+    // The join of the loop reports at (2, n): the head of the outer join, the `+`, or else the
+    // `loop` (ADR 0052).
+    let join = |n| Some((Code::Mismatch, (2, n)));
+    for (element, at, code, own) in [
+        (
+            format!("nope + {looped}"),
+            (2, 20),
+            Code::BindingNotFound,
+            join(25),
+        ),
+        (
+            format!("nope ?? {looped}"),
+            (2, 20),
+            Code::BindingNotFound,
+            join(28),
+        ),
+        (
+            format!("nope({looped})"),
+            (2, 20),
+            Code::FunctionNotFound,
+            join(25),
+        ),
         (
             format!("if true {{ nope }} else {{ {looped} }}"),
             (2, 30),
             Code::BindingNotFound,
+            None,
         ),
     ] {
         // WHEN the element is checked in a literal whose context failed
         let src = format!("fn main() {{\n    let xs: Bad = [{element}]\n}}");
-        // THEN only the failed context and the first failure are reported
-        codes(&src, &[(Code::UnknownType, (2, 13)), (code, at)]);
+        // THEN the failed context, the first failure and the loop's own join are reported
+        let wanted: Vec<_> = [(Code::UnknownType, (2, 13)), (code, at)]
+            .into_iter()
+            .chain(own)
+            .collect();
+        codes(&src, &wanted);
     }
     codes(
         "fn f(b: u8) {\n    let xs: Bad = [nope + loop {\n        if true { break 1 }\n        break b\n    }]\n}\nfn main() {}",
@@ -198,10 +227,11 @@ fn a_part_that_fails_on_its_own_in_a_quiet_element_should_add_no_report() {
             (Code::BindingNotFound, (2, 20)),
         ],
     );
-    // A loop that is the receiver of a field keeps its own report, as with no failed context.
+    // A loop that is the receiver of a field keeps its own report at its head, as an `if` does,
+    // as with no failed context.
     codes(
         &format!("fn main() {{\n    let xs: Bad = [{looped}.x]\n}}"),
-        &[(Code::UnknownType, (2, 13)), (Code::Mismatch, (4, 15))],
+        &[(Code::UnknownType, (2, 13)), (Code::Mismatch, (2, 20))],
     );
 }
 
@@ -1225,8 +1255,8 @@ fn nested_layers(n: usize, (open, close): (&str, &str)) -> String {
     )
 }
 
-/// The expressions that `gives_made_value` and `without_value` visit when `main` is checked,
-/// whose `let` takes `n` nested layers of `layer` around `1`.
+/// The expressions that `without_value` visits when `main` is checked, whose `let` takes `n`
+/// nested layers of `layer` around `1`.
 fn nested_array_walk_steps(n: usize, layer: (&str, &str)) -> usize {
     let src = nested_layers(n, layer);
     VALUE_WALK_STEPS.set(0);

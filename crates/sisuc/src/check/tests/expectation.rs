@@ -31,10 +31,10 @@ const ARRAY_HEAD: (usize, usize) = (4, 15);
 /// GIVEN an array whose context failed, and a later element or branch that does not fit
 /// WHEN the program is checked
 /// THEN it reports the failure, and an element that does not fit an earlier element,
-/// AND a mistake inside a later loop waits for the next run
-/// AND an `if` that joins a `string` with a `[]` is reported at the head of its array
+/// AND an `if` or a `loop` whose values do not join is reported at the head of its array, as a
+///   nested join (ADR 0052)
 #[test]
-fn a_later_mistake_in_a_failed_array_should_wait() {
+fn a_later_mistake_in_a_failed_array_should_be_reported_at_its_head() {
     let rows: Vec<ErrorRow<'_>> = vec![
         (
             "arg if",
@@ -59,12 +59,12 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
         (
             "let loop empty",
             format!("let _x: Missing = [{LS}]"),
-            vec![FAILED_LET],
+            vec![FAILED_LET, (Mismatch, (4, 23))],
         ),
         (
             "let loop mismatch",
             format!("let _x: Missing = [{LM}]"),
-            vec![FAILED_LET],
+            vec![FAILED_LET, (Mismatch, (4, 23))],
         ),
         (
             "let loop none",
@@ -84,12 +84,12 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
         (
             "second loop empty",
             format!("let _x: Missing = [1, {LS}]"),
-            vec![FAILED_LET],
+            vec![FAILED_LET, (Mismatch, (4, 23))],
         ),
         (
             "second loop mismatch",
             format!("let _x: Missing = [1, {LM}]"),
-            vec![FAILED_LET],
+            vec![FAILED_LET, (Mismatch, (4, 23))],
         ),
         (
             "second loop none",
@@ -109,12 +109,12 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
         (
             "operand loop empty",
             format!("print(missing + [{LS}])"),
-            vec![(BindingNotFound, (4, 11))],
+            vec![(BindingNotFound, (4, 11)), (Mismatch, (4, 21))],
         ),
         (
             "operand loop mismatch",
             format!("print(missing + [{LM}])"),
-            vec![(BindingNotFound, (4, 11))],
+            vec![(BindingNotFound, (4, 11)), (Mismatch, (4, 21))],
         ),
         (
             "operand loop none",
@@ -139,25 +139,25 @@ fn a_later_mistake_in_a_failed_array_should_wait() {
 /// AND a mismatch between its `break` values, between the loop and the elements, or between the
 /// branches of an `if` that holds it
 /// WHEN the program is checked
-/// THEN it reports the failure only, and the mismatch waits for the next run
-/// AND a mismatch between two elements that are no loop is reported, as with no loop
+/// THEN it reports the failure and the mismatch at the head of the array, as with no loop: the
+///   `break` values are members of the array's join (ADR 0052)
 #[test]
-fn a_mismatch_with_a_loop_in_a_failed_array_should_wait() {
+fn a_mismatch_with_a_loop_in_a_failed_array_should_be_reported_as_with_no_loop() {
     let rows: Vec<ErrorRow<'_>> = vec![
         (
             "branch loop",
             "let _x: Missing = [if c { loop { break 1 } } else { true }]".to_string(),
-            vec![FAILED_LET],
+            vec![FAILED_LET, (Mismatch, (4, 23))],
         ),
         (
             "nested loop break",
             "let _x: Missing = [loop { if c { break loop { break 1 } }; break \"a\" }]".to_string(),
-            vec![FAILED_LET],
+            vec![FAILED_LET, (Mismatch, (4, 23))],
         ),
         (
             "loop then bool",
             "let _x: Missing = [loop { break 1 }, true]".to_string(),
-            vec![FAILED_LET],
+            vec![FAILED_LET, (Mismatch, (4, 23))],
         ),
         (
             "bool then loop",
@@ -193,7 +193,7 @@ fn an_array_that_did_not_fail_should_keep_its_mistake() {
         // At the head of the array: the `if` is a nested join (ADR 0052).
         ("no failure if", format!("let _x = [{IF}]"), (4, 14)),
         ("no failure second", format!("let _x = [1, {IF}]"), (4, 14)),
-        ("no failure loop", format!("let _x = [{LN}]"), (4, 46)),
+        ("no failure loop", format!("let _x = [{LM}]"), (4, 14)),
         ("typed", format!("let _x: [string] = [{IF}]"), (4, 45)),
     ]
     .into_iter()
@@ -451,16 +451,16 @@ fn a_hint_should_reach_exactly_its_value() {
             vec![],
         ),
         ("empty", "let _a = if c { 1 } else { [] }", e((6, 14))),
+        // The `break` values join to an optional, as the branches of an `if` do (ADR 0052).
         (
             "loop none",
             "let _a = loop { if c { break 1 }; break None }",
-            e((6, 45)),
+            vec![],
         ),
         (
-            // interim: Task 5e gives E0032 at (6, 14)
             "loop value",
             "let _a = if c { 1 } else { loop { break \"a\" } }",
-            e((6, 32)),
+            e((6, 14)),
         ),
         ("coalesce none", "let _a = o ?? None", vec![]),
         ("coalesce empty", "let _a = o ?? []", e((6, 16))),

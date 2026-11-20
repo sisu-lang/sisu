@@ -7,5 +7,3 @@ fn main() {
     let y = loop { if c { break }; break if d { 1 } else { "s" } }
     print(y)
 }
-
-// interim: Task 5e gives E0043 at the bare `break` (Q42)

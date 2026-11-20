@@ -201,39 +201,3 @@ fn reports_at_should_match_the_start_of_a_primary_or_a_secondary_span() {
     assert!(!support::reports_at(json, 7, 8));
     assert!(!support::reports_at(json, 9, 7));
 }
-
-/// GIVEN a case that `tests/parked.txt` parks, and that passes
-/// WHEN `unless_parked` runs it
-/// THEN it panics and says to remove the line of the case
-#[test]
-#[should_panic(expected = "parks it (interim: Task 5e): remove its line")]
-fn unless_parked_should_fail_a_parked_case_that_passes() {
-    let path = Path::new("run/parked_case.sisu");
-    support::unless_parked(Some("interim: Task 5e"), path, true, |_| {});
-}
-
-/// GIVEN a case that `tests/parked.txt` parks, and that fails
-/// WHEN `unless_parked` runs it
-/// THEN it passes, and the case ran with no bless
-#[test]
-fn unless_parked_should_pass_a_parked_case_that_fails() {
-    let path = Path::new("run/parked_case.sisu");
-    let mut runs = Vec::new();
-    support::unless_parked(Some("interim: Task 5e"), path, true, |bless| {
-        runs.push(bless);
-        panic!("the parked case fails");
-    });
-    assert_eq!(runs, [false]);
-}
-
-/// GIVEN a case that `tests/parked.txt` does not park
-/// WHEN `unless_parked` runs it with bless
-/// THEN the case runs once, with bless
-#[test]
-fn unless_parked_should_run_a_case_that_is_not_parked_with_its_bless() {
-    let mut runs = Vec::new();
-    support::unless_parked(None, Path::new("run/case.sisu"), true, |bless| {
-        runs.push(bless);
-    });
-    assert_eq!(runs, [true]);
-}

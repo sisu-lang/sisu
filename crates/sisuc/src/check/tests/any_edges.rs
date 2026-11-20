@@ -223,7 +223,8 @@ fn a_branch_array_that_leaves_its_any_type_should_report_at_the_head() {
             "{PRE}{}",
             "fn main() {\n    let b = true\n    let a: any Shape = Circle(r: 1.0)\n    let r = loop {\n        if b { break a }\n        break Some(Some(Rock(w: 1.0)))\n    }\n    print(0)\n}\n"
         ),
-        &[(Mismatch, (41, 15))],
+        // The `break` values join: E0032 at the `loop` (ADR 0052).
+        &[(Mismatch, (39, 13))],
     );
     codes_row(
         "an `any` of another interface",

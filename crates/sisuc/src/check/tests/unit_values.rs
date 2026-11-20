@@ -700,17 +700,15 @@ fn a_bare_break_beside_a_unit_break_should_give_the_loop_a_unit() {
             "let x = loop { if c { break Some(1) }; break }".into(),
             vec![(Code::NoValue, "break }", false)],
         ),
-        // interim: Task 5e gives E0043 at the bare `break`
         (
             "unit? value",
             "let x = loop { if c { break o?.log() }; break }".into(),
-            vec![],
+            vec![(Code::NoValue, "break }", false)],
         ),
-        // interim: Task 5e gives E0043 at the bare `break`
         (
             "unit? statement",
             "loop { if c { break o?.log() }; break }".into(),
-            vec![],
+            vec![(Code::NoValue, "break }", false)],
         ),
     ];
     rows_in(&rows, with_safe_call, 12);
@@ -765,14 +763,12 @@ fn a_bare_break_beside_a_unit_break_should_add_no_report_to_an_error() {
         (
             "unit? value after a unit value",
             "loop { if c { break g() }; if d { break o?.log() }; break }".into(),
-            // interim: Task 5e gives E0043 at the bare `break`
-            vec![(Code::Mismatch, "o?.log()", false)],
+            vec![(Code::NoValue, "break }", false)],
         ),
         (
             "i64 value after a unit value",
             "loop { if c { break g() }; if d { break 1 }; break }".into(),
-            // interim: Task 5e gives E0043 at the bare `break`
-            vec![(Code::Mismatch, "1 }", false)],
+            vec![(Code::NoValue, "break }", false)],
         ),
         (
             "failed coalesce",

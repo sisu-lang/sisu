@@ -258,20 +258,20 @@ fn a_break_after_a_failed_break_should_wait_for_the_next_run() {
     error_rows(&rows);
 }
 
-/// A `None` before a typed or poisoned value has no type to take, and a true error after a failed
-/// `break` stays. Each row holds before and after the #618 fix.
+/// A `None` before a poisoned value joins with it, as the branches of an `if` do. Before an
+/// optional it takes the optional's type (ADR 0052). A true error after a failed `break` stays.
 #[test]
 fn a_break_that_is_first_or_a_true_error_should_stay_holds_before_and_after() {
     let rows: Vec<ErrorRow<'_>> = [
         (
             "none first",
             "let a = loop { if c { break None }; break yy }",
-            vec![(CannotInfer, (6, 33)), (BindingNotFound, (6, 47))],
+            vec![(BindingNotFound, (6, 47))],
         ),
         (
             "none first, then an optional",
             "let a = loop { if c { break None }; break o }",
-            vec![(CannotInfer, (6, 33))],
+            vec![],
         ),
         (
             "typed after a failed break",
@@ -300,13 +300,12 @@ fn a_break_that_is_first_or_a_true_error_should_stay_holds_before_and_after() {
 /// AND a branch with a `break` of a value, and a later branch with `break None`, to a `loop`
 ///   that was open before the join
 /// WHEN the program is checked
-/// THEN only the failed part reports
-///   (the join checks its branches out of source order. So the `break None` can come before the
-///   `break` that gives the loop its type. It waits for the next run.)
+/// THEN only the failed part reports: the `break` values join in the loop in source order, so the
+///   `break None` joins with the value before it
 /// AND this holds for `if`, `else if`, `if let` and `match`, and for a `break` by a label
-/// AND a first `break None` in a join in a poisoned context waits too: in a poisoned context a
-///   value waits for the next run, as in #617. Before the fix such a `None` gave E0050 at once.
-/// AND a waiting `break` with a value of a type fails the loop, so it gives the loop no type
+/// AND a loop whose only `break` value is `None` gives E0050 at it
+/// AND a loop whose `break` values do not join gives E0032 at the loop
+/// AND these are true errors of the loop's join, as in a context that did not fail (ADR 0052)
 #[test]
 fn a_break_in_a_failed_join_should_wait_for_a_loop_outside_it() {
     let call: Wanted = (ArgumentCount, (5, 20));
@@ -354,14 +353,13 @@ fn a_break_in_a_failed_join_should_wait_for_a_loop_outside_it() {
         (
             "first break none in a failed join",
             "let a = loop { f(if c { if c { break None }; 8 } else { 9 }) }",
-            vec![call],
+            vec![call, (CannotInfer, (5, 42))],
         ),
-        // `m` is a `u8` and `8` is a literal, so `join` reads `expected`, not `carried`: the
-        // branch of literals gets a hint, and it is still in a join in a poisoned context.
+        // The only `break` value of the loop is `None`.
         (
             "branch of literals",
             "let a = loop { f(if c { m } else { if c { break None } else { 8 } }) }",
-            vec![call],
+            vec![call, (CannotInfer, (5, 53))],
         ),
         // The inner join is a join in a poisoned context in a loop that opens inside the outer
         // join in a poisoned context. Its `break` still waits for the first `break` of that loop:
@@ -384,7 +382,7 @@ fn a_break_in_a_failed_join_should_wait_for_a_loop_outside_it() {
         (
             "later break of another type after the join",
             "let a = loop { f(if c { if c { break Some(m) } else { 8 } } else { if c { break 1 }; 8 }); if c { break \"s\" }; break 2 }",
-            vec![call],
+            vec![(Mismatch, (5, 13)), call],
         ),
         (
             "break of a name in a later branch",
@@ -423,15 +421,11 @@ fn a_break_in_a_failed_join_should_keep_its_output_holds_before_and_after() {
             vec![(ArgumentCount, (5, 5)), (CannotInfer, (5, 35))],
         ),
         // E0043: the outer loop has no `break`, so it gives no value. E0053: the call has one
-        // argument. E0050: the inner loop opens inside the join, and its first `break` is `None`.
+        // argument. The inner loop joins `None` and `1` to an optional (ADR 0052).
         (
             "loop with a typed break inside the join",
             "let a = loop { f(if c { 8 } else { let b = loop { if c { break None }; break 1 }; 9 }) }",
-            vec![
-                (NoValue, (5, 13)),
-                (ArgumentCount, (5, 20)),
-                (CannotInfer, (5, 68)),
-            ],
+            vec![(NoValue, (5, 13)), (ArgumentCount, (5, 20))],
         ),
         (
             "valid coalesce",
@@ -527,8 +521,9 @@ fn a_typed_poisoned_break_value_should_give_its_loop_the_type() {
         ),
         (
             "with a declared type",
+            // The poisoned value has no span of its own in the join: E0032 at its `break`.
             typed_break_program("let a: bool = loop { break h() }; print(a)"),
-            vec![(ArgumentCount, (4, 32)), (Mismatch, (4, 32))],
+            vec![(Mismatch, (4, 26)), (ArgumentCount, (4, 32))],
         ),
         (
             "with two wrong arguments",
@@ -548,19 +543,20 @@ fn a_typed_poisoned_break_value_should_give_its_loop_the_type() {
 /// GIVEN a `loop` with a `break` of a call with the wrong count of arguments, typed `i64`
 /// AND another `break` of a value of another type, or with no value
 /// WHEN the program is checked
-/// THEN the second `break` is a true error against the type of the first one, in either order
+/// THEN the values do not join: a true error at the `loop` in either order, as at the head of an
+///   `if` (ADR 0052), or at the bare `break`
 #[test]
 fn a_typed_poisoned_break_value_should_join_with_the_other_breaks() {
     let rows: Vec<ErrorRow<'_>> = vec![
         (
             "a bool after it",
             typed_break_program("let a = loop { if c { break h() }; break true }; print(a)"),
-            vec![(ArgumentCount, (4, 33)), (Mismatch, (4, 46))],
+            vec![(Mismatch, (4, 13)), (ArgumentCount, (4, 33))],
         ),
         (
             "a bool before it",
             typed_break_program("let a = loop { if c { break true }; break h() }; print(a)"),
-            vec![(ArgumentCount, (4, 47)), (Mismatch, (4, 47))],
+            vec![(Mismatch, (4, 13)), (ArgumentCount, (4, 47))],
         ),
         (
             "a bare break before it",
@@ -656,6 +652,7 @@ fn a_break_with_a_failed_value_should_be_never_in_its_branch() {
 /// AND other rows: a typed value outside a loop, a block that never ends, a value after a `None`
 /// WHEN the program is checked
 /// THEN the errors are as they were before the fix of #651
+/// AND where the loop has an `if` or block twin, it gives the errors of its twin (ADR 0052)
 #[test]
 fn an_untyped_break_value_should_fail_the_loop_holds_before_and_after() {
     let rows: Vec<ErrorRow<'_>> = vec![
@@ -671,15 +668,17 @@ fn an_untyped_break_value_should_fail_the_loop_holds_before_and_after() {
         ),
         (
             "a block that never ends",
+            // E0043 at the `loop`, as at its block twin `let a = { return; h() }`.
             "fn h(x: i64) -> i64 { x }\nfn main() {\n    let a = loop { break { return; h() } }\n    print(a + true)\n}\n"
                 .into(),
-            vec![(ArgumentCount, (3, 36))],
+            vec![(NoValue, (3, 13)), (ArgumentCount, (3, 36))],
         ),
         (
             "a none first",
+            // The `None` joins with `h()` to `i64?`, as in `if c { None } else { h() }`.
             "fn h(x: i64) -> i64 { x }\nfn f(c: bool) {\n    let a = loop {\n        if c { break None }\n        break h()\n    }\n    print(a + true)\n}\nfn main() {}\n"
                 .into(),
-            vec![(CannotInfer, (4, 22)), (ArgumentCount, (5, 15))],
+            vec![(ArgumentCount, (5, 15)), (Mismatch, (7, 11))],
         ),
     ];
     error_rows(&rows);

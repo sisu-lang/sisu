@@ -408,7 +408,6 @@ crates/sisuc/src/check/tests/mod.rs::unknown_method
 crates/sisuc/src/check/tests/mod.rs::unknown_name
 crates/sisuc/src/check/tests/mod.rs::unknown_optional_type_underlines_the_name
 crates/sisuc/src/check/tests/mod.rs::unknown_param_type_still_checks_body
-crates/sisuc/src/check/tests/mod.rs::unknown_return_type_checks_no_break
 crates/sisuc/src/check/tests/mod.rs::unknown_target_suppresses_never_reassigned
 crates/sisuc/src/check/tests/mod.rs::unknown_target_suppresses_warnings_in_every_open_scope
 crates/sisuc/src/check/tests/mod.rs::unknown_type

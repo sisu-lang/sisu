@@ -5,5 +5,3 @@ fn main() {
     let x = loop { if c { break a }; break b }
     print(x)
 }
-
-// interim: Task 5e gives the join report of ADR 0052 at the loop

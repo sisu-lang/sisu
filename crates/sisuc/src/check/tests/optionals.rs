@@ -1099,9 +1099,12 @@ fn a_default_of_a_value_that_is_not_optional_should_offer_its_removal() {
         row(
             "C12",
             "let v = loop { let x = a ?? break \"s\"; if x > 1 { break 5 } }; print(v)",
+            // The `break` values do not join: E0032 at the `loop`, with a label at each value
+            // (ADR 0052).
             vec![
+                Report::new(Code::Mismatch, ("v = ", "loop"))
+                    .secondary(&[("?? break ", "\"s\""), ("{ break ", "5")]),
                 none(("x = ", "a")),
-                Report::new(Code::Mismatch, ("break ", "5")).secondary(&[("?? ", "break \"s\"")]),
             ],
         ),
         row(

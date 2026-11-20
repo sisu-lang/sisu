@@ -788,7 +788,7 @@ fn push_should_check_nested_receivers_in_linear_steps() {
     assert_near_linear(checks(4), checks(8), checks(12));
 }
 
-/// A `break` in a `push` leaves a `loop` that gives an `i64?`. The widened loop wraps the value.
+/// A `break` in a `push` leaves a `loop` that gives an `i64?`. The loop's join wraps the value.
 /// It does so when the `break` is in the pushed value, in the pushed value of a `?.push`, and when
 /// it is in the index of the array.
 #[test]

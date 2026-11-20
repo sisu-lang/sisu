@@ -10,7 +10,7 @@ help: drop it on purpose
 3 |     if c { let _ = None } else { let _ = loop { break 1 } }
   |            +++++++               +++++++
 
-warning[W0004]: unused value of type `i64`
+warning[W0004]: unused value of type `i64?`
  --> W0004-branch-own-type.sisu:3:26
   |
 3 |     if c { None } else { loop { break 1 } }

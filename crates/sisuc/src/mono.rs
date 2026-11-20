@@ -2127,13 +2127,6 @@ mod tests {
             if !(name.starts_with("generic_") && path.extension().is_some_and(|e| e == "sisu")) {
                 continue;
             }
-            // A parked run case does not check yet: its `run` test is its guard.
-            let parked = include_str!("../tests/parked.txt")
-                .lines()
-                .any(|line| line.starts_with(&format!("run run/{name} ")));
-            if parked {
-                continue;
-            }
             seen += 1;
             let src = std::fs::read_to_string(&path).expect("a case should be readable");
             assert_concrete(&instantiated(&src));

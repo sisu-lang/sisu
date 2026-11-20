@@ -589,22 +589,17 @@ fn poisoned_member_should_report_nothing_more() {
                 (Code::CannotInfer, (1, 40)),
             ],
         ),
-        // interim: Task 5e gives [(FunctionNotFound, (1, 16)), (NoValue, (1, 34))]
         (
             "let x = loop { prnt(\"a\"); if c { break }; break None }",
-            &[
-                (Code::FunctionNotFound, (1, 16)),
-                (Code::CannotInfer, (1, 49)),
-            ],
+            &[(Code::FunctionNotFound, (1, 16)), (Code::NoValue, (1, 34))],
         ),
         (
             "let x = [loop { prnt(\"a\"); break a }, 1]\nlet y: [u8] = x",
             &[(Code::FunctionNotFound, (1, 17))],
         ),
-        // interim: Task 5e gives [(FunctionNotFound, (1, 21))]
         (
             "let x = pick(loop { prnt(\"a\"); break a }, 1)\nlet y: u8 = x",
-            &[(Code::FunctionNotFound, (1, 21)), (Code::Mismatch, (1, 38))],
+            &[(Code::FunctionNotFound, (1, 21))],
         ),
         (
             "let x = [loop { prnt(\"a\"); break a }, o]\nlet y: [u8?] = x",
@@ -1667,37 +1662,16 @@ fn break_values_should_join_in_each_order() {
         ("let x = loop { if c { break a }; break 1 }", "u8"),
         ("let x = loop { if c { break a }; break id(1) }", "u8"),
         ("let x = loop { if c { break id(a) }; break 1 }", "u8"),
+        ("let x = loop { if c { break 1 }; break a }", "u8"),
+        ("let x = loop { if c { break 1 + 2 }; break a }", "u8"),
+        ("let x = loop { if c { break id(1) }; break a }", "u8"),
+        ("let x = loop { if c { break 1 }; break id(a) }", "u8"),
     ]);
     // AND a loop whose body failed is `[u8?]`, which a later `let` reports
-    body_rows(&[
-        // interim: Task 5e gives [(FunctionNotFound, (1, 16)), (Mismatch, (2, 17))]
-        (
-            "let x = loop { prnt(\"a\"); if c { break [a] }; break [o] }\nlet y: string = x",
-            &[(Code::FunctionNotFound, (1, 16)), (Code::Mismatch, (1, 54))],
-        ),
-    ]);
-    body_rows(&[
-        // interim: Task 5e gives no error, and `x` is `u8`
-        (
-            "let x = loop { if c { break 1 }; break a }",
-            &[(Code::Mismatch, (1, 40))],
-        ),
-        // interim: Task 5e gives no error, and `x` is `u8`
-        (
-            "let x = loop { if c { break 1 + 2 }; break a }",
-            &[(Code::Mismatch, (1, 44))],
-        ),
-        // interim: Task 5e gives no error, and `x` is `u8`
-        (
-            "let x = loop { if c { break id(1) }; break a }",
-            &[(Code::Mismatch, (1, 44))],
-        ),
-        // interim: Task 5e gives no error, and `x` is `u8`
-        (
-            "let x = loop { if c { break 1 }; break id(a) }",
-            &[(Code::Mismatch, (1, 40))],
-        ),
-    ]);
+    body_rows(&[(
+        "let x = loop { prnt(\"a\"); if c { break [a] }; break [o] }\nlet y: string = x",
+        &[(Code::FunctionNotFound, (1, 16)), (Code::Mismatch, (2, 17))],
+    )]);
 }
 
 #[test]
@@ -1705,13 +1679,10 @@ fn loop_under_a_required_type_should_report_once_when_the_break_values_agree() {
     // GIVEN a loop whose `break` values `a, b: u8` agree, under a required `string`
     // WHEN it is checked
     // THEN it reports one E0032 at the whole loop
-    body_rows(&[
-        // interim: Task 5e gives [(Mismatch, (1, 17))]
-        (
-            "let x: string = loop { if c { break a }; break b }",
-            &[(Code::Mismatch, (1, 37)), (Code::Mismatch, (1, 48))],
-        ),
-    ]);
+    body_rows(&[(
+        "let x: string = loop { if c { break a }; break b }",
+        &[(Code::Mismatch, (1, 17))],
+    )]);
 }
 
 #[test]
@@ -1740,22 +1711,12 @@ fn negation_of_an_open_integer_should_wait_for_its_type() {
 }
 
 #[test]
-fn loop_three_operators_deep_should_take_i64_until_task_5e() {
+fn loop_three_operators_deep_should_join_as_its_break_value() {
     // GIVEN a loop that is an operand two operators below the operand of a join
     // WHEN it is checked
-    // THEN the loop takes `i64`: the test for a late operand looks one operator deep
-    body_rows(&[
-        // interim: Task 5e gives no error
-        (
-            "let s: f64 = 1 + (1 + (1 + loop { break 1 }))",
-            &[(Code::Mismatch, (1, 14))],
-        ),
-        // interim: Task 5e gives no error
-        (
-            "let x5 = a + (2 + (3 + loop { break 3 }))",
-            &[(Code::Mismatch, (1, 12))],
-        ),
-    ]);
+    // THEN it is valid: its `break` value is a member of the operators' join
+    body_rows(&[("let s: f64 = 1 + (1 + (1 + loop { break 1 }))", &[])]);
+    type_rows(&[("let x = a + (2 + (3 + loop { break 3 }))", "u8")]);
 }
 
 #[test]
@@ -1764,40 +1725,29 @@ fn bare_break_should_require_a_unit_of_each_break_value() {
     // WHEN each is checked
     // THEN each reports one E0043 at the bare `break`, and nothing for the values
     body_rows(&[
-        // interim: Task 5e gives [(NoValue, (1, 23))]
         (
             "let x = loop { if c { break }; break None }",
-            &[(Code::CannotInfer, (1, 38))],
+            &[(Code::NoValue, (1, 23))],
         ),
-        // interim: Task 5e gives [(NoValue, (1, 30))]
         (
             "let x = if c { loop { if d { break }; break None } } else { Some(u()) }",
-            &[(Code::CannotInfer, (1, 45))],
+            &[(Code::NoValue, (1, 30))],
         ),
-        // interim: Task 5e gives [(NoValue, (1, 30))]
         (
             "let x = if c { loop { if c { break }; break None } } else { o }",
-            &[(Code::CannotInfer, (1, 45))],
+            &[(Code::NoValue, (1, 30))],
         ),
-        // interim: Task 5e gives [(NoValue, (1, 23))]
         (
             "let x = loop { if c { break }; break if d { None } else { Some(print(\"a\")) } }",
-            &[],
+            &[(Code::NoValue, (1, 23))],
         ),
-        // interim: Task 5e gives [(NoValue, (1, 31))]
         (
             "let x: string = loop { if c { break }; if d { break a }; break a }",
-            &[
-                (Code::NoValue, (1, 31)),
-                (Code::Mismatch, (1, 53)),
-                (Code::Mismatch, (1, 64)),
-            ],
+            &[(Code::NoValue, (1, 31))],
         ),
-        // interim: Task 5e gives [(NoValue, (1, 23))]
         (
             "let x = loop { if c { break }; break if d { 1 } else { \"s\" } }",
-            // The `if` reports its own conflict at its head (ADR 0052).
-            &[(Code::Mismatch, (1, 38))],
+            &[(Code::NoValue, (1, 23))],
         ),
     ]);
 }

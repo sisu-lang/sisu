@@ -43,13 +43,6 @@ pub(crate) const SEARCH_SEEDS: u64 = 16 * SEEDS;
 /// `seed`: a shell step cannot call a test-only function.
 pub(crate) const FUZZ_SEEDS: u64 = 128;
 const SEED_LEN: usize = 4_096;
-/// Seeds whose programs `main` accepts and the branch rejects with an E0032 (interim: Task 5e).
-/// Each holds a loop beside a hint whose `break` gives an optional that its form does not show,
-/// such as `break ([o][0])`. The walk leaves them out, and `parked_seeds_should_fail_to_check`
-/// fails when one checks. Task 5e then removes it, and `PARKED_KEYS` with the last seed.
-const PARKED_SEEDS: &[u64] = &[34531, 43555, 50142];
-/// The key that only the programs of `PARKED_SEEDS` hold: it waits for them (interim: Task 5e).
-const PARKED_KEYS: &[&str] = &[];
 
 /// What no generated program holds, and why.
 const EXCLUDED: &[(&str, &str)] = &[
@@ -336,8 +329,9 @@ const REACH: &[&str] = &[
 /// The keys that the forms of `Gen::gap_forms` mark. `Generated::plain` leaves the forms out, so
 /// the universe has no `GAP_RULES` key. The nightly reads the seeds `0..FUZZ_SEEDS` and no others,
 /// so `generated_programs_should_reach_each_gap_rule` reads the `program` of those.
-const WIDENS: &str = "reach: a `break` value converts to the type that its loop grew to, and no nested `break` targets that loop";
-const CROSSES: &str = "reach: the widening of a `break` crosses a nested loop";
+const WIDENS: &str = "reach: a `break` value converts to the type of its loop's join, and no nested `break` targets that loop";
+const CROSSES: &str =
+    "reach: the walk that puts back the `break` values of a loop crosses a nested loop";
 const OBJECT_IN_SOME: &str = "reach: the checker runs `object_in_some`";
 const OWN_PUSH: &str = "reach: a `.push` reads a place of a type that is no array";
 const PUSHED_VALUE: &str = "reach: the checker runs `pushed_value`";
@@ -3949,9 +3943,6 @@ fn inexact(e: &tir::Expr) -> bool {
 fn walk_until(least: u64, done: impl Fn(&Walk) -> bool) -> Walk {
     let mut walk = Walk::default();
     search_seeds(least, |n| {
-        if PARKED_SEEDS.contains(&n) {
-            return done(&walk);
-        }
         let generated = generate(&seed(n));
         walk.mut_lens = generated.mut_lens.into_iter().collect();
         walk.program(&generated.plain);
@@ -3960,30 +3951,17 @@ fn walk_until(least: u64, done: impl Fn(&Walk) -> bool) -> Walk {
     walk
 }
 
-/// GIVEN the program of each parked seed
-/// WHEN the checker checks it
-/// THEN it reports an error, until the task that `PARKED_SEEDS` names
-#[test]
-fn parked_seeds_should_fail_to_check() {
-    for &n in PARKED_SEEDS {
-        let (_, diagnostics) = crate::front_end::checked(&generate(&seed(n)).plain);
-        assert!(
-            (diagnostics.iter()).any(|d| d.severity() == Severity::Error),
-            "seed {n} checks: remove it from `PARKED_SEEDS`"
-        );
-    }
-}
-
 /// Seeds whose programs `main` accepts and that once failed to check on the branch. In 33, the
 /// context decided a call's type before its own arguments. Two hold a block argument with a
 /// nested block. In 23, a type parameter of the caller has the name of the callee's. In 14, a loop
-/// beside a hint breaks a `None`.
+/// beside a hint breaks a `None`. In 3, a loop beside a hint breaks an optional that its form does
+/// not show, such as `break ([o][0])`.
 const ACCEPTED_SEEDS: &[u64] = &[
     75, 85, 87, 97, 118, 128, 226, 288, 313, 314, 356, 365, 379, 388, 404, 408, 423, 466, 494, 527,
     578, 580, 596, 667, 735, 745, 784, 788, 794, 903, 916, 995, 1012, 12023, 51950, 7138, 8193,
     8980, 9928, 15045, 18070, 23316, 24710, 26474, 30475, 34915, 37612, 42874, 48275, 53226, 53329,
     54407, 55756, 56810, 58720, 59300, 60727, 63829, 8907, 12203, 17382, 25403, 31220, 31305,
-    43168, 46088, 54491, 57020, 57280, 59201, 59907, 60088,
+    43168, 46088, 54491, 57020, 57280, 59201, 59907, 60088, 34531, 43555, 50142,
 ];
 
 /// GIVEN the program of each seed of `ACCEPTED_SEEDS`
@@ -4183,11 +4161,7 @@ fn every_variant_should_be_generated() {
     );
     let absent = |seen: &FxHashSet<String>| -> Vec<&String> {
         (universe.iter())
-            .filter(|key| {
-                !seen.contains(*key)
-                    && !named.contains(&key.as_str())
-                    && !PARKED_KEYS.contains(&key.as_str())
-            })
+            .filter(|key| !seen.contains(*key) && !named.contains(&key.as_str()))
             .collect()
     };
     let seen = walk_until(2 * SEEDS, |walk| absent(&walk.seen).is_empty()).seen;
@@ -6566,9 +6540,10 @@ fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
 
 /// GIVEN a program with a `loop` in the value of a `let` and breaks of the kinds in the table
 /// WHEN the walk reads it
-/// THEN the key of a widening, of a crossing and of `object_in_some` are marked as the table
-/// says, each one when the checker did that work: a written `Some(..)` or a `None` first gives the
-/// typed tree of the checker's wrap, but `wrap_breaks` does nothing for it
+/// THEN the key of a conversion and of a crossing are marked as the table says, each one when the
+/// checker did that work
+/// AND the loop's join converts each value that it lifts, in any order
+/// AND a written `Some(..)` gives the typed tree of a wrap that the join did not make
 #[test]
 #[expect(clippy::too_many_lines, reason = "one table of whole programs")]
 fn a_loop_key_should_mark_what_the_checker_did() {
@@ -6600,13 +6575,12 @@ fn a_loop_key_should_mark_what_the_checker_did() {
         "{joined_to_any}fn main() {{\n let a: any I = A()\n let y = ({{\n let mut c = 1\n{}\n }})\n print(1)\n}}",
         flat(&["A()", "a"])
     );
-    let rows: Vec<(&str, String, bool, bool, bool)> = vec![
-        ("no loop", "fn main() {}".to_string(), false, false, false),
-        ("1, None", typed(&flat(&["1", "None"])), true, false, false),
+    let rows: Vec<(&str, String, bool, bool)> = vec![
+        ("no loop", "fn main() {}".to_string(), false, false),
+        ("1, None", typed(&flat(&["1", "None"])), true, false),
         (
             "Some(1), None",
             typed(&flat(&["Some(1)", "None"])),
-            false,
             false,
             false,
         ),
@@ -6615,105 +6589,68 @@ fn a_loop_key_should_mark_what_the_checker_did() {
             typed(&flat(&["Some (1)", "None"])),
             false,
             false,
-            false,
         ),
         (
             "Option.Some(1), None",
             typed(&flat(&["Option.Some(1)", "None"])),
             false,
             false,
-            false,
         ),
-        ("None, 1", typed(&flat(&["None", "1"])), false, false, false),
+        ("None, 1", typed(&flat(&["None", "1"])), true, false),
         (
             "None, 1, None",
             typed(&flat(&["None", "1", "None"])),
-            false,
-            false,
-            false,
-        ),
-        (
-            "o, 1, None",
-            typed(&flat(&["o", "1", "None"])),
-            false,
-            false,
-            false,
-        ),
-        ("1, o", typed(&flat(&["1", "o"])), true, false, false),
-        (
-            "1, Some(2)",
-            typed(&flat(&["1", "Some(2)"])),
             true,
             false,
-            false,
         ),
+        ("o, 1, None", typed(&flat(&["o", "1", "None"])), true, false),
+        ("1, o", typed(&flat(&["1", "o"])), true, false),
+        ("1, Some(2)", typed(&flat(&["1", "Some(2)"])), true, false),
         (
             "an inner loop that no break leaves",
             typed(inner_loop),
             true,
             false,
-            false,
         ),
-        ("crossed", typed(crossed), false, true, false),
+        ("crossed", typed(crossed), false, true),
         (
             "crossed, the value inside",
             typed(value_inside),
             false,
-            false,
-            false,
+            true,
         ),
         (
             "crossed, None first in the text",
             typed(none_first),
             false,
-            false,
-            false,
+            true,
         ),
         (
             "a written u8?",
             program(" let o: u8? = 200\n", Some("u8?"), &flat(&["o", "6"])),
-            false,
-            false,
-            false,
-        ),
-        (
-            "untyped, o, 6",
-            untyped(&flat(&["o", "6"])),
-            false,
-            false,
             true,
+            false,
         ),
+        ("untyped, o, 6", untyped(&flat(&["o", "6"])), true, false),
         (
             "untyped, o, Some(6)",
             untyped(&flat(&["o", "Some(6)"])),
             false,
             false,
-            false,
         ),
-        (
-            "untyped, o, v",
-            untyped(&flat(&["o", "v"])),
-            false,
-            false,
-            true,
-        ),
+        ("untyped, o, v", untyped(&flat(&["o", "v"])), true, false),
         (
             "untyped, Some(1), 2",
             untyped(&flat(&["Some(1)", "2"])),
-            false,
-            false,
             true,
+            false,
         ),
-        ("a join to any", any_program, true, false, false),
+        ("a join to any", any_program, true, false),
     ];
-    for (row, source, widens, crosses, object_in_some) in rows {
+    for (row, source, widens, crosses) in rows {
         let mut walk = Walk::default();
         walk.program(&source);
-        for (key, want) in [
-            (WIDENS, widens),
-            (CROSSES, crosses),
-            (OBJECT_IN_SOME, object_in_some),
-        ] {
+        for (key, want) in [(WIDENS, widens), (CROSSES, crosses)] {
             assert_eq!(walk.seen.contains(key), want, "row `{row}`, key `{key}`");
         }
     }
@@ -7158,7 +7095,7 @@ let j = if c { a } else {
 }
 print(j.seen())
 }",
-            &["seeded_join for a loop"],
+            &[],
         ),
         (
             "an array of objects beside an array of `any`",
@@ -9481,7 +9418,7 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::ReadLine
             | tir::ExprKind::Index { .. }
             | tir::ExprKind::Slice { .. }
-            | tir::ExprKind::Loop(_)
+            | tir::ExprKind::Loop { .. }
             | tir::ExprKind::Break { .. }
             | tir::ExprKind::Continue { .. }
             | tir::ExprKind::Return(_)

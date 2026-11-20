@@ -1,4 +1,5 @@
 use super::*;
+use crate::check::join::VALUE_STEPS;
 use crate::diagnostic::explanations::apply;
 use crate::diagnostic::{Code, Fix};
 use crate::front_end::{PRELUDE_SOURCE, checked_with, prelude_program};
@@ -1765,7 +1766,7 @@ fn loop_type(src: &str) -> Type {
         .value
         .as_ref()
         .expect("the `loop` should be the body's value");
-    assert!(matches!(lp.kind, tir::ExprKind::Loop(_)), "{program}");
+    assert!(matches!(lp.kind, tir::ExprKind::Loop { .. }), "{program}");
     lp.ty
 }
 
@@ -1788,7 +1789,8 @@ fn optional_value_after_payload_widens_the_loop() {
     assert_eq!(loop_type(src), Type::optional(Type::I64));
 }
 
-/// A widened loop wraps its `T` values but not a `never` one, which has no value to wrap.
+/// A loop whose join gives an optional wraps its `T` values but not a `never` one, which has no
+/// value to wrap.
 #[test]
 fn widening_leaves_a_never_value_unwrapped() {
     let src = "fn f(c: bool) -> i64? {\n    loop {\n        if c { break panic(\"x\") }\n        if c { break 5 }\n        break None\n    }\n}\nfn main() {}";
@@ -1797,8 +1799,8 @@ fn widening_leaves_a_never_value_unwrapped() {
     assert!(!printed.contains("(wrap (panic"), "{printed}");
 }
 
-/// The walk that wraps a widened loop's values enters a nested loop only when a `break` in
-/// one targets the widened loop: `break loop { ... }` at every level stays linear.
+/// The walk that puts back the values of a loop's join enters a nested loop only when a `break`
+/// in one targets the outer loop: `break loop { ... }` at every level stays linear.
 #[test]
 fn widening_walk_enters_only_crossed_loops() {
     let entered = |label: &str, inner: &str| {
@@ -1823,13 +1825,46 @@ fn bare_break_walk_should_stay_linear_in_nested_loops() {
         for _ in 0..depth {
             e = format!("loop {{ if c {{ break g() }}; {e}; break }}");
         }
-        FILL_STEPS.set(0);
+        VALUE_STEPS.set(0);
         lowered(&format!(
             "fn g() {{}}\nfn f(c: bool) {{ {e} }}\nfn main() {{}}"
         ));
-        FILL_STEPS.get()
+        VALUE_STEPS.get()
     };
     assert_near_linear(steps(20), steps(40), steps(60));
+}
+
+/// The walk that puts back a loop's `break` values enters a nested loop only when a `break` in
+/// one targets the outer loop: a loop in an array in each loop stays linear. So does the same
+/// nest where each inner loop also breaks to the outermost loop, whose walk enters each once.
+#[test]
+fn value_walk_should_stay_linear_in_nested_loops() {
+    let steps = |depth: usize, crossing: bool| {
+        let mut e = "1".to_string();
+        for level in (0..depth).rev() {
+            let label = if crossing && level == 0 {
+                "outer: "
+            } else {
+                ""
+            };
+            let cross = if crossing && level > 0 {
+                "if c { break outer 2 }; "
+            } else {
+                ""
+            };
+            e = format!("{label}loop {{ let _x = [{e}]; {cross}break 1 }}");
+        }
+        VALUE_STEPS.set(0);
+        lowered(&format!("fn f(c: bool) -> i64 {{ {e} }}\nfn main() {{}}"));
+        VALUE_STEPS.get()
+    };
+    for crossing in [false, true] {
+        assert_near_linear(
+            steps(16, crossing),
+            steps(40, crossing),
+            steps(64, crossing),
+        );
+    }
 }
 
 /// `??` expects a `T` or a `T?` of its right side, so the loop keeps its values' `i64`.
@@ -1893,11 +1928,17 @@ fn failed_value_reports_once() {
     );
 }
 
-/// An unknown return type reports once: no `break` value is checked against it.
+/// An unknown return type reports once: no `break` value is checked against it. The `break`
+/// values still join: `1` and `"x"` do not, and the loop reports at its head, as an `if` of the
+/// two does (ADR 0052). `1` and `2` join, so that loop reports nothing.
 #[test]
-fn unknown_return_type_checks_no_break() {
+fn unknown_return_type_should_check_no_break_value_against_it() {
     codes(
         "fn f(c: bool) -> Missing {\n    loop {\n        if c { break 1 }\n        break \"x\"\n    }\n}\nfn main() {}",
+        &[(Code::UnknownType, (1, 18)), (Code::Mismatch, (2, 5))],
+    );
+    codes(
+        "fn f(c: bool) -> Missing {\n    loop {\n        if c { break 1 }\n        break 2\n    }\n}\nfn main() {}",
         &[(Code::UnknownType, (1, 18))],
     );
 }
