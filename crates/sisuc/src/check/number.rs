@@ -325,10 +325,14 @@ impl Checker<'_> {
         lhs: (&ast::Expr, &Checked),
         rhs: (&ast::Expr, &Checked),
     ) {
-        // `f64.nan` is the only member that checks to a `nan`.
+        // `f64.nan` is the only member that checks to a `nan`. Beside an `f64?` the join wraps it.
         let is_nan = |(e, checked): (&ast::Expr, &Checked)| {
+            let value = checked.as_ref().ok().map(|checked| match &checked.kind {
+                tir::ExprKind::Wrap(inner) => &inner.kind,
+                kind => kind,
+            });
             matches!(e.kind, ast::ExprKind::Field { .. })
-                && matches!(checked, Ok(tir::Expr { kind: tir::ExprKind::Float(x), .. }) if x.is_nan())
+                && matches!(value, Some(tir::ExprKind::Float(x)) if x.is_nan())
         };
         let other = if is_nan(lhs) {
             rhs

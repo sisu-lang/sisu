@@ -359,6 +359,15 @@ impl Checker<'_> {
                         .map(|operand| match operand.kind {
                             // `-1.5` is one literal, as it reads.
                             tir::ExprKind::Float(x) => tir::ExprKind::Float(-x),
+                            // An integer literal that the context types `f64` is one too, as the
+                            // write-back makes it (see `float_literals`).
+                            #[expect(
+                                clippy::cast_precision_loss,
+                                reason = "E0104 has checked that the literal is exact"
+                            )]
+                            tir::ExprKind::Int(x) if operand.ty == Type::F64 => {
+                                tir::ExprKind::Float(-(x as f64))
+                            }
                             _ => tir::ExprKind::Unary {
                                 op: *op,
                                 operand: Box::new(operand),
@@ -371,7 +380,7 @@ impl Checker<'_> {
                 op_span,
                 lhs,
                 rhs,
-            } => self.binary(e.span, (*op, *op_span), lhs, rhs, expected, false),
+            } => self.binary(e.span, (*op, *op_span), lhs, rhs, expected, (false, None)),
             ExprKind::Compare { operands, ops } => self.compare(e.span, operands, ops),
             ExprKind::If {
                 cond,
@@ -1123,14 +1132,11 @@ pub(super) fn if_some(
     )
 }
 
-/// Whether `e` is a form that a join does not convert yet: an operator, a `??` or a loop that a
-/// `break` leaves. As a member, it is checked as a made value, with no type expected. A loop that
-/// no `break` leaves never ends: it has no value, as a `return`.
+/// Whether `e` is a form that a join does not convert yet: a loop that a `break` leaves (until
+/// Task 5e). As a member, it is checked as a made value, with no type expected. A loop that no
+/// `break` leaves never ends: it has no value, as a `return`.
 pub(super) fn made_value(e: &ast::Expr) -> bool {
-    matches!(
-        e.kind,
-        ExprKind::Binary { .. } | ExprKind::Coalesce { .. } | ExprKind::Loop { breaks: true, .. }
-    )
+    matches!(e.kind, ExprKind::Loop { breaks: true, .. })
 }
 
 /// Whether `e` holds a join of branches whose leaves the join around it settles: an `if` or an
@@ -1172,18 +1178,22 @@ pub(super) fn nested_join(e: &ast::Expr) -> bool {
 /// array element in it. Its value is that of its block, branches and arms. A call with
 /// such an argument waits for its join, as the made value does (see `takes_member`). The
 /// branches of `e` then join by the order of their ranks, not as members of one join (see
-/// `Checker::branches`). A `-` of a value that is not a literal counts too: in a branch it is not
-/// a member until Task 5d.
+/// `Checker::branches`). A `-` of a made value counts too.
 pub(super) fn gives_made_value(e: &ast::Expr) -> bool {
     ensure_stack(|| {
         #[cfg(test)]
         super::VALUE_WALK_STEPS.set(super::VALUE_WALK_STEPS.get() + 1);
         made_value(e)
             || match &e.kind {
+                // An operator with a made value as its operand is one too, with no walk below it.
                 ExprKind::Unary {
                     op: UnaryOp::Neg,
                     operand,
-                } => !matches!(operand.kind, ExprKind::Int { .. }),
+                } => made_value(operand),
+                ExprKind::Binary { lhs, rhs, .. } | ExprKind::Coalesce { lhs, rhs } => {
+                    made_value(lhs) || made_value(rhs)
+                }
+                ExprKind::Compare { operands, .. } => operands.iter().any(made_value),
                 ExprKind::If {
                     then_block,
                     else_block,

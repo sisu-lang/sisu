@@ -1182,9 +1182,7 @@ fn member_type(value: &Checked) -> Option<Type> {
 pub(super) fn target(at: Place, hole: Option<Symbol>, ty: Type) -> Type {
     match (at, hole) {
         (Place::Part { place, .. }, Some(hole)) => fill(place, hole, ty),
-        // The left side of `??`: its payload is the member, so the left side takes `ty?`.
-        (Place::Part { .. }, None) => Type::optional(ty),
-        (Place::Whole | Place::Split { .. }, _) => ty,
+        (Place::Part { .. } | Place::Whole | Place::Split { .. }, _) => ty,
     }
 }
 

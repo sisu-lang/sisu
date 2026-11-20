@@ -779,20 +779,13 @@ impl Checker<'_> {
         .unwrap_or(open)
     }
 
-    /// Whether each of `spans` is a number literal. A number literal states no type: its type came
-    /// from a hint, and a conversion of it fixes nothing (deferred, see the Task 5d report: the
-    /// plan gives the report of `main`).
-    fn number_literals(&self, spans: &[Span]) -> bool {
-        (spans.iter()).all(|&at| {
-            self.source
-                .text(at)
-                .starts_with(|c: char| c.is_ascii_digit())
-        })
-    }
-
     /// The E0032 of a join that has no candidate: its groups in the order of the source, the
     /// parts of its arguments, the declared interfaces that fit each member, and the fix. It is
     /// `pub(super)` so that a test reads its fields, which the diagnostic text hides.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one pass over the groups gives the shown types, and the fix reads them"
+    )]
     pub(super) fn conflict_kind(
         &mut self,
         site: Site,
@@ -804,6 +797,7 @@ impl Checker<'_> {
         let mut shown: Vec<Shown> = Vec::new();
         let mut index: FxHashMap<Type, usize> = FxHashMap::default();
         let known = self.known_group(conflict);
+        let left = matches!(site.form, JoinForm::Coalesce).then(|| site.heading.whole.start());
         for group in &conflict.groups {
             let open = self.table.resolve(group.ty).holds_infer();
             if open
@@ -830,7 +824,10 @@ impl Checker<'_> {
                 shown.len() - 1
             };
             shown[at].leaves.extend(&group.leaves);
-            shown[at].whole.extend(&group.whole);
+            // The left member of `??` is the read of its payload: no edit of its text converts it.
+            shown[at]
+                .whole
+                .extend((group.whole.iter()).filter(|span| Some(span.start()) != left));
         }
         for one in &mut shown {
             one.leaves.sort_by_key(|&span| place(span));
@@ -848,8 +845,7 @@ impl Checker<'_> {
         let conversion = if shown.len() == 2 && parts.is_empty() {
             (0..2).find_map(|want| {
                 let (want, got) = (&shown[want], &shown[1 - want]);
-                let (to, through) =
-                    widening(want.ty, got.ty).filter(|_| !self.number_literals(&got.whole))?;
+                let (to, through) = widening(want.ty, got.ty)?;
                 // A value that is no whole value, such as a leaf of a nested join, has no wrap.
                 (got.whole.len() == got.leaves.len()).then(|| {
                     JoinFix::Convert(

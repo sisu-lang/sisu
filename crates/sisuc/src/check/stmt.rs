@@ -119,6 +119,26 @@ impl Checker<'_> {
             ..
         } = so_far;
         self.pop_scope();
+        // A failed block hands up no `tir`, so no join around it can settle its tail's join: the
+        // tail settles it alone, as the one member of its join.
+        let ty = match (ty, &failed, tail(block)) {
+            (Some(open), Some(_), Some(e))
+                if expected == Expectation::Member
+                    && self.table.resolve(open).holds_infer()
+                    && let Some((form, head)) = self.own_join(e)
+                    && let Some(tir::Stmt::Expr(value)) = stmts.pop() =>
+            {
+                let mut values = [Ok(value)];
+                let joined =
+                    self.join_operands(form, head, (&[e], &mut values), None, |_, _, _| None);
+                let [value] = values;
+                if let Ok(value) = value {
+                    stmts.push(tir::Stmt::Expr(value));
+                }
+                joined.ok().map(|joined| self.table.resolve(joined))
+            }
+            _ => ty,
+        };
         let ty = match (ty, failed) {
             (Some(ty), None) => ty,
             // A tail that rejected `expected` fails the block, unless a `never` came first: then

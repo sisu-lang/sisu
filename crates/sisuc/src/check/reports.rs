@@ -42,34 +42,10 @@ pub(super) struct Held {
 }
 
 impl Held {
-    /// Keeps only the reports of `code`, and no promise: each report kept is an error that keeps
-    /// every promise.
-    pub(super) fn only(mut self, code: Code) -> Held {
-        self.reports.retain(|d| d.code() == code);
-        self.promises.clear();
-        self
-    }
-
     /// Adds the reports and the promises of `other` after the ones held.
     pub(super) fn absorb(&mut self, other: Held) {
         self.reports.extend(other.reports);
         self.promises.extend(other.promises);
-    }
-
-    /// Adds a report that no list holds yet, after the ones held.
-    pub(super) fn push(&mut self, d: Diagnostic) {
-        self.reports.push(d);
-    }
-
-    /// Puts `d` in place of the first report held.
-    pub(super) fn replace_first(&mut self, d: Diagnostic) {
-        self.reports[0] = d;
-    }
-
-    /// Drops the reports and the promises held, for good.
-    pub(super) fn clear(&mut self) {
-        self.reports.clear();
-        self.promises.clear();
     }
 }
 
@@ -136,20 +112,6 @@ impl Diagnostics {
             reports: self.list.drain(mark.reports..).collect(),
             promises: self.promises.drain(mark.promises..).collect(),
         }
-    }
-
-    /// Adds each report of `held` that no report after `mark` repeats (the same code at the same
-    /// span), and the promises of `held`. Each error added counts again.
-    pub(super) fn restore_new(&mut self, held: Held, mark: Mark) {
-        for d in held.reports {
-            let again = self.list[mark.reports..]
-                .iter()
-                .any(|r| r.code() == d.code() && r.span() == d.span());
-            if !again {
-                self.add(d);
-            }
-        }
-        self.promises.extend(held.promises);
     }
 
     /// Adds the reports and the promises of `held` at the end. Each error counts again.

@@ -453,7 +453,7 @@ impl Checker<'_> {
 
     /// Whether `members` all have one type that `want`, a required optional, lifts: then they
     /// keep that type, as the value of a block does, and the context lifts the whole value.
-    fn lifted_whole(&self, members: &[JoinMember<'_>], want: Type) -> bool {
+    pub(super) fn lifted_whole(&self, members: &[JoinMember<'_>], want: Type) -> bool {
         let mut types = (members.iter())
             .filter_map(JoinMember::ty)
             .map(|ty| self.table.resolve(ty))
@@ -467,7 +467,7 @@ impl Checker<'_> {
     /// Whether `members` all have one known type other than `want`. Then they keep that type, as
     /// the value of a block does. The context reports the whole value once, with its own code
     /// (E0094 for a `char` in arithmetic). A misfit counts with the type it found.
-    fn agreed_whole(&self, members: &[JoinMember<'_>], want: Type) -> bool {
+    pub(super) fn agreed_whole(&self, members: &[JoinMember<'_>], want: Type) -> bool {
         // A failed member has reported, so the members do not agree. A misfit has not.
         if (members.iter()).any(|member| matches!(member.value, Err(Poisoned { found: None, .. })))
         {
@@ -525,7 +525,12 @@ impl Checker<'_> {
     /// Closes the open variables of `ty`, the type of a join at `at` that is no member. A value
     /// with no type to meet closes them so (see `close_open`). A hint first gives an open `Int` its
     /// type, as it gives a literal. Each variable that the close defaults is bound to its default.
-    fn close_join(&mut self, ty: Type, at: Span, expected: Expectation) -> Result<Type, Poisoned> {
+    pub(super) fn close_join(
+        &mut self,
+        ty: Type,
+        at: Span,
+        expected: Expectation,
+    ) -> Result<Type, Poisoned> {
         match expected {
             Expectation::Member | Expectation::Required(..) => return Ok(ty),
             Expectation::Hint { want, .. } => {
@@ -1137,7 +1142,7 @@ pub(super) fn branch_expectation(expected: Expectation, tail: Option<&ast::Expr>
 }
 
 /// Each of `values`, the value of the branch at its span in `spans`, as a whole member of a join.
-fn whole_members<'a>(values: &'a mut [Checked], spans: &[Span]) -> Vec<JoinMember<'a>> {
+pub(super) fn whole_members<'a>(values: &'a mut [Checked], spans: &[Span]) -> Vec<JoinMember<'a>> {
     (values.iter_mut().zip(spans))
         .map(|(value, &label)| JoinMember {
             value,

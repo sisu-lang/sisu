@@ -738,8 +738,6 @@ thread_local! {
     /// How many closure entries have been indexed, and how many entries of an interface have been
     /// read for the name of an associated type, on this thread.
     pub(super) static LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many dropped locals the rollback of a string join has visited on this thread.
-    pub(super) static ROLLBACK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The points of the checker that this thread has reached since `Walk::program` cleared them.
     pub(crate) static POINTS: std::cell::RefCell<FxHashSet<&'static str>> = std::cell::RefCell::default();
 }
@@ -1115,6 +1113,11 @@ struct Body {
     /// parameters of its call (Q28): a method call with arguments in it waits (see
     /// `takes_member`).
     closed_place: bool,
+    /// Whether a call checked as a member needs the type of a sibling. It could not infer a type
+    /// parameter, or it had an argument at an associated type that only its join decides.
+    /// Nothing checks that argument again. So `==` and the default of `??` check that side again
+    /// after the other, with its type (see `Checker::equal`).
+    needs_context: bool,
     /// The argument that its call checks late at a place that is not a bare type parameter. A part
     /// of that place is still open. A result there that clashes with a known part is E0032, as on
     /// `main` (see `Checker::known_context`).
@@ -1169,9 +1172,6 @@ struct Body {
     /// The constant whose value is being checked, where interpolation is not known and a
     /// conversion that can fail is an error.
     in_constant: Option<ConstantSite>,
-    /// Each `+` found to join a `string` under an expected `u8`, which a later check of it
-    /// checks with no expected type.
-    joins: FxHashSet<Span>,
     /// How many writes the body has checked; a binding's `written` is this count at its last.
     writes: u32,
     /// `writes` at the last write rooted at `self`; 0 for none.

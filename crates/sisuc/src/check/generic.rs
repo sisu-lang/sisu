@@ -3218,6 +3218,7 @@ impl Checker<'_> {
                     .resolve(param.subst(&listed_all(&call)))
                     .holds_infer() =>
                 {
+                    self.body.needs_context |= expected == Expectation::Member;
                     mark(self.operand(&arg.value, Expectation::Poisoned))
                 }
                 // An associated type with no choice: the conformance reported it.
@@ -4191,6 +4192,10 @@ impl Checker<'_> {
     /// with arguments waits: it meets its parameter type, so that the part that is wrong is
     /// reported (`h(true, C().m("s", 1))` at `"s"`). So does such a call in an argument that
     /// waits at such a place, as `h(true, id(c?.m("s", 1)))` (`Body::closed_place`).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm for each form of expression that can be a member"
+    )]
     fn takes_member(&mut self, e: &ast::Expr, closed: bool) -> Option<Expectation> {
         use ast::ExprKind as K;
         match &e.kind {
@@ -4298,7 +4303,20 @@ impl Checker<'_> {
                 op: ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Eq | ast::BinaryOp::Ne,
                 ..
             } => Some(Expectation::Member),
-            K::MethodCall { .. } | K::Binary { .. } | K::Coalesce { .. } | K::Loop { .. } => None,
+            // A `-` is a member when its operand is: it converts at its top.
+            K::Unary {
+                op: ast::UnaryOp::Neg,
+                operand,
+            } => self
+                .takes_member(operand, closed)
+                .map(|_| Expectation::Member),
+            // An arithmetic operator is a member when its operands are: it converts at its top.
+            K::Binary { lhs, rhs, .. } => (self.takes_member(lhs, closed).is_some()
+                && self.takes_member(rhs, closed).is_some())
+            .then_some(Expectation::Member),
+            // A `??` is a member when its default is: the left side is optional by itself.
+            K::Coalesce { rhs, .. } => self.takes_member(rhs, closed).map(|_| Expectation::Member),
+            K::MethodCall { .. } | K::Loop { .. } => None,
             _ => Some(Expectation::Member),
         }
     }
@@ -5350,6 +5368,8 @@ impl Checker<'_> {
 
     /// Reports the call of `sig` that binds nothing to its parameter at `param`.
     fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: usize) -> Reported {
+        // A sibling's type may give the parameter: `==` and `??` check this side again with it.
+        self.body.needs_context = true;
         let in_result = sig.ret.is_some_and(|ret| names_outside_assoc(ret, param));
         let kind = OpenParam::of(sig, param).kind(in_result);
         self.error(kind)
