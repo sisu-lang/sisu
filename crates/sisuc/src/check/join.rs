@@ -22,6 +22,8 @@ use crate::types::MARK_INDEX;
 
 #[cfg(test)]
 thread_local! {
+    /// How many waiting parameters `open_waits` has read, on this thread.
+    pub(super) static WAITS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many candidates `join` has tested, on this thread.
     pub(super) static CANDIDATES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many value positions `settle` has settled, on this thread.
@@ -521,6 +523,8 @@ impl Checker<'_> {
         calls.sort_unstable_by_key(|&(span, k)| (span.start(), std::cmp::Reverse(span.end()), k));
         let mut first = None;
         for (span, k) in calls {
+            #[cfg(test)]
+            WAITS_READ.set(WAITS_READ.get() + 1);
             let var = self.body.waits[&span][k].0;
             let open_here = self.table.open_roots(var);
             if open_here.iter().any(|r| roots.contains(r)) {

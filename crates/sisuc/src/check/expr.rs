@@ -24,6 +24,12 @@ use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeKind};
 use crate::types::{HOLE_INDEX, REJECTED_INDEX};
 
+#[cfg(test)]
+thread_local! {
+    /// How many `Int` variables `int_variable` has made, on this thread.
+    pub(super) static INT_VARIABLES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// A jump that failed where its value is read is `Error`, not a `never`: its own diagnostic is
 /// the one report of the mistake, and a `never` would also fail every place that needs a value
 /// with E0043. A jump statement keeps the `never`, so the code after it is still unreachable.
@@ -202,6 +208,8 @@ impl Checker<'_> {
 
     /// A new `Int` variable, made at the literal of `check`, whose fit waits for its type.
     pub(super) fn int_variable(&mut self, check: LiteralCheck) -> Type {
+        #[cfg(test)]
+        INT_VARIABLES.set(INT_VARIABLES.get() + 1);
         let ty = self.table.fresh(Kind::Int, check.span);
         self.table.literal(ty, check);
         ty

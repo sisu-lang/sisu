@@ -1,0 +1,32 @@
+// GIVEN a generic call whose argument is a call or a method call
+// AND that argument leaves a type parameter open
+// AND the call is a side of `==`, `!=` or `??`, an element or a branch beside a `u8?`
+// WHEN the program runs
+// THEN each open parameter is `u8`, as the other side gives it, and each value is as written
+fn id<T>(x: T) -> T { x }
+fn first<T>(_xs: [T]) -> T? { None }
+fn pick<T>(a: T, _b: T) -> T { a }
+
+struct B {
+    v: i64
+    fn make<T>(self, _c: bool) -> [T] { [] }
+    fn opt<T>(self, _c: bool) -> T? { None }
+    fn get<T>(self) -> T? { None }
+}
+
+fn main() {
+    let b = B(v: 1)
+    let o: u8? = None
+    let s: u8? = 7
+    let c = b.v == 1
+    print(id(first(b.make(true))) == o)                    // true
+    print(id(first(b.make(true))) != s)                    // true
+    print(id(id(first(b.make(c)))) == s)                   // false
+    print((s ?? id(first(b.make(true)))) == s)             // true
+    print(id(b.opt(true)) == o)                            // true
+    print(pick(b.get(), b.get()) == s)                     // false
+    print(Some(pick(b.opt(true), b.opt(true))) == Some(o)) // true
+    print([id(first(b.make(true))), s].len())              // 2
+    let v = if c { id(first(b.make(true))) } else { s }
+    print(v == o)                                          // true
+}

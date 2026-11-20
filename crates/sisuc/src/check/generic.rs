@@ -1172,6 +1172,9 @@ thread_local! {
     /// How many expressions `takes_member` has walked on this thread, those it answers from
     /// `body.members` not counted.
     pub(super) static MEMBER_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many entries of a call's lone arguments `note_lone_arg` has read, written or added on
+    /// this thread.
+    pub(super) static LONE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `waits_for` has unified the type of a waiting call with its context on this
     /// thread.
     pub(super) static WAIT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -3613,6 +3616,8 @@ impl Checker<'_> {
         if let Some(ret) = ret {
             let (_, args) = (self.body.lone_args.entry(call)).or_insert_with(|| (ret, Vec::new()));
             let (t, at, ty) = arg;
+            #[cfg(test)]
+            LONE_STEPS.set(LONE_STEPS.get() + 1 + (t + 1).saturating_sub(args.len()));
             if args.len() <= t {
                 args.resize(t + 1, None);
             }

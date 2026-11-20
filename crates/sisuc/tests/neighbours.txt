@@ -122,6 +122,14 @@ struct Hb {
 fn hput<S: Source>(_v: S.Elem) -> S? { None }
 fn hpick<T>(a: T, _b: T) -> T { a }
 fn opr() -> Pr? { None }
+// A method call that leaves its parameter open, inside a generic call: only the join around the
+// outer call decides it.
+struct Bm {
+    v: i64
+    fn make<T>(self, _c: bool) -> [T] { [] }
+    fn opt<T>(self, _c: bool) -> T? { None }
+}
+fn nfirst<T>(_xs: [T]) -> T? { None }
 class Sn {
     name: string?
 }
@@ -548,6 +556,14 @@ let _a = Hb(a: hput($))
 let mut _a = opr(); _a = hput($)
 w: loop { let _a = [hput(if c { break w } else { $ }), opr()]; break }
 for _i in [1] { let _a = [opr(), hput(if c { continue } else { $ })] }
+# A method call that leaves its parameter open, two calls down in a side of `==`, `!=` and `??`,
+# an element and a branch, beside the value: the value gives the parameter its type.
+let _a = id(nfirst(Bm(v: 1).make(c))) == $
+let _a = $ != id(nfirst(Bm(v: 1).make(c)))
+let _a = $ ?? id(nfirst(Bm(v: 1).make(c)))
+let _a = [id(nfirst(Bm(v: 1).make(c))), $]
+let _a = if c { id(nfirst(Bm(v: 1).make(c))) } else { $ }
+let _a = hpick(Bm(v: 1).opt(c), Bm(v: 1).opt(c)) == $
 # A call of a `mut self` method on each value: bare, on a `let mut` copy, on the binding of a
 # `let`-`else` and of an `if let`, in the argument of a generic call, of `Some` and of a join, on an
 # element, through `?.` and on a field. The last is a plain generic method that shares its name

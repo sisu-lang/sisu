@@ -554,3 +554,24 @@ fn a_negated_u8_should_offer_a_conversion() {
         },
     ]);
 }
+
+/// GIVEN an integer literal beside a closed `u8` operand: `x == 1`, `o ?? 1` with `o: u8?`, and
+///   `n += 1`
+/// WHEN each is checked
+/// THEN the literal takes `u8` before its check, and no `Int` variable is made
+#[test]
+fn literal_beside_a_closed_operand_should_make_no_int_variable() {
+    for (row, line) in [
+        ("x == 1", "let r = x == 1\n    print(r)"),
+        ("o ?? 1", "let r = o ?? 1\n    print(r)"),
+        ("n += 1", "let mut n = x\n    n += 1\n    print(n)"),
+    ] {
+        let src = format!(
+            "fn f(x: u8, o: u8?) {{\n    {line}\n    print(o == None)\n    print(x)\n}}\n\
+             fn main() {{ f(2, None) }}"
+        );
+        expr::INT_VARIABLES.set(0);
+        clean_row(row, &src);
+        assert_eq!(expr::INT_VARIABLES.get(), 0, "row `{row}`");
+    }
+}

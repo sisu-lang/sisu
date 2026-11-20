@@ -1,5 +1,5 @@
 // GIVEN a call argument at an associated type that only the join around the call decides
-// AND a counted member comes before the call, and the argument holds a `return`, a `break`, a
+// AND a live counted member comes before the call, and the argument holds a `return`, a `break`, a
 // `continue` or a `?? return`
 // WHEN the program runs with the jump taken and not taken
 // THEN the jump leaves as written, and the value is as when no jump is taken
@@ -25,7 +25,7 @@ fn puts<S: Source>(_s: string, _v: S.Item) -> S? {
 }
 
 fn mk(name: string) -> Named? {
-    if name.len() == 99 { Named(v: name) } else { None }
+    if name.len() != 99 { Named(v: name) } else { None }
 }
 
 fn some(c: bool, name: string) -> string? {
@@ -139,15 +139,15 @@ fn main() {
     let name = "n{[1].len()}"
     for c in [true, false] {
         print(element(c, name))           // 1, then 2
-        print(equal(c, name))             // 3, then 4
-        print(default(c, name))           // 6, then 7
+        print(equal(c, name))             // 3, then 5
+        print(default(c, name))           // 8, then 8: the default does not run
         print(for_continue(c, name))      // 0, then 7
         print(while_break(c, name))       // 1, then 6
-        print(match_arm(c, name))         // 9, then 10
+        print(match_arm(c, name))         // 9, then 11
         print(wrapped(c, name))           // 12, then 14
         print(coalesce_return(c, name))   // 15, then 2
         print(match_in_argument(c, name)) // 16, then 2
-        print(field_under_if(c, name))    // 17, then 18
+        print(field_under_if(c, name))    // 17, then 19
         print(assignment(c, name))        // 20, then 2
         print(coalesce_continue(c, name)) // 0, then 9
         print(two_held(c, name))          // 21, then 3

@@ -1,0 +1,15 @@
+fn first<T>(_xs: [T]) -> T? { None }
+fn make<T>(_c: bool) -> [T] { [] }
+
+struct B {
+    v: i64
+    fn make<T>(self, _c: bool) -> [T] { [] }
+}
+
+fn main() {
+    let b = B(v: 1)
+    let o: u8? = None
+    let x: u8 = o ?? first(b.make(true))
+    let y: u8 = o ?? first(make(true))
+    print(x + y)
+}

@@ -2504,20 +2504,24 @@ fn held_arguments_with_no_type_should_keep_the_check_linear() {
 /// level. The first sizes fail fast on a count that doubles; the parser takes nesting up to 256,
 /// and a level of `(o ?? first(b.make(...))) == o` is six.
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table of rows, each a shape of side"
+)]
 fn a_side_checked_again_should_keep_the_checks_linear_in_depth() {
     const SOURCE: &str = "interface Source {\n    type Item\n    fn first(self) -> Item\n}\n\
         struct Pair: Source, Eq {\n    type Item = bool\n    v: bool\n    fn first(self) -> bool { self.v }\n}\n\
         fn put<S: Source>(v: S.Item) -> S? { None }\nfn zu<T>() -> u8 { 1 }\nfn zb<T>() -> bool { true }\n\
         fn put2<S: Source>(a: bool, v: S.Item) -> S? { None }\n\
         fn putb<S: Source>(v: S.Item, a: bool) -> S? { None }\n\
-        struct B {\n    v: bool\n    fn make<T>(self, c: bool) -> [T] { [] }\n    fn none<T>(self) -> [T] { [] }\n}\n\
+        struct B {\n    v: bool\n    fn make<T>(self, c: bool) -> [T] { [] }\n    fn none<T>(self) -> [T] { [] }\n    fn opt<T>(self, c: bool) -> T? { None }\n}\n\
         fn first<T>(xs: [T]) -> T? { None }\nfn first2<T>(xs: [T], c: bool) -> T? { None }\n\
         fn zb1<T>(a: bool) -> bool { a }\nfn make<T>(a: bool) -> [T] { [] }\n\
-        fn mk2<T>(b: bool) -> T? { None }\nfn mk<T, U>(b: U) -> T? { None }\n";
+        fn mk2<T>(b: bool) -> T? { None }\nfn mk<T, U>(b: U) -> T? { None }\nfn id<T>(x: T) -> T { x }\n";
     let nest = |depth: usize, inner: &str, wrap: &dyn Fn(&str) -> String| {
         (0..depth).fold(inner.to_owned(), |side, _| wrap(&side))
     };
-    let rows: [(&str, &dyn Fn(usize) -> String); 18] = [
+    let rows: [(&str, &dyn Fn(usize) -> String); 20] = [
         ("`put(...) == ob`", &|d| {
             nest(d, "true", &|s| format!("put({s}) == ob"))
         }),
@@ -2569,6 +2573,14 @@ fn a_side_checked_again_should_keep_the_checks_linear_in_depth() {
                 format!("(o ?? first(B(v: true).make({s}))) == o")
             })
         }),
+        ("`id(first(b.make(...))) == o`", &|d| {
+            nest(d, "true", &|s| {
+                format!("id(first(B(v: true).make({s}))) == o")
+            })
+        }),
+        ("`id(b.opt(...)) == o`", &|d| {
+            nest(d, "true", &|s| format!("id(B(v: true).opt({s})) == o"))
+        }),
         ("`first(make(...)) == o`", &|d| {
             nest(d, "true", &|s| format!("first(make({s})) == o"))
         }),
@@ -2598,5 +2610,90 @@ fn a_side_checked_again_should_keep_the_checks_linear_in_depth() {
         };
         assert_near_linear_for(&format!("{row}: "), checks(2), checks(4), checks(6));
         assert_near_linear_for(&format!("{row}: "), checks(14), checks(28), checks(42));
+    }
+}
+
+/// The header of `a_call_inside_a_member_call_should_take_its_type_from_the_join`.
+const MEMBER_CALLS: &str = "fn id<T>(x: T) -> T { x }\nfn first<T>(xs: [T]) -> T? { None }\n\
+    fn pick<T>(a: T, b: T) -> T { a }\nfn make<T>(c: bool) -> [T] { [] }\n\
+    struct B {\n    v: i64\n    fn make<T>(self, c: bool) -> [T] { [] }\n\
+    fn opt<T>(self, c: bool) -> T? { None }\n    fn get<T>(self) -> T? { None }\n}\n\
+    fn main() {\n    let b = B(v: 1)\n    let o: u8? = None\n    let c = b.v == 1\n";
+
+/// GIVEN a generic call whose argument is a call, a method call or an array literal
+/// AND that argument leaves a type parameter open
+/// AND the call is a side of `==`, `!=` or `??`, an element or a branch beside `o: u8?`
+/// WHEN each is checked
+/// THEN the other side gives the open parameter its type at each depth, as on `main`
+/// AND the call with no context still reports E0050 at `make`
+#[test]
+fn a_call_inside_a_member_call_should_take_its_type_from_the_join() {
+    for value in [
+        "id(first(b.make(true))) == o",
+        "o == id(first(b.make(true)))",
+        "id(first(b.make(true))) != o",
+        "id(id(first(b.make(true)))) == o",
+        "(o ?? id(first(b.make(true)))) == o",
+        "o ?? id(first(b.make(true)))",
+        "id(b.opt(true)) == o",
+        "pick(b.get(), b.get()) == o",
+        "pick(b.opt(true), b.opt(true)) == o",
+        "o == pick(b.opt(true), b.opt(true))",
+        "pick(b.opt(true), b.opt(true)) != o",
+        "o ?? pick(b.opt(true), b.opt(true))",
+        "Some(pick(b.opt(true), b.opt(true))) == Some(o)",
+        "pick(first(b.make(true)), None) == o",
+        "[id(first(b.make(true))), o]",
+        "if c { id(first(b.make(true))) } else { o }",
+        "if c { pick(b.opt(true), b.opt(true)) } else { o }",
+        "[id(first(b.make(true)))] == [o]",
+        "id(first(b.make(true))) == Some(3)",
+        "[pick(b.opt(true), b.opt(true)), o]",
+        "pick(b.make(true), b.make(true)) == [o]",
+        "id(first(make(true))) == o",
+    ] {
+        let src = format!("{MEMBER_CALLS}    let _x = {value}\n    print(c)\n}}");
+        clean_row(value, &src);
+    }
+    let src = format!("{MEMBER_CALLS}    let x = id(first(b.make(true)))\n    print(x)\n}}");
+    codes(&src, &[(Code::CannotInfer, (15, 24))]);
+}
+
+/// GIVEN `n` lines `let wK = [id(mk2())]`: each is a call that waits with a parameter left open
+/// AND `n` valid lines `let wK = [id(mko()), o]`, then `n` lines `let zK = [None]`
+/// AND one more line that reports, for `n` = 50, 100 and 150
+/// WHEN each is checked
+/// THEN the waiting parameters that `open_waits` reads grow in step with `n`: a value reads only
+///   the calls inside it, and a call that reports or has no open parameter is not read again
+#[test]
+fn open_waits_should_read_each_waiting_call_once() {
+    const HEADER: &str = "struct Two<A, B> {\n    a: A\n    b: B\n}\n\
+        fn mk2<X>() -> Two<X, bool> { panic(\"no\") }\nfn mko<X>() -> X? { None }\n\
+        fn id<V>(v: V) -> V { v }\nfn main() {\n    let o: u8? = None\n    print(o == None)\n";
+    let reports = |n: usize| -> String {
+        (0..n).fold(String::new(), |text, k| {
+            text + &format!("    let _w{k} = [id(mk2())]\n")
+        })
+    };
+    let settled = |n: usize| -> String {
+        let valid = (0..n).fold(String::new(), |text, k| {
+            text + &format!("    let _w{k} = [id(mko()), o]\n")
+        });
+        let open = (0..n).fold(String::new(), |text, k| {
+            text + &format!("    let _z{k} = [None]\n")
+        });
+        // One call that reports, so that each count reads it.
+        valid + &open + "    let _r = [id(mk2())]\n"
+    };
+    let rows: [(&str, &dyn Fn(usize) -> String); 2] =
+        [("reports", &reports), ("settled, then `[None]`", &settled)];
+    for (row, lines) in rows {
+        let read = |n: usize| {
+            let src = format!("{HEADER}{}}}", lines(n));
+            join::WAITS_READ.set(0);
+            drop(diags(&src));
+            join::WAITS_READ.get()
+        };
+        assert_near_linear_for(&format!("{row}: "), read(50), read(100), read(150));
     }
 }

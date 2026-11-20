@@ -5125,6 +5125,31 @@ fn nested_generic_calls_should_walk_each_argument_for_its_join_once() {
     });
 }
 
+/// GIVEN a struct of 20, 40 and 60 type parameters, built under its written type
+/// WHEN each is checked
+/// THEN the entries that `note_lone_arg` reads, writes and adds grow in step with the parameters:
+///   it notes each argument at the index of its parameter, and reads no other entry
+#[test]
+fn a_constructor_of_many_type_parameters_should_note_each_lone_argument_once() {
+    let steps = |k: usize| {
+        let params: Vec<String> = (0..k).map(|i| format!("A{i}")).collect();
+        let fields = (0..k).fold(String::new(), |text, i| text + &format!("    f{i}: A{i}\n"));
+        let written = vec!["i64"; k].join(", ");
+        let given: Vec<String> = (0..k).map(|i| format!("f{i}: 1")).collect();
+        let src = format!(
+            "struct Tup<{}> {{\n{fields}}}\nfn main() {{\n    let t: Tup<{written}> = Tup({})\n    \
+             print(t.f0)\n}}",
+            params.join(", "),
+            given.join(", "),
+        );
+        generic::LONE_STEPS.set(0);
+        clean(&src);
+        generic::LONE_STEPS.get()
+    };
+    assert!(steps(2) > 0, "the counter should count the notes");
+    assert_near_linear(steps(20), steps(40), steps(60));
+}
+
 /// A generic call nested `d` deep, as an argument of a generic call, and a join or an operator
 /// nested so. Each argument, element, branch and operand of these rows is a member of its join
 /// (Tasks 5c and 5d-2), so no level ranks its siblings: the count of rank steps is the same at
