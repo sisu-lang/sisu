@@ -3064,7 +3064,7 @@ impl Checker<'_> {
             if joins(i) {
                 let closed = self.body.closed_place;
                 self.body.closed_place |= index.decided_at(i).nth(1).is_some();
-                let checked = self.late_argument(&call, i, &arg.value, param);
+                let checked = self.late_argument(&call, i, &arg.value, (param, expected));
                 self.body.closed_place = closed;
                 // A poisoned argument decides nothing, and its report is the call's. A parameter
                 // that it leaves open is poisoned, so a later argument there reports only its own
@@ -3797,13 +3797,14 @@ impl Checker<'_> {
     /// An argument at a place of a decided parameter that is a join of its own (see
     /// `takes_member`): it meets the type that the members decided, each open `Int` as `i64`. A
     /// parameter that they left open takes the argument's own type, except under a method call,
-    /// which meets the open type.
+    /// which meets the open type. In a call that `expected` makes a member, the method call is a
+    /// member too.
     fn late_argument(
         &mut self,
         call: &Inference<'_>,
         i: usize,
         e: &ast::Expr,
-        param: Type,
+        (param, expected): (Type, Expectation),
     ) -> Checked {
         let with: Vec<Type> = (call.bindings.found.iter())
             .map(|&ty| ty.unwrap_or(NO_BINDING))
@@ -3828,7 +3829,11 @@ impl Checker<'_> {
                 names_outside_assoc(param, k)
                     && !matches!(self.table.resolve(ty).kind(), TypeKind::Infer(_))
             });
-        if (informed || matches!(e.kind, ast::ExprKind::MethodCall { .. })) && !filled.has_assoc() {
+        let method = matches!(e.kind, ast::ExprKind::MethodCall { .. });
+        // In a call that is a member, a method call is a member too: a parameter that it cannot
+        // infer stays open, and the join around the call gives it (`first(b.make(true)) == o`).
+        let member = method && expected == Expectation::Member && !filled.has_assoc();
+        if (informed || method) && !member && !filled.has_assoc() {
             let outer = self.body.late_argument;
             if !matches!(param.kind(), TypeKind::Param(..)) {
                 self.body.late_argument = Some(e.span);
@@ -3862,7 +3867,12 @@ impl Checker<'_> {
             let checked = mark(self.operand(e, Expectation::Required(filled, origin)));
             return self.refuse_valueless(read_jump(checked));
         }
-        let checked = mark(self.operand(e, Expectation::None));
+        let context = if member {
+            Expectation::Member
+        } else {
+            Expectation::None
+        };
+        let checked = mark(self.operand(e, context));
         let checked = self.refuse_valueless(read_jump(checked));
         match type_of(&checked) {
             Some(ty) if !self.meets_late(filled, ty, e.span) => {
@@ -5232,8 +5242,6 @@ impl Checker<'_> {
 
     /// Reports the call of `sig` that binds nothing to its parameter at `param`.
     fn cannot_infer(&mut self, sig: &GenericSig<'_>, param: usize) -> Reported {
-        // A sibling's type may give the parameter: `==` and `??` check this side again with it.
-        self.body.needs_context = true;
         let in_result = sig.ret.is_some_and(|ret| names_outside_assoc(ret, param));
         let kind = OpenParam::of(sig, param).kind(in_result);
         self.error(kind)

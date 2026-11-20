@@ -1079,11 +1079,6 @@ struct Body {
     /// parameters of its call (Q28): a method call with arguments in it waits (see
     /// `takes_member`).
     closed_place: bool,
-    /// Whether a call checked as a member could not infer a type parameter, which the type of a
-    /// sibling may give. So `==` and the default of `??` check that side again after the other,
-    /// with its type (see `Checker::equal`). After that check the flag is the one from before the
-    /// operator: a check of the operator again gives that side no more type.
-    needs_context: bool,
     /// The argument that its call checks late at a place that is not a bare type parameter. A part
     /// of that place is still open. A result there that clashes with a known part is E0032, as on
     /// `main` (see `Checker::known_context`).
