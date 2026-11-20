@@ -2705,12 +2705,35 @@ fn a_method_that_two_interfaces_answer_should_take_its_type_from_the_other_side(
     codes(&src, &[(Code::Ambiguous, (21, 19))]);
 }
 
+/// GIVEN a generic call `h52` whose first argument is at a place of two type parameters
+///   (`G2<T, U>`)
+/// AND that argument holds an `if` of written types, through `dbg`
+/// AND the call is the left side of `?? true`, a member
+/// WHEN each is checked
+/// THEN the argument keeps its own check, and the call is clean, as on `main`
+#[test]
+fn an_argument_at_a_place_of_two_parameters_should_keep_its_own_check() {
+    const HEADER: &str = "struct G0<T> {\n    g45: T\n}\nenum G2<T, U> {\n    V48(U)\n\
+        V49(G2<T, U>, T?, [U])\n}\n\
+        fn h52<T, U>(v53: G2<T, U>, v54: T, v55: G0<char>) -> T { v54 }\n\
+        fn main() {\n    let c = true\n    let v: i64 = 3\n";
+    for value in [
+        "h52(dbg(if c { G2<bool?, i64>.V48(v) } else { G2<bool?, i64>.V48(v) }), None, \
+         G0(g45: ' ')) ?? true",
+        "h52(dbg((if c { G2<bool?, i64>.V48(v) } else { None }) ?? G2<bool?, i64>.V48(v)), \
+         if c { false } else { None }, G0(g45: ' ')) ?? true",
+    ] {
+        let src = format!("{HEADER}    let _x = {value}\n    print(c)\n}}");
+        clean_row(value, &src);
+    }
+}
+
 /// GIVEN `n` lines `let wK = [id(mk2())]`: each is a call that waits with a parameter left open
 /// AND `n` valid lines `let wK = [id(mko()), o]`, then `n` lines `let zK = [None]`
 /// AND one more line that reports, for `n` = 50, 100 and 150
 /// WHEN each is checked
 /// THEN the waiting parameters that `open_waits` reads grow in step with `n`: a value reads only
-///   the calls inside it, and a call that reports or has no open parameter is not read again
+///   the calls inside it
 #[test]
 fn open_waits_should_read_each_waiting_call_once() {
     const HEADER: &str = "struct Two<A, B> {\n    a: A\n    b: B\n}\n\
