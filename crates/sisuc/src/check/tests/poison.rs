@@ -688,7 +688,7 @@ fn a_push_on_an_untyped_local_should_add_no_error() {
 }
 
 /// `-h()`, `-i64(nope)` and the join with a typed poisoned branch are `i64`, so `a + true` is
-/// E0032.
+/// E0032. A block after a failed statement is typed by its last value, so `+` reports that type.
 #[test]
 fn a_typed_poisoned_operand_should_read_as_its_type() {
     c_rows(&[
@@ -701,6 +701,16 @@ fn a_typed_poisoned_operand_should_read_as_its_type() {
             "a typed poisoned branch",
             "let a = if c { 1 } else { h() } and print(a + true)".into(),
             vec![(ArgumentCount, (41, 31)), (Mismatch, (42, 15))],
+        ),
+        (
+            "a block of an optional after a failed statement",
+            "print({ h() and o } + 1)".into(),
+            vec![(Mismatch, (41, 11)), (ArgumentCount, (41, 13))],
+        ),
+        (
+            "a block of a bool after a failed statement",
+            "print({ h() and true } + 1)".into(),
+            vec![(Mismatch, (41, 11)), (ArgumentCount, (41, 13))],
         ),
     ]);
 }

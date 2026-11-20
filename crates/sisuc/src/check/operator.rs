@@ -845,13 +845,12 @@ impl Checker<'_> {
             let Some(got) = typed(i) else { continue };
             let taken = operator.takes().contains(&payload(got));
             // A `None` beside a `X?` is not the mistake.
-            if got != payload(got) && taken && checked[i].is_ok() && !self.none_operand(operands[i])
-            {
+            if got != payload(got) && taken && !self.none_operand(operands[i]) {
                 let want = Expectation::Required(payload(got), Origin::None);
                 let value = std::mem::replace(&mut checked[i], Ok(unit_value(operands[i].span)));
                 checked[i] = self.against(operands[i], value, want).0;
                 reported = true;
-            } else if arithmetic && !taken && checked[i].is_ok() && !reported {
+            } else if arithmetic && !taken && !reported {
                 let d = self.takes_mismatch(operands[i].span, operator.takes(), got);
                 checked[i] = Err(Poisoned::untyped(self.diagnostics.error(d)));
                 reported = true;
