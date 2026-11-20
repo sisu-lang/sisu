@@ -3040,7 +3040,9 @@ impl Checker<'_> {
             let param =
                 sig.params[i].expect("an argument with no parameter type should be checked");
             // A method call that waits for its context to pick a method, at a bare parameter that
-            // nothing decides: the call cannot infer that parameter, as on `main`.
+            // nothing decides: the call cannot infer that parameter, as on `main`. In a member
+            // call whose result names the parameter, the join around the call gives it
+            // (`id(b.opt(true)) == o`), unless several methods answer the method call.
             // A block gives its value's context to that value.
             let mut value = &arg.value;
             while let ast::ExprKind::Block(block) = &value.kind
@@ -3054,6 +3056,9 @@ impl Checker<'_> {
                 && let TypeKind::Param(_, t) = param.kind()
                 && let Ok(found) = decided.binary_search_by_key(&(t as usize), |&(k, _)| k)
                 && let (t, var) = decided[found]
+                && (expected != Expectation::Member
+                    || !sig.ret.is_some_and(|ret| names_outside_assoc(ret, t))
+                    || self.picks_by_context(value))
                 && let open = self.table.resolve(var)
                 && matches!(open.kind(), TypeKind::Infer(_))
                 && self.table.default_open(open) == open
@@ -3847,9 +3852,14 @@ impl Checker<'_> {
                     && !matches!(self.table.resolve(ty).kind(), TypeKind::Infer(_))
             });
         let method = matches!(e.kind, ast::ExprKind::MethodCall { .. });
-        // In a call that is a member, a method call is a member too: a parameter that it cannot
-        // infer stays open, and the join around the call gives it (`first(b.make(true)) == o`).
-        let member = method && expected == Expectation::Member && !filled.has_assoc();
+        // In a call that is a member, a method call, a call or an array literal is a member too,
+        // at each depth: a parameter that it cannot infer stays open, and the join around the
+        // outer call gives it (`id(first(b.make(true))) == o`). A method call that several methods
+        // answer waits for its context to pick one, and a closed place keeps its own check.
+        let member = expected == Expectation::Member
+            && !self.body.closed_place
+            && !filled.has_assoc()
+            && (shaped || method && !self.picks_by_context(e));
         if (informed || method) && !member && !filled.has_assoc() {
             let outer = self.body.late_argument;
             if !matches!(param.kind(), TypeKind::Param(..)) {
@@ -5896,6 +5906,13 @@ impl Checker<'_> {
             ),
             ..CallShape::default()
         }
+    }
+
+    /// Whether `e` is a method call that several methods answer: only its context picks one, so
+    /// it cannot stay open for a join.
+    fn picks_by_context(&mut self, e: &ast::Expr) -> bool {
+        matches!(&e.kind, ast::ExprKind::MethodCall { receiver, method, safe, .. }
+            if self.answered_by_several(receiver, method, *safe))
     }
 
     /// Whether several methods answer `receiver.method(...)`, or `receiver?.method(...)` with
