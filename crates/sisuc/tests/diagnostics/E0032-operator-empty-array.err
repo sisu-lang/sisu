@@ -1,0 +1,26 @@
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `[]`
+ --> E0032-operator-empty-array.sisu:3:10
+  |
+3 |     m += []
+  |          ^^
+
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `[]`
+ --> E0032-operator-empty-array.sisu:4:13
+  |
+4 |     let b = [] + []
+  |             ^^
+
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `[]`
+ --> E0032-operator-empty-array.sisu:5:17
+  |
+5 |     let c = 1 + []
+  |                 ^^
+
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `[None]`
+ --> E0032-operator-empty-array.sisu:6:13
+  |
+6 |     let d = [None] + 1
+  |             ^^^^^^
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

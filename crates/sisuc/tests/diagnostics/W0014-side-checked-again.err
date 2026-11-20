@@ -1,0 +1,26 @@
+warning[W0014]: variable `unused` is never read
+  --> W0014-side-checked-again.sisu:18:13
+   |
+18 |         let unused = 1
+   |             ^^^^^^ never read
+   |
+   = help: if this is on purpose, name it `_unused`
+
+warning[W0014]: variable `unused2` is never read
+  --> W0014-side-checked-again.sisu:24:13
+   |
+24 |         let unused2 = 1
+   |             ^^^^^^^ never read
+   |
+   = help: if this is on purpose, name it `_unused2`
+
+warning[W0014]: variable `unused3` is never read
+  --> W0014-side-checked-again.sisu:30:13
+   |
+30 |         let unused3 = 1
+   |             ^^^^^^^ never read
+   |
+   = help: if this is on purpose, name it `_unused3`
+
+sisu: 3 warnings
+sisu: for more on a code, run `sisu explain <code>`: W0014

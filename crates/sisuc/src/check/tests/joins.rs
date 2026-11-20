@@ -46,8 +46,15 @@ pub(in crate::check) fn with_params<R>(
     let types: Vec<Type> = (checker.signatures[probe].params.iter())
         .map(|ty| ty.expect("each parameter of `probe` should name a type"))
         .collect();
+    // The reads that the `local` helper of the join tests makes are of named locals.
+    let named = tir::Local {
+        name: Some(String::new()),
+        ty: Type::UNIT,
+        mutable: false,
+    };
     let body = Body {
         owner: Some(Owner::Func(tir::FuncId(main))),
+        locals: vec![named; 2048],
         ..Body::default()
     };
     checker
@@ -2505,4 +2512,48 @@ fn a_decided_or_bounded_call_under_a_nested_optional_should_keep_its_wrap() {
         red.len(),
         red.join("\n")
     );
+}
+
+/// A side of `==` or a default of `??` that needs its sibling's type is checked again with it.
+/// Each nested side is checked a fixed number of times, so the expressions checked grow in step
+/// with the depth. A side that each level checks two times would double them at each level. The
+/// first sizes fail fast on a count that doubles; the parser takes nesting up to 256.
+#[test]
+fn a_side_checked_again_should_keep_the_checks_linear_in_depth() {
+    const SOURCE: &str = "interface Source {\n    type Item\n    fn first(self) -> Item\n}\n\
+        struct Pair: Source, Eq {\n    type Item = bool\n    v: bool\n    fn first(self) -> bool { self.v }\n}\n\
+        fn put<S: Source>(v: S.Item) -> S? { None }\nfn zu<T>() -> u8 { 1 }\nfn zb<T>() -> bool { true }\n";
+    let nest = |depth: usize, inner: &str, wrap: &dyn Fn(&str) -> String| {
+        (0..depth).fold(inner.to_owned(), |side, _| wrap(&side))
+    };
+    let rows: [(&str, &dyn Fn(usize) -> String); 5] = [
+        ("`put(...) == ob`", &|d| {
+            nest(d, "true", &|s| format!("put({s}) == ob"))
+        }),
+        ("`(zb() == true) == true`", &|d| {
+            nest(d, "zb()", &|s| format!("({s}) == true"))
+        }),
+        ("`o ?? (... ?? zu())`", &|d| {
+            nest(d, "zu()", &|s| format!("o ?? ({s})"))
+        }),
+        ("`o ?? (... zb() == true)`", &|d| {
+            nest(d, "zb()", &|s| format!("(o ?? {s}) == true"))
+        }),
+        ("a string join under `u8`", &|d| {
+            nest(d, "\"z\"", &|s| format!("\"a\" + ({s})"))
+        }),
+    ];
+    for (row, side) in rows {
+        let checks = |depth: usize| {
+            let src = format!(
+                "{SOURCE}fn main() {{\n    let ob: Pair? = None\n    let o: u8? = None\n    let a: u8 = {}\n}}",
+                side(depth)
+            );
+            EXPR_CHECKS.set(0);
+            drop(diags(&src));
+            EXPR_CHECKS.get()
+        };
+        assert_near_linear_for(&format!("{row}: "), checks(2), checks(4), checks(6));
+        assert_near_linear_for(&format!("{row}: "), checks(25), checks(50), checks(75));
+    }
 }

@@ -1,0 +1,14 @@
+error[E0047]: cannot compare `i64?` with `[]`
+ --> E0047-empty-array.sisu:3:13
+  |
+3 |     let a = o == []
+  |             ^^^^^^^
+
+error[E0047]: cannot compare `[]` with `i64`
+ --> E0047-empty-array.sisu:4:13
+  |
+4 |     let b = [] == 1
+  |             ^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0047

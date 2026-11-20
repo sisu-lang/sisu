@@ -1,0 +1,5 @@
+fn main() {
+    let o: i64? = None
+    let a = o == []
+    let b = [] == 1
+}

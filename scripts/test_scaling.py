@@ -693,6 +693,8 @@ class ScalingTest(unittest.TestCase):
             ("never built", 16),
             ("array literal depth beside []", 24),
             ("array fill depth", 24),
+            ("coalesce depth", 15),
+            ("coalesce depth to an optional", 15),
         ]
         self.assertEqual([(name, n) for name, (n, _) in sc.SHAPES.items()], sizes)
 
@@ -768,6 +770,8 @@ class ScalingTest(unittest.TestCase):
             "never built": (lambda t: t.count("class C"), 0),
             "array literal depth beside []": (lambda t: depth(t, "[", "]"), 1),
             "array fill depth": (lambda t: depth(t, "[", "]"), 1),
+            "coalesce depth": (lambda t: t.count("Some(1) ??"), 0),
+            "coalesce depth to an optional": (lambda t: t.count("Some(1) ??"), 0),
         }
         self.assertEqual(list(parts), list(sc.SHAPES))
         for name, (_, make) in sc.SHAPES.items():

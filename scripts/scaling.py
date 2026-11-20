@@ -228,6 +228,20 @@ def array_literal_depth_beside_empty(k: int) -> str:
     )
 
 
+def coalesce_depth(k: int) -> str:
+    """Return a program with `k` nested `??`, each with the open left side `Some(1)`."""
+    chain = nest(k, lambda s: f"Some(1) ?? ({s})", "1")
+    return f'fn main() {{\n    let r = {chain}\n    print("{{r}}")\n}}\n'
+
+
+def coalesce_depth_to_optional(k: int) -> str:
+    """Return a program with `k` nested `??` as in `coalesce_depth`, the last default an `i64?`."""
+    chain = nest(k, lambda s: f"Some(1) ?? ({s})", "o")
+    return (
+        f'fn main() {{\n    let o: i64? = None\n    let r = {chain}\n    print("{{r ?? 0}}")\n}}\n'
+    )
+
+
 def array_fill_depth(k: int) -> str:
     """Return a program with an array fill of `k + 1` nested layers."""
     return (
@@ -739,6 +753,9 @@ SHAPES = {
     "never built": (16, never_built),
     "array literal depth beside []": (24, array_literal_depth_beside_empty),
     "array fill depth": (24, array_fill_depth),
+    # n = 15: 8n levels stay under the nesting limit of 256 (E0071).
+    "coalesce depth": (15, coalesce_depth),
+    "coalesce depth to an optional": (15, coalesce_depth_to_optional),
 }
 
 

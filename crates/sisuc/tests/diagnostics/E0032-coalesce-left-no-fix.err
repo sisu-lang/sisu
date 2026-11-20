@@ -1,0 +1,88 @@
+error[E0032]: expected `i64`, found `u8`
+  --> E0032-coalesce-left-no-fix.sisu:14:12
+   |
+13 | fn ret(ou: u8?, n: i64) -> i64 {
+   |                            --- `ret` returns `i64`
+14 |     return ou ?? n
+   |            ^^
+
+error[E0032]: expected `u8?`, found `i64`
+  --> E0032-coalesce-left-no-fix.sisu:18:18
+   |
+18 |     let z: u8? = o ?? u
+   |            ---   ^
+   |            |
+   |            declared as `u8?` here
+
+error[E0032]: expected `i64`, found `u8`
+  --> E0032-coalesce-left-no-fix.sisu:19:18
+   |
+19 |     let y: i64 = ou ?? n
+   |            ---   ^^
+   |            |
+   |            declared as `i64` here
+
+error[E0032]: expected `u8`, found `i64`
+  --> E0032-coalesce-left-no-fix.sisu:20:17
+   |
+20 |     let w: u8 = o ?? 1
+   |            --   ^
+   |            |
+   |            declared as `u8` here
+
+error[E0032]: expected `f64`, found `u8`
+  --> E0032-coalesce-left-no-fix.sisu:21:18
+   |
+21 |     let v: f64 = ou ?? 1.5
+   |            ---   ^^
+   |            |
+   |            declared as `f64` here
+
+error[E0032]: expected `i64`, found `u8`
+  --> E0032-coalesce-left-no-fix.sisu:22:22
+   |
+22 |     let t = take_i64(ou ?? n)
+   |                      ^^
+   |
+  ::: E0032-coalesce-left-no-fix.sisu:9:16
+   |
+ 9 | fn take_i64(v: i64) -> i64 { v }
+   |                --- `take_i64` declares `v` as `i64`
+
+error[E0032]: expected `i64`, found `u8`
+  --> E0032-coalesce-left-no-fix.sisu:23:23
+   |
+23 |     let h = Holder(v: ou ?? n)
+   |                       ^^
+   |
+  ::: E0032-coalesce-left-no-fix.sisu:6:8
+   |
+ 6 |     v: i64
+   |        --- `v` is declared as `i64`
+
+error[E0032]: expected `i64`, found `u8`
+  --> E0032-coalesce-left-no-fix.sisu:24:21
+   |
+24 |     let a: [i64] = [ou ?? n]
+   |            -----    ^^
+   |            |
+   |            declared as `[i64]` here
+
+error[E0032]: expected `i64`, found `u8`
+  --> E0032-coalesce-left-no-fix.sisu:25:18
+   |
+25 |     let p: i64 = s.ou ?? n
+   |            ---   ^^^^
+   |            |
+   |            declared as `i64` here
+
+error[E0032]: expected `i64`, found `u8`
+  --> E0032-coalesce-left-no-fix.sisu:26:18
+   |
+26 |     let q: i64 = get() ?? n
+   |            ---   ^^^^^
+   |            |
+   |            declared as `i64` here
+
+sisu: 10 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032
