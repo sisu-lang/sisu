@@ -5089,6 +5089,42 @@ fn nested_some_context_should_cost_one_step_for_each_level() {
     assert_near_linear(steps(10), steps(20), steps(30));
 }
 
+/// GIVEN a generic call nested 20, 40 and 60 deep as the argument of a generic call: `id(...)`,
+///   `id([...])`, `k(1, ...)` and `id(-(...))`
+/// WHEN each is checked
+/// THEN the expressions that `takes_member` walks grow in step with the depth: a call checked
+///   inside its join takes the answer kept for its argument, and walks it no second time
+#[test]
+fn nested_generic_calls_should_walk_each_argument_for_its_join_once() {
+    crate::on_compiler_stack(|| {
+        with_prelude();
+        let walks = |(open, close): (&str, &str), depth: usize| {
+            let src = format!(
+                "fn k<T>(a: T, b: T) -> T {{ b }}\nfn id<T>(x: T) -> T {{ x }}\n\
+                 fn main() {{\n    let v = {}1{}\n    print(v)\n}}",
+                open.repeat(depth),
+                close.repeat(depth),
+            );
+            generic::MEMBER_WALKS.set(0);
+            clean(&src);
+            generic::MEMBER_WALKS.get()
+        };
+        for row in [
+            ("id(", ")"),
+            ("id([", "])"),
+            ("k(1, ", ")"),
+            ("id(-(", "))"),
+        ] {
+            assert_near_linear_for(
+                &format!("{row:?}: "),
+                walks(row, 20),
+                walks(row, 40),
+                walks(row, 60),
+            );
+        }
+    });
+}
+
 /// A generic call nested `d` deep, as an argument of a generic call, and a join or an operator
 /// nested so. Each argument, element, branch and operand of these rows is a member of its join
 /// (Tasks 5c and 5d-2), so no level ranks its siblings: the count of rank steps is the same at

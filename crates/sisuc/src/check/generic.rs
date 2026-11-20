@@ -1166,6 +1166,9 @@ thread_local! {
     /// How many expressions `rank_value` has walked on this thread, those it answers from
     /// `body.ranked` not counted.
     pub(super) static RANK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many expressions `takes_member` has walked on this thread, those it answers from
+    /// `body.members` not counted.
+    pub(super) static MEMBER_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `waits_for` has unified the type of a waiting call with its context on this
     /// thread.
     pub(super) static WAIT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -4089,6 +4092,18 @@ impl Checker<'_> {
     /// reported (`h(true, C().m("s", 1))` at `"s"`). So does such a call in an argument that
     /// waits at such a place, as `h(true, id(c?.m("s", 1)))` (`Body::closed_place`).
     fn takes_member(&mut self, e: &ast::Expr, closed: bool) -> Option<Expectation> {
+        if let Some(&found) = self.body.members.get(&(e.span, closed)) {
+            return found;
+        }
+        #[cfg(test)]
+        MEMBER_WALKS.set(MEMBER_WALKS.get() + 1);
+        let found = self.member_walk(e, closed);
+        self.body.members.insert((e.span, closed), found);
+        found
+    }
+
+    /// `takes_member` for `e`, found by a walk of it.
+    fn member_walk(&mut self, e: &ast::Expr, closed: bool) -> Option<Expectation> {
         use ast::ExprKind as K;
         match &e.kind {
             // An array is a nested join, unless an element waits.

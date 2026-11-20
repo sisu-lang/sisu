@@ -1172,6 +1172,10 @@ struct Body {
     /// cleared `fit`. A span is checked in one scope only (there are no closures yet), so the
     /// answer holds for every call that ranks it.
     ranked: FxHashMap<Span, (generic::Ranked, bool)>,
+    /// What `takes_member` answered for each expression, by its span and whether its place is
+    /// closed. A nested generic call walks its arguments again when it is checked. The kept answer
+    /// makes the walks of a nest of calls linear in its depth.
+    members: FxHashMap<(Span, bool), Option<Expectation>>,
     /// What `int_literal` answered for each unary `-` and operator, by its span. The answer
     /// depends only on the node, and no two operator nodes have one span.
     int_literals: FxHashMap<Span, bool>,
