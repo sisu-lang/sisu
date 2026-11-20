@@ -574,6 +574,17 @@ impl Table {
         }
     }
 
+    /// The roots of the open `Any` variables in `ty` that no failed use reached: those that
+    /// `unsettled` would report.
+    pub(super) fn unsettled_roots(&self, ty: Type) -> Vec<u32> {
+        let mut roots = self.open_roots(ty);
+        roots.retain(|&root| {
+            let known = self.sets.root(root);
+            known.kind == Kind::Any && !known.poisoned
+        });
+        roots
+    }
+
     /// The first source of each open `Any` variable in `ty` that no failed use reached, which
     /// `write_back` would report, in source order. Each one is poisoned, so that it reports once.
     pub(super) fn unsettled(&mut self, ty: Type) -> Vec<Unsettled> {

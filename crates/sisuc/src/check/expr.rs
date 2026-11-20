@@ -755,6 +755,11 @@ impl Checker<'_> {
         if let Some(reported) = self.held_conflict_in(&mut value) {
             return Err(Poisoned::untyped(reported));
         }
+        // A call that waits with a parameter left open reports it, in place of the `None` that
+        // stands for the parameter.
+        let waited = (expected != Expectation::Poisoned)
+            .then(|| self.open_waits(value.ty))
+            .flatten();
         let unsettled = self.table.unsettled(value.ty);
         if expected == Expectation::Poisoned {
             value.ty = self.table.default_open(value.ty);
@@ -763,7 +768,7 @@ impl Checker<'_> {
             }
             return Ok(value);
         }
-        let mut first = None;
+        let mut first = waited;
         for unsettled in unsettled {
             let reported = self.report_unsettled(unsettled);
             first.get_or_insert(reported);

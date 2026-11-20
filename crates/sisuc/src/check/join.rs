@@ -505,6 +505,35 @@ impl Checker<'_> {
         first
     }
 
+    /// E0050 at each call that waits with a parameter that `ty` leaves open with no type, as on
+    /// `main`: `cannot infer` that parameter, not the type of a `None`. The outer call reports
+    /// first, then the calls in source order. A report poisons the open type, so a call inside it
+    /// that shares the type reports nothing. It gives the first report. The walk of the waiting
+    /// calls runs only for a value that reports E0050.
+    pub(super) fn open_waits(&mut self, ty: Type) -> Option<Reported> {
+        let mut roots = self.table.unsettled_roots(ty);
+        if roots.is_empty() {
+            return None;
+        }
+        let mut calls: Vec<(Span, usize)> = (self.body.waits.iter())
+            .flat_map(|(&span, waits)| (0..waits.len()).map(move |k| (span, k)))
+            .collect();
+        calls.sort_unstable_by_key(|&(span, k)| (span.start(), std::cmp::Reverse(span.end()), k));
+        let mut first = None;
+        for (span, k) in calls {
+            let var = self.body.waits[&span][k].0;
+            let open_here = self.table.open_roots(var);
+            if open_here.iter().any(|r| roots.contains(r)) {
+                let kind = self.body.waits[&span][k].1.kind(true);
+                let reported = self.error(kind);
+                self.table.poison(var);
+                roots.retain(|r| !open_here.contains(r));
+                first.get_or_insert(reported);
+            }
+        }
+        first
+    }
+
     /// The candidate that each member takes with the fewest wraps. Each test runs under a
     /// snapshot, which it rolls back: the join binds nothing. A required type decides the join
     /// also when a member is left out. `hole` is the `T` of a call's
