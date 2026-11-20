@@ -485,10 +485,7 @@ impl Checker<'_> {
     ) -> Reported {
         let convertible = !matches!(top, Some(Top { fixed: true, .. }))
             && !matches!(top, Some(Top { part: Some(_), .. }))
-            && !matches!(
-                e.kind,
-                ExprKind::If { .. } | ExprKind::IfSome { .. } | ExprKind::Match { .. }
-            );
+            && self.wraps_text(e);
         let (want, got) = match top {
             Some(Top {
                 part: Some((place, hole)),
@@ -782,10 +779,6 @@ impl Checker<'_> {
     /// The E0032 of a join that has no candidate: its groups in the order of the source, the
     /// parts of its arguments, the declared interfaces that fit each member, and the fix. It is
     /// `pub(super)` so that a test reads its fields, which the diagnostic text hides.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one pass over the groups gives the shown types, and the fix reads them"
-    )]
     pub(super) fn conflict_kind(
         &mut self,
         site: Site,
@@ -797,7 +790,6 @@ impl Checker<'_> {
         let mut shown: Vec<Shown> = Vec::new();
         let mut index: FxHashMap<Type, usize> = FxHashMap::default();
         let known = self.known_group(conflict);
-        let left = matches!(site.form, JoinForm::Coalesce).then(|| site.heading.whole.start());
         for group in &conflict.groups {
             let open = self.table.resolve(group.ty).holds_infer();
             if open
@@ -824,10 +816,7 @@ impl Checker<'_> {
                 shown.len() - 1
             };
             shown[at].leaves.extend(&group.leaves);
-            // The left member of `??` is the read of its payload: no edit of its text converts it.
-            shown[at]
-                .whole
-                .extend((group.whole.iter()).filter(|span| Some(span.start()) != left));
+            shown[at].whole.extend(&group.whole);
         }
         for one in &mut shown {
             one.leaves.sort_by_key(|&span| place(span));

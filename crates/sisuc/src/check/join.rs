@@ -963,6 +963,17 @@ impl Checker<'_> {
         as_it_is
     }
 
+    /// Whether a conversion fix can wrap the text of `e`, a leaf of a join. An `if`, a `??` or a
+    /// `match` converts at its leaves. The read of a value that the checker made, as the payload
+    /// that `??` reads, has no text of its own: a conversion around its text takes the optional.
+    pub(super) fn wraps_text(&self, e: &tir::Expr) -> bool {
+        match e.kind {
+            ExprKind::If { .. } | ExprKind::IfSome { .. } | ExprKind::Match { .. } => false,
+            ExprKind::Local(local) => self.body.locals[local.0].name.is_some(),
+            _ => true,
+        }
+    }
+
     /// Whether `e` is a `??` whose own join settled each side to its type.
     fn settled_coalesce(&self, e: &tir::Expr) -> bool {
         matches!(e.kind, ExprKind::IfSome { .. }) && self.body.settled_joins.contains(&e.span)
@@ -1097,13 +1108,7 @@ impl Checker<'_> {
                     top = !nested_leaves(e, &mut leaves);
                     if top {
                         leaves.push(Leaf::of(e));
-                        whole = fixed != Some(i)
-                            && !matches!(
-                                e.kind,
-                                ExprKind::If { .. }
-                                    | ExprKind::IfSome { .. }
-                                    | ExprKind::Match { .. }
-                            );
+                        whole = fixed != Some(i) && self.wraps_text(e);
                     }
                 }
                 Ok(_) => {}
