@@ -1,0 +1,54 @@
+// GIVEN a `??` whose left side is a `string?` or a `[string]?` and whose default is counted
+// AND the `??` is the value of a `let`, a call argument, an array element or a side of `==`
+// WHEN the program runs with the left side `Some` and `None`
+// THEN the result is the payload or the default
+// AND each counted value is freed one time (Valgrind and `--rc-checks`)
+fn some(c: bool, name: string) -> string? {
+    if c { name + "s" } else { None }
+}
+
+fn items(c: bool, name: string) -> [string]? {
+    if c { [name + "i"] } else { None }
+}
+
+fn take(s: string) -> i64 {
+    s.len()
+}
+
+fn let_value(c: bool, name: string) -> string {
+    let v = some(c, name) ?? name + "d"
+    v
+}
+
+fn let_items(c: bool, name: string) -> [string] {
+    let v = items(c, name) ?? [name + "d", name + "e"]
+    v
+}
+
+fn argument(c: bool, name: string) -> i64 {
+    take(some(c, name) ?? name + "dd")
+}
+
+fn element(c: bool, name: string) -> [string] {
+    [some(c, name) ?? name + "d", name + "e"]
+}
+
+fn equal_side(c: bool, name: string) -> bool {
+    (some(c, name) ?? name + "d") == name + "s"
+}
+
+fn equal_items(c: bool, name: string) -> bool {
+    [name + "i"] == (items(c, name) ?? [name + "d"])
+}
+
+fn main() {
+    let name = "n{[1].len()}"
+    for c in [true, false] {
+        print(let_value(c, name))   // n1s, then n1d
+        print(let_items(c, name))   // ["n1i"], then ["n1d", "n1e"]
+        print(argument(c, name))    // 3, then 4
+        print(element(c, name))     // ["n1s", "n1e"], then ["n1d", "n1e"]
+        print(equal_side(c, name))  // true, then false
+        print(equal_items(c, name)) // true, then false
+    }
+}
