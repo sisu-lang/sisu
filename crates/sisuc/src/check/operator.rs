@@ -510,6 +510,18 @@ impl Checker<'_> {
         };
         let (ty, origin) = number.unwrap_or((Type::I64, Origin::None));
         let none = Expectation::Required(ty, origin);
+        // Arithmetic of integer literals only, under a required number or with no context, has
+        // that number or `i64`. So its operands take it at once, with no `Int` variables
+        // (`1 + 1 + 1`). A literal that does not fit the number stays a member, and reports as
+        // one does.
+        let mut literals = match expected {
+            _ if !arithmetic || operator.compound() => None,
+            Expectation::None => Some((Type::I64, Origin::None)),
+            _ => number,
+        };
+        if literals.is_some() && !operands.iter().all(|e| self.int_literal(e)) {
+            literals = None;
+        }
         let mut checked: Vec<Checked> = Vec::with_capacity(operands.len());
         for e in operands {
             // The place of a compound assignment is read once, before its value.
@@ -520,7 +532,14 @@ impl Checker<'_> {
             checked.push(if self.none_operand(e) {
                 Ok(unit_value(e.span)) // replaced below
             } else {
-                self.value(e, Expectation::Member)
+                let expected = match (literals, &e.kind) {
+                    (Some((ty, _)), ExprKind::Int { .. }) => self.beside_closed(e, Some(ty)),
+                    (Some((ty, origin)), ExprKind::Binary { .. }) => {
+                        Expectation::Required(ty, origin)
+                    }
+                    _ => self.beside_closed(e, checked.first().and_then(type_of)),
+                };
+                self.value(e, expected)
             });
         }
         // A `None` has no number to be. Beside a `char` the operator is the mistake. Beside a
@@ -706,6 +725,31 @@ impl Checker<'_> {
         let reported = self.diagnostics.error(d);
         checked[at] = Err(Poisoned::untyped(reported));
         (checked, None, true)
+    }
+
+    /// The expectation of the operand `e` beside an operand of type `beside`. An integer literal
+    /// that fits a closed number type `beside` takes that type: it needs no `Int` variable, and it
+    /// joins as the variable would. Any other operand is a member.
+    fn beside_closed(&self, e: &ast::Expr, beside: Option<Type>) -> Expectation {
+        let ExprKind::Int { value, .. } = e.kind else {
+            return Expectation::Member;
+        };
+        let fits = match beside.map(|ty| self.table.resolve(ty)) {
+            Some(Type::I64) => true,
+            Some(Type::U8) => (0..=i64::from(u8::MAX)).contains(&value),
+            // Through `i128`, as the literal's own check of an `f64`.
+            #[expect(
+                clippy::cast_precision_loss,
+                clippy::cast_possible_truncation,
+                reason = "the round trip is the check that the `f64` is exact"
+            )]
+            Some(Type::F64) => (value as f64) as i128 == i128::from(value),
+            _ => false,
+        };
+        match beside {
+            Some(ty) if fits => Expectation::Required(self.table.resolve(ty), Origin::None),
+            _ => Expectation::Member,
+        }
     }
 
     /// Whether `e` is a `None`, or a block whose value is one: it waits for the operator's
@@ -1011,7 +1055,9 @@ impl Checker<'_> {
         let sides = [lhs, rhs];
         // Each side is checked once, as a member: a call that cannot infer its parameter there
         // stays open, and the join of the two sides gives it the type of the other.
-        let mut values = sides.map(|side| self.value(side, Expectation::Member));
+        let first = self.value(lhs, Expectation::Member);
+        let expected = self.beside_closed(rhs, type_of(&first));
+        let mut values = [first, self.value(rhs, expected)];
         let types = [
             self.member_own_type(&mut values[0], lhs.span),
             self.member_own_type(&mut values[1], rhs.span),
@@ -1496,7 +1542,13 @@ impl Checker<'_> {
             Err(failed) => Err(Poisoned::typed(payload, failed.reported())),
         };
         // In a failed context too the default is a member: the join is silent (ADR 0049).
-        let inner = Expectation::Member;
+        // A context of another type blames the left side, which the open literal of the default
+        // joins: the literal takes the payload's type only when the context agrees.
+        let inner = if expected.ty().is_none_or(|ty| super::payload(ty) == payload) {
+            self.beside_closed(rhs, Some(payload))
+        } else {
+            Expectation::Member
+        };
         let mut other = self.fallback(rhs, inner);
         // A failed default whose type is a nested join's variable lost the values that give it
         // its type: it has none.
