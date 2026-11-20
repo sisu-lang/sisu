@@ -1185,7 +1185,8 @@ thread_local! {
     /// `body.members` not counted.
     pub(super) static MEMBER_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many entries of a call's lone arguments `note_lone_arg` has read, written or added on
-    /// this thread.
+    /// this thread. The guard against a scan of `args` is its indexed form, `args[t]`: the counter
+    /// counts one step for each note and one for each entry that the vector grows by, not a scan.
     pub(super) static LONE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many times `waits_for` has unified the type of a waiting call with its context on this
     /// thread.
