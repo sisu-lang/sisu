@@ -1,6 +1,7 @@
 // GIVEN a call argument at an associated type that only the join around the call decides
 // AND a live counted member comes before the call, and the argument holds a `return`, a `break`, a
 // `continue` or a `?? return`
+// AND in `default`, the left side of `??` is `None`, so that the default runs
 // WHEN the program runs with the jump taken and not taken
 // THEN the jump leaves as written, and the value is as when no jump is taken
 // AND the counted member before the jump is freed one time (Valgrind and `--rc-checks`)
@@ -28,6 +29,10 @@ fn mk(name: string) -> Named? {
     if name.len() != 99 { Named(v: name) } else { None }
 }
 
+fn gone(name: string) -> Named? {
+    if name.len() == 99 { Named(v: name) } else { None }
+}
+
 fn some(c: bool, name: string) -> string? {
     if c { None } else { name + "z" }
 }
@@ -43,7 +48,7 @@ fn equal(c: bool, name: string) -> i64 {
 }
 
 fn default(c: bool, name: string) -> i64 {
-    let d = mk(name + "a") ?? puts(name + "x", if c { return 6 } else { name + "y" })
+    let d = gone(name + "a") ?? puts(name + "x", if c { return 6 } else { name + "y" })
     if d == None { 7 } else { 8 }
 }
 
@@ -140,7 +145,7 @@ fn main() {
     for c in [true, false] {
         print(element(c, name))           // 1, then 2
         print(equal(c, name))             // 3, then 5
-        print(default(c, name))           // 8, then 8: the default does not run
+        print(default(c, name))           // 6, then 7
         print(for_continue(c, name))      // 0, then 7
         print(while_break(c, name))       // 1, then 6
         print(match_arm(c, name))         // 9, then 11
