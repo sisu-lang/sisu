@@ -84,86 +84,6 @@ impl<K: Eq + Hash, V: Copy> WalkMemo<K, V> {
     }
 }
 
-/// Whether a `break` of a loop gives a value that is an optional by its form (see
-/// `optional_form`). The loop is `e`, or the value of a block or a branch of `e`. It reads the
-/// form only: to rank a `break` value before the loop is checked would read its names outside
-/// their scope.
-/// shortcut: these do not count: a `break` of a name, a labelled `break`, and a `break` under a
-/// form that is not a block, a branch or a statement. Task 5e makes the loop a member.
-fn breaks_optional(e: &ast::Expr) -> bool {
-    fn block(b: &ast::Block) -> bool {
-        (b.stmts.iter()).any(|stmt| match &stmt.kind {
-            StmtKind::Expr(e) => expr(e),
-            _ => false,
-        })
-    }
-    fn expr(e: &ast::Expr) -> bool {
-        match &e.kind {
-            ast::ExprKind::Break {
-                label: None,
-                value: Some(value),
-                ..
-            } => optional_form(value),
-            ast::ExprKind::If {
-                then_block,
-                else_block,
-                ..
-            }
-            | ast::ExprKind::IfLet {
-                then_block,
-                else_block,
-                ..
-            } => block(then_block) || else_block.as_ref().is_some_and(block),
-            ast::ExprKind::Match { arms, .. } => arms.iter().any(|arm| expr(&arm.body)),
-            ast::ExprKind::Block(b) => block(b),
-            _ => false,
-        }
-    }
-    let value = |b: &ast::Block| tail(b).is_some_and(breaks_optional);
-    match &e.kind {
-        ast::ExprKind::Loop { body, .. } => block(body),
-        ast::ExprKind::Block(b) => value(b),
-        ast::ExprKind::If {
-            then_block,
-            else_block,
-            ..
-        }
-        | ast::ExprKind::IfLet {
-            then_block,
-            else_block,
-            ..
-        } => value(then_block) || else_block.as_ref().is_some_and(value),
-        ast::ExprKind::Match { arms, .. } => arms.iter().any(|arm| breaks_optional(&arm.body)),
-        _ => false,
-    }
-}
-
-/// Whether `e` is an optional by its form: `None`, a loop with a `break` of one, or a branch, a
-/// block or a `dbg` whose value is one.
-fn optional_form(e: &ast::Expr) -> bool {
-    let value = |b: &ast::Block| tail(b).is_some_and(optional_form);
-    match &e.kind {
-        ast::ExprKind::NoneLit => true,
-        ast::ExprKind::Loop { .. } => breaks_optional(e),
-        ast::ExprKind::If {
-            then_block,
-            else_block: Some(else_block),
-            ..
-        }
-        | ast::ExprKind::IfLet {
-            then_block,
-            else_block: Some(else_block),
-            ..
-        } => value(then_block) || value(else_block),
-        ast::ExprKind::Match { arms, .. } => arms.iter().any(|arm| optional_form(&arm.body)),
-        ast::ExprKind::Block(b) => value(b),
-        ast::ExprKind::Call { callee, args, .. } if callee.name.as_str() == "dbg" => {
-            matches!(args.as_slice(), [arg] if optional_form(&arg.value))
-        }
-        _ => false,
-    }
-}
-
 /// Marks in `named` each type parameter that `ty` names, by its place; `named` has a place for
 /// each type parameter in scope. `seen` holds each type already visited, so each distinct type of
 /// `ty` is visited once, whatever the number of paths to it. It can be shared by several types.
@@ -1948,12 +1868,6 @@ pub(super) struct Ranked {
     /// not ranked. The `1` of `Bx(v: 1)` is not passed on. An array, or a call that returns
     /// `Some(...)` or a class, is not.
     scalar: bool,
-    /// For a `Concrete` value: whether its type comes from a `loop`, whose `break` values take a
-    /// type that the call's context binds first (see `infer_call`). Ranking does not read `break`
-    /// values. The claim holds only for a bare `loop` argument. `combine` takes the flag from the
-    /// first `Concrete` part, and `combine_branches` drops a part that never ends, so
-    /// `pick(if c { loop { } } else { loop { } }, 1)` has no such flag.
-    holds_loop: bool,
     /// Whether the value never ends and gives no type: `todo`, a call of `panic`, a `loop` that
     /// no `break` leaves, a block that ends in a jump, or a branch of these only. Every reader but
     /// `combine_branches` reads `rank` alone, so such a value is `Concrete` for them.
@@ -1979,7 +1893,6 @@ impl Ranked {
         holds_optional: false,
         nested: false,
         scalar: false,
-        holds_loop: false,
         never: false,
         leads: false,
         waited: false,
@@ -1990,7 +1903,6 @@ impl Ranked {
         holds_optional: false,
         nested: false,
         scalar: true,
-        holds_loop: false,
         never: false,
         leads: false,
         waited: false,
@@ -2006,7 +1918,6 @@ impl Ranked {
         holds_optional: false,
         nested: false,
         scalar: false,
-        holds_loop: false,
         never: false,
         leads: false,
         waited: false,
@@ -2055,20 +1966,14 @@ impl Ranked {
 /// It is `leads` when a part is. It is `waited` when it is `Literal` and each `Literal` part is
 /// `waited`, so `-mk() + 1` is not: it holds the literal `1`. The parts of an operator make one
 /// value. The branches of a join do not, and `combine_branches` sets `waited` by its own rule. It
-/// stops at the first `Concrete` part and takes `holds_loop` from it. The parts after it are not
-/// ranked.
+/// stops at the first `Concrete` part. The parts after it are not ranked.
 fn combine(parts: impl IntoIterator<Item = Ranked>) -> Ranked {
     let mut found = Ranked::WAITS;
     let mut scalar = true;
     let mut waited = true;
     for part in parts {
         match part.rank {
-            Rank::Concrete => {
-                return Ranked {
-                    holds_loop: part.holds_loop,
-                    ..Ranked::CONCRETE
-                };
-            }
+            Rank::Concrete => return Ranked::CONCRETE,
             Rank::Literal => found.rank = Rank::Literal,
             Rank::Waits => {}
         }
@@ -4297,7 +4202,6 @@ impl Checker<'_> {
     /// that gives itself a type (`Rank::Concrete`) is a member then, checked with no context: the
     /// call decides each parameter from its own arguments (Q22). These stay out, and keep their
     /// reports:
-    /// - a loop, which needs its context for its literal breaks;
     /// - a value that is an optional by itself, as a safe call: the context's `?` is its own;
     /// - a value that never finishes, and an `if` with no `else` (E0043);
     /// - an array literal with elements at a place that is not `T` or `[T]`, whose elements meet
@@ -4339,7 +4243,6 @@ impl Checker<'_> {
         );
         let ranked = self.rank_value(e, &mut true);
         (ranked.rank == Rank::Concrete
-            && !ranked.holds_loop
             && !ranked.optional
             && !ranked.never
             && !elements
@@ -4349,11 +4252,8 @@ impl Checker<'_> {
 
     /// Whether an argument of `call` that is still to check can make an optional by itself, or
     /// holds one (see `Ranked`). Ranking stops at a `Concrete` value, so such a value can, unless
-    /// it is an operator, whose value is never optional. Under a hint (`hint`), a value that
-    /// holds a loop does not count by its rank: the loop meets the hint's payload, and the call
-    /// takes the type of its own arguments. It counts when a `break` of the loop gives an optional
-    /// by its form (see `breaks_optional`).
-    fn late_optional(&mut self, call: &Inference<'_>, hint: bool) -> bool {
+    /// it is an operator, whose value is never optional.
+    fn late_optional(&mut self, call: &Inference<'_>) -> bool {
         (call.slots.iter().zip(call.args)).any(|(slot, arg)| {
             let e = &arg.value;
             let operator = matches!(
@@ -4362,11 +4262,7 @@ impl Checker<'_> {
             );
             let ranked = slot.is_none().then(|| self.rank_value(e, &mut true));
             ranked.is_some_and(|r| {
-                r.rank == Rank::Concrete
-                    && !operator
-                    && !(hint && r.holds_loop && !breaks_optional(e))
-                    || r.optional
-                    || r.holds_optional
+                r.rank == Rank::Concrete && !operator || r.optional || r.holds_optional
             })
         })
     }
@@ -4578,12 +4474,10 @@ impl Checker<'_> {
         (expected, whole): (Expectation, bool),
     ) -> Option<bool> {
         let want = match expected {
-            Expectation::Hint { want, siblings, .. }
-                if whole && !self.late_optional(call, true) =>
-            {
+            Expectation::Hint { want, siblings, .. } if whole && !self.late_optional(call) => {
                 (siblings, want)
             }
-            Expectation::Required(want, _) if whole && !self.late_optional(call, false) => {
+            Expectation::Required(want, _) if whole && !self.late_optional(call) => {
                 (payload(want), want)
             }
             Expectation::Required(want, _) | Expectation::Hint { want, .. } => (want, want),
@@ -5435,19 +5329,10 @@ impl Checker<'_> {
             _ if self.int_literal(e) => Ranked::LITERAL,
             K::ArrayLit(elements) => {
                 let found = combine(elements.iter().map(|e| self.rank_value(e, fit)));
-                // `combine` stops at the first `Concrete` element. A `loop` in a later one takes
-                // the context too (a memo answers the elements ranked already).
-                let mut later = true;
-                let holds_loop = found.holds_loop
-                    || found.rank == Rank::Concrete
-                        && elements
-                            .iter()
-                            .any(|e| self.rank_value(e, &mut later).holds_loop);
                 Ranked {
                     optional: false,
                     nested: false,
                     scalar: false,
-                    holds_loop,
                     ..found
                 }
             }
@@ -5546,7 +5431,6 @@ impl Checker<'_> {
                 .block_rank(block, fit, |_| None)
                 .unwrap_or(Ranked::NEVER),
             K::Loop { breaks, .. } => Ranked {
-                holds_loop: true,
                 never: !breaks,
                 ..Ranked::CONCRETE
             },
