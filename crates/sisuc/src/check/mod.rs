@@ -980,9 +980,9 @@ impl SelfType {
     }
 }
 
-/// The return type of a generic call and the parameter, span and type of each argument that
-/// alone decides its bare type parameter (see `Body::lone_args`).
-type LoneArgs = (Type, Vec<(usize, Span, Type)>);
+/// The return type of a generic call, and a list by type parameter. At each parameter that one
+/// argument alone decides, the list has that argument's span and type (see `Body::lone_args`).
+type LoneArgs = (Type, Vec<Option<(Span, Type)>>);
 
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
 #[derive(Default)]
@@ -1186,8 +1186,9 @@ struct Body {
     /// The span of each array literal and array fill whose value no `if` and no `match` gives
     /// through its elements (see `branch_free`). The walk of `without_value` does not enter it.
     branch_free: FxHashSet<Span>,
-    /// The return type of a generic call, by the call's span. With it, the parameter, span and
-    /// type of each argument that alone decides its bare type parameter. The directed report of
+    /// The return type of a generic call, by the call's span. With it, at the index of each bare
+    /// type parameter that one argument alone decides, that argument's span and type. A list by
+    /// index keeps the note and the look-up of a parameter in constant time. The directed report of
     /// a call whose result misfits goes to such an argument, as on `main`. In `id(id(mk2()))`, it
     /// is at `mk2()`. In `g(py(true, none()))` at `Two<i64?, i64>`, with `py<X, Y>(y: Y, x: X) ->
     /// Two<X, Y>`, it is at `true` (see `Checker::blamed_part`).

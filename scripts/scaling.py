@@ -691,6 +691,21 @@ def never_built(k: int) -> str:
     )
 
 
+def constructor_type_parameters(k: int) -> str:
+    """Return a program that builds a struct of `k + 1` type parameters under its written type."""
+    params = ", ".join(["A", *(f"A{tag(i)}" for i in range(k))])
+    fields = "    f: A\n" + "".join(f"    f{tag(i)}: A{tag(i)}\n" for i in range(k))
+    written = ", ".join(["i64"] * (k + 1))
+    given = "f: 1" + "".join(f", f{tag(i)}: 1" for i in range(k))
+    # `main` adds each field to `total`, so that no size has a W0013.
+    read = "".join(f"    total += t.f{tag(i)}\n" for i in range(k))
+    return (
+        f"struct Tup<{params}> {{\n{fields}}}\n\n"
+        f"fn main() {{\n    let t: Tup<{written}> = Tup({given})\n    let mut total = 0\n"
+        f'    total += t.f\n{read}    print("{{total}}")\n}}\n'
+    )
+
+
 def failed_bounds(k: int) -> str:
     """Return a program with `k` failed bounds in one alias, and `k` users of that alias."""
     params = ", ".join(["P", *(f"P{tag(i)}" for i in range(k))])
@@ -746,6 +761,7 @@ SHAPES = {
     "mutable locals": (250, mutable_locals),
     "nested array ==": (5, nested_array_eq),
     "failed bounds": (64, failed_bounds),
+    "constructor type parameters": (100, constructor_type_parameters),
     "struct fields": (50, struct_fields),
     "struct paths": (24, struct_paths),
     "struct writes": (100, struct_writes),

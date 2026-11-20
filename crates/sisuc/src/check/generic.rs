@@ -3605,8 +3605,11 @@ impl Checker<'_> {
     fn note_lone_arg(&mut self, call: Span, ret: Option<Type>, arg: (usize, Span, Type)) {
         if let Some(ret) = ret {
             let (_, args) = (self.body.lone_args.entry(call)).or_insert_with(|| (ret, Vec::new()));
-            args.retain(|&(k, ..)| k != arg.0);
-            args.push(arg);
+            let (t, at, ty) = arg;
+            if args.len() <= t {
+                args.resize(t + 1, None);
+            }
+            args[t] = Some((at, ty));
         }
     }
 
@@ -3617,9 +3620,7 @@ impl Checker<'_> {
         let TypeKind::Param(_, k) = ret.kind() else {
             return None;
         };
-        (args.iter())
-            .find(|&&(t, ..)| t == k as usize)
-            .map(|&(_, at, ty)| (at, ty))
+        args.get(k as usize).copied().flatten()
     }
 
     /// The argument of the generic call at `call` that a known part of `want` clashes with, as
@@ -3636,7 +3637,7 @@ impl Checker<'_> {
             _ => want,
         };
         let args: Vec<_> = (args.iter())
-            .map(|&(t, at, ty)| (t, at, self.table.resolve(ty)))
+            .map(|arg| arg.map(|(at, ty)| (at, self.table.resolve(ty))))
             .collect();
         let mut seen = FxHashSet::default();
         let mut pairs = vec![(ret, want)];
@@ -3658,8 +3659,9 @@ impl Checker<'_> {
             };
             match (ret.kind(), want.kind()) {
                 (TypeKind::Param(_, k), _) if !want.holds_infer() => {
-                    if let Some(n) = args.iter().position(|&(t, ..)| t == k as usize) {
-                        let open = args[n].2.holds_infer();
+                    let n = k as usize;
+                    if let Some(Some((_, ty))) = args.get(n) {
+                        let open = ty.holds_infer();
                         parts[n] = match parts[n] {
                             Some(None) => Some(Some(want)),
                             Some(Some(part)) if part != want && !open => None,
@@ -3677,8 +3679,8 @@ impl Checker<'_> {
                 _ => {}
             }
         }
-        for (&(_, at, ty), part) in args.iter().zip(parts) {
-            let Some(Some(part)) = part else {
+        for (arg, part) in args.iter().zip(parts) {
+            let (Some((at, ty)), Some(Some(part))) = (*arg, part) else {
                 continue;
             };
             let ty = self.shown_against(ty, part);
