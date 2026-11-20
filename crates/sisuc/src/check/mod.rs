@@ -3063,6 +3063,17 @@ fn payload(ty: Type) -> Type {
     }
 }
 
+/// The value that `e` gives: the tail of each block that ends in a value, through each such
+/// block, and `e` itself for any other expression.
+fn block_value(mut e: &ast::Expr) -> &ast::Expr {
+    while let ast::ExprKind::Block(block) = &e.kind
+        && let Some(value) = tail(block)
+    {
+        e = value;
+    }
+    e
+}
+
 /// The expression a block ends in, if it ends in one: its value. A jump is no value.
 fn tail(block: &ast::Block) -> Option<&ast::Expr> {
     match block.stmts.last() {

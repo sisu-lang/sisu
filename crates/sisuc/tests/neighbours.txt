@@ -564,6 +564,7 @@ let _a = $ ?? id(nfirst(Bm(v: 1).make(c)))
 let _a = [id(nfirst(Bm(v: 1).make(c))), $]
 let _a = if c { id(nfirst(Bm(v: 1).make(c))) } else { $ }
 let _a = hpick(Bm(v: 1).opt(c), Bm(v: 1).opt(c)) == $
+let _a = id({ Bm(v: 1).opt(c) }) == $
 # A call of a `mut self` method on each value: bare, on a `let mut` copy, on the binding of a
 # `let`-`else` and of an `if let`, in the argument of a generic call, of `Some` and of a join, on an
 # element, through `?.` and on a field. The last is a plain generic method that shares its name

@@ -25,7 +25,7 @@ use super::reports::{Held, Reported};
 use super::stmt::BlockSoFar;
 use super::{
     Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Origin, Poisoned,
-    built_in_type, is_kept, own_args, payload, tail, type_of,
+    block_value, built_in_type, is_kept, own_args, payload, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::diagnostic::{ArgumentsForm, Diagnostic, Expected, MainForm, NoValueCause, Unwrap};
@@ -3044,12 +3044,7 @@ impl Checker<'_> {
             // call whose result names the parameter, the join around the call gives it
             // (`id(b.opt(true)) == o`), unless several methods answer the method call.
             // A block gives its value's context to that value.
-            let mut value = &arg.value;
-            while let ast::ExprKind::Block(block) = &value.kind
-                && let Some(tail) = tail(block)
-            {
-                value = tail;
-            }
+            let value = block_value(&arg.value);
             if waits
                 && failed.is_none()
                 && matches!(value.kind, ast::ExprKind::MethodCall { .. })
@@ -3842,11 +3837,13 @@ impl Checker<'_> {
         // associated type of an open parameter is no context: the argument decides the parameter.
         // The members may decide a part of the context. That part reaches each call inside a
         // call or an array argument, which keeps its open parts open as a member does.
-        let shaped = matches!(
-            &e.kind,
-            ast::ExprKind::Call { .. } | ast::ExprKind::ArrayLit(_)
-        );
-        let informed = shaped
+        let shaped = |e: &ast::Expr| {
+            matches!(
+                &e.kind,
+                ast::ExprKind::Call { .. } | ast::ExprKind::ArrayLit(_)
+            )
+        };
+        let informed = shaped(e)
             && (with.iter().enumerate()).any(|(k, &ty)| {
                 names_outside_assoc(param, k)
                     && !matches!(self.table.resolve(ty).kind(), TypeKind::Infer(_))
@@ -3854,12 +3851,16 @@ impl Checker<'_> {
         let method = matches!(e.kind, ast::ExprKind::MethodCall { .. });
         // In a call that is a member, a method call, a call or an array literal is a member too,
         // at each depth: a parameter that it cannot infer stays open, and the join around the
-        // outer call gives it (`id(first(b.make(true))) == o`). A method call that several methods
-        // answer waits for its context to pick one, and a closed place keeps its own check.
+        // outer call gives it (`id(first(b.make(true))) == o`). So is a block whose value is one
+        // (`id({ b.opt(true) }) == o`). A method call that several methods answer waits for its
+        // context to pick one, and a closed place keeps its own check.
+        let value = block_value(e);
         let member = expected == Expectation::Member
             && !self.body.closed_place
             && !filled.has_assoc()
-            && (shaped || method && !self.picks_by_context(e));
+            && (shaped(value)
+                || matches!(value.kind, ast::ExprKind::MethodCall { .. })
+                    && !self.picks_by_context(value));
         if (informed || method) && !member && !filled.has_assoc() {
             let outer = self.body.late_argument;
             if !matches!(param.kind(), TypeKind::Param(..)) {
