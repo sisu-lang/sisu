@@ -7,9 +7,10 @@ use super::expr::{
 use super::generic::mismatched;
 use super::infer::Kind;
 use super::infer::LiteralCheck;
+use super::infer::Snapshot;
 use super::interface::Operation;
 use super::join::{Heading, JoinForm, JoinMember, Place};
-use super::reports::{Held, Reported};
+use super::reports::{Held, Mark, Reported};
 use super::{
     Checked, Checker, Expectation, Lowered, Origin, Poisoned, as_optional, beyond_one_layer,
     block_expr, known_type, payload, type_of,
@@ -724,6 +725,33 @@ impl Checker<'_> {
         }
     }
 
+    /// Marks the start of the first check of a side of `==` or `??`, which `drop_side` drops.
+    fn side_mark(&self) -> SideMark {
+        SideMark {
+            snapshot: self.table.snapshot(),
+            reports: self.diagnostics.mark(),
+            locals: self.body.locals.len(),
+            pending: self.pending.len(),
+            misfits: self.body.misfits.len(),
+        }
+    }
+
+    /// Drops the first check of a side since `first`: its types, reports, locals and the
+    /// uninferred literals of them, warnings and misfits. So the check again leaves each once.
+    fn drop_side(&mut self, first: SideMark) {
+        self.table.rollback(first.snapshot);
+        self.diagnostics.drop_since(first.reports);
+        // Most bodies have no uninferred literal: then the walk of the locals is skipped.
+        if !self.body.uninferred.is_empty() {
+            for local in first.locals..self.body.locals.len() {
+                self.body.uninferred.remove(&tir::LocalId(local));
+            }
+        }
+        self.body.locals.truncate(first.locals);
+        self.pending.truncate(first.pending);
+        self.body.misfits.truncate(first.misfits);
+    }
+
     /// The type that the operands but the `late` ones, not checked yet, join to, as the type a
     /// late one takes when it is closed; else no type. Nothing is bound.
     fn joined_others(
@@ -1044,17 +1072,23 @@ impl Checker<'_> {
         let mut late: Vec<usize> = (0..2).filter(|&i| late_operand(sides[i])).collect();
         let mut values = [Ok(unit_value(lhs.span)), Ok(unit_value(rhs.span))];
         let early: Vec<usize> = (0..2).filter(|i| !late.contains(i)).collect();
+        let outer = (
+            std::mem::take(&mut self.body.needs_context),
+            std::mem::take(&mut self.body.rechecks),
+        );
         for i in early {
-            let (snapshot, reports) = (self.table.snapshot(), self.diagnostics.mark());
-            let outer = std::mem::take(&mut self.body.needs_context);
+            let first = self.side_mark();
+            self.body.rechecks = late.is_empty();
             values[i] = self.value(sides[i], Expectation::Member);
-            // A side that needs the type of the other is checked again after it, as on `main`.
-            if std::mem::replace(&mut self.body.needs_context, outer) && late.is_empty() {
-                self.table.rollback(snapshot);
-                self.diagnostics.drop_since(reports);
+            self.body.rechecks = false;
+            // A side that needs the type of the other is checked again after it, with that type:
+            // `put(true) == ob` takes the parameter of `put` from `ob`. This is new: `main`
+            // gives E0050.
+            if std::mem::take(&mut self.body.needs_context) && late.is_empty() {
+                self.drop_side(first);
                 late.push(i);
             } else {
-                self.keep_snapshot(snapshot);
+                self.keep_snapshot(first.snapshot);
             }
         }
         for (k, &i) in late.iter().enumerate() {
@@ -1066,6 +1100,7 @@ impl Checker<'_> {
             };
             values[i] = self.value(sides[i], given);
         }
+        (self.body.needs_context, self.body.rechecks) = outer;
         let types = [
             self.member_own_type(&mut values[0], lhs.span),
             self.member_own_type(&mut values[1], rhs.span),
@@ -1559,13 +1594,16 @@ impl Checker<'_> {
             },
             _ => Expectation::Member,
         };
-        let (snapshot, reports) = (self.table.snapshot(), self.diagnostics.mark());
-        let outer = std::mem::take(&mut self.body.needs_context);
+        let first = self.side_mark();
+        let outer = (
+            std::mem::take(&mut self.body.needs_context),
+            std::mem::replace(&mut self.body.rechecks, read.is_ok()),
+        );
         let mut other = self.fallback(rhs, inner);
+        self.body.rechecks = false;
         // A default that needs the payload's type is checked again with it, as on `main`.
-        if std::mem::replace(&mut self.body.needs_context, outer) && read.is_ok() {
-            self.table.rollback(snapshot);
-            self.diagnostics.drop_since(reports);
+        if std::mem::take(&mut self.body.needs_context) && read.is_ok() {
+            self.drop_side(first);
             let hint = Expectation::Hint {
                 want: as_optional(payload),
                 siblings: payload,
@@ -1573,8 +1611,9 @@ impl Checker<'_> {
             };
             other = self.fallback(rhs, hint);
         } else {
-            self.keep_snapshot(snapshot);
+            self.keep_snapshot(first.snapshot);
         }
+        (self.body.needs_context, self.body.rechecks) = outer;
         // A failed default whose type is a nested join's variable lost the values that give it
         // its type: it has none.
         if let Err(failed) = &mut other
@@ -1740,4 +1779,14 @@ fn untyped(checked: &Checked) -> Option<Reported> {
 fn on_char(operator: Operator, own: &[Option<Type>]) -> bool {
     own.contains(&Some(Type::CHAR))
         && !(matches!(operator, Operator::Plus { .. }) && own.contains(&Some(Type::STRING)))
+}
+
+/// Where the first check of a side of `==` or `??` starts (see `Checker::drop_side`).
+#[derive(Clone, Copy)]
+struct SideMark {
+    snapshot: Snapshot,
+    reports: Mark,
+    locals: usize,
+    pending: usize,
+    misfits: usize,
 }

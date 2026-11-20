@@ -3218,8 +3218,15 @@ impl Checker<'_> {
                     .resolve(param.subst(&listed_all(&call)))
                     .holds_infer() =>
                 {
-                    self.body.needs_context |= expected == Expectation::Member;
-                    mark(self.operand(&arg.value, Expectation::Poisoned))
+                    let member = expected == Expectation::Member;
+                    self.body.needs_context |= member;
+                    // The side is checked again with its sibling's type, and the argument with
+                    // it: a check now would be dropped, and nested sides would double.
+                    if member && self.body.rechecks {
+                        Err(Poisoned::untyped(self.proof(arg.value.span))) // proof: dropped side
+                    } else {
+                        mark(self.operand(&arg.value, Expectation::Poisoned))
+                    }
                 }
                 // An associated type with no choice: the conformance reported it.
                 None => {

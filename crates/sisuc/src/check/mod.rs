@@ -1116,8 +1116,13 @@ struct Body {
     /// Whether a call checked as a member needs the type of a sibling. It could not infer a type
     /// parameter, or it had an argument at an associated type that only its join decides.
     /// Nothing checks that argument again. So `==` and the default of `??` check that side again
-    /// after the other, with its type (see `Checker::equal`).
+    /// after the other, with its type (see `Checker::equal`). After that check the flag is the
+    /// one from before the operator: a check of the operator again gives that side no more type.
     needs_context: bool,
+    /// Whether the `==` or `??` whose side is being checked drops that check and checks the side
+    /// again when `needs_context` is set. Then an argument that only the join decides is not
+    /// checked: that check would be dropped.
+    rechecks: bool,
     /// The argument that its call checks late at a place that is not a bare type parameter. A part
     /// of that place is still open. A result there that clashes with a known part is E0032, as on
     /// `main` (see `Checker::known_context`).
