@@ -6732,6 +6732,39 @@ fn misfitting_arguments_should_be_joined_a_linear_number_of_times() {
     assert_near_linear(reads(20), reads(40), reads(60));
 }
 
+/// GIVEN a call of `n` type parameters that type arguments bind
+/// AND an argument at each parameter, and `n` more arguments at an alias `n` arrays deep
+/// WHEN it is checked, at n = 20, 40 and 60
+/// THEN the reads of the call's origins and the layers peeled for them grow in step with n: each
+///   argument reads the origin of its own parameter only, and a concrete pattern is not peeled
+#[test]
+fn origins_should_be_read_a_linear_number_of_times() {
+    let reads = |n: usize| {
+        let params: Vec<_> = (0..n).map(|k| format!("T{k}")).collect();
+        let typed: Vec<_> = (0..n)
+            .map(|k| format!("_a{k}: T{k}"))
+            .chain((0..n).map(|k| format!("_p{k}: A")))
+            .collect();
+        let args: Vec<_> = (0..n).map(|_| "1").chain((0..n).map(|_| "v")).collect();
+        let src = format!(
+            "type A = {}i64{}\nfn f<{}>({}) {{}}\nfn g(v: A) {{\n    f<{}>({})\n}}\n\
+             fn main() {{}}",
+            "[".repeat(n),
+            "]".repeat(n),
+            params.join(", "),
+            typed.join(", "),
+            vec!["i64"; n].join(", "),
+            args.join(", ")
+        );
+        generic::ORIGIN_READS.set(0);
+        generic::PEELED.set(0);
+        let (_, ds) = checked(&src);
+        assert!(ds.is_empty(), "{ds:?}");
+        generic::ORIGIN_READS.get() + generic::PEELED.get()
+    };
+    assert_near_linear(reads(20), reads(40), reads(60));
+}
+
 /// A clean call of `n` arguments, whose last argument binds `T`, finds that argument once for
 /// each other argument. A walk of the arguments before it for each would cost n². `call_work`
 /// counts the work of the join of the call, so a search that walks the arguments adds to it.

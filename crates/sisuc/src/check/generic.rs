@@ -1154,6 +1154,9 @@ thread_local! {
     /// How many layers of patterns the search for the argument that bound a parameter has read on
     /// this thread (see `inferred_origin`).
     pub(super) static PEELED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many reads of a call's origins (`Origins::get`) and searches for the argument that
+    /// bound a parameter (`inferred_origin`) there have been on this thread.
+    pub(super) static ORIGIN_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many entries of the substitution lists of early bound checks have been written on this
     /// thread.
     pub(super) static LISTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1630,6 +1633,8 @@ mod origins {
 
         /// Where parameter `i` was bound. Panics when `i` is not a parameter of the call.
         pub(super) fn get(&self, i: usize) -> Option<Span> {
+            #[cfg(test)]
+            super::ORIGIN_READS.set(super::ORIGIN_READS.get() + 1);
             self.0[i].map(|(at, _)| at)
         }
 
@@ -1658,6 +1663,8 @@ use origins::Origins;
 /// layers. None for any other pattern, and for a parameter that a written type argument or the
 /// context bound: neither is in an argument.
 fn inferred_origin(call: &Inference<'_>, pattern: Type) -> Option<Origin> {
+    #[cfg(test)]
+    ORIGIN_READS.set(ORIGIN_READS.get() + 1);
     // A pattern with no type parameter has none to name: its layers are not read.
     if !pattern.has_param() {
         return None;
