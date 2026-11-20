@@ -5177,6 +5177,27 @@ fn nested_int_literals_should_be_walked_once() {
     });
 }
 
+/// An argument of `id` is a chain of `+` over integer literals. A name is at its start, and a
+/// mismatched operand is at its end (E0032). The checker ranks the argument, and `int_literal`
+/// answers for the subtree of each level of the chain. A walk that is not kept reads the operands
+/// of each level again: the work grows with the square of the length (#367). The lengths stay
+/// below the nesting limit of the parser (256).
+#[test]
+fn int_literals_of_a_mismatched_argument_should_be_walked_once() {
+    crate::on_compiler_stack(|| {
+        let steps = |length: usize| {
+            let src = format!(
+                "fn id<T>(x: T) -> T {{ x }}\nfn main() {{\n    let y = 1\n    let a: [i64]? = None\n    let r = id(y{} + a?.len())\n}}",
+                " + 1".repeat(length),
+            );
+            INT_LITERAL_STEPS.set(0);
+            drop(diags(&src));
+            INT_LITERAL_STEPS.get()
+        };
+        assert_near_linear(steps(60), steps(120), steps(180));
+    });
+}
+
 /// The program of `a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times`: an
 /// array literal `depth` deep, for a parameter type with `end` at its end. `bottom` is what the
 /// innermost level holds, and `setup` is the line before the call.

@@ -633,6 +633,9 @@ thread_local! {
     pub(super) static EXPR_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many expressions `without_value` has visited on this thread.
     pub(super) static VALUE_WALK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many unary `-` and operator expressions `int_literal` has walked on this thread, those
+    /// it answers from `body.int_literals` not counted.
+    pub(super) static INT_LITERAL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many nested loops the walk that puts back a loop's `break` values has entered.
     pub(crate) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many `break` values their loop's join has converted, in loops that no nested `break`

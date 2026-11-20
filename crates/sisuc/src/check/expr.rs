@@ -138,6 +138,8 @@ impl Checker<'_> {
         if let Some(&known) = self.body.int_literals.get(&e.span) {
             return known;
         }
+        #[cfg(test)]
+        super::INT_LITERAL_STEPS.set(super::INT_LITERAL_STEPS.get() + 1);
         let found = op.is_none_or(|op| operator(op).is_some_and(|(_, ty)| ty == Type::I64))
             && self.int_literal(lhs)
             && rhs.is_none_or(|rhs| self.int_literal(rhs));
