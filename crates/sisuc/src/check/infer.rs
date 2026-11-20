@@ -277,16 +277,20 @@ impl Table {
         self.record(Undo::Held { at });
     }
 
-    /// The held arguments whose types are known now, taken out of the list.
-    pub(super) fn take_held(&mut self) -> Vec<HeldArgument> {
-        if self.held.is_empty() {
+    /// The held arguments whose types are known now, taken out of the list. With `within`, only
+    /// the ones held inside that span. A join checks its members just before it, so those are the
+    /// last ones in the list. The walk stops at the first one outside the span.
+    pub(super) fn take_held(&mut self, within: Option<Span>) -> Vec<HeldArgument> {
+        let inside = |held: &HeldArgument| {
+            within.is_none_or(|span| span.start() <= held.at.start() && held.at.end() <= span.end())
+        };
+        let from = (self.held.iter().rposition(|held| !inside(held))).map_or(0, |i| i + 1);
+        if from == self.held.len() {
             return Vec::new();
         }
-        let held = std::mem::take(&mut self.held);
-        let (known, open) = held
-            .into_iter()
+        let (known, open) = (self.held.split_off(from).into_iter())
             .partition(|held| !self.resolve(held.want).holds_infer());
-        self.held = open;
+        self.held.extend::<Vec<HeldArgument>>(open);
         known
     }
 

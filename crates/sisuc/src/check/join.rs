@@ -278,7 +278,7 @@ impl Checker<'_> {
                     let target = target(member.at, hole, ty);
                     self.settle_member(member, target, fixed == Some(i));
                 }
-                self.settle_held(&mut |at, value| {
+                self.settle_held(Some(site.heading.whole), &mut |at, value| {
                     for member in members.iter_mut() {
                         if let Ok(e) = &mut *member.value
                             && put_back(e, at, value, false)
@@ -344,14 +344,19 @@ impl Checker<'_> {
     }
 
     /// Each held argument whose type is known now, met with that type and given to `put`, which
-    /// puts it back in its call. One that `put` leaves is held again, for a join around it or the
-    /// end of the function (see `Checker::with_table`).
-    pub(super) fn settle_held(&mut self, put: &mut dyn FnMut(Span, &mut Option<tir::Expr>)) {
+    /// puts it back in its call. With `within`, only the ones held inside that span, the members
+    /// of a join (see `Table::take_held`). One that `put` leaves is held again, for a join around
+    /// it or the end of the function (see `Checker::with_table`).
+    pub(super) fn settle_held(
+        &mut self,
+        within: Option<Span>,
+        put: &mut dyn FnMut(Span, &mut Option<tir::Expr>),
+    ) {
         for super::infer::HeldArgument {
             at,
             want,
             mut value,
-        } in self.table.take_held()
+        } in self.table.take_held(within)
         {
             let want = self.table.resolve(want);
             let want = self.normalize(want).unwrap_or(want);
@@ -367,7 +372,8 @@ impl Checker<'_> {
             }];
             let required = Expectation::Required(want, super::Origin::None);
             // A value that does not take `want` is reported here, and its call keeps the `None`.
-            // One member under a required type has no conflict, so the form names nothing.
+            // One member under a required type has no conflict, so the form names nothing: each
+            // form gives the same report, and `Loop` is one with no fields.
             let _ = self.join_form(JoinForm::Loop, heading, &mut member, required, None);
             let Ok(value) = value else {
                 continue;

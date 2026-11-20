@@ -1599,13 +1599,14 @@ impl<'src> Checker<'src> {
         let errors = self.diagnostics.errors();
         let mut result = f(self);
         // A held argument that no join put back goes back in place now.
-        self.settle_held(&mut |at, value| {
+        self.settle_held(None, &mut |at, value| {
             result.each_root_mut(&mut |e| {
                 join::put_back(e, at, value, true);
             });
         });
+        let left = self.table.take_held(None);
         debug_assert!(
-            self.table.take_held().is_empty() || self.diagnostics.errors() > errors,
+            left.is_empty() || self.diagnostics.errors() > errors,
             "each held argument with a type should be put back in its call"
         );
         self.report_held_conflicts();
