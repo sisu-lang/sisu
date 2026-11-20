@@ -1,0 +1,101 @@
+// GIVEN a call argument at an associated type that only the join around the call decides
+// AND the argument holds a `return`, a `break` or a loop
+// WHEN the program runs with the jump taken and not taken
+// THEN the join gives the argument its type, and the jump leaves as written
+// AND a counted operand before the jump is freed one time (Valgrind and `--rc-checks`)
+interface Source {
+    type Item
+    fn first(self) -> Item
+}
+
+struct Pair: Source, Eq {
+    type Item = bool
+    v: bool
+    fn first(self) -> bool { self.v }
+}
+
+struct Named: Source, Eq {
+    type Item = string
+    v: string
+    fn first(self) -> string { self.v }
+}
+
+fn put<S: Source>(_v: S.Item) -> S? {
+    None
+}
+
+fn puts<S: Source>(_s: string, _v: S.Item) -> S? {
+    None
+}
+
+fn pick<T>(a: T, _b: T) -> T {
+    a
+}
+
+fn element(ob: Pair?) -> i64 {
+    let a = [put(loop { break true }), ob]
+    a.len()
+}
+
+fn left_of_equal(c: bool, ob: Pair?) -> i64 {
+    let b = put(if c { return 1 } else { true }) == ob
+    if b { 2 } else { 3 }
+}
+
+fn default(ob: Pair?) -> i64 {
+    let d = ob ?? put(loop { break true })
+    if d == None { 4 } else { 5 }
+}
+
+fn argument(c: bool, ob: Pair?) -> i64 {
+    let e = pick(put(if c { return 6 } else { true }), ob)
+    if e == None { 7 } else { 8 }
+}
+
+fn branch(c: bool, ob: Pair?) -> i64 {
+    let f = if c { put(loop { break true }) } else { ob }
+    if f == None { 9 } else { 10 }
+}
+
+fn outer_break(c: bool, ob: Pair?) -> i64 {
+    let mut n = 0
+    outer: loop {
+        let a = [put(if c { break outer } else { true }), ob]
+        n = a.len()
+        break
+    }
+    n
+}
+
+fn counted_element(c: bool, name: string, os: Named?) -> i64 {
+    let a = [puts(name + "x", if c { return 11 } else { name + "y" }), os]
+    a.len()
+}
+
+fn counted_equal(c: bool, name: string, os: Named?) -> i64 {
+    let b = os == puts(name + "x", if c { return 12 } else { name + "y" })
+    if b { 13 } else { 14 }
+}
+
+fn counted_default(c: bool, name: string, os: Named?) -> i64 {
+    let d = os ?? puts(name + "x", if c { return 15 } else { name + "y" })
+    if d == None { 16 } else { 17 }
+}
+
+fn main() {
+    let never = [1].len() == 2
+    let ob: Pair? = if never { Pair(v: true) } else { None }
+    let os: Named? = if never { Named(v: "v") } else { None }
+    let name = "n{[1].len()}"
+    print(element(ob))
+    print(default(ob))
+    for c in [true, false] {
+        print(left_of_equal(c, ob))
+        print(argument(c, ob))
+        print(branch(c, ob))
+        print(outer_break(c, ob))
+        print(counted_element(c, name, os))
+        print(counted_equal(c, name, os))
+        print(counted_default(c, name, os))
+    }
+}

@@ -1,7 +1,7 @@
 //! The tests of the inference table and the join that is built on it.
 
 use super::*;
-use crate::check::infer::{Kind, Written};
+use crate::check::infer::{self, Kind, Written};
 use crate::check::join::{SETTLED, VALUE_STEPS};
 
 /// A result that holds no type, so that `with_table` has nothing to write back in the test.
@@ -2464,6 +2464,38 @@ fn a_decided_or_bounded_call_under_a_nested_optional_should_keep_its_wrap() {
         red.len(),
         red.join("\n")
     );
+}
+
+/// A held argument whose type no join gives stays held to the end of the function, as in
+/// `let a = [put(true)]` (E0050). A later join looks only at the arguments held inside it. So the
+/// types that the checker resolves grow in step with the number of such statements. A join that
+/// walks the whole list resolves each earlier argument again: n^2. The row with `[1, 2]` gives a
+/// join that holds nothing after each held argument.
+#[test]
+fn held_arguments_with_no_type_should_keep_the_check_linear() {
+    const SOURCE: &str = "interface Source {\n    type Item\n    fn first(self) -> Item\n}\n\
+        struct Pair: Source, Eq {\n    type Item = bool\n    v: bool\n    fn first(self) -> bool { self.v }\n}\n\
+        fn put<S: Source>(v: S.Item) -> S? { None }\n";
+    for line in [
+        "let a{i} = [put(true)]",
+        "let a{i} = [put(true)]; let b{i} = [1, 2]",
+    ] {
+        let visits = |n: usize| {
+            let lines: Vec<String> = (0..n)
+                .map(|i| line.replace("{i}", &i.to_string()))
+                .collect();
+            let src = format!("{SOURCE}fn main() {{\n    {}\n}}", lines.join("\n    "));
+            infer::VISITS.set(0);
+            drop(diags(&src));
+            infer::VISITS.get()
+        };
+        assert_near_linear_for(
+            &format!("`{line}`: "),
+            visits(200),
+            visits(400),
+            visits(600),
+        );
+    }
 }
 
 /// A side of `==` or a default of `??` that needs its sibling's type is checked again with it.
