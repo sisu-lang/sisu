@@ -14,9 +14,6 @@ use std::rc::Rc;
 pub(super) enum Origin {
     /// No origin that a report names.
     None,
-    /// The `break` at `at`, which gave the loop its type `ty`. `outer` is set when that loop
-    /// is around the loop that reports.
-    Break { at: Span, ty: Type, outer: bool },
     /// Parameter `index` of the function or method `function` (a `FuncId`).
     Parameter { function: u32, index: u32 },
     /// The return type of the function or method `function`.
@@ -41,16 +38,10 @@ pub(super) enum Origin {
     Index,
     /// The rule that an index of a place is an `i64`: a place takes no range.
     PlaceIndex,
-    /// The branch value at `at`, which gave its `if` or `match` the type `ty`.
-    Branch { at: Span, ty: Type },
     /// The argument at `at`, which bound the type parameter `param` of a call to `ty`.
     Inferred { at: Span, param: Symbol, ty: Type },
     /// The first bare `break` of a loop, at `at`, which gives the loop the value `unit`. A report
     /// of a `break` that has a value points at it.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the first caller comes in Task 5")
-    )]
     BareBreak { at: Span },
 }
 
@@ -189,56 +180,13 @@ impl Expectation {
     }
 
     /// The origin of an operand that is held to the type `want`: the origin of this context when
-    /// `want` is the type that it expects. A branch hints its type made optional, so an operand
-    /// held to the branch's own type keeps the origin too. Else none.
+    /// `want` is the type that it expects. Else none.
     pub(super) fn origin_for(self, want: Option<Type>) -> Origin {
-        let origin = self.origin();
-        let branch = matches!(origin, Origin::Branch { ty, .. } if want == Some(ty));
-        if (want.is_some() && want == self.ty()) || branch {
-            origin
+        if want.is_some() && want == self.ty() {
+            self.origin()
         } else {
             Origin::None
         }
-    }
-
-    /// `self` for a loop in the value: a `break` origin is of a loop around it, so it is `outer`.
-    pub(super) fn for_inner_loop(self) -> Self {
-        let outer = |origin| match origin {
-            Origin::Break { at, ty, .. } => Origin::Break {
-                at,
-                ty,
-                outer: true,
-            },
-            other => other,
-        };
-        match self {
-            Self::Required(ty, origin) => Self::Required(ty, outer(origin)),
-            Self::Hint {
-                want,
-                siblings,
-                origin,
-            } => Self::Hint {
-                want,
-                siblings,
-                origin: outer(origin),
-            },
-            other => other,
-        }
-    }
-
-    /// For a hint: `None`, and the type of its siblings with its origin. Else `self` and none.
-    pub(super) fn split_hint(self) -> (Self, Option<(Type, Origin)>) {
-        match self {
-            Self::Hint {
-                siblings, origin, ..
-            } => (Self::None, Some((siblings, origin))),
-            other => (other, None),
-        }
-    }
-
-    /// The type of the siblings of a hint; else none.
-    pub(super) fn siblings(self) -> Option<Type> {
-        self.split_hint().1.map(|(ty, _)| ty)
     }
 }
 
@@ -263,11 +211,6 @@ impl Checker<'_> {
         };
         match origin {
             Origin::None | Origin::BareBreak { .. } => None,
-            Origin::Break { at, ty, outer } => Some(MismatchOrigin::Break {
-                at,
-                ty: self.type_name(ty),
-                outer,
-            }),
             Origin::Parameter { function, index } => {
                 let sig = &self.signatures[function as usize];
                 let i = index as usize;
@@ -330,10 +273,6 @@ impl Checker<'_> {
             Origin::Condition => Some(MismatchOrigin::Condition),
             Origin::Index => Some(MismatchOrigin::Index),
             Origin::PlaceIndex => Some(MismatchOrigin::PlaceIndex),
-            Origin::Branch { at, ty } => Some(MismatchOrigin::Branch {
-                at,
-                ty: self.type_name(ty),
-            }),
             Origin::Inferred { at, param, ty } => Some(MismatchOrigin::Inferred {
                 at,
                 param: param.to_string(),

@@ -192,7 +192,7 @@ impl Walk {
                 });
                 first.then(arms.reduce(Flow::or).unwrap_or(Flow::PASS))
             }
-            ExprKind::Loop(body) => {
+            ExprKind::Loop { body, .. } => {
                 let body = self.block(body, open, calls);
                 Flow {
                     recurses: body.recurses,

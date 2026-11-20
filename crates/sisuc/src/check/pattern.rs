@@ -6,9 +6,8 @@ use std::iter;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::Via;
-use super::branch::{Branch, branch_expectation};
+use super::branch::branch_expectation;
 use super::exhaust::{self, Neighbours, Report, Row};
-use super::expr::gives_made_value;
 use super::generic::{Ahead, type_meets};
 use super::join::{Heading, JoinForm};
 use super::names::{self, Position, Resolved};
@@ -197,14 +196,6 @@ fn empty_block() -> tir::Block {
     }
 }
 
-/// The value of `arm`: its body, or the value of its block.
-fn arm_tail(arm: &ast::Arm) -> Option<&ast::Expr> {
-    match &arm.body.kind {
-        ast::ExprKind::Block(block) => super::tail(block),
-        _ => Some(&arm.body),
-    }
-}
-
 /// Where the value of `arm` is: its body, or the value of its block (see `value_span`).
 fn arm_value_span(arm: &ast::Arm) -> Span {
     match &arm.body.kind {
@@ -214,25 +205,6 @@ fn arm_value_span(arm: &ast::Arm) -> Span {
 }
 
 impl Checker<'_> {
-    /// The branch for each of `arms`, ranked when no type is `expected` (see `block_branch`). The
-    /// patterns bind for the ranking in `form`.
-    fn arm_branches<'a>(
-        &mut self,
-        arms: &'a [ast::Arm],
-        form: &LetValue,
-        expected: Expectation,
-    ) -> Vec<Branch<'a>> {
-        arms.iter()
-            .map(|arm| {
-                let bind = |c: &mut Self| Some(c.bind_pattern(None, form, &arm.pattern, Some(arm)));
-                match &arm.body.kind {
-                    ast::ExprKind::Block(block) => self.block_branch(block, expected, bind),
-                    _ => self.expr_branch(arm, &arm.body, expected, bind),
-                }
-            })
-            .collect()
-    }
-
     /// `match scrutinee { arms }`, whose keyword is at `keyword` and `}` at `close`. Each arm is
     /// checked in a scope that holds its bindings, and the arms join as an `if`'s branches do
     /// (`join`). When every pattern checked, the arms are checked for coverage and reachability.
@@ -251,7 +223,6 @@ impl Checker<'_> {
     ) -> Checked {
         let dropped = self.body.dropped == Some(span);
         let whole = expected;
-        let siblings = expected.split_hint().1;
         let checked = self.value_kept(scrutinee);
         let mut position = type_of(&checked);
         let cannot = position.take_if(|&mut ty| !matchable(ty)).map(|ty| {
@@ -289,24 +260,11 @@ impl Checker<'_> {
                 value: Some(Box::new(value)),
             })
         };
-        // shortcut: an arm that gives a made value joins by rank, as on `main`, until the forms
-        // of `made_value` are members (Tasks 5d and 5e).
         let inner = self.branches_expect(whole);
-        let (blocks, ty) = if matches!(inner, Expectation::None | Expectation::Poisoned)
-            && arms.iter().any(|arm| gives_made_value(&arm.body))
-        {
-            self.ranked(|c| {
-                let sources = c.arm_branches(arms, &form, inner);
-                c.join(&sources, (inner, siblings), dropped, check_arm)
-            })
-        } else {
+        let (blocks, ty) = {
             let binding = self.let_name(span);
             let blocks = (0..arms.len())
-                .map(|i| {
-                    let tail = arm_tail(&arms[i]);
-                    let expected = branch_expectation(inner, tail);
-                    self.waiting(whole, |c| check_arm(c, i, expected))
-                })
+                .map(|i| check_arm(self, i, branch_expectation(inner)))
                 .collect();
             let heading = Heading {
                 head: keyword,

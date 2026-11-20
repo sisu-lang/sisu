@@ -332,7 +332,6 @@ const REACH: &[&str] = &[
 const WIDENS: &str = "reach: a `break` value converts to the type of its loop's join, and no nested `break` targets that loop";
 const CROSSES: &str =
     "reach: the walk that puts back the `break` values of a loop crosses a nested loop";
-const OBJECT_IN_SOME: &str = "reach: the checker runs `object_in_some`";
 const OWN_PUSH: &str = "reach: a `.push` reads a place of a type that is no array";
 const PUSHED_VALUE: &str = "reach: the checker runs `pushed_value`";
 
@@ -341,7 +340,6 @@ const GAP_RULES: &[&str] = &[
     PUSHED_VALUE,
     WIDENS,
     CROSSES,
-    OBJECT_IN_SOME,
     "reach: two `mut` arguments have one root local",
     "reach: a `string` field appends to itself",
     "reach: a program gets W0006",
@@ -367,7 +365,6 @@ const GAP_POINTS: &[&str] = &[
     "make_check keeps an applied type",
     "make_any on the right",
     "make_any on the left",
-    "seeded_join for a loop",
     "a dbg in a generic function",
     "a dbg of an enum in a generic function",
     "an any conversion in a generic function",
@@ -879,7 +876,6 @@ impl Walk {
         let counters = [
             (WIDENS, &check::WIDENED_BREAKS),
             (CROSSES, &check::WRAP_LOOPS),
-            (OBJECT_IN_SOME, &check::OBJECT_IN_SOME_CALLS),
             (OWN_PUSH, &check::OWN_PUSH_READS),
             (PUSHED_VALUE, &check::PUSHED_VALUES),
         ];
@@ -3453,7 +3449,7 @@ impl Walk {
                     self.tir_block(&arm.body);
                 }
             }
-            tir::ExprKind::Loop(body) => {
+            tir::ExprKind::Loop { body, .. } => {
                 self.mark("tir::ExprKind::Loop");
                 self.tir_block(body);
             }
@@ -9366,7 +9362,7 @@ impl<'f> Lets<'f> {
                     }
                 });
             }
-            tir::ExprKind::Loop(block) => self.conditionally(|walk| walk.block(block)),
+            tir::ExprKind::Loop { body: block, .. } => self.conditionally(|walk| walk.block(block)),
             tir::ExprKind::Break {
                 value: Some(value), ..
             } => self.expr(value),

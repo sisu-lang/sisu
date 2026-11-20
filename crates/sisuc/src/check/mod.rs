@@ -471,10 +471,6 @@ impl LoopKind {
 }
 
 /// A loop whose body is being checked, and what the `break`s that target it have given.
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each flag is a separate fact, set by a different jump or value"
-)]
 struct LoopFrame {
     kind: LoopKind,
     keyword: Span,
@@ -483,26 +479,17 @@ struct LoopFrame {
     label_used: bool,
     /// Whether a `break` has targeted it.
     broken: bool,
-    /// The type the position around a `loop` expects, each value's hint; `Poisoned` when that
-    /// position failed. A `Hint` when the loop is hinted, which no value converts to.
+    /// The type the position around a `loop` expects; `Poisoned` when that position failed.
     expected: Expectation,
-    /// The type of the first value whose type is neither `never` nor `Error`, and its `break`'s
-    /// span; under an expected `T?`, a `T?` value after `T` ones replaces it.
-    first: Option<(Type, Span)>,
-    /// The span of the value that first set `first`.
-    first_value: Span,
-    /// Whether `first` went from a `T` to a `T?`, so the `T` values before need wrapping.
-    widened: bool,
-    /// The values of objects that did not join the first one yet, by span, with their types. A
-    /// later `any` value can join them, so the loop reports them when its body is checked.
-    deferred: Vec<(Span, Type)>,
+    /// The value of each `break` with a value, in the order that the `break`s were reached, with
+    /// the `break`'s span: the members of the loop's join. A slot is kept before its value is
+    /// checked, so a `break` inside that value comes after it. A `never` value is no member: its
+    /// slot is `None`, and the value stays in its `break`.
+    values: Vec<Option<(Span, Checked)>>,
     /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
     crossed: bool,
     /// The first bare `break`.
     bare: Option<Span>,
-    /// The first `break` whose value's type is not `never`, and that type. It holds the type
-    /// also when `first` stays unset, as it does under a `Poisoned` expectation.
-    valued: Option<(Span, Type)>,
     /// The token of the error that failed the loop: a failed jump, loop label or `break` value
     /// in it. It then has no type.
     failed: Option<Reported>,
@@ -522,32 +509,11 @@ impl LoopFrame {
             label_used: false,
             broken: false,
             expected,
-            first: None,
-            first_value: keyword,
-            bare: None,
-            valued: None,
-            failed: None,
-            widened: false,
-            deferred: Vec::new(),
+            values: Vec::new(),
             crossed: false,
+            bare: None,
+            failed: None,
         }
-    }
-
-    /// The type of a `loop` whose body has been checked: `never` with no `break`, or with only
-    /// `never` values; `unit` with bare ones; else its values'. `None` is `Error`.
-    fn loop_type(&self) -> Option<Type> {
-        if self.failed.is_some() {
-            return None;
-        }
-        if self.valued.is_none() {
-            return Some(if self.bare.is_some() {
-                Type::UNIT
-            } else {
-                Type::NEVER
-            });
-        }
-        // Under a `Poisoned` expectation no value sets `first`.
-        self.first.map(|(ty, _)| ty)
     }
 }
 
@@ -665,20 +631,13 @@ thread_local! {
     pub(super) static SKIP_TOKEN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many expressions `Checker::expr` has checked on this thread.
     pub(super) static EXPR_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many expressions `gives_made_value` and `without_value` have visited on this thread.
+    /// How many expressions `without_value` has visited on this thread.
     pub(super) static VALUE_WALK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many unary `-` and operator expressions `int_literal` has walked on this thread, those
-    /// it answers from `body.int_literals` not counted.
-    pub(super) static INT_LITERAL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many nested loops the walk that wraps a widened loop's values has entered.
+    /// How many nested loops the walk that puts back a loop's `break` values has entered.
     pub(crate) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many values `wrap_breaks` has wrapped in a walk that enters no nested loop, on this
-    /// thread.
+    /// How many `break` values their loop's join has converted, in loops that no nested `break`
+    /// crosses, on this thread.
     pub(crate) static WIDENED_BREAKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many expressions `fill_bare_breaks` has visited on this thread.
-    pub(super) static FILL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many times `object_in_some` has been called on this thread.
-    pub(crate) static OBJECT_IN_SOME_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many calls written `.push` have read a place of a type that is no array, on this
     /// thread.
     pub(crate) static OWN_PUSH_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1148,11 +1107,6 @@ struct Body {
     /// The bare name right after an unlabeled `break`, which may be a misspelled loop label, and
     /// the byte where that `break` starts: only there does E0033 offer the open loop labels.
     label_typo: Option<(Span, usize)>,
-    /// The count of open loops (`loops.len()`) when the innermost join or branch ranking in a
-    /// poisoned context started. A `break` to one of them, with no type yet, waits for the next
-    /// run: the branches are ranked and checked out of source order, so it may come before the
-    /// `break` that gives the loop its type.
-    waiting_loops: Option<usize>,
     /// Where the value of the unlabeled `break` being checked starts: the parser reads an open
     /// loop label there as the `break`'s label, so a fix must not write one there.
     break_start: Option<usize>,
@@ -1223,10 +1177,10 @@ struct Body {
     /// What `int_literal` answered for each unary `-` and operator, by its span. The answer
     /// depends only on the node, and no two operator nodes have one span.
     int_literals: FxHashMap<Span, bool>,
-    /// The span of the array literal that `array_lit` checks next as an element, when no element
-    /// inside it gives a made value (see `gives_made_value`). Then that literal does not walk its
-    /// elements again: each layer of a nested array asks this once.
-    made_free: Option<Span>,
+    /// For a loop, by its span: the first `if` without an `else` that one of its `break` values
+    /// gives. It is read when the loop's `unit` lifts to `unit?` (see `unlifted`). The values are
+    /// in the loop's body, where `without_value` does not walk.
+    loop_unlifted: FxHashMap<Span, (Span, bool)>,
     /// The span of each array literal and array fill whose value no `if` and no `match` gives
     /// through its elements (see `branch_free`). The walk of `without_value` does not enter it.
     branch_free: FxHashSet<Span>,

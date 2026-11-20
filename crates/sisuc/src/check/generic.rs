@@ -12,7 +12,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::alias::{Through, Via};
 use super::array::innermost;
-use super::expr::{gives_made_value, literal_type, nested_join, option_written, read_jump};
+use super::expr::{nested_join, option_written, read_jump};
 use super::infer::{Kind, ObligationId, OpenCall};
 use super::interface::{Bound, Bounds, Required};
 use super::join::{Heading, JoinForm, JoinMember, Place, part_at, target};
@@ -1231,8 +1231,6 @@ thread_local! {
     /// How many types the walk for the type parameters that types name has visited on this
     /// thread.
     pub(super) static MARKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many parameter origins `Origins::get` has read on this thread.
-    pub(super) static ORIGINS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many layers of patterns the search for the argument that bound a parameter has read on
     /// this thread (see `inferred_origin`).
     pub(super) static PEELED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -1698,7 +1696,7 @@ mod origins {
 
     /// Where each parameter of a call was bound (see `Inference::origin`), and the place of the
     /// argument that the call checked then. The list is private, so each read goes through `get`
-    /// or `arg`, which a test counts.
+    /// or `arg`.
     pub(super) struct Origins(Vec<Option<(Span, Option<usize>)>>);
 
     impl Origins {
@@ -1709,16 +1707,12 @@ mod origins {
 
         /// Where parameter `i` was bound. Panics when `i` is not a parameter of the call.
         pub(super) fn get(&self, i: usize) -> Option<Span> {
-            #[cfg(test)]
-            super::ORIGINS.set(super::ORIGINS.get() + 1);
             self.0[i].map(|(at, _)| at)
         }
 
         /// The place of the argument that the call checked when parameter `i` was bound. Panics
         /// when `i` is not a parameter of the call.
         pub(super) fn arg(&self, i: usize) -> Option<usize> {
-            #[cfg(test)]
-            super::ORIGINS.set(super::ORIGINS.get() + 1);
             self.0[i].and_then(|(_, arg)| arg)
         }
 
@@ -1906,19 +1900,6 @@ pub(super) enum Rank {
     Waits,
 }
 
-impl Rank {
-    /// Whether a value of this rank, checked beside siblings of type `siblings`, took its type
-    /// from them, so that it did not give that type. A value that waits always took it. A literal
-    /// took it when the siblings give its literals a type that is not their default.
-    pub(super) fn took(self, siblings: Type) -> bool {
-        match self {
-            Self::Concrete => false,
-            Self::Literal => literal_type(Some(siblings)) != literal_type(None),
-            Self::Waits => true,
-        }
-    }
-}
-
 /// What `rank_value` finds about a value.
 #[derive(Clone, Copy, Debug)]
 #[expect(
@@ -2045,12 +2026,6 @@ impl Ranked {
         } else {
             self
         }
-    }
-
-    /// Whether the type of the value comes only from the defaults of its integer literals: its
-    /// rank is `Literal`, and not only because it waited. `Branch::literal` reads it.
-    pub(super) fn of_literals(self) -> bool {
-        self.rank == Rank::Literal && !self.waited
     }
 
     /// The rank that joins and operators order siblings by. They type a `Literal` value with
@@ -4185,12 +4160,11 @@ impl Checker<'_> {
     /// `Expectation::Member`, or `Expectation::None` for a method call that is closed. Such a
     /// value has its own type, or a type that stays open where the join decides it: an integer
     /// literal, a `None`, a `[]`, a generic call or method call, a case of a generic enum
-    /// (`Two.P(5, 7)`). An `if` or a `match` whose branches join is a nested join: its branches
-    /// are members, and so is an array, whose elements are members. A value that is a join of its
-    /// own does not yet. That is a loop, an operator, a `??`, or an `if` or `match` whose branch
-    /// gives one (`gives_made_value`). It meets what the members decide (see `late_argument`). A
-    /// call or an array that has such an argument or element does not either, as `Some(1 + 2)`.
-    /// A block does when its value does.
+    /// (`Two.P(5, 7)`). An `if`, a `match` or a `loop` whose values join is a nested join: its
+    /// branches or `break` values are members, and so is an array, whose elements are members.
+    /// An operator and a `??` are members when their operands are. A value that waits meets what
+    /// the members decide (see `late_argument`). A call or an array that has such an argument or
+    /// element waits too. A block does when its value does.
     ///
     /// A method call with no argument is closed, unless it waits for its context to pick among
     /// conformances (`Rank::Waits`). A method call that checks its receiver as a place is closed.
@@ -4198,10 +4172,6 @@ impl Checker<'_> {
     /// with arguments waits: it meets its parameter type, so that the part that is wrong is
     /// reported (`h(true, C().m("s", 1))` at `"s"`). So does such a call in an argument that
     /// waits at such a place, as `h(true, id(c?.m("s", 1)))` (`Body::closed_place`).
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one arm for each form of expression that can be a member"
-    )]
     fn takes_member(&mut self, e: &ast::Expr, closed: bool) -> Option<Expectation> {
         use ast::ExprKind as K;
         match &e.kind {
@@ -4291,19 +4261,12 @@ impl Checker<'_> {
                 }
                 found
             }
-            // A branch join is a nested join, unless a branch gives a form that waits. At a place
-            // that names two decided parameters it waits, as a call there is closed (Q28).
-            K::If {
-                else_block: Some(_),
-                ..
+            // A branch join or a loop is a nested join, and an `if` with no `else` is a `unit`
+            // member, which no optional lifts (E0043). At a place that names two decided
+            // parameters each waits, as a call there is closed (Q28).
+            K::If { .. } | K::IfLet { .. } | K::Match { .. } | K::Loop { .. } => {
+                (!closed).then_some(Expectation::Member)
             }
-            | K::IfLet {
-                else_block: Some(_),
-                ..
-            }
-            | K::Match { .. } => (!closed && !gives_made_value(e)).then_some(Expectation::Member),
-            // An `if` with no `else` is a `unit` member, which no optional lifts (E0043).
-            K::If { .. } | K::IfLet { .. } => (!closed).then_some(Expectation::Member),
             // A comparison or a logic operator is a `bool`, which is a member as `true` is.
             K::Binary {
                 op: ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Eq | ast::BinaryOp::Ne,
@@ -4322,7 +4285,7 @@ impl Checker<'_> {
             .then_some(Expectation::Member),
             // A `??` is a member when its default is: the left side is optional by itself.
             K::Coalesce { rhs, .. } => self.takes_member(rhs, closed).map(|_| Expectation::Member),
-            K::MethodCall { .. } | K::Loop { .. } => None,
+            K::MethodCall { .. } => None,
             _ => Some(Expectation::Member),
         }
     }

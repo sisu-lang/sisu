@@ -834,14 +834,6 @@ impl Checker<'_> {
             return Some(0);
         }
         self.open_target(e, target);
-        // A loop that only a bare `break` ends has no value position: it converts as itself.
-        if matches!(e.kind, ExprKind::Loop(_)) {
-            let mut valued = false;
-            value_positions(e, &mut |_| valued = true);
-            if !valued {
-                return self.conversion(e.ty, target).map(|steps| steps.len());
-            }
-        }
         ensure_stack(|| match self.enter(e, target) {
             Some((part, wrapped)) => {
                 let mut wraps = Some(usize::from(wrapped));
@@ -1058,7 +1050,7 @@ impl Checker<'_> {
                 ..
             }
             | ExprKind::Block(_)
-            | ExprKind::Loop(_)
+            | ExprKind::Loop { .. }
             | ExprKind::Dbg { .. } => Some((target, false)),
             ExprKind::Match { arms, .. } if !arms.iter().any(|arm| arm.made) => {
                 Some((target, false))
@@ -1378,7 +1370,10 @@ fn value_positions(e: &mut tir::Expr, f: &mut impl FnMut(&mut tir::Expr)) {
         ExprKind::ArrayFill { value, .. }
         | ExprKind::Wrap(value)
         | ExprKind::Dbg { operand: value, .. } => f(value),
-        ExprKind::Loop(body) => body.each_expr_mut(&mut |child| breaks(child, 0, f)),
+        ExprKind::Loop { body, crossed } => {
+            let crossed = *crossed;
+            body.each_expr_mut(&mut |child| breaks(child, 0, crossed, f));
+        }
         // No value position: the value converts at its top. Each kind is named, so that a new
         // kind is put on one side or the other.
         ExprKind::If { .. }
@@ -1446,27 +1441,35 @@ fn block_positions(block: &mut tir::Block, span: Span, f: &mut impl FnMut(&mut t
     }
 }
 
-/// Calls `f` on each `break` value in `e` that ends the loop `depth` loops out from `e`, as
-/// `wrap_breaks` counts the depth.
-// shortcut: a nested loop is entered when it holds any jump (`exits` reads a kept flag). So each
-// join of an enclosing loop walks again into the nested loops that jump, and a deep nest costs n
-// squared. Task 5's `crossed` flag enters a loop only when a `break` in it ends an outer loop.
-fn breaks(e: &mut tir::Expr, depth: usize, f: &mut impl FnMut(&mut tir::Expr)) {
-    #[cfg(test)]
-    VALUE_STEPS.set(VALUE_STEPS.get() + 1);
-    let nested = matches!(e.kind, ExprKind::Loop(_));
-    if nested && !e.exits() {
+/// Calls `f` on each `break` value in `e` that ends the loop `depth` loops out from `e`. A bare
+/// `break` gives `f` a `unit`, which the `break` keeps only when `f` changes it, as a block with
+/// no value does (see `block_positions`). It enters nested loops only when `crossed`: when a
+/// `break` in one ends that loop.
+fn breaks(e: &mut tir::Expr, depth: usize, crossed: bool, f: &mut impl FnMut(&mut tir::Expr)) {
+    let nested = matches!(e.kind, ExprKind::Loop { .. });
+    if nested && !crossed {
         return;
     }
+    #[cfg(test)]
+    VALUE_STEPS.set(VALUE_STEPS.get() + 1);
     let inner = depth + usize::from(nested);
-    ensure_stack(|| e.each_child_mut(&mut |child| breaks(child, inner, f)));
+    ensure_stack(|| e.each_child_mut(&mut |child| breaks(child, inner, crossed, f)));
+    let span = e.span;
     if let ExprKind::Break {
         depth: target,
-        value: Some(value),
+        value,
     } = &mut e.kind
         && *target == depth
     {
-        f(value);
+        if let Some(value) = value {
+            f(value);
+        } else {
+            let mut unit = tir::Expr::new(ExprKind::Unit, Type::UNIT, span);
+            f(&mut unit);
+            if !matches!(unit.kind, ExprKind::Unit) {
+                *value = Some(Box::new(unit));
+            }
+        }
     }
 }
 

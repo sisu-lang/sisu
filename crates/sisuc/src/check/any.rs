@@ -9,10 +9,10 @@ use super::alias::UseCheck;
 use super::interface::{BOUND_CLOSURE_LIMIT, Bound, Check};
 use super::reports::Reported;
 use super::unused_names::Used;
-use super::{Checked, CheckedBlock, Checker, DeferredAsType, Origin, Poisoned, block_type, wrap};
+use super::{Checked, CheckedBlock, Checker, DeferredAsType, Origin, Poisoned, block_type};
 use crate::ast;
 use crate::conformance::{any_closure, interface_closure};
-use crate::diagnostic::{Diagnostic, DiagnosticKind, NotAny, NotConformForm};
+use crate::diagnostic::{DiagnosticKind, NotAny, NotConformForm};
 use crate::source::Span;
 use crate::tir::{self, InterfaceId, Type, TypeArgs, TypeKind};
 
@@ -30,28 +30,6 @@ pub(super) enum Conversion {
     Wrap,
     /// A value to this `any` type.
     ToAny(Type),
-}
-
-/// What `any_join_all` found.
-pub(super) enum AnyJoin {
-    /// No member is an `any` type: the caller joins as before.
-    NoAny,
-    /// The members join to `ty`, the widest `any` type.
-    Joined { ty: Type },
-    /// Two members do not join: the later one, an index and its type, does not convert to the
-    /// earlier one, or the other way round when the `any` type is the later one.
-    Fails {
-        earlier: (usize, Type),
-        later: (usize, Type),
-    },
-    /// The `any` types join to `ty`, the widest, and `member`, an index and a type that is no
-    /// `any` type, does not convert to it. The member `giver` has the type `ty`; it is
-    /// `SEED` for the seed of a hinted join.
-    Leaves {
-        ty: Type,
-        giver: usize,
-        member: (usize, Type),
-    },
 }
 
 /// The interfaces that an `any` type conforms to, and whether it is unknown (`any_unknown`). The
@@ -87,9 +65,6 @@ enum ReasonKind {
     /// The requirement at this place takes `mut self`. Part 3 lets `any` call it.
     MutSelf(usize),
 }
-
-/// The index of the seed of a hinted join, the sibling's type: no member of `any_join_all` has it.
-pub(super) const SEED: usize = usize::MAX;
 
 impl Checker<'_> {
     /// The type `any I` that `interface`, written as `written`, makes. The interface and its
@@ -571,98 +546,6 @@ impl Checker<'_> {
         can_convert(got) && self.conforms(got, interface, args)
     }
 
-    /// The type that values of types `a` and `b` join to when one converts to the other: the `any`
-    /// type, with its optional layer. A join never makes an `any` type that neither side has.
-    pub(super) fn any_join(&mut self, a: Type, b: Type) -> Option<Type> {
-        if a == b || self.converts_to_any(b, a) {
-            Some(a)
-        } else if self.converts_to_any(a, b) {
-            Some(b)
-        } else {
-            None
-        }
-    }
-
-    /// The join of the typed `members`, each an index and a type, when one of them is an `any`
-    /// type. The join is the widest of those, and each other member must convert to it. It does
-    /// not depend on the order of the members, as `any_join` of two does not see a third.
-    pub(super) fn any_join_all(&mut self, members: &[(usize, Type)]) -> AnyJoin {
-        let mut targets = members.iter().filter(|&&(_, ty)| is_target(ty));
-        let Some(&(first, mut ty)) = targets.next() else {
-            return AnyJoin::NoAny;
-        };
-        // The member whose type is `ty`.
-        let mut giver = first;
-        for &(other, t) in targets {
-            match self.any_join(ty, t) {
-                Some(wider) => {
-                    // A tie keeps the earlier member of `members`; the seed of a hinted join
-                    // is last.
-                    if wider != ty {
-                        giver = other;
-                    }
-                    ty = wider;
-                }
-                None => {
-                    return AnyJoin::Fails {
-                        earlier: (first, ty),
-                        later: (other, t),
-                    };
-                }
-            }
-        }
-        for &(other, t) in members {
-            if !is_target(t) && t != ty && !self.converts_to_any(t, ty) {
-                return AnyJoin::Leaves {
-                    ty,
-                    giver,
-                    member: (other, t),
-                };
-            }
-        }
-        AnyJoin::Joined { ty }
-    }
-
-    /// `any_join_all` of the typed `members` of a hinted join, for members that do not join by
-    /// themselves. `siblings` is the type of its siblings (see `Expectation::Hint`). With
-    /// `siblings` an `any` type, the members join to the widest `any` type of them all, or one
-    /// of them leaves it. `if c { a } else { if d { C() } else { D() } }` joins the inner `C` and
-    /// `D` so. Else, or when two `any` types do not join, it is `NoAny`: the members' own
-    /// failure is the mistake.
-    pub(super) fn seeded_join(
-        &mut self,
-        siblings: Option<Type>,
-        members: &[(usize, Type)],
-    ) -> AnyJoin {
-        let Some(seed) = siblings.filter(|&ty| is_target(ty)) else {
-            return AnyJoin::NoAny;
-        };
-        let mut with = members.to_vec();
-        // No member has this index, and only a member that is no `any` type leaves the join.
-        with.push((SEED, seed));
-        match self.any_join_all(&with) {
-            AnyJoin::Fails { .. } => AnyJoin::NoAny,
-            join => join,
-        }
-    }
-
-    /// The mistake when the value at `at`, of type `got`, leaves a join whose `any` type is
-    /// `want` (`AnyJoin::Leaves`): a value that does not conform, or else a mismatch, which
-    /// names `origin`.
-    pub(super) fn leaves_any(
-        &mut self,
-        at: Span,
-        source: Option<&ast::Expr>,
-        want: Type,
-        got: Type,
-        origin: Origin,
-    ) -> Diagnostic {
-        match self.any_misfit(at, want, got, origin) {
-            Some(kind) => kind.into(),
-            None => self.mismatch(at, source, want, got, origin),
-        }
-    }
-
     /// The E0154 of the value at `at`, of type `got`, against `want`. `want` is an `any` type, or
     /// an optional one, and `got` does not conform to its interface. `None` when the mistake is a
     /// mismatch.
@@ -721,24 +604,6 @@ pub(super) fn is_target(want: Type) -> bool {
         _ => false,
     }
 }
-
-/// `e`, of a type that a join widened, as `want`. That is an `any` type, an optional `any` type,
-/// or another optional.
-pub(super) fn widen(e: tir::Expr, want: Type) -> tir::Expr {
-    match want.kind() {
-        TypeKind::Any(..) => to_any(e, want),
-        TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Any(..)) => {
-            let e = if e.ty == payload {
-                e
-            } else {
-                to_any(e, payload)
-            };
-            wrap(e, want)
-        }
-        _ => wrap(e, want),
-    }
-}
-
 /// `e` as the `any` type `target`.
 pub(super) fn to_any(e: tir::Expr, target: Type) -> tir::Expr {
     let span = e.span;

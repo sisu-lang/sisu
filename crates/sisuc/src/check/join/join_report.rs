@@ -398,7 +398,10 @@ impl Checker<'_> {
             };
             let node = matches!(
                 e.kind,
-                ExprKind::If { .. } | ExprKind::IfSome { .. } | ExprKind::Match { .. }
+                ExprKind::If { .. }
+                    | ExprKind::IfSome { .. }
+                    | ExprKind::Match { .. }
+                    | ExprKind::Loop { .. }
             );
             if node
                 && !in_join
@@ -609,8 +612,8 @@ impl Checker<'_> {
         }
     }
 
-    /// The `unit` leaves of `e`, pushed to `out` with the cause of each. An `if` or a `match`
-    /// whose leaves are each `unit` is one leaf at its head.
+    /// The `unit` leaves of `e`, pushed to `out` with the cause of each. An `if`, a `match` or a
+    /// `loop` whose leaves are each `unit` is one leaf at its head.
     fn units(
         &self,
         e: &mut tir::Expr,
@@ -649,7 +652,10 @@ impl Checker<'_> {
             }
             if matches!(
                 e.kind,
-                ExprKind::If { .. } | ExprKind::IfSome { .. } | ExprKind::Match { .. }
+                ExprKind::If { .. }
+                    | ExprKind::IfSome { .. }
+                    | ExprKind::Match { .. }
+                    | ExprKind::Loop { .. }
             ) {
                 out.truncate(start);
                 out.push((e.span, self.unit_cause(e, want)));

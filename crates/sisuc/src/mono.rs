@@ -1393,7 +1393,7 @@ impl Mono {
                     self.arm(arm, args);
                 }
             }
-            K::Loop(block) | K::Block(block) => self.block(block, args),
+            K::Loop { body: block, .. } | K::Block(block) => self.block(block, args),
             K::MutCall { call, muts, back } => {
                 for m in muts.iter_mut() {
                     for (_, object) in &mut m.keep {
@@ -1647,7 +1647,7 @@ fn assert_concrete(program: &Program) {
                         .flatten(),
                 ),
                 ExprKind::Match { arms, .. } => blocks.extend(arms.iter().map(|arm| &arm.body)),
-                ExprKind::Loop(block) | ExprKind::Block(block) => blocks.push(block),
+                ExprKind::Loop { body: block, .. } | ExprKind::Block(block) => blocks.push(block),
                 ExprKind::MutCall { back, .. } => blocks.push(back),
                 _ => {}
             }
@@ -2400,7 +2400,13 @@ mod tests {
                     arms: vec![arm],
                 },
             ),
-            ("loop", ExprKind::Loop(block(param))),
+            (
+                "loop",
+                ExprKind::Loop {
+                    body: block(param),
+                    crossed: false,
+                },
+            ),
             ("block", ExprKind::Block(block(param))),
         ] {
             let mut program = instantiated("fn main() {}");

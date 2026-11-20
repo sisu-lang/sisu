@@ -1,16 +1,13 @@
 //! Array expressions: literals and their element join, `[v; n]`, indexing and methods.
 
 use super::branch::branch_expectation;
-use super::expr::{branch_free, gives_made_value, no_member, path, read_jump, typed};
+use super::expr::{branch_free, no_member, path, read_jump, typed};
 use super::generic::{mismatch_poison, mismatched};
 use super::infer::Kind;
-use super::join::{Heading, JoinForm, JoinMember, Place};
+use super::join::{Heading, JoinForm};
 use super::place::{Change, first_safe, is_struct};
 use super::reports::Reported;
-use super::{
-    Checked, Checker, Declared, Expectation, Misfit, Origin, Poisoned, as_optional, payload,
-    type_of,
-};
+use super::{Checked, Checker, Declared, Expectation, Misfit, Origin, Poisoned, payload, type_of};
 use crate::ast;
 use crate::diagnostic::{
     Definition, Diagnostic, DiagnosticKind, Expected, IndexUsage, Literal, UnwrapHelp,
@@ -37,38 +34,13 @@ impl Checker<'_> {
             return self.empty_array(span, expected);
         }
         let inner = self.element_expectation(expected);
-        // shortcut: an element that gives a made value is checked after the others, against their
-        // type as a hint, as on `main`. Upgrade when the forms of `made_value` are members (Tasks
-        // 5d and 5e).
-        let looks = matches!(
-            inner,
-            Expectation::None | Expectation::Member | Expectation::Poisoned
-        );
-        let free = self.body.made_free.take() == Some(span);
-        let member = branch_expectation(inner, None);
-        let mut values: Vec<Option<Checked>> = (elements.iter())
-            .map(|e| {
-                let unmade = free || looks && !gives_made_value(e);
-                if looks && !unmade {
-                    return None;
-                }
-                if unmade && matches!(e.kind, ast::ExprKind::ArrayLit(_)) {
-                    self.body.made_free = Some(e.span);
-                }
-                Some(self.element_value(e, member))
-            })
+        let member = branch_expectation(inner);
+        let values: Vec<Checked> = (elements.iter())
+            .map(|e| self.element_value(e, member))
             .collect();
-        if values.iter().any(Option::is_none) {
-            let hint = self.late_hint(&mut values, elements, inner);
-            for (value, e) in values.iter_mut().zip(elements) {
-                if value.is_none() {
-                    *value = Some(self.element_value(e, hint));
-                }
-            }
-        }
         // The join takes blocks: each element is the value of a block of its own, which the join
         // settles inside, as it settles the value of a branch.
-        let blocks = (values.into_iter().flatten())
+        let blocks = (values.into_iter())
             .map(|value| {
                 value.map(|e| tir::Block {
                     stmts: Vec::new(),
@@ -146,43 +118,6 @@ impl Checker<'_> {
     fn element_value(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
         let checked = read_jump(self.expr(e, expected));
         self.value_of(e, checked, expected, false)
-    }
-
-    /// What an element that `array_lit` checks late takes. That is the type of the other elements
-    /// of `values` when it is known, made optional, as a hint (see `Expectation::Hint`). So the
-    /// branch of an `if` takes the type of the branches before it. With no known type, nothing.
-    /// Under a failed context `inner`, `Poisoned`.
-    fn late_hint(
-        &mut self,
-        values: &mut [Option<Checked>],
-        elements: &[ast::Expr],
-        inner: Expectation,
-    ) -> Expectation {
-        let mut members: Vec<JoinMember<'_>> = (values.iter_mut().zip(elements))
-            .filter_map(|(value, e)| {
-                Some(JoinMember {
-                    value: value.as_mut()?,
-                    at: Place::Whole,
-                    label: e.span,
-                })
-            })
-            .collect();
-        // A failed context gives no hint: a mistake of a late element waits for the next run.
-        if matches!(inner, Expectation::Poisoned) {
-            return Expectation::Poisoned;
-        }
-        // An open type, such as the type of a literal alone, gives no hint: the join settles it.
-        let joined = (self.join_type(&mut members, None, None))
-            .map(|ty| self.table.resolve(ty))
-            .filter(|&ty| ty != Type::NEVER && !ty.holds_infer());
-        match joined {
-            Some(ty) => Expectation::Hint {
-                want: as_optional(ty),
-                siblings: ty,
-                origin: Origin::None,
-            },
-            None => Expectation::None,
-        }
     }
 
     /// `[]` under `expected`: an array of the expected element type. An expected optional of an

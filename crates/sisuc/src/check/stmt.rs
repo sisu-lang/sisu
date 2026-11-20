@@ -2,13 +2,14 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::any::{AnyJoin, SEED, is_target, widen};
 use super::array::must_unwrap;
+use super::branch::{branch_expectation, whole_members};
 use super::enums::unwrapped;
 use super::expectation::{Part, own_name};
-use super::expr::{fits, local};
+use super::expr::local;
 use super::extend::mut_self_removal;
 use super::generic::Ahead;
+use super::join::{Heading, JoinForm};
 use super::pattern::LetPattern;
 use super::prelude::PRELUDE;
 use super::reports::Reported;
@@ -19,6 +20,7 @@ use super::{
     starts_in, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
+use crate::conformance::ensure_stack;
 use crate::diagnostic::{
     ClashForm, ClashKind, Diagnostic, DiagnosticKind, NeverReassignedForm, NoReturn, RangePlace,
     Unwrap, UnwrapHelp, closest,
@@ -537,7 +539,10 @@ impl Checker<'_> {
                     // A bare `Loop`: `else Break` would give MIR an exit the checker denies.
                     let ty = if broken { Type::UNIT } else { Type::NEVER };
                     return Ok(tir::Stmt::Expr(tir::Expr::new(
-                        ExprKind::Loop(body),
+                        ExprKind::Loop {
+                            body,
+                            crossed: false,
+                        },
                         ty,
                         stmt.span,
                     )));
@@ -1473,7 +1478,10 @@ impl Checker<'_> {
         }
     }
 
-    /// `loop { body }` at `span`, of the type its `break`s give it.
+    /// `loop { body }` at `span`, of the type its `break`s give it. The values of its `break`s
+    /// are the members of its join (`JoinForm::Loop`). The join settles them when the body is
+    /// checked, and puts each back in its `break` (see `put_back_breaks`). A loop with a bare
+    /// `break` is a `unit`: its join requires a `unit` of each value, else it is E0043 (Q42).
     pub(super) fn loop_expr(
         &mut self,
         span: Span,
@@ -1481,149 +1489,110 @@ impl Checker<'_> {
         body: &ast::Block,
         expected: Expectation,
     ) -> Checked {
-        // A `break` origin in `expected` is of a loop around this one.
-        let frame = LoopFrame::new(
-            LoopKind::Loop,
-            keyword,
-            label.cloned(),
-            expected.for_inner_loop(),
-        );
+        let dropped = self.body.dropped == Some(span);
+        let frame = LoopFrame::new(LoopKind::Loop, keyword, label.cloned(), expected);
         let (mut checked, mut frame) = self.loop_body(frame, |c| {
             c.body.dropped = Some(body.span);
             c.block(body, Expectation::None)
         });
-        self.join_deferred(&mut frame);
-        if let Ok(checked) = &mut checked {
+        if let Ok(checked) = &checked {
             self.discard_tail(body, checked);
-            if let (true, Some((ty, _))) = (frame.widened, frame.first) {
-                let mut widened = Vec::new();
-                checked.each_expr_mut(&mut |e| wrap_breaks(e, 0, ty, frame.crossed, &mut widened));
-                for got in widened {
-                    self.record_shown_any(got, ty);
-                }
-            }
         }
-        if let (Some(at), Some((valued, got))) = (frame.bare, frame.valued) {
-            // A bare `break` gives a `unit`, so it joins `unit` values and `unit?` values. The
-            // type of the values decides, also when the body or the context failed.
-            let ty = frame.first.map_or(got, |(ty, _)| ty);
-            if ty == Type::UNIT || optional_unit(ty) {
-                if let Ok(body) = &mut checked {
-                    body.each_expr_mut(&mut |e| fill_bare_breaks(e, 0, ty, frame.crossed));
-                }
+        let (labels, mut values): (Vec<Span>, Vec<Checked>) = std::mem::take(&mut frame.values)
+            .into_iter()
+            .flatten()
+            .unzip();
+        let heading = Heading {
+            head: keyword,
+            whole: span,
+            returns: None,
+        };
+        #[cfg(test)]
+        let converted_before: Vec<bool> = values.iter().map(converted).collect();
+        let ty = if frame.failed.is_some() {
+            None
+        } else if values.is_empty() {
+            Some(Ok(if frame.bare.is_some() {
+                Type::UNIT
             } else {
-                let reported = self.error(DiagnosticKind::BareBreak { at, valued });
-                frame.failed.get_or_insert(reported);
+                Type::NEVER
+            }))
+        } else if let Some(at) = frame.bare {
+            // The values join in the loop, in every position: each must be a `unit`.
+            let errors = self.diagnostics.errors();
+            let mut members = whole_members(&mut values, &labels);
+            let required = Expectation::Required(Type::UNIT, Origin::BareBreak { at });
+            let joined = self.join_form(JoinForm::Loop, heading, &mut members, required, None);
+            match joined {
+                Err(poisoned) if self.diagnostics.errors() > errors => {
+                    frame.failed = Some(poisoned.reported());
+                    None
+                }
+                joined => Some(joined.map(|_| Type::UNIT)),
+            }
+        } else {
+            // A body that failed has no tree to put the values back in: then the values join by
+            // themselves, as the branches of a failed head do (see `join_blocks`).
+            let binding = self.let_name(span);
+            Some(self.join_whole(
+                (JoinForm::Loop, heading, binding),
+                &mut values,
+                (&labels, dropped, checked.is_err()),
+                frame.expected,
+            ))
+        };
+        #[cfg(test)]
+        if !frame.crossed {
+            let count = (values.iter().zip(converted_before))
+                .filter(|(value, before)| !before && converted(value))
+                .count();
+            super::WIDENED_BREAKS.set(super::WIDENED_BREAKS.get() + count);
+        }
+        if let Some(found) = values.iter().flatten().find_map(|e| self.unlifted(e)) {
+            self.body.loop_unlifted.insert(span, found);
+        }
+        if let (Ok(body), Some(_)) = (&mut checked, &ty) {
+            let mut values: FxHashMap<Span, tir::Expr> = (labels.into_iter().zip(values))
+                .filter_map(|(at, value)| Some((at, value.ok()?)))
+                .collect();
+            let bare = frame.bare.is_some();
+            if !values.is_empty() {
+                body.each_expr_mut(&mut |e| {
+                    put_back_breaks(e, 0, frame.crossed, (&mut values, bare));
+                });
+                debug_assert!(values.is_empty(), "each `break` value should be put back");
             }
         }
-        let ty = frame.loop_type();
-        match (checked, ty) {
-            (Ok(body), Some(ty)) => Ok(tir::Expr::new(ExprKind::Loop(body), ty, span)),
-            // A loop with no type failed by its frame, or has values that a `Poisoned`
-            // expectation gives no type; one with a type failed by its body.
-            (Ok(_), None) => Err(Poisoned::untyped(frame.failed.unwrap_or_else(|| {
-                debug_assert_eq!(
-                    frame.expected,
-                    Expectation::Poisoned,
-                    "the loop should have failed"
-                );
-                self.poisoned_context(span)
-            }))),
-            (Err(failed), ty) => Err(Poisoned::new(ty, frame.failed.unwrap_or(failed.reported))),
-        }
-    }
-
-    /// The values of objects that did not join the first value of the loop (see `join_break`),
-    /// now that every `break` is known: they join it as `if` branches do, also to an `any` type
-    /// that the siblings of a hinted loop give (see `seeded_join`), or one is reported.
-    fn join_deferred(&mut self, frame: &mut LoopFrame) {
-        let deferred = std::mem::take(&mut frame.deferred);
-        let Some((first, at)) = frame.first.filter(|_| !deferred.is_empty()) else {
-            return;
-        };
-        // The first value is member 0, and each deferred value its place after it.
-        let members: Vec<(usize, Type)> = std::iter::once((0, first))
-            .chain((1..).zip(deferred.iter().map(|&(_, t)| t)))
-            .collect();
-        let span = |i: usize| match i.checked_sub(1) {
-            Some(i) => deferred[i].0,
-            None => frame.first_value,
-        };
-        let join = match self.any_join_all(&members) {
-            joined @ AnyJoin::Joined { .. } => joined,
-            failed => match self.seeded_join(frame.expected.siblings(), &members) {
-                seeded @ AnyJoin::Joined { .. } => {
-                    #[cfg(test)]
-                    super::reached("seeded_join for a loop");
-                    seeded
-                }
-                leaves @ AnyJoin::Leaves { .. } => leaves,
-                AnyJoin::NoAny | AnyJoin::Fails { .. } => failed,
-            },
-        };
-        // A value of an object reads no conversion from its expression.
-        let d = match join {
-            AnyJoin::Joined { ty } => {
-                // The loop grew to this type, so `wrap_breaks` converts the values.
-                if ty != first {
-                    frame.first = Some((ty, at));
-                    frame.widened = true;
-                }
-                self.instantiates = true;
-                return;
+        let body = match checked {
+            Ok(body) => body,
+            // A loop with a type failed by its body. A poisoned join keeps what it found, as a
+            // generic call's misfit, for the code that uses the loop's value.
+            Err(failed) => {
+                return Err(match ty {
+                    Some(Err(poisoned)) => poisoned,
+                    ty => Poisoned::new(
+                        ty.and_then(Result::ok),
+                        frame.failed.unwrap_or(failed.reported),
+                    ),
+                });
             }
-            AnyJoin::Leaves {
-                ty,
-                giver,
-                member: (i, got),
-            } => {
-                // The seed of a hinted loop, member `SEED`, is no `break`.
-                let given = match giver {
-                    SEED => Origin::None,
-                    0 => Origin::Break {
-                        at,
-                        ty: first,
-                        outer: false,
-                    },
-                    _ => Origin::Break {
-                        at: span(giver),
-                        ty: members[giver].1,
-                        outer: false,
-                    },
-                };
-                self.leaves_any(span(i), None, ty, got, given)
-            }
-            AnyJoin::Fails {
-                earlier: (_, want),
-                later: (i, got),
-            } => self.mismatch(
-                span(i),
-                None,
-                want,
-                got,
-                Origin::Break {
-                    at,
-                    ty: want,
-                    outer: false,
+        };
+        match ty {
+            Some(Ok(ty)) => Ok(tir::Expr::new(
+                ExprKind::Loop {
+                    body,
+                    crossed: frame.crossed,
                 },
-            ),
-            // Objects that join to no `any` type: each is not the first value's.
-            AnyJoin::NoAny => {
-                for &(at_value, got) in &deferred {
-                    let origin = Origin::Break {
-                        at,
-                        ty: first,
-                        outer: false,
-                    };
-                    let d = self.mismatch(at_value, None, first, got, origin);
-                    let reported = self.diagnostics.error(d);
-                    frame.failed.get_or_insert(reported);
-                }
-                return;
-            }
-        };
-        let reported = self.diagnostics.error(d);
-        frame.failed.get_or_insert(reported);
+                ty,
+                span,
+            )),
+            Some(Err(poisoned)) => Err(poisoned),
+            None => Err(Poisoned::untyped(
+                frame
+                    .failed
+                    .expect("a loop with no type should have failed"),
+            )),
+        }
     }
 
     /// The loop body open at `at` in `self.body.loops`.
@@ -1634,9 +1603,11 @@ impl Checker<'_> {
         }
     }
 
-    /// `v`, the value of the `break` at `span` whose target is the loop body at `target`, checked
-    /// by the loop's type rule. A failed value fails the loop. `typo` is `v` when it is a bare
-    /// name right after an unlabeled `break`, which may be a misspelled loop label.
+    /// `v` is the value of the `break` at `span` that ends the loop body at `target`. It is
+    /// checked as a member of the loop's join (see `loop_expr`): the value goes to its slot in the
+    /// frame, and the `break` keeps a `never` placeholder, so that no other join reaches it. A
+    /// failed value fails the loop. `typo` is `v` when it is a bare name right after an unlabeled
+    /// `break`, which may be a misspelled loop label.
     fn break_value(
         &mut self,
         span: Span,
@@ -1644,7 +1615,6 @@ impl Checker<'_> {
         v: &ast::Expr,
         typo: Option<&ast::Ident>,
     ) -> Checked {
-        let waits = self.body.waiting_loops.is_some_and(|open| target < open);
         let frame = self.frame(target);
         if frame.kind != LoopKind::Loop {
             let (keyword, loop_at) = (frame.kind.keyword(), frame.keyword);
@@ -1670,159 +1640,44 @@ impl Checker<'_> {
             self.frame(target).failed.get_or_insert(reported);
             return Err(Poisoned::typed(Type::NEVER, reported));
         }
-        let frame = self.frame(target);
-        // With no expected type, an earlier value gives a hint, as the siblings of a hinted loop
-        // do. A value waits for the next run, and gives the loop no type, in two cases. The loop
-        // failed, so it has no type. Or the value is in a join in a poisoned context: the join
-        // checks its branches out of source order (see `Body::waiting_loops`).
-        let waiting = (waits || frame.failed.is_some())
-            && frame.expected == Expectation::None
-            && frame.first.is_none();
-        let hint = match (frame.expected, frame.first) {
-            (Expectation::None, None) if waiting => Expectation::Poisoned,
-            (Expectation::None, Some((ty, at))) => Expectation::Hint {
-                want: ty,
-                siblings: ty,
-                origin: Origin::Break {
-                    at,
-                    ty,
-                    outer: false,
-                },
-            },
-            (expected, _) => expected,
+        // A failed loop has no type, so its values give it none: their mistakes wait for the
+        // next run. Else the slot is kept first, so a `break` of this loop inside `v` comes after.
+        let slot = frame.failed.is_none().then(|| {
+            frame.values.push(None);
+            frame.values.len() - 1
+        });
+        let expected = match (slot, frame.expected) {
+            (None, _) => Expectation::Poisoned,
+            (_, expected) => branch_expectation(expected),
         };
         self.body.label_typo = typo.map(|name| (name.span, span.start()));
-        let checked = self.expr(v, hint);
+        let checked = self.expr(v, expected);
         self.body.label_typo = None;
+        let checked = self.refuse_unwanted(v, checked, expected, false);
+        let Some(slot) = slot else {
+            return checked;
+        };
         // An untyped failed value fails the loop, and gives it no type and no second report. A
-        // typed poisoned value joins as its type. A generic call's misfit is joined by the type it
-        // found, as a concrete call is by its type.
-        let misfit = self.misfit_type(&checked);
-        if let (Err(failed), None, None) = (&checked, misfit, type_of(&checked)) {
-            self.frame(target).failed.get_or_insert(failed.reported);
-            return checked;
+        // typed poisoned value is a member of its type. A generic call's misfit is a member of
+        // the type that it found, as a concrete call is of its type.
+        let typed = type_of(&checked).is_some() || self.misfit_type(&checked).is_some();
+        match checked {
+            Ok(e) if e.ty == Type::NEVER => Ok(e),
+            Ok(e) => {
+                let placeholder = tir::Expr::new(ExprKind::None, Type::NEVER, e.span);
+                self.frame(target).values[slot] = Some((span, Ok(e)));
+                Ok(placeholder)
+            }
+            Err(poisoned) if typed => {
+                let reported = poisoned.reported();
+                self.frame(target).values[slot] = Some((span, Err(poisoned)));
+                Err(Poisoned::untyped(reported))
+            }
+            Err(poisoned) => {
+                self.frame(target).failed.get_or_insert(poisoned.reported);
+                Err(poisoned)
+            }
         }
-        let checked = match type_of(&checked).or(misfit) {
-            Some(Type::UNIT) if self.missing_value(v, &checked, hint, false).is_some() => {
-                self.refuse_unwanted(v, checked, hint, false)
-            }
-            Some(Type::NEVER) | None => checked,
-            Some(got) => {
-                // Checking `v` can set the first type, through a `break` of this loop inside it.
-                let frame = self.frame(target);
-                frame.valued.get_or_insert((span, got));
-                let (expected, first) = (frame.expected, frame.first);
-                let hinted = matches!(expected, Expectation::Hint { .. });
-                if waiting {
-                    // The value would give the loop its type, so the loop fails instead.
-                    let reported = self.poisoned_context(v.span);
-                    self.frame(target).failed.get_or_insert(reported);
-                    return checked;
-                }
-                if expected == Expectation::Poisoned {
-                    checked
-                } else {
-                    let want = (expected, hinted, first);
-                    self.join_break((v, span), (checked, got), want, target)
-                }
-            }
-        };
-        if let Err(failed) = &checked
-            && type_of(&checked).is_none_or(|ty| ty == Type::NEVER)
-        {
-            self.frame(target).failed.get_or_insert(failed.reported);
-        }
-        checked
-    }
-
-    /// The value `checked` of the `break` `v`, of type `got`, joined with the loop's first value.
-    /// A value that fits the expected type keeps its own, as a block's value does. The values join
-    /// as `if` branches do: a `T` and a `T?` make a `T?`. An object and an `any` type that it
-    /// converts to make the `any` type. The values before it are converted at the loop's end when
-    /// the type grows. With `hinted`, `expected` is a hint (see `Expectation::Hint`).
-    fn join_break(
-        &mut self,
-        (v, span): (&ast::Expr, Span),
-        (checked, got): (Checked, Type),
-        (expected, hinted, first): (Expectation, bool, Option<(Type, Span)>),
-        target: usize,
-    ) -> Checked {
-        // A value that does not fit the expected type converts to it, or is the mismatch. No
-        // value converts to an `any` hint: the join of the values does.
-        let (checked, got) = match expected.ty() {
-            Some(ty) if !fits(ty, got) && (!hinted || !is_target(ty)) => {
-                (self.against(v, checked, expected).0, ty)
-            }
-            // The loop as a whole lifts a `T` value to the expected `T?`.
-            Some(ty) if ty != got => (self.refuse_unlifted(checked), got),
-            _ => (checked, got),
-        };
-        // A misfit left is reported against the first value, as a value of its type is.
-        if let Some((first, at)) = first
-            && self.misfit_type(&checked).is_some()
-        {
-            let want = Expectation::Required(
-                first,
-                Origin::Break {
-                    at,
-                    ty: first,
-                    outer: false,
-                },
-            );
-            return self.against(v, checked, want).0;
-        }
-        let Some((first, at)) = first else {
-            let frame = self.frame(target);
-            frame.first = Some((got, span));
-            frame.first_value = v.span;
-            return checked;
-        };
-        // Without an expected type, a `T` and a `T?` do not join.
-        let expects = expected.ty().is_some();
-        let joined = if first == got || expects && fits(first, got) {
-            Some(first)
-        } else if expects && fits(got, first) {
-            Some(got)
-        } else {
-            self.any_join(first, got)
-        };
-        let Some(joined) = joined else {
-            // Objects and `any` values: a later `any` value can join them all.
-            let object = |ty: Type| matches!(ty.kind(), TypeKind::Class(..) | TypeKind::Any(..));
-            let objects = object(got) && object(first);
-            if objects {
-                self.frame(target).deferred.push((v.span, got));
-                return checked;
-            }
-            // A `Some` of an object is the mistake at the object, as in a branch.
-            let given = Origin::Break {
-                at,
-                ty: first,
-                outer: false,
-            };
-            if let Ok(value) = &checked
-                && let Some((at, want, object)) = self.object_in_some(value, first)
-            {
-                let d = self.leaves_any(at, None, want, object, given);
-                return Err(Poisoned::untyped(self.diagnostics.error(d)));
-            }
-            let want = Expectation::Required(first, given);
-            return self.against(v, checked, want).0;
-        };
-        let checked = if got == joined {
-            checked
-        } else {
-            self.against(v, checked, Expectation::Required(joined, Origin::None))
-                .0
-        };
-        if joined != first {
-            let frame = self.frame(target);
-            frame.widened = true;
-            frame.first = Some((joined, span));
-            // Converting the values before makes a table, as a conversion does.
-            self.instantiates |= is_target(joined);
-        }
-        checked
     }
 
     /// `block`, its scope holding `name` bound to a `ty`, as `keyword` (`if let`, `while let` or
@@ -1891,16 +1746,7 @@ impl Checker<'_> {
         operands: Vec<tir::Expr>,
         later_exits: bool,
     ) -> (Vec<tir::Stmt>, Vec<tir::Expr>) {
-        let last_exit = if later_exits {
-            Some(operands.len())
-        } else {
-            operands.iter().rposition(tir::Expr::exits)
-        };
-        let first_counted = operands.iter().position(|e| {
-            e.ty.may_be_counted(&self.lowered_enums, &self.lowered_structs)
-        });
-        let Some(last_exit) = last_exit.filter(|&exit| first_counted.is_some_and(|c| c < exit))
-        else {
+        let Some(last_exit) = self.last_spilled(operands.iter(), later_exits) else {
             return (Vec::new(), operands);
         };
         let mut spills = Vec::new();
@@ -1921,6 +1767,33 @@ impl Checker<'_> {
             })
             .collect();
         (spills, operands)
+    }
+
+    /// The last operand that `spill_before` binds, or `None` when it binds none.
+    fn last_spilled<'e>(
+        &self,
+        operands: impl Iterator<Item = &'e tir::Expr>,
+        later_exits: bool,
+    ) -> Option<usize> {
+        let (mut first_counted, mut last_exit, mut len) = (None, None, 0);
+        for (i, e) in operands.enumerate() {
+            if first_counted.is_none()
+                && (e.ty).may_be_counted(&self.lowered_enums, &self.lowered_structs)
+            {
+                first_counted = Some(i);
+            }
+            if !later_exits && e.exits() {
+                last_exit = Some(i);
+            }
+            len = i + 1;
+        }
+        let last_exit = if later_exits { Some(len) } else { last_exit };
+        last_exit.filter(|&exit| first_counted.is_some_and(|c| c < exit))
+    }
+
+    /// Whether `spill` binds one of `operands`.
+    pub(super) fn spills<'e>(&self, operands: impl Iterator<Item = &'e tir::Expr>) -> bool {
+        self.last_spilled(operands, false).is_some()
     }
 
     /// Adds `name` to the innermost scope as a new local; `keyword` is the `mut` of a
@@ -2329,66 +2202,62 @@ fn reread(e: &tir::Expr) -> tir::Expr {
     tir::Expr::new(kind, e.ty, e.span)
 }
 
-/// Wraps into `ty` each value of another type, `never` aside, that a `break` in `e` gives the
-/// loop `depth` loops out from `e`: the `T` values of a loop that a `T?` value widened. It enters
-/// nested loops only when `crossed`: when a `break` in one targets that loop.
-fn wrap_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool, widened: &mut Vec<Type>) {
-    let nested = matches!(e.kind, ExprKind::Loop(_));
+/// Puts each value of `values` back in its `break` in `e`, by the span of that `break`. Each such
+/// `break` ends the loop `depth` loops out from `e`. With `bare`, it gives each bare `break` there
+/// a `unit` value. It enters nested loops only when `crossed`: when a `break` in one targets that
+/// loop.
+fn put_back_breaks(
+    e: &mut tir::Expr,
+    depth: usize,
+    crossed: bool,
+    (values, bare): (&mut FxHashMap<Span, tir::Expr>, bool),
+) {
+    let nested = matches!(e.kind, ExprKind::Loop { .. });
     if nested && !crossed {
         return;
     }
     #[cfg(test)]
-    if nested {
-        super::WRAP_LOOPS.set(super::WRAP_LOOPS.get() + 1);
-    }
-    let inner = depth + usize::from(nested);
-    e.each_child_mut(&mut |child| wrap_breaks(child, inner, ty, crossed, widened));
-    if let ExprKind::Break {
-        depth: target,
-        value: Some(value),
-    } = &mut e.kind
-        && *target == depth
-        && value.ty != ty
-        && value.ty != Type::NEVER
     {
-        let placeholder = tir::Expr::new(ExprKind::None, ty, value.span);
-        let payload = std::mem::replace(&mut **value, placeholder);
-        widened.push(payload.ty);
-        **value = widen(payload, ty);
-        #[cfg(test)]
-        if !crossed {
-            super::WIDENED_BREAKS.set(super::WIDENED_BREAKS.get() + 1);
+        super::join::VALUE_STEPS.set(super::join::VALUE_STEPS.get() + 1);
+        if nested {
+            super::WRAP_LOOPS.set(super::WRAP_LOOPS.get() + 1);
         }
     }
-}
-
-/// Gives each bare `break` in `e` that ends the loop `depth` loops out from `e` a `unit` value,
-/// wrapped into `ty` when that is `unit?`. It enters nested loops only when `crossed`: when a
-/// `break` in one targets that loop.
-fn fill_bare_breaks(e: &mut tir::Expr, depth: usize, ty: Type, crossed: bool) {
-    let nested = matches!(e.kind, ExprKind::Loop(_));
-    if nested && !crossed {
-        return;
-    }
-    #[cfg(test)]
-    super::FILL_STEPS.set(super::FILL_STEPS.get() + 1);
-    let inner = depth + usize::from(nested);
-    e.each_child_mut(&mut |child| fill_bare_breaks(child, inner, ty, crossed));
     let span = e.span;
     if let ExprKind::Break {
         depth: target,
-        value: value @ None,
+        value,
     } = &mut e.kind
         && *target == depth
     {
-        let unit = tir::Expr::new(ExprKind::Unit, Type::UNIT, span);
-        let filled = if ty == Type::UNIT {
-            unit
-        } else {
-            super::wrap(unit, ty)
-        };
-        *value = Some(Box::new(filled));
+        match value {
+            Some(placeholder) if matches!(placeholder.kind, ExprKind::None) => {
+                if let Some(put) = values.remove(&span) {
+                    **placeholder = put;
+                }
+            }
+            None if bare => {
+                *value = Some(Box::new(tir::Expr::new(ExprKind::Unit, Type::UNIT, span)));
+            }
+            _ => {}
+        }
     }
+    let inner = depth + usize::from(nested);
+    ensure_stack(|| {
+        e.each_child_mut(&mut |child| put_back_breaks(child, inner, crossed, (values, bare)));
+    });
+}
+
+/// Whether `value` is a conversion: a wrap to an optional, a box to `any` or a number
+/// conversion. A test counts the `break` values that the loop's join converted.
+#[cfg(test)]
+fn converted(value: &Checked) -> bool {
+    (value.as_ref()).is_ok_and(|e| {
+        matches!(
+            e.kind,
+            ExprKind::Wrap(_) | ExprKind::ToAny(_) | ExprKind::Convert(_)
+        )
+    })
 }
 
 /// The type a statement gives its block when it comes last.
@@ -2430,7 +2299,12 @@ fn lower_loop(
         value: Some(Box::new(branch)),
         ty,
     };
-    expr(ExprKind::Loop(looped), Type::UNIT)
+    // No `break` of a `while` has a value, so no walk for its values enters its nested loops.
+    let loop_kind = ExprKind::Loop {
+        body: looped,
+        crossed: false,
+    };
+    expr(loop_kind, Type::UNIT)
 }
 
 /// A value that `discard` warns about: its type, the span the warning points at, the span its

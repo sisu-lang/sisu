@@ -883,7 +883,12 @@ pub(crate) enum ExprKind {
         temp: LocalId,
         arms: Vec<Arm>,
     },
-    Loop(Block),
+    /// `loop { body }`. `crossed` says that a `break` inside a nested loop ends this one: only
+    /// then does a walk for its `break` values enter the nested loops. Only the checker reads it.
+    Loop {
+        body: Block,
+        crossed: bool,
+    },
     /// Leaves the loop `depth` loops out from the innermost one around it, giving it `value`.
     Break {
         depth: usize,
@@ -1282,7 +1287,7 @@ impl ExprKind {
             ExprKind::Slice {
                 base, start, end, ..
             } => base.exits() || start.iter().chain(end).any(|bound| bound.exits()),
-            ExprKind::Loop(block) | ExprKind::Block(block) => block.exits(),
+            ExprKind::Loop { body: block, .. } | ExprKind::Block(block) => block.exits(),
             ExprKind::MutCall { call, muts, back } => {
                 call.exits()
                     || back.exits()
@@ -1394,7 +1399,7 @@ impl Expr {
                     f(bound);
                 }
             }
-            ExprKind::Loop(block) | ExprKind::Block(block) => block.each_expr_mut(f),
+            ExprKind::Loop { body: block, .. } | ExprKind::Block(block) => block.each_expr_mut(f),
             ExprKind::MutCall { call, muts, back } => {
                 for m in muts {
                     for (_, object) in &mut m.keep {
@@ -1500,7 +1505,9 @@ impl Expr {
                     arm.body.each_block_type_mut(f);
                 }
             }
-            ExprKind::Loop(block) | ExprKind::Block(block) => block.each_block_type_mut(f),
+            ExprKind::Loop { body: block, .. } | ExprKind::Block(block) => {
+                block.each_block_type_mut(f);
+            }
             ExprKind::MutCall { back, .. } => back.each_block_type_mut(f),
             ExprKind::Int(_)
             | ExprKind::Float(_)
@@ -1716,7 +1723,7 @@ impl Expr {
                     bound.exprs(out);
                 }
             }
-            K::Loop(block) | K::Block(block) => block.exprs(out),
+            K::Loop { body: block, .. } | K::Block(block) => block.exprs(out),
             K::MutCall { call, muts, back } => {
                 for m in muts {
                     m.keep.iter().for_each(|(_, object)| object.exprs(out));
@@ -2053,7 +2060,7 @@ impl Printer<'_> {
                 }
                 f.write_str(")")
             }
-            ExprKind::Loop(body) => {
+            ExprKind::Loop { body, .. } => {
                 f.write_str("(loop ")?;
                 self.block(f, body)?;
                 f.write_str(")")
@@ -2516,7 +2523,13 @@ mod tests {
             jump(ExprKind::Continue { depth: 1 }),
         ]);
         let outer = block(vec![
-            Stmt::Expr(expr(ExprKind::Loop(inner), Type::NEVER)),
+            Stmt::Expr(expr(
+                ExprKind::Loop {
+                    body: inner,
+                    crossed: false,
+                },
+                Type::NEVER,
+            )),
             jump(ExprKind::Break {
                 depth: 0,
                 value: Some(Box::new(int(2))),
@@ -2539,7 +2552,13 @@ mod tests {
                 locals: vec![],
                 body: Block {
                     stmts: vec![],
-                    value: Some(Box::new(expr(ExprKind::Loop(outer), Type::I64))),
+                    value: Some(Box::new(expr(
+                        ExprKind::Loop {
+                            body: outer,
+                            crossed: true,
+                        },
+                        Type::I64,
+                    ))),
                     ty: Type::I64,
                 },
             }],
@@ -2594,7 +2613,10 @@ mod tests {
             Type::UNIT,
         );
         let looped = expr(
-            ExprKind::Loop(block(vec![Stmt::Expr(inner_if)])),
+            ExprKind::Loop {
+                body: block(vec![Stmt::Expr(inner_if)]),
+                crossed: false,
+            },
             Type::UNIT,
         );
         (if_stmt, looped)
@@ -4068,7 +4090,13 @@ mod tests {
                 },
                 4,
             ),
-            (ExprKind::Loop(body), 9),
+            (
+                ExprKind::Loop {
+                    body,
+                    crossed: false,
+                },
+                9,
+            ),
             (ExprKind::Block(valued(1)), 1),
             (
                 ExprKind::MutCall {

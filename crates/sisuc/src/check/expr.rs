@@ -138,8 +138,6 @@ impl Checker<'_> {
         if let Some(&known) = self.body.int_literals.get(&e.span) {
             return known;
         }
-        #[cfg(test)]
-        super::INT_LITERAL_STEPS.set(super::INT_LITERAL_STEPS.get() + 1);
         let found = op.is_none_or(|op| operator(op).is_some_and(|(_, ty)| ty == Type::I64))
             && self.int_literal(lhs)
             && rhs.is_none_or(|rhs| self.int_literal(rhs));
@@ -214,11 +212,6 @@ impl Checker<'_> {
     )]
     fn expr_kind(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
         let node = |kind, ty| Ok(tir::Expr::new(kind, ty, e.span));
-        // A form that no join converts yet is a made value: it is not a member.
-        let expected = match expected {
-            Expectation::Member if made_value(e) => Expectation::None,
-            expected => expected,
-        };
         match &e.kind {
             ExprKind::Int { value, literal } => self.integer(e.span, *value, *literal, expected),
             ExprKind::Float(x) => node(tir::ExprKind::Float(x.0), Type::F64),
@@ -673,21 +666,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `checked`, a value that a later wrap lifts to its optional, as a loop lifts its `break`
-    /// values. E0043 when it has no value to lift (see `lift`); the value keeps its type.
-    pub(super) fn refuse_unlifted(&mut self, checked: Checked) -> Checked {
-        match checked
-            .as_ref()
-            .ok()
-            .and_then(|e| Some((self.unlifted(e)?, e.ty)))
-        {
-            Some(((at, if_let), ty)) => {
-                Err(Poisoned::typed(ty, self.no_value(at, no_else(if_let))))
-            }
-            None => checked,
-        }
-    }
-
     /// `lift` for the value of `block`, a branch or a body. A block with no value gets a `unit`
     /// at `span` (see `wrap_block`).
     pub(super) fn lift_block(&mut self, block: &mut CheckedBlock, want: Type, span: Span) {
@@ -1132,21 +1110,15 @@ pub(super) fn if_some(
     )
 }
 
-/// Whether `e` is a form that a join does not convert yet: a loop that a `break` leaves (until
-/// Task 5e). As a member, it is checked as a made value, with no type expected. A loop that no
-/// `break` leaves never ends: it has no value, as a `return`.
-pub(super) fn made_value(e: &ast::Expr) -> bool {
-    matches!(e.kind, ExprKind::Loop { breaks: true, .. })
-}
-
-/// Whether `e` holds a join of branches whose leaves the join around it settles: an `if` or an
-/// `if let` with an `else`, or a `match`, as `e` or as the value of a block, a `dbg` or a `Some`.
+/// Whether `e` holds a join of branches whose leaves the join around it settles. That is an `if`
+/// or an `if let` with an `else`, a `match`, or a loop that a `break` leaves. It is `e`, or the
+/// value of a block, a `dbg` or a `Some`.
 pub(super) fn branch_join(e: &ast::Expr) -> bool {
     ensure_stack(|| match &e.kind {
         ExprKind::If { else_block, .. } | ExprKind::IfLet { else_block, .. } => {
             else_block.is_some()
         }
-        ExprKind::Match { .. } => true,
+        ExprKind::Match { .. } | ExprKind::Loop { breaks: true, .. } => true,
         ExprKind::Block(block) => super::tail(block).is_some_and(branch_join),
         ExprKind::Call { callee, args, .. }
             if callee.name.as_str() == "dbg" || callee.name == Symbol::SOME =>
@@ -1171,50 +1143,6 @@ pub(super) fn nested_join(e: &ast::Expr) -> bool {
             matches!(args.as_slice(), [arg] if nested_join(&arg.value))
         }
         _ => branch_join(e),
-    })
-}
-
-/// Whether `e` gives a made value (see `made_value`) at its value, or at a call argument or an
-/// array element in it. Its value is that of its block, branches and arms. A call with
-/// such an argument waits for its join, as the made value does (see `takes_member`). The
-/// branches of `e` then join by the order of their ranks, not as members of one join (see
-/// `Checker::branches`). A `-` of a made value counts too.
-pub(super) fn gives_made_value(e: &ast::Expr) -> bool {
-    ensure_stack(|| {
-        #[cfg(test)]
-        super::VALUE_WALK_STEPS.set(super::VALUE_WALK_STEPS.get() + 1);
-        made_value(e)
-            || match &e.kind {
-                // An operator with a made value as its operand is one too, with no walk below it.
-                ExprKind::Unary {
-                    op: UnaryOp::Neg,
-                    operand,
-                } => made_value(operand),
-                ExprKind::Binary { lhs, rhs, .. } | ExprKind::Coalesce { lhs, rhs } => {
-                    made_value(lhs) || made_value(rhs)
-                }
-                ExprKind::Compare { operands, .. } => operands.iter().any(made_value),
-                ExprKind::If {
-                    then_block,
-                    else_block,
-                    ..
-                }
-                | ExprKind::IfLet {
-                    then_block,
-                    else_block,
-                    ..
-                } => (std::iter::once(then_block).chain(else_block))
-                    .filter_map(super::tail)
-                    .any(gives_made_value),
-                ExprKind::Match { arms, .. } => arms.iter().any(|arm| gives_made_value(&arm.body)),
-                ExprKind::Block(block) => super::tail(block).is_some_and(gives_made_value),
-                ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. } => {
-                    args.iter().any(|arg| gives_made_value(&arg.value))
-                }
-                ExprKind::ArrayLit(elements) => elements.iter().any(gives_made_value),
-                ExprKind::ArrayFill { value, .. } => gives_made_value(value),
-                _ => false,
-            }
     })
 }
 
@@ -1267,7 +1195,7 @@ impl Checker<'_> {
 
     /// `valueless` of `e`, a `unit` that lifts to `unit?`. There each `if` without an `else` has
     /// no value, whatever its branch has, as for an `i64?`.
-    fn unlifted(&self, e: &tir::Expr) -> Option<(Span, bool)> {
+    pub(super) fn unlifted(&self, e: &tir::Expr) -> Option<(Span, bool)> {
         without_value(e, true, self)
     }
 }
@@ -1334,8 +1262,11 @@ fn without_value(e: &tir::Expr, lifted: bool, checker: &Checker<'_>) -> Option<(
         }
         tir::ExprKind::Block(block) => tail(block),
         tir::ExprKind::Wrap(inner) => without_value(inner, lifted, checker),
-        // Each of these gives its own value, which no `if` gives.
-        tir::ExprKind::Int(_)
+        tir::ExprKind::Loop { .. } if lifted => checker.body.loop_unlifted.get(&e.span).copied(),
+        // Each of these gives its own value, which no `if` gives. A loop that no optional lifts
+        // keeps its `break` values, which its own join checked.
+        tir::ExprKind::Loop { .. }
+        | tir::ExprKind::Int(_)
         | tir::ExprKind::Float(_)
         | tir::ExprKind::Bool(_)
         | tir::ExprKind::Char(_)
@@ -1374,7 +1305,6 @@ fn without_value(e: &tir::Expr, lifted: bool, checker: &Checker<'_>) -> Option<(
         | tir::ExprKind::Compare { .. }
         | tir::ExprKind::Equal { .. }
         | tir::ExprKind::Is { .. }
-        | tir::ExprKind::Loop(_)
         | tir::ExprKind::Break { .. }
         | tir::ExprKind::Continue { .. }
         | tir::ExprKind::Return(_)
@@ -1438,7 +1368,7 @@ pub(super) fn branch_free(e: &tir::Expr, known: &FxHashSet<Span>) -> bool {
         | tir::ExprKind::Compare { .. }
         | tir::ExprKind::Equal { .. }
         | tir::ExprKind::Is { .. }
-        | tir::ExprKind::Loop(_)
+        | tir::ExprKind::Loop { .. }
         | tir::ExprKind::Break { .. }
         | tir::ExprKind::Continue { .. }
         | tir::ExprKind::Return(_)

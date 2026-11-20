@@ -2331,9 +2331,6 @@ pub(crate) enum MismatchOrigin {
     Concat(Span),
     /// The earlier alternative's binding of `name`, at `at`, which gave it the type wanted.
     Alternative { name: String, at: Span },
-    /// The `break` at `at`, the first of its `loop` with a value, gave the loop the type `ty`.
-    /// `outer` is set when that loop is around the loop that reports.
-    Break { at: Span, ty: String, outer: bool },
     /// `function` declares its parameter `param` as `ty`, written at `at`.
     Parameter {
         at: Span,
@@ -2365,8 +2362,6 @@ pub(crate) enum MismatchOrigin {
     Index,
     /// The rule that an index of a place is an `i64`.
     PlaceIndex,
-    /// The branch value at `at` gave its `if` or `match` the type `ty`.
-    Branch { at: Span, ty: String },
     /// The argument at `at` gave the type parameter `param` the type `ty`.
     Inferred { at: Span, param: String, ty: String },
 }
@@ -2377,13 +2372,6 @@ impl MismatchOrigin {
         match self {
             Self::Concat(operand) => (Some(operand), "`+` joins this `string`".to_string()),
             Self::Alternative { name, at } => (Some(at), format!("`{name}` is {want} here")),
-            Self::Break { at, ty, outer } => {
-                let which = if outer { "the outer loop" } else { "the loop" };
-                (
-                    Some(at),
-                    format!("this `break` gave {which} the type `{ty}`"),
-                )
-            }
             Self::Parameter {
                 at,
                 function,
@@ -2403,7 +2391,6 @@ impl MismatchOrigin {
             Self::Condition => (None, "a condition must be `bool`".to_string()),
             Self::Index => (None, "an index must be `i64` or a range".to_string()),
             Self::PlaceIndex => (None, "an index must be `i64`".to_string()),
-            Self::Branch { at, ty } => (Some(at), format!("this branch gives the type `{ty}`")),
             Self::Inferred { at, param, ty } => (
                 Some(at),
                 format!("this argument gives `{param}` the type `{ty}`"),

@@ -1,9 +1,7 @@
 //! Operators: arithmetic, comparison, equality, `is` and `??`.
 
 use super::branch::whole_members;
-use super::expr::{
-    fits, gives_made_value, if_some, local, made_value, operator, path, takes_unit, typed,
-};
+use super::expr::{fits, if_some, local, operator, path, takes_unit, typed};
 use super::generic::mismatched;
 use super::infer::Kind;
 use super::infer::LiteralCheck;
@@ -49,17 +47,10 @@ impl Checker<'_> {
             let literal = tir::Expr::new(tir::ExprKind::Int(value), ty, operand.span);
             return Ok((ty, (Ok(literal), false)));
         }
-        // The operand is a member: `-` converts at its top, as a made value does. A `None` expects
-        // an `i64`, as in `None + 1`. A loop is checked as a made value (Task 5e): it takes the
-        // payload of a required type, as `-` is never optional.
+        // The operand is a member: `-` converts at its top. A `None` expects an `i64`, as in
+        // `None + 1`.
         let given = if self.none_written(operand) {
             Expectation::Required(Type::I64, Origin::None)
-        } else if late_operand(operand) {
-            match expected.plain() {
-                Expectation::Required(ty, origin) => Expectation::Required(payload(ty), origin),
-                Expectation::Member => Expectation::None,
-                other => other,
-            }
         } else {
             Expectation::Member
         };
@@ -485,8 +476,7 @@ impl Checker<'_> {
 
     /// The operands of one number operator, its token at `head`, each checked as a member of one
     /// join (ADR 0052); the type they join to, `None` when it is `Error`; and whether a rule of
-    /// the operator reported. A loop is checked after the others, with the type they join to,
-    /// or a required number (Task 5e). A `None` expects that number, else `i64`.
+    /// the operator reported. A `None` expects that number, else `i64`.
     ///
     /// Before the join, each operand of a closed type meets the rules of the operator's kind
     /// (`kind_rules`). A conflict meets them again with each operand's own type. Else under a
@@ -521,17 +511,14 @@ impl Checker<'_> {
         };
         let (ty, origin) = number.unwrap_or((Type::I64, Origin::None));
         let none = Expectation::Required(ty, origin);
-        let late: Vec<usize> = (0..operands.len())
-            .filter(|&i| late_operand(operands[i]))
-            .collect();
         let mut checked: Vec<Checked> = Vec::with_capacity(operands.len());
-        for (i, e) in operands.iter().enumerate() {
+        for e in operands {
             // The place of a compound assignment is read once, before its value.
             if let Some(read) = read.take() {
                 checked.push(read);
                 continue;
             }
-            checked.push(if late.contains(&i) || self.none_operand(e) {
+            checked.push(if self.none_operand(e) {
                 Ok(unit_value(e.span)) // replaced below
             } else {
                 self.value(e, Expectation::Member)
@@ -540,9 +527,9 @@ impl Checker<'_> {
         // A `None` has no number to be. Beside a `char` the operator is the mistake. Beside a
         // `unit` a comparison holds it to `unit`. Beside a `string?` it is one, so that the
         // `string?` is the mistake. Else it meets the operator's number.
-        let others: Vec<Type> = (operands.iter().zip(&checked).enumerate())
-            .filter(|&(i, (e, _))| !late.contains(&i) && !self.none_operand(e))
-            .filter_map(|(_, (_, c))| type_of(c))
+        let others: Vec<Type> = (operands.iter().zip(&checked))
+            .filter(|(e, _)| !self.none_operand(e))
+            .filter_map(|(_, c)| type_of(c))
             .collect();
         let want = if arithmetic && others.contains(&Type::CHAR) {
             Expectation::Member
@@ -557,20 +544,9 @@ impl Checker<'_> {
             none
         };
         for (i, e) in operands.iter().enumerate() {
-            if !late.contains(&i) && self.none_operand(e) {
+            if self.none_operand(e) {
                 checked[i] = self.value(e, want);
             }
-        }
-        for (k, &i) in late.iter().enumerate() {
-            // Beside a failed operand, a late one has no type to meet.
-            let failed = (checked.iter().enumerate())
-                .any(|(j, c)| !late[k..].contains(&j) && untyped(c).is_some());
-            let given = match number {
-                _ if failed => Expectation::Poisoned,
-                Some((ty, origin)) => Expectation::Required(ty, origin),
-                None => self.joined_others(operands, &mut checked, &late[k..]),
-            };
-            checked[i] = self.value(operands[i], given);
         }
         if arithmetic {
             for (e, c) in operands.iter().zip(&mut checked) {
@@ -1085,12 +1061,11 @@ impl Checker<'_> {
         rhs: &ast::Expr,
     ) -> Checked {
         let sides = [lhs, rhs];
-        // A late side is checked after the other, with its type (Task 5e), as in `integers`.
-        let mut late: Vec<usize> = (0..2).filter(|&i| late_operand(sides[i])).collect();
+        // A side that needs the type of the other is checked after it, with that type.
+        let mut late: Vec<usize> = Vec::new();
         let mut values = [Ok(unit_value(lhs.span)), Ok(unit_value(rhs.span))];
-        let early: Vec<usize> = (0..2).filter(|i| !late.contains(i)).collect();
         let outer = std::mem::take(&mut self.body.needs_context);
-        for i in early {
+        for i in 0..2 {
             let first = self.side_mark();
             values[i] = self.value(sides[i], Expectation::Member);
             // A side that needs the type of the other is checked again after it, with that type:
@@ -1596,15 +1571,7 @@ impl Checker<'_> {
             Err(failed) => Err(Poisoned::typed(payload, failed.reported())),
         };
         // In a failed context too the default is a member: the join is silent (ADR 0049).
-        let inner = match self.table.resolve(payload) {
-            // A loop is a made value until Task 5e: it takes the payload as a hint, as on `main`.
-            payload if late_operand(rhs) && !payload.holds_infer() => Expectation::Hint {
-                want: as_optional(payload),
-                siblings: payload,
-                origin: Origin::None,
-            },
-            _ => Expectation::Member,
-        };
+        let inner = Expectation::Member;
         let first = self.side_mark();
         let outer = std::mem::take(&mut self.body.needs_context);
         let mut other = self.fallback(rhs, inner);
@@ -1740,38 +1707,6 @@ fn fail_all(checked: Vec<Checked>, reported: Reported) -> Vec<Checked> {
     (checked.into_iter())
         .map(|_| Err(Poisoned::untyped(reported)))
         .collect()
-}
-
-/// Whether the operand `e` is checked after the other operands, with the type they join to
-/// (until Task 5e, where a loop is a member). It is a value that gives a made value, as an array
-/// element does (see `gives_made_value`). It can also be an operator with a loop as an operand,
-/// or a block whose value is one of these. The test looks one operator deep, so it costs no walk
-/// of a chain.
-fn late_operand(e: &ast::Expr) -> bool {
-    match &e.kind {
-        ExprKind::Block(block) => super::tail(block).is_some_and(late_operand),
-        ExprKind::Binary { op, lhs, rhs, .. } if arithmetic_op(*op) => {
-            late_loop(lhs) || late_loop(rhs)
-        }
-        ExprKind::Unary {
-            op: ast::UnaryOp::Neg,
-            operand,
-        } => late_loop(operand),
-        _ => gives_made_value(e),
-    }
-}
-
-/// Whether `e` is a made value, or a block whose value is one.
-fn late_loop(e: &ast::Expr) -> bool {
-    match &e.kind {
-        ExprKind::Block(block) => super::tail(block).is_some_and(late_loop),
-        _ => made_value(e),
-    }
-}
-
-/// Whether `op` is an arithmetic operator, whose operands are numbers.
-fn arithmetic_op(op: ast::BinaryOp) -> bool {
-    operator(op).is_some_and(|(_, want)| want != Type::BOOL)
 }
 
 /// The proof of the failure of `checked` when it failed with no type.
