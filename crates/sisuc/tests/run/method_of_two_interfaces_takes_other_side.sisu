@@ -1,0 +1,36 @@
+// GIVEN a method call `s.name()` that two interfaces answer, `Label` with a `string` and `Code`
+//   with an `i64`
+// AND the method call is the argument of a generic call
+// AND the call is a side of `==` or `??` beside a `string`
+// WHEN the program runs
+// THEN the other side picks `Label.name`, and each value is as written
+// AND a written `i64` picks `Code.name`
+interface Label {
+    fn name(self) -> string
+}
+
+interface Code {
+    fn name(self) -> i64
+}
+
+struct S {
+}
+
+extend S: Label {
+    fn name(self) -> string { "a" }
+}
+
+extend S: Code {
+    fn name(self) -> i64 { 7 }
+}
+
+fn id<T>(x: T) -> T { x }
+
+fn main() {
+    let s = S()
+    let o: string? = None
+    print(id(s.name()) == "a") // true
+    print(o ?? id(s.name()))   // a
+    let n: i64 = s.name()
+    print(n)                   // 7
+}

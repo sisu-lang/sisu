@@ -2618,9 +2618,11 @@ const MEMBER_CALLS: &str = "fn id<T>(x: T) -> T { x }\nfn first<T>(xs: [T]) -> T
     fn pick<T>(a: T, b: T) -> T { a }\nfn make<T>(c: bool) -> [T] { [] }\n\
     struct B {\n    v: i64\n    fn make<T>(self, c: bool) -> [T] { [] }\n\
     fn opt<T>(self, c: bool) -> T? { None }\n    fn get<T>(self) -> T? { None }\n}\n\
-    fn main() {\n    let b = B(v: 1)\n    let o: u8? = None\n    let c = b.v == 1\n";
+    struct W {\n    b: B\n}\nfn main() {\n    let b = B(v: 1)\n    let w = W(b: b)\n\
+    let o: u8? = None\n    let c = b.v == 1\n";
 
-/// GIVEN a generic call whose argument is a call, a method call or an array literal
+/// GIVEN a generic call whose argument is a call, a method call or an array literal, or a block
+///   whose value is one
 /// AND that argument leaves a type parameter open
 /// AND the call is a side of `==`, `!=` or `??`, an element or a branch beside `o: u8?`
 /// WHEN each is checked
@@ -2651,12 +2653,56 @@ fn a_call_inside_a_member_call_should_take_its_type_from_the_join() {
         "[pick(b.opt(true), b.opt(true)), o]",
         "pick(b.make(true), b.make(true)) == [o]",
         "id(first(make(true))) == o",
+        "id({ b.opt(true) }) == o",
+        "id({ let r = w; r.b.opt(true) }) == o",
+        "id(first({ let r = w; r.b.make(true) })) == o",
+        "o ?? id({ let r = w; r.b.opt(c) })",
+        "pick(b.opt(true), { b.opt(true) }) == o",
+        "id({ id(b.opt(true)) }) == o",
+        "[id({ b.opt(true) }), o]",
     ] {
-        let src = format!("{MEMBER_CALLS}    let _x = {value}\n    print(c)\n}}");
+        let src = format!("{MEMBER_CALLS}    let _x = {value}\n    print(c)\n    print(w.b.v)\n}}");
         clean_row(value, &src);
     }
-    let src = format!("{MEMBER_CALLS}    let x = id(first(b.make(true)))\n    print(x)\n}}");
-    codes(&src, &[(Code::CannotInfer, (15, 24))]);
+    let src = format!(
+        "{MEMBER_CALLS}    let x = id(first(b.make(true)))\n    print(x)\n    print(w.b.v)\n}}"
+    );
+    codes(&src, &[(Code::CannotInfer, (19, 24))]);
+}
+
+/// The header of `a_method_that_two_interfaces_answer_should_take_its_type_from_the_other_side`.
+const TWO_NAMES: &str = "interface Label {\n    fn name(self) -> string\n}\n\
+    interface Code {\n    fn name(self) -> i64\n}\nstruct S {\n}\n\
+    extend S: Label {\n    fn name(self) -> string { \"a\" }\n}\n\
+    extend S: Code {\n    fn name(self) -> i64 { 7 }\n}\n\
+    fn id<T>(x: T) -> T { x }\nfn pick<T>(a: T, b: T) -> T { a }\n\
+    fn main() {\n    let s = S()\n    let o: string? = None\n    let t = \"a\"\n";
+
+/// GIVEN a method call `s.name()` that two interfaces answer, one with a `string` and one with
+///   an `i64`
+/// AND it is the argument of a generic call, at each depth and in a block
+/// AND the call is a side of `==`, `!=` or `??` beside a closed `string`
+/// WHEN each is checked
+/// THEN the other side gives the call its type, which picks the method, as on `main`
+/// AND beside a `bool`, no method answers, and E0156 names the two interfaces, as on `main`
+#[test]
+fn a_method_that_two_interfaces_answer_should_take_its_type_from_the_other_side() {
+    for value in [
+        "id(s.name()) == \"a\"",
+        "\"a\" == id(s.name())",
+        "id(s.name()) != t",
+        "o ?? id(s.name())",
+        "id(id(s.name())) == t",
+        "t == id(id(s.name()))",
+        "id({ s.name() }) == t",
+        "(o ?? id(s.name())) == t",
+        "pick(s.name(), t)",
+    ] {
+        let src = format!("{TWO_NAMES}    let _x = {value}\n    print(o == t)\n}}");
+        clean_row(value, &src);
+    }
+    let src = format!("{TWO_NAMES}    let _x = id(s.name()) == true\n    print(o == t)\n}}");
+    codes(&src, &[(Code::Ambiguous, (21, 19))]);
 }
 
 /// GIVEN `n` lines `let wK = [id(mk2())]`: each is a call that waits with a parameter left open
