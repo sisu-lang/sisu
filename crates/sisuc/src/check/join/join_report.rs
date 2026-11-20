@@ -574,7 +574,7 @@ impl Checker<'_> {
 
     /// `ty` as a diagnostic names it. A part that no type reached is written as the value that
     /// leaves it open: `None` for the payload of an optional, `[]` for the element of an array.
-    fn open_name(&self, ty: Type) -> String {
+    pub(in crate::check) fn open_name(&self, ty: Type) -> String {
         if !ty.holds_infer() {
             return self.type_name(ty);
         }

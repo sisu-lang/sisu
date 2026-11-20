@@ -1035,7 +1035,7 @@ impl Checker<'_> {
         let listed = takes.iter().copied().chain(unit);
         DiagnosticKind::Mismatch {
             want: Expected::Types(listed.map(|ty| self.type_name(ty)).collect()),
-            got: self.type_name(got),
+            got: self.open_name(got),
             at,
             origin: None,
             fix: None,
@@ -1181,8 +1181,8 @@ impl Checker<'_> {
                     && !bare(b)
                 {
                     let kind = DiagnosticKind::CannotCompare {
-                        left: c.type_name(a),
-                        right: c.type_name(b),
+                        left: c.open_name(a),
+                        right: c.open_name(b),
                         at: span,
                     };
                     return Some(c.diagnostics.error(kind));
@@ -1400,8 +1400,8 @@ impl Checker<'_> {
             && !fits(rt, lt)
         {
             let kind = DiagnosticKind::CannotCompare {
-                left: self.type_name(lt),
-                right: self.type_name(rt),
+                left: self.open_name(lt),
+                right: self.open_name(rt),
                 at: span,
             };
             let reported = self.diagnostics.error(kind);
@@ -1426,8 +1426,8 @@ impl Checker<'_> {
                     (l.and_then(|e| self.make_any(e, rt)), r)
                 } else {
                     let kind = DiagnosticKind::CannotCompare {
-                        left: self.type_name(lt),
-                        right: self.type_name(rt),
+                        left: self.open_name(lt),
+                        right: self.open_name(rt),
                         at: span,
                     };
                     return Err(Poisoned::untyped(self.diagnostics.error(kind)));
