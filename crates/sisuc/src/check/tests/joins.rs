@@ -2517,18 +2517,35 @@ fn a_decided_or_bounded_call_under_a_nested_optional_should_keep_its_wrap() {
 /// A side of `==` or a default of `??` that needs its sibling's type is checked again with it.
 /// Each nested side is checked a fixed number of times, so the expressions checked grow in step
 /// with the depth. A side that each level checks two times would double them at each level. The
-/// first sizes fail fast on a count that doubles; the parser takes nesting up to 256.
+/// first sizes fail fast on a count that doubles; the parser takes nesting up to 256, and a level
+/// of `put2((ob ?? ...) == ob, true)` is four.
 #[test]
 fn a_side_checked_again_should_keep_the_checks_linear_in_depth() {
     const SOURCE: &str = "interface Source {\n    type Item\n    fn first(self) -> Item\n}\n\
         struct Pair: Source, Eq {\n    type Item = bool\n    v: bool\n    fn first(self) -> bool { self.v }\n}\n\
-        fn put<S: Source>(v: S.Item) -> S? { None }\nfn zu<T>() -> u8 { 1 }\nfn zb<T>() -> bool { true }\n";
+        fn put<S: Source>(v: S.Item) -> S? { None }\nfn zu<T>() -> u8 { 1 }\nfn zb<T>() -> bool { true }\n\
+        fn put2<S: Source>(a: bool, v: S.Item) -> S? { None }\n\
+        fn putb<S: Source>(v: S.Item, a: bool) -> S? { None }\n";
     let nest = |depth: usize, inner: &str, wrap: &dyn Fn(&str) -> String| {
         (0..depth).fold(inner.to_owned(), |side, _| wrap(&side))
     };
-    let rows: [(&str, &dyn Fn(usize) -> String); 5] = [
+    let rows: [(&str, &dyn Fn(usize) -> String); 8] = [
         ("`put(...) == ob`", &|d| {
             nest(d, "true", &|s| format!("put({s}) == ob"))
+        }),
+        ("`put2(... == ob, true) == ob`", &|d| {
+            let side = nest(d, "put2(true, true)", &|s| format!("put2({s} == ob, true)"));
+            format!("{side} == ob")
+        }),
+        ("`putb(true, ... == ob) == ob`", &|d| {
+            let side = nest(d, "putb(true, true)", &|s| format!("putb(true, {s} == ob)"));
+            format!("{side} == ob")
+        }),
+        ("`(ob ?? put2(... == ob, true)) == ob`", &|d| {
+            let side = nest(d, "put2(true, true)", &|s| {
+                format!("put2((ob ?? {s}) == ob, true)")
+            });
+            format!("(ob ?? {side}) == ob")
         }),
         ("`(zb() == true) == true`", &|d| {
             nest(d, "zb()", &|s| format!("({s}) == true"))
@@ -2554,6 +2571,6 @@ fn a_side_checked_again_should_keep_the_checks_linear_in_depth() {
             EXPR_CHECKS.get()
         };
         assert_near_linear_for(&format!("{row}: "), checks(2), checks(4), checks(6));
-        assert_near_linear_for(&format!("{row}: "), checks(25), checks(50), checks(75));
+        assert_near_linear_for(&format!("{row}: "), checks(20), checks(40), checks(60));
     }
 }
