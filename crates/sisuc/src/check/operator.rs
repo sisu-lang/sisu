@@ -81,10 +81,12 @@ impl Checker<'_> {
                 Err(reported) => return Err(Poisoned::untyped(reported)),
             }
         }
-        if let Ok(value) = &mut checked {
-            value.ty = self.table.resolve(value.ty);
+        // A failed operand keeps its type for the checks below, as a valid one does.
+        match &mut checked {
+            Ok(value) => value.ty = self.table.resolve(value.ty),
+            Err(failed) => failed.ty = failed.ty.map(|ty| self.table.resolve(ty)),
         }
-        if let Some(ty) = type_of(&checked).map(|ty| self.table.resolve(ty))
+        if let Some(ty) = type_of(&checked)
             && matches!(ty.kind(), TypeKind::Infer(_))
         {
             let number = (expected.ty().map(payload))
@@ -101,8 +103,9 @@ impl Checker<'_> {
                 && !negation
                 && self.unify(ty, number)
             {
-                if let Ok(value) = &mut checked {
-                    value.ty = number;
+                match &mut checked {
+                    Ok(value) => value.ty = number,
+                    Err(failed) => failed.ty = Some(number),
                 }
             } else {
                 let check = LiteralCheck {

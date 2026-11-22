@@ -122,10 +122,12 @@ impl Checker<'_> {
         } = so_far;
         self.pop_scope();
         // A failed block hands up no `tir`, so no join around it can settle its tail's join: the
-        // tail settles it alone, as the one member of its join.
+        // tail settles it alone, as the one member of its join. A tail that failed has no `tir`
+        // to settle (`value`), and the last statement is then another one.
         let ty = match (ty, &failed, tail(block)) {
             (Some(open), Some(_), Some(e))
                 if expected == Expectation::Member
+                    && value.is_none()
                     && self.table.resolve(open).holds_infer()
                     && let Some((form, head)) = self.own_join(e)
                     && let Some(tir::Stmt::Expr(value)) = stmts.pop() =>
