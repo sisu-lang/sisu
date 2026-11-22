@@ -1,0 +1,12 @@
+fn main() {
+    let c = [1].len() == 1
+    let s = "x"
+    let a = 1 + if c { None } else { "a" }
+    let b = if c { None } else { "a" } + 1
+    let d = 1 + match c { true => None; false => s }
+    let e = 1 < if c { None } else { "a" }
+    print(a)
+    print(b)
+    print(d)
+    print(e)
+}

@@ -644,9 +644,9 @@ let _a = match k { 0 => Some(p); 1 => $; _ => None }
 let _a = if c { Some(Some(Some(n))) } else { match k { 0 => $; _ => Rock() } }
 let _a = op ?? $
 # Operators and `??`, whose operands join: each side of `+`, `*` and `-`, of `==`, `!=` and `<`,
-# the value and the target of a compound assignment, and each side of `??`, beside an `i64`, a
-# `u8`, a literal and the same value. Also an operator under a written type, as an argument, and
-# as a branch.
+# the value and the target of a compound assignment, a compound assignment beside a join value, and
+# each side of `??`, beside an `i64`, a `u8`, a literal and the same value. Also an operator under a
+# written type, as an argument, and as a branch.
 let _a = $ + k
 let _a = u8(1) + $
 let _a = $ * 1
@@ -657,6 +657,9 @@ let _a = u8(1) != $
 let _a = $ < 1
 let mut _t = $; _t += k
 let mut _t = u8(1); _t += $
+let mut _t = 1; _t += if c { $ } else { "b" }
+let mut _t = 1; _t += match k { 0 => $; _ => "b" }
+let mut _t = 1; _t += loop { break $ }
 let _a = $ ?? k
 let _a = $ ?? u8(1)
 let _a = op ?? $ ?? p
