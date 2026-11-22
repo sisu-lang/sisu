@@ -148,8 +148,9 @@ Some expressions combine values into one type. Each combined value is a *member*
 - the branches of an `if` or an `if let`, and the arms of a `match`
 - the elements of an [array literal](arrays.md#array-literals)
 - the `break` values of one [loop](#loop)
-- the two sides of `??`
-- the two operands of an operator, and the operands of a [comparison chain](operators.md#comparison-chains)
+- the value in the left side of `??`, and its right side
+- the two operands of `+`, `-`, `*`, `/`, `%`, a comparison or an equality, and the two sides of a compound assignment such as `+=`
+- the operands of a [comparison chain](operators.md#comparison-chains)
 - the arguments of one type parameter of a [generic call](generics.md#inference)
 
 **Rules**
@@ -160,10 +161,12 @@ Some expressions combine values into one type. Each combined value is a *member*
 - A join never makes an `any I` that no member has. With a `Lid` and an `Eye` that conform to `Seen`, `[Eye(v: 1), Lid(v: 2)]` is an error. [E0032](../diagnostics/E0032.md)
 - When the members are optional at different depths, the type has each of these `?`. So `[[[1, None], None], None]` is a `[[[i64?]?]?]`.
 - A value that is already made, such as a local, converts at its top only. With an `m: i64?` and an `xs: [i64]`, `if c { [m] } else { [1] }` is a `[i64?]`, but `if c { [m] } else { xs }` is an error. [E0032](../diagnostics/E0032.md)
-- The order of the members changes neither the type nor the error.
-- An expected type is the type of the join, and each member must convert to it. [E0032](../diagnostics/E0032.md)
+- The order of the members changes neither the type nor the error. `??` is the exception: its left side must be optional, and its right side takes its type from the payload of the left side. [E0048](../diagnostics/E0048.md)
+- The operands of `&&` and `||` are no members. Each must be a `bool`.
+- An expected type is the type of the join. A member that does not convert to it is an error at the member: expected that type, found the type of the member. [E0032](../diagnostics/E0032.md)
+- When the members agree and only the expected type differs, one error is at the whole join.
 - An integer literal in a join takes its type as [Literals](literals.md#the-type-of-an-integer-literal) says.
-- When no type fits each member, the error is at the join. It gives the type of each group of members. [E0032](../diagnostics/E0032.md)
+- With no expected type, and when no type fits each member, the error is at the join. It gives the types of the members. [E0032](../diagnostics/E0032.md)
 
 ```sisu
 interface Seen {
@@ -187,9 +190,11 @@ fn main() {
     let a = if c { [m] } else { [1] }
     let b = [e, Some(Lid(v: 4))]
     let d = [[[1, None], None], None]
-    print(a.len())                         // 1
-    print(b.len())                         // 2
-    print(d.len())                         // 2
+    // The `let` with a type shows the type of each join.
+    let a2: [i64?] = a
+    let b2: [(any Seen)?] = b
+    let d2: [[[i64?]?]?] = d
+    print(a2.len() + b2.len() + d2.len())  // 5
 }
 ```
 

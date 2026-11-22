@@ -157,7 +157,7 @@ fn main() {
 - From the expected type: a `let` with a type, a parameter or a return type.
 - From the call, when you write it: `first<string>([])` or `Stack<i64>(items: [])`. A method call can write them too.
 - A later use of the result gives no type.
-- From the other members of a [join](expressions.md#joins). In an array literal, a generic call takes its type from the other elements. In an `if` or a `match`, it takes it from the other branches. The same holds for the other `break` values of a loop and the other side of `??`. It holds for the other side of an operator and the other arguments of the type parameter. The order of the members does not matter. With an `x: u8`, `[x, id(None)]` and `[id(None), x]` are each a `[u8?]`.
+- From the other members of a [join](expressions.md#joins). A generic call takes its type from the other elements of an array literal. It takes it from the other branches of an `if` or a `match`. It does the same from the other `break` values of a loop and the other operand of an operator. It does the same from the other arguments of the type parameter. In `??`, only the right side takes its type from the left side. With an `x: u8`, `[x, id(None)]` and `[id(None), x]` are each a `[u8?]`.
 - A `None` or a `[]` alone has no type. When nothing else fixes a type parameter, the call is an error. Annotate the result, or write the type arguments. [E0050](../diagnostics/E0050.md)
 
 **Calls inside calls**
@@ -172,7 +172,7 @@ fn main() {
 **Integer literals**
 
 - An integer literal argument takes the type that the expected type gives. This is also true under `dbg`, a block, an `if`, a `match` or another generic call: `let d: u8 = id({ 250 })` is valid.
-- A concrete argument gives the literals of the same type parameter their type, whatever the order. In `pick(1, x)` and `pick(x, 1)` with an `x: u8`, `T` is `u8`.
+- A concrete argument gives the literals of the same type parameter their type. In `pick(1, x)` and `pick(x, 1)` with an `x: u8`, `T` is `u8`.
 - A `loop` argument is a member of the join of its type parameter, and its `break` values are a join too ([Joins](expressions.md#joins)). With a `v: u8`, `pick(v, loop { break 1 })` and `pick(loop { break 1 }, v)` are each valid, and `T` is `u8`. With no other member, the `break` values give the type: `id(loop { break 1 })` is an `i64`. An expected type gives the type of the loop too: `let r: Result<u8, i64> = Ok(loop { break 1 })` and `let x: u8? = id(loop { break 1 })` are valid. With an `o: u8?`, so is `o ?? id(loop { break 1 })`.
 
 **Optionals**
@@ -180,7 +180,8 @@ fn main() {
 The examples use `fn pick<T>(a: T, b: T) -> T`, `fn h<T>(a: T, b: T?) -> T` and `fn opt<T>(x: T) -> T?`.
 
 - The arguments at the places of one type parameter are a [join](expressions.md#joins). A call decides each type parameter from its own arguments first. Its result then converts to the type that the context asks for at its top only, and wraps at most once ([ADR 0052](../adr/0052-a-join-takes-the-type-of-one-of-its-members.md)).
-- When the result does not convert, the call can take the part of the context type at the place of `T` in its return type. This applies to a call that is a member of a join, or a value under an expected type. Each argument at a place of `T` must then convert to that part. A new value, such as a literal or an array literal, converts inside. A local converts at its top only. Else the call is an error. [E0032](../diagnostics/E0032.md)
+- When the result does not convert, the call can take the part of the context type at the place of `T` in its return type. This applies to a call that is a member of a join, or a value under an expected type. Each argument at a place of `T` must then convert to that part. Else the call is an error. [E0032](../diagnostics/E0032.md)
+- Take a generic call that is an argument at a place that names two or more type parameters of the outer call. It does not take a part of the context type. Its result must convert as it is. [E0032](../diagnostics/E0032.md)
 
 ```sisu
 fn id<T>(x: T) -> T {
@@ -219,7 +220,7 @@ fn main() {
 - A call that returns `T?` gives the result one more `?` than `T` has. `let w: i64?? = opt(Some(2))` has `T` as `i64?`.
 - When the context has more optionals, the result wraps once. `let w: i64??? = opt(Some(2))` also has `T` as `i64?`.
 - `Some(Some(2))` at a `T?` place fills the `?` and leaves one optional, so `T` is an optional. `let v: i64? = h(1, Some(Some(2)))` is valid, and a context `i64??` wraps the result once.
-- The arguments of `T` join, so their order does not change the result. `pick(Some(Some(1)), Some(2))` and `pick(Some(2), Some(Some(1)))` are each an `i64??`.
+- `pick(Some(Some(1)), Some(2))` and `pick(Some(2), Some(Some(1)))` are each an `i64??`.
 - A `None` at a `T?` place shows no optional. `let w: i64?? = h(1, None)` is an error: expected `i64??`, found `i64`.
 - A call that returns `T?` joins its arguments too. For `fn opt2<T>(x: T, _y: T) -> T?`, `let w: i64??? = opt2(Some(2), Some(Some(3)))` is valid: `T` is `i64??`.
 - To give `T` more optionals than the arguments show, write the type argument. `h<i64?>(1, None)` is valid.

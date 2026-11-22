@@ -140,6 +140,7 @@ In a group of operands, the operands that are not integer literals decide the ty
 - The operands of a [comparison chain](operators.md#comparison-chains).
 - The elements of an [array literal](arrays.md#array-literals).
 - The branches of an `if` or an `if let`, or the arms of a `match`.
+- The payload of the left side of `??`, and its right side. So with an `x: u8`, `Some(1) ?? x` is a `u8`.
 - The `break` values of one [loop](expressions.md#loop).
 - The arguments of one type parameter of a [generic call](generics.md#inference).
 
@@ -168,6 +169,7 @@ fn main() {
     print(n)                      // 200
     print(id(1) + x)              // 201
     print([Some(1), x][0] ?? 0)   // 1
+    print(Some(1) ?? x)           // 1
     print(id(300))                // 300
 }
 ```
