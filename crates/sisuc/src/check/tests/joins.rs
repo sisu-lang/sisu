@@ -2774,12 +2774,12 @@ fn open_waits_should_read_each_waiting_call_once() {
     }
 }
 
+/// GIVEN `==` and `!=` with a `unit` on one side and an open optional on the other
+/// WHEN each is checked
+/// THEN each checks clean, as `main` does: the open side takes `unit?`, which a `unit` converts
+///   to (#724)
 #[test]
 fn equal_should_take_a_unit_beside_an_open_side() {
-    // GIVEN `==` and `!=` with a `unit` on one side and an open optional on the other
-    // WHEN each is checked
-    // THEN each checks clean, as `main` does: the open side takes `unit?`, which a `unit`
-    // converts to (#724)
     type_rows(&[
         ("let x = first([]) == u()", "bool"),
         ("let x = none() == u()", "bool"),
@@ -2790,14 +2790,15 @@ fn equal_should_take_a_unit_beside_an_open_side() {
     ]);
 }
 
+/// GIVEN a generic method call that waits for its type, as an argument of a generic call under a
+///   required type
+/// AND the same call in a block, with or without a statement before it
+/// AND the same call with written type arguments and no required type
+/// WHEN it is checked
+/// THEN it checks clean, as the same form with a function does: the method call is a member of
+///   the call's join
 #[test]
 fn generic_method_argument_should_take_its_type_from_the_other_arguments() {
-    // GIVEN a generic method call that waits for its type, as an argument of a generic call
-    // under a required type
-    // AND the same call in a block, with or without a statement before it
-    // WHEN it is checked
-    // THEN it checks clean, as the same form with a function does: the method call is a member
-    // of the call's join
     type_rows(&[
         ("let x: i64? = pick(Sw().wrap(None), 1)", "i64?"),
         ("let x: i64? = pick(1, Sw().wrap(None))", "i64?"),
@@ -2826,13 +2827,15 @@ fn generic_method_argument_should_take_its_type_from_the_other_arguments() {
     ]);
 }
 
+/// GIVEN a value under `-` whose block has a mistake in a statement
+/// AND a member of a join whose block ends in an `if` chain with a mistake
+/// WHEN it is checked
+/// THEN only the mistake is reported, as `main` does: no E0032 of a type against itself, no
+///   E0043 of the statement before the tail
+///
+/// The array-element row is a neighbour: it passed before the fix.
 #[test]
 fn failed_operand_should_report_only_its_own_error() {
-    // GIVEN a value under `-` whose block has a mistake in a statement
-    // AND a member of a join whose block ends in an `if` chain with a mistake
-    // WHEN it is checked
-    // THEN only the mistake is reported, as `main` does: no E0032 of a type against itself, no
-    // E0043 of the statement before the tail
     let tail =
         "    print(1)\n    if c { (if c { a } else { a }) } else if c { a } else { missing }\n}";
     let joins = [
