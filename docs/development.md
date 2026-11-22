@@ -807,8 +807,10 @@ must pass eight properties. Each one has the name of its check:
    An `if let` keeps its order. So do `-`, `/`, `%`, a comparison, `&&`, `||`
    and `is`. The checker, alone, with no build, must report no error for the
    swapped program. A `??` reads its left side first. So it swaps only when a
-   probe checks clean. The probe holds `a ?? b` in a block that assigns its
-   result, and then `a`, to one variable. The join-order check runs after the
+   probe checks clean. The probe holds `a ?? b` in a block. The block binds `b`
+   alone, so `b` must have a type of its own. It also assigns the result of
+   `a ?? b`, and then `a`, to one variable, so both sides must be optionals of
+   one type. The probes of one depth of nested `??` go in one program. The join-order check runs after the
    single-mistake check, before the builds. The generator also writes the joins
    of `gap_forms` in both orders (`JOIN_ORDERS` in `generate/coverage.rs`).
 
@@ -840,13 +842,13 @@ time. It lists every failure, not only the first:
 $ cargo nextest run -p sisuc --lib single_mistake_check_should_hold_for_the_fuzz_seeds --run-ignored only --no-capture
 ```
 
-To run the join-order check over the 128 seeds of the fuzz run, run the test
-below. It takes about 25 seconds in a debug build, so it stays ignored: the
-fuzz judge runs the check on every program. The test lists each seed that fails,
-with its first error:
+The join-order check over the 128 seeds of the fuzz run is a test that
+`make test` runs. It takes about 7 seconds in a debug build. The fuzz judge runs
+the check on every program too. To see each seed that fails, with its first
+error, run the test alone:
 
 ```console
-$ cargo nextest run -p sisuc --lib join_order_check_should_hold_for_the_fuzz_seeds --run-ignored only --no-capture
+$ cargo nextest run -p sisuc --lib join_order_check_should_hold_for_the_fuzz_seeds --no-capture
 ```
 
 The script first builds the runtime archive in release mode and points

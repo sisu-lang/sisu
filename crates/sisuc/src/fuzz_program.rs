@@ -628,20 +628,35 @@ fn append_lines(seen: &Path, lines: &[String]) {
     appended.unwrap_or_else(|e| panic!("the fuzzer should append to {}: {e}", seen.display()));
 }
 
+/// The starts of the errors of `source`, in the checker's order. The copy is noted first, so that a
+/// checker panic leaves it in the dump.
+fn error_starts(source: &str) -> Vec<usize> {
+    note_broken(Some(source));
+    let (_, diagnostics) = front_end::front_end(source);
+    (diagnostics.iter())
+        .filter(|d| d.severity() == Severity::Error)
+        .map(|d| d.span().start())
+        .collect()
+}
+
 /// The join-order check for `g`: its program, which checks clean, has no error with the members
 /// of each join swapped (`generate::swap_with`). The swap changes what the program does, so the
 /// check only checks it. `??` reads its left side first, and the left side must be optional. So a
-/// `??` swaps only when its program held in the probe of `swap_with` checks clean: its two sides
-/// are optionals of one type, and the swap keeps that. Any error of the swap stays and fails the
-/// check.
+/// `??` swaps only when its probe has no error. The probe shows that the right side has a type of
+/// its own, and that `a ?? b` has the type of `a`: the two sides are optionals of one type, and the
+/// swap keeps the type. Any error of the swap stays and fails the check. The failure holds the
+/// swapped program, which is the copy in the dump.
 fn judge_join_order(g: &Generated) -> Result<(), Failure> {
-    let probe_checks = |probe: &str| {
-        let (_, diagnostics) = front_end::front_end(probe);
-        (diagnostics.iter()).all(|d| d.severity() != Severity::Error)
-    };
-    let Some(swapped) = generate::swap_with(&g.program, probe_checks) else {
+    let Some(swapped) = generate::swap_with(&g.program, error_starts) else {
         return Ok(());
     };
+    #[cfg_attr(not(test), expect(unused_mut, reason = "only a test forces a failure"))]
+    let mut swapped = swapped;
+    #[cfg(test)]
+    if FORCE.get() == Some(Force::OrderBroken) {
+        swapped += FORCED_ORDER_ERROR;
+    }
+    note_broken(Some(&swapped));
     let (_, diagnostics) = front_end::front_end(&swapped);
     let errors: Vec<Diagnostic> = (diagnostics.into_iter())
         .filter(|d| d.severity() == Severity::Error)
@@ -650,10 +665,13 @@ fn judge_join_order(g: &Generated) -> Result<(), Failure> {
         return Ok(());
     }
     let rendered = render("swapped", &swapped, &errors);
-    Err(Failure::new(
-        Property::JoinOrder,
-        format!("the checker rejects the program with each join swapped\n{rendered}"),
-    ))
+    Err(Failure {
+        broken: Some(swapped),
+        ..Failure::new(
+            Property::JoinOrder,
+            format!("the checker rejects the program with each join swapped\n{rendered}"),
+        )
+    })
 }
 
 /// The pairs of `fuzz/known_cascades.txt`, parsed once.
@@ -1085,9 +1103,9 @@ mod tests {
     use super::dbg_location;
     use super::{
         Answer, BUILDS, Exit, FORCE, FORCED_ORDER_ERROR, Force, Known, LIMIT, Property, Run, build,
-        builds, checked, control_of, is_marked, judge, judge_bounds, judge_builds, judge_edit,
-        judge_join_order, judge_known, judge_marked, judge_mistakes, judge_pair, judge_source,
-        known_cascades, parse_cascades, program, program_in, run,
+        builds, checked, control_of, error_starts, is_marked, judge, judge_bounds, judge_builds,
+        judge_edit, judge_join_order, judge_known, judge_marked, judge_mistakes, judge_pair,
+        judge_source, known_cascades, parse_cascades, program, program_in, run,
     };
     use crate::Allocator;
     use crate::diagnostic::Severity;
@@ -2206,10 +2224,7 @@ mod tests {
 
     /// `generate::swap_with` of `program`, with the probe that `judge_join_order` checks.
     fn swapped_with_probe(program: &str) -> Option<String> {
-        crate::generate::swap_with(program, |probe| {
-            let (_, diagnostics) = crate::on_compiler_stack(|| crate::front_end::front_end(probe));
-            (diagnostics.iter()).all(|d| d.severity() != Severity::Error)
-        })
+        crate::on_compiler_stack(|| crate::generate::swap_with(program, error_starts))
     }
 
     /// GIVEN a `??` of a `bool??` and a `bool?`, which `??` takes and the swap does not
@@ -2286,7 +2301,6 @@ mod tests {
     /// The join-order check over the fuzz seeds `0..FUZZ_SEEDS`. It prints the first error of
     /// each seed that fails, and how many seeds have a join.
     #[test]
-    #[ignore = "the fuzz judge runs the check on every program, and this sweep takes about 25 s"]
     fn join_order_check_should_hold_for_the_fuzz_seeds() {
         let (mut joined, mut failures) = (0, Vec::new());
         for n in 0..FUZZ_SEEDS {

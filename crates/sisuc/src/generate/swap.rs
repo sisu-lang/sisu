@@ -18,7 +18,7 @@ use crate::{lexer, parser};
 /// `program` with the members of each join swapped (`swap_with`), each `??` that can swap included.
 #[cfg(test)]
 pub(crate) fn swap_joins(program: &str) -> Option<String> {
-    swap_with(program, |_| true)
+    swap_with(program, |_| Vec::new())
 }
 
 /// `program` with the members of each join swapped, or None when it has no such join or does not
@@ -36,13 +36,16 @@ pub(crate) fn swap_joins(program: &str) -> Option<String> {
 /// - the operands of `+`, `*`, `==` and `!=`. The other operators have an order: `-`, `/`, `%`, a
 ///   comparison, `&&`, `||` and `is`;
 /// - the sides of `??`, when neither is a `None`, a literal, an operator or a jump. `??` reads its
-///   left side first, and that side must be optional. The swap is valid when both sides are
-///   optionals of one type. The syntax does not say that, so `accepts` gets a probe: the program
-///   with `a ?? b` held in a block, `{ let mut p = a ?? b; p = a; p }`. The check of the probe
-///   passes when `a ?? b` has the type of `a`. `accepts` tells whether it does.
+///   left side first, and that side must be optional. The syntax does not show two things. Both
+///   sides must be optionals of one type. The right side must have a type of its own. So `errors`
+///   checks probes (see `coalesce_errors`), and a `??` swaps when its probe has no error.
 ///
-/// A pair that overlaps another is left out.
-pub(crate) fn swap_with(program: &str, mut accepts: impl FnMut(&str) -> bool) -> Option<String> {
+/// A pair that overlaps another is left out. `errors` gets a program. It tells where each error of
+/// that program starts.
+pub(crate) fn swap_with(
+    program: &str,
+    mut errors: impl FnMut(&str) -> Vec<usize>,
+) -> Option<String> {
     let lexed = lexer::lex(program).ok()?;
     let parsed = parser::parse(lexed, false);
     // A warning, such as the W0007 that the generator writes, does not count.
@@ -57,10 +60,11 @@ pub(crate) fn swap_with(program: &str, mut accepts: impl FnMut(&str) -> bool) ->
     };
     finder.program(&parsed.program);
     let mut pairs = compatible(finder.pairs);
-    pairs.retain(|pair| {
-        pair.coalesce
-            .as_ref()
-            .is_none_or(|whole| accepts(&probe(program, whole, &pair.first)))
+    let refused = coalesce_errors(program, &pairs, &mut errors);
+    let mut index = 0;
+    pairs.retain(|_| {
+        index += 1;
+        !refused.contains(&(index - 1))
     });
     if pairs.is_empty() {
         return None;
@@ -91,41 +95,139 @@ impl Pair {
         let hull = inner.first.start..inner.second.end;
         (self.slots().iter()).any(|slot| slot.start <= hull.start && hull.end <= slot.end)
     }
-
-    /// Whether `render` can swap both: each pair holds the other or the two do not overlap.
-    fn fits(&self, other: &Pair) -> bool {
-        self.second.end <= other.first.start
-            || other.second.end <= self.first.start
-            || self.holds(other)
-            || other.holds(self)
-    }
 }
 
 /// The pairs of `pairs` that `render` can swap together, an enclosing pair before the pairs inside
 /// it. A pair that overlaps one before it is left out. The `break` values of a loop do this when
-/// one of them sits in an `if` block that swaps.
+/// one of them sits in an `if` block that swaps. The pairs are in order of start, an enclosing
+/// pair first. So a stack of the open pairs gives the one pair that the next pair must lie in.
+/// The time is that of the sort and one walk. No pair is compared with all the others.
 fn compatible(mut pairs: Vec<Pair>) -> Vec<Pair> {
     pairs.sort_by_key(|p| (p.first.start, std::cmp::Reverse(p.second.end)));
     let mut kept: Vec<Pair> = Vec::new();
+    // The indices into `kept` of the pairs that enclose the next pair, the innermost last.
+    let mut open: Vec<usize> = Vec::new();
     for pair in pairs {
-        if kept.iter().all(|k| k.fits(&pair)) {
+        while open
+            .last()
+            .is_some_and(|&top| kept[top].second.end <= pair.first.start)
+        {
+            open.pop();
+        }
+        if open.last().is_none_or(|&top| kept[top].holds(&pair)) {
+            open.push(kept.len());
             kept.push(pair);
         }
     }
     kept
 }
 
-/// `program` with `whole`, an `a ?? b`, held in a block that assigns the result and then `lhs`, the
-/// text of `a`, to one variable: a program that passes the check only when `a ?? b` has the type
-/// of `a`.
-fn probe(program: &str, whole: &Range<usize>, lhs: &Range<usize>) -> String {
+/// The block that holds the `a ?? b` at `whole` for a probe, with `a` and `b` the two sides of the
+/// pair `sides`:
+///
+/// `{ let join_right = b; let mut join_probe = a ?? b; join_probe = a; join_probe }`
+///
+/// The `let` of `b` has no error only when `b` has a type of its own. So `id(None)`, `first([])`
+/// and the `None` of a `Some(None)` fail it. They take their type from `a`, and no type from `a`
+/// reaches them on the left. The assignment of `a` has no error only when `a ?? b` has the type
+/// of `a`. Then both sides are optionals of one type.
+fn probe_block(program: &str, whole: &Range<usize>, sides: &Pair) -> String {
     format!(
-        "{}{{ let mut join_probe = {}; join_probe = {}; join_probe }}{}",
-        &program[..whole.start],
+        "{{ let join_right = {}; let mut join_probe = {}; join_probe = {}; join_probe }}",
+        &program[sides.second.clone()],
         &program[whole.clone()],
-        &program[lhs.clone()],
-        &program[whole.end..]
+        &program[sides.first.clone()],
     )
+}
+
+/// The indices into `pairs` of the `??` pairs that the swap must leave as written. The probe of
+/// each (see `probe_block`) replaces its `a ?? b`. The probes of the `??` that no other `??` holds
+/// go in one program. So do those at each depth below. So `errors` runs once for each depth of
+/// nested `??`, on a text of the size of the program. Each probe is a block of its own. An error
+/// that starts in a block refuses that probe alone.
+///
+/// The result of a failed block is silent in the probes that read it. So the check goes on with
+/// the blocks that are left, until a check has no error. The worst input is a chain of C probes,
+/// each of which reads the result of the one before it. The checks are then C, each of a text of N
+/// bytes, and the time is C times N. An error outside every block cannot be told to a probe. Then
+/// each probe of that depth is checked alone, with the same worst time. The generated programs
+/// give few rounds and no such error.
+fn coalesce_errors(
+    program: &str,
+    pairs: &[Pair],
+    errors: &mut impl FnMut(&str) -> Vec<usize>,
+) -> FxHashSet<usize> {
+    let mut found: Vec<(usize, &Range<usize>)> = (pairs.iter().enumerate())
+        .filter_map(|(i, p)| p.coalesce.as_ref().map(|whole| (i, whole)))
+        .collect();
+    // A `??` holds the `??` after it in the list that start inside it.
+    found.sort_by_key(|(_, whole)| (whole.start, std::cmp::Reverse(whole.end)));
+    let mut levels: Vec<Vec<(usize, &Range<usize>)>> = Vec::new();
+    let mut open: Vec<usize> = Vec::new();
+    for (i, whole) in found {
+        while open.last().is_some_and(|&end| end <= whole.start) {
+            open.pop();
+        }
+        if open.len() == levels.len() {
+            levels.push(Vec::new());
+        }
+        levels[open.len()].push((i, whole));
+        open.push(whole.end);
+    }
+    let mut refused = FxHashSet::default();
+    for level in levels {
+        let mut left = level;
+        // An error in a block stays silent in the blocks that read its result. So the probes that
+        // pass are known only when a round has no error. The refused blocks go back to the text
+        // that they replaced, and the others are checked again.
+        loop {
+            let mut text = String::new();
+            let (mut at, mut blocks) = (0, Vec::new());
+            for &(i, whole) in &left {
+                text += &program[at..whole.start];
+                let start = text.len();
+                text += &probe_block(program, whole, &pairs[i]);
+                blocks.push(start..text.len());
+                at = whole.end;
+            }
+            text += &program[at..];
+            let starts = errors(&text);
+            if starts.is_empty() {
+                break;
+            }
+            let mut here = FxHashSet::default();
+            let mut told = true;
+            for start in starts {
+                // The blocks are in order: the block of an error is the last one that starts at
+                // or before it.
+                let block = blocks.partition_point(|b| b.start <= start).checked_sub(1);
+                match block.filter(|&b| start < blocks[b].end) {
+                    Some(b) => {
+                        here.insert(left[b].0);
+                    }
+                    None => told = false,
+                }
+            }
+            if told {
+                left.retain(|(i, _)| !here.contains(i));
+                refused.extend(here);
+                continue;
+            }
+            for &(i, whole) in &left {
+                let alone = format!(
+                    "{}{}{}",
+                    &program[..whole.start],
+                    probe_block(program, whole, &pairs[i]),
+                    &program[whole.end..]
+                );
+                if !errors(&alone).is_empty() {
+                    refused.insert(i);
+                }
+            }
+            break;
+        }
+    }
+    refused
 }
 
 /// Finds the pairs of one program.
@@ -211,7 +313,9 @@ impl<'a> Finder<'a> {
         if values.len() < 2 {
             return;
         }
-        // A value moves out of the block that binds a name it reads.
+        // A value moves out of the block that binds a name it reads. The walk of a value costs its
+        // size. A `break` value can hold a loop whose `break` value holds a loop, down d levels.
+        // That costs d times the size of the innermost.
         let mut bound = Bound(FxHashSet::default());
         bound.block(body);
         for value in [first, last] {
@@ -388,10 +492,27 @@ impl<'a> Visit<'a> for Breaks<'a> {
     }
 }
 
-/// The names that a part of the program binds: a `let`, a `for` and each pattern.
+/// The names that a part of the program binds: a `let`, a `for` and each pattern. It leaves out a
+/// nested loop, as `Breaks` does: the `break` values of the outer loop lie outside it, and it has
+/// its own walk. So the walks of nested loops cost the size of the outer loop once in all.
 struct Bound(FxHashSet<Symbol>);
 
 impl<'a> Visit<'a> for Bound {
+    fn expr(&mut self, e: &'a Expr) {
+        if !matches!(e.kind, ExprKind::Loop { .. }) {
+            walk_expr(self, e);
+        }
+    }
+
+    fn stmt(&mut self, s: &'a Stmt) {
+        if !matches!(
+            s.kind,
+            StmtKind::While { .. } | StmtKind::WhileLet { .. } | StmtKind::For { .. }
+        ) {
+            walk_stmt(self, s);
+        }
+    }
+
     fn binding(&mut self, name: &'a Ident) {
         self.0.insert(name.name);
     }
@@ -840,30 +961,93 @@ mod tests {
         assert_eq!(swapped("let x = a ?? b\n"), "let x = b ?? a\n");
     }
 
+    /// `swap_with` where `errors` tells that a probe has an error at `at` of its text, or none.
+    const PAIR: &str = "fn main() {\n    let x = a ?? b\n}\n";
+
     #[test]
     fn swap_with_should_leave_a_coalesce_that_the_probe_refuses_as_written() {
-        let program = "fn main() {\n    let x = a ?? b\n}\n";
-        assert_eq!(swap_with(program, |_| false), None);
+        assert_eq!(swap_with(PAIR, |_| vec![0]), None);
     }
 
     #[test]
-    fn swap_with_should_give_the_probe_the_coalesce_in_a_block_that_assigns_its_left_side() {
-        let program = "fn main() {\n    let x = a ?? b\n}\n";
+    fn swap_with_should_give_the_probe_the_coalesce_in_a_block_that_checks_both_sides() {
         let mut probes = Vec::new();
-        let swapped = swap_with(program, |probe| {
+        let swapped = swap_with(PAIR, |probe| {
             probes.push(probe.to_string());
-            true
+            Vec::new()
         });
         assert_eq!(
             probes,
             [
-                "fn main() {\n    let x = { let mut join_probe = a ?? b; join_probe = a; join_probe }\n}\n"
+                "fn main() {\n    let x = { let join_right = b; let mut join_probe = a ?? b; join_probe = a; join_probe }\n}\n"
             ]
         );
         assert_eq!(
             swapped.as_deref(),
             Some("fn main() {\n    let x = b ?? a\n}\n")
         );
+    }
+
+    #[test]
+    fn swap_with_should_check_the_coalesces_of_one_depth_in_one_probe() {
+        let program =
+            "fn main() {\n    let x = a ?? b\n    let y = c ?? d\n    let z = e ?? f\n}\n";
+        let mut probes = 0;
+        let swapped = swap_with(program, |_| {
+            probes += 1;
+            Vec::new()
+        });
+        assert_eq!(probes, 1);
+        assert_eq!(
+            swapped.as_deref(),
+            Some("fn main() {\n    let x = b ?? a\n    let y = d ?? c\n    let z = f ?? e\n}\n")
+        );
+    }
+
+    #[test]
+    fn swap_with_should_refuse_the_coalesce_whose_block_has_the_error() {
+        let program =
+            "fn main() {\n    let x = a ?? b\n    let y = c ?? d\n    let z = e ?? f\n}\n";
+        // An error in the probe of `c ?? d`.
+        let swapped = swap_with(program, |probe| {
+            probe.find("let mut join_probe = c").into_iter().collect()
+        });
+        assert_eq!(
+            swapped.as_deref(),
+            Some("fn main() {\n    let x = b ?? a\n    let y = c ?? d\n    let z = f ?? e\n}\n")
+        );
+    }
+
+    #[test]
+    fn swap_with_should_check_each_coalesce_alone_when_an_error_is_in_no_block() {
+        let program = "fn main() {\n    let x = a ?? b\n    let y = c ?? d\n}\n";
+        let mut probes = Vec::new();
+        let swapped = swap_with(program, |probe| {
+            probes.push(probe.to_string());
+            // An error at the start of the first probe, which is in no block, and in the probe
+            // of `a ?? b` when it stands alone.
+            if probes.len() == 1 || probe.contains("join_right = b") {
+                vec![0]
+            } else {
+                Vec::new()
+            }
+        });
+        assert_eq!(probes.len(), 3);
+        assert_eq!(
+            swapped.as_deref(),
+            Some("fn main() {\n    let x = a ?? b\n    let y = d ?? c\n}\n")
+        );
+    }
+
+    #[test]
+    fn swap_with_should_check_a_coalesce_in_a_coalesce_in_a_probe_of_its_own() {
+        let program = "fn main() {\n    let x = f(a ?? b) ?? g(c ?? d)\n}\n";
+        let mut probes = 0;
+        swap_with(program, |_| {
+            probes += 1;
+            Vec::new()
+        });
+        assert_eq!(probes, 2);
     }
 
     #[test]
