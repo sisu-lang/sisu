@@ -339,7 +339,7 @@ impl Checker<'_> {
                 {
                     Expectation::None
                 }
-                _ => self.hinted_join(&mut members, expected),
+                _ => expected,
             };
             let outer = std::mem::replace(&mut self.body.dropped_join, dropped);
             let ty = self.join_form(form, heading, &mut members, expected, binding);
@@ -352,11 +352,7 @@ impl Checker<'_> {
             // A failed branch has reported: the close is silent, as in a failed context.
             Ok(ty) if self.table.resolve(ty).holds_infer() => {
                 let close = match expected {
-                    Expectation::None | Expectation::Hint { .. }
-                        if values.iter().any(Result::is_err) =>
-                    {
-                        Expectation::Poisoned
-                    }
+                    Expectation::None if values.iter().any(Result::is_err) => Expectation::Poisoned,
                     expected => expected,
                 };
                 self.close_join(ty, (heading.whole, heading.whole), close)
@@ -467,40 +463,10 @@ impl Checker<'_> {
             && (members.iter()).any(|m| m.ty().map(|ty| self.table.resolve(ty)) == Some(Type::UNIT))
     }
 
-    /// The expectation that the join of `members` under `expected` takes. Under a hint it is no
-    /// type when the members join by themselves. Else it is the type of its siblings or the
-    /// hint's type, required, the first that the members join to. The siblings' type comes
-    /// first, as it adds no `?`. A join that takes none of them has no type to meet, and is
-    /// reported as a conflict.
-    fn hinted_join(
-        &mut self,
-        members: &mut [JoinMember<'_>],
-        expected: Expectation,
-    ) -> Expectation {
-        let Expectation::Hint {
-            want,
-            siblings,
-            origin,
-        } = expected
-        else {
-            return expected;
-        };
-        // A join with no member that has a value takes no type from a hint: it is untyped
-        // (ADR 0049).
-        let valued = |m: &JoinMember<'_>| m.ty().is_some_and(|ty| ty != Type::NEVER);
-        if !members.iter().any(valued) || self.join_type(members, None, None).is_some() {
-            return Expectation::None;
-        }
-        [siblings, want]
-            .into_iter()
-            .find(|&ty| self.join_type(members, None, Some(ty)).is_some())
-            .map_or(Expectation::None, |ty| Expectation::Required(ty, origin))
-    }
-
     /// Closes the open variables of `ty`, the type of a join at `at` that is no member. A value
-    /// with no type to meet closes them so (see `close_open`). A hint first gives an open `Int` its
-    /// type, as it gives a literal. Each variable that the close defaults is bound to its default.
-    /// `whole` is the span of the join's members: a call inside it that waits reports there.
+    /// with no type to meet closes them so (see `close_open`). Each variable that the close
+    /// defaults is bound to its default. `whole` is the span of the join's members: a call inside
+    /// it that waits reports there.
     pub(super) fn close_join(
         &mut self,
         ty: Type,
@@ -509,14 +475,6 @@ impl Checker<'_> {
     ) -> Result<Type, Poisoned> {
         match expected {
             Expectation::Member | Expectation::Required(..) => return Ok(ty),
-            Expectation::Hint { want, .. } => {
-                let snapshot = self.table.snapshot();
-                if self.conversion(ty, want).is_some() {
-                    self.keep_snapshot(snapshot);
-                } else {
-                    self.table.rollback(snapshot);
-                }
-            }
             Expectation::None | Expectation::Poisoned => {}
         }
         let open = tir::Expr::new(tir::ExprKind::Unit, self.table.resolve(ty), at);
@@ -525,12 +483,12 @@ impl Checker<'_> {
         Ok(closed)
     }
 }
-/// What a member of a join expects, when the join expects `expected`: a required type or a hint
-/// as it is, else it is a member. The members are the branches of an `if`, the arms of a
+/// What a member of a join expects, when the join expects `expected`: a required type as it is,
+/// else it is a member. The members are the branches of an `if`, the arms of a
 /// `match`, the elements of an array and the `break` values of a loop.
 pub(super) fn branch_expectation(expected: Expectation) -> Expectation {
     match expected {
-        Expectation::Required(..) | Expectation::Hint { .. } => expected,
+        Expectation::Required(..) => expected,
         Expectation::None | Expectation::Poisoned | Expectation::Member => Expectation::Member,
     }
 }

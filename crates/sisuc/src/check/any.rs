@@ -596,14 +596,6 @@ fn can_convert(got: Type) -> bool {
     !matches!(got.kind(), TypeKind::Optional(_)) && got != Type::NEVER && got != Type::UNIT
 }
 
-/// Whether `want` is `any I` or `(any I)?`: the types that a value converts to.
-pub(super) fn is_target(want: Type) -> bool {
-    match want.kind() {
-        TypeKind::Any(..) => true,
-        TypeKind::Optional(payload) => matches!(payload.kind(), TypeKind::Any(..)),
-        _ => false,
-    }
-}
 /// `e` as the `any` type `target`.
 pub(super) fn to_any(e: tir::Expr, target: Type) -> tir::Expr {
     let span = e.span;

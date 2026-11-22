@@ -809,7 +809,7 @@ impl Checker<'_> {
         checked: Checked,
         want: Expectation,
     ) -> (Checked, bool) {
-        let (hint, want, origin) = (want, want.ty(), want.origin());
+        let (want, origin) = (want.ty(), want.origin());
         if let (Some(want), Some(got)) = (want, type_of(&checked))
             && want != got
         {
@@ -827,7 +827,7 @@ impl Checker<'_> {
             }
             // The report shows each open part of `got` that `want` knows (`shown_against`).
             let shown = self.shown_against(got, want);
-            let d = self.mismatch(e.span, Some(e), hint.shown(shown), shown, origin);
+            let d = self.mismatch(e.span, Some(e), want, shown, origin);
             return (Err(Poisoned::untyped(self.diagnostics.error(d))), true);
         }
         // A generic call that cannot meet `want` is reported with the type it found, as a
@@ -836,7 +836,7 @@ impl Checker<'_> {
             && let Some(found) = self.misfit_type(&checked).filter(|&found| found != want)
         {
             let found = self.shown_against(found, want);
-            let d = self.mismatch(e.span, Some(e), hint.shown(found), found, origin);
+            let d = self.mismatch(e.span, Some(e), want, found, origin);
             let reported = self.diagnostics.error(d);
             self.settle_misfit(&checked);
             return (Err(Poisoned::untyped(reported)), true);
@@ -853,22 +853,18 @@ impl Checker<'_> {
                 return Ok(tir::Expr::new(tir::ExprKind::None, ty, span));
             }
             Expectation::Poisoned => return Err(Poisoned::untyped(self.poisoned_context(span))),
-            Expectation::Required(ty, _) | Expectation::Hint { want: ty, .. }
-                if matches!(ty.kind(), TypeKind::Optional(_)) =>
-            {
+            Expectation::Required(ty, _) if matches!(ty.kind(), TypeKind::Optional(_)) => {
                 return Ok(tir::Expr::new(tir::ExprKind::None, ty, span));
             }
-            Expectation::Required(ty, _) | Expectation::Hint { want: ty, .. } => {
-                DiagnosticKind::Mismatch {
-                    want: Expected::Types(vec![self.want_name(span, ty)]),
-                    got: "None".to_string(),
-                    at: span,
-                    origin: self.origin_fact(expected.origin()),
-                    fix: None,
-                    conversion: false,
-                    layers: false,
-                }
-            }
+            Expectation::Required(ty, _) => DiagnosticKind::Mismatch {
+                want: Expected::Types(vec![self.want_name(span, ty)]),
+                got: "None".to_string(),
+                at: span,
+                origin: self.origin_fact(expected.origin()),
+                fix: None,
+                conversion: false,
+                layers: false,
+            },
             Expectation::None => {
                 return Err(Poisoned::untyped(
                     self.report_uninferred(Literal::None, span),

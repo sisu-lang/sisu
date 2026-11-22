@@ -938,7 +938,7 @@ impl Checker<'_> {
             JoinForm::Array => JoinFormName::Array,
             JoinForm::Loop => JoinFormName::Loop,
             JoinForm::Coalesce => JoinFormName::Coalesce,
-            JoinForm::Operator(_) => JoinFormName::Operator(self.source.text(head).to_string()),
+            JoinForm::Operator => JoinFormName::Operator(self.source.text(head).to_string()),
             JoinForm::Compare => JoinFormName::Compare,
             JoinForm::Compound { .. } => JoinFormName::Compound(self.source.text(head).to_string()),
             JoinForm::Call { param } => JoinFormName::Call(param.to_string()),
@@ -954,7 +954,6 @@ mod tests {
     use super::super::*;
     use crate::check::expectation::Origin;
     use crate::check::infer::Kind;
-    use crate::check::operator::Operator;
     use crate::check::tests::joins::with_params;
     use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Expected, JoinFix, NoValueCause};
     use crate::mir::tests::assert_near_linear;
@@ -1193,8 +1192,7 @@ mod tests {
                 let (mut s, mut a) = (local(types[0], 0), local(types[1], 0));
                 (s.span, a.span) = (Span::new(0, 1), Span::new(5, 6));
                 let mut values = vec![Ok(s), Ok(a)];
-                let op = Operator::Plus { compound: true };
-                let form = JoinForm::Compound { op, assigned: 0 };
+                let form = JoinForm::Compound { assigned: 0 };
                 let mut members = whole(&mut values);
                 // WHEN they join
                 let joined = c.join_form(

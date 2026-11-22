@@ -13,7 +13,6 @@ mod join_report;
 
 use super::any::Conversion;
 use super::infer::Table;
-use super::operator::Operator;
 use super::reports::{Held, Reported};
 use super::{Checked, Checker, Expectation, Poisoned, WaitKey};
 use crate::conformance::ensure_stack;
@@ -87,18 +86,16 @@ impl JoinMember<'_> {
 
 /// The form of a join, which its report names.
 #[derive(Clone, Copy)]
-#[expect(dead_code, reason = "the other forms come in Task 5d and later")]
 pub(super) enum JoinForm {
     If,
     Match,
     Array,
     Loop,
     Coalesce,
-    Operator(Operator),
+    Operator,
     Compare,
     /// `+=`: the member at `assigned` is the place it writes to, which does not convert.
     Compound {
-        op: Operator,
         assigned: usize,
     },
     /// The arguments at the places of the type parameter `param` of a call.
@@ -252,7 +249,7 @@ impl Checker<'_> {
             _ => None,
         };
         let fixed = match form {
-            JoinForm::Compound { assigned, .. } => Some(assigned),
+            JoinForm::Compound { assigned } => Some(assigned),
             _ => None,
         };
         let mut site = Site {
@@ -266,10 +263,7 @@ impl Checker<'_> {
         let required = match expected {
             Expectation::Required(ty, _) if self.bare_variable(ty) => None,
             Expectation::Required(ty, origin) => Some((ty, origin)),
-            Expectation::None
-            | Expectation::Poisoned
-            | Expectation::Hint { .. }
-            | Expectation::Member => None,
+            Expectation::None | Expectation::Poisoned | Expectation::Member => None,
         };
         // The first member that is left out: untyped poison.
         let left_out = members.iter().find_map(|member| match &*member.value {

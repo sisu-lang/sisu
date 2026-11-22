@@ -8,7 +8,7 @@ use crate::symbol::Symbol;
 use crate::tir::{Type, TypeKind};
 use std::rc::Rc;
 
-/// Where the type that a context requires or hints comes from: a declaration, an earlier value or
+/// Where the type that a context requires comes from: a declaration, an earlier value or
 /// a language rule. A report that names the type points at it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Origin {
@@ -64,25 +64,6 @@ pub(super) enum Expectation {
     Poisoned,
     /// The context expects this type, which comes from the origin.
     Required(Type, Origin),
-    /// The siblings that the value joins give it `want`, the type of the siblings (`siblings`).
-    /// Siblings are the branches before it and the earlier values of its loop. They are also the
-    /// other side of its `==` and the left side of its `??`. In an array, they are the elements
-    /// beside an element that waits (`late_hint` in `check/array.rs`). An operator can also hint
-    /// each operand except its leader, the first operand of a concrete type. With no leader, it
-    /// hints each operand. The hint is the type that the operator takes by default (`i64`), or
-    /// takes from a leader of a type that it does not take. The context did not write it. `want`
-    /// steers inference as a required type does.
-    /// But the value does not convert to an `any` type for it. A join in the value takes
-    /// `siblings` as its first anchor, not as its expected type (see `split_hint`). A value part
-    /// of the value keeps the hint. Such a part is the tail of a block, a branch of a hinted `if`
-    /// or `match`, or the argument of a hinted `Some`. It is also an argument that a hinted
-    /// call's context bound, or a `break` value of a hinted loop. An operand does not take the
-    /// hint of the value: it takes `plain`. `origin` is where `want` and `siblings` come from.
-    Hint {
-        want: Type,
-        siblings: Type,
-        origin: Origin,
-    },
     /// The value is a member of a join, or at a value position inside one: its inference
     /// variables stay open. The join closes them when it applies its own expectation.
     Member,
@@ -96,10 +77,6 @@ pub(super) enum Part {
     Payload,
     /// The value of a block, which takes what the block takes.
     Tail,
-    /// The argument of `dbg`, `print` or `eprint`. A hint reaches it as a required type. The
-    /// argument of `dbg` is a value position, as the call has its type: a member gives it
-    /// `Member`.
-    Argument,
 }
 
 const _: () = assert!(
@@ -111,14 +88,13 @@ impl Expectation {
     /// The type that the value should have; none when nothing is expected or the context failed.
     pub(super) fn ty(self) -> Option<Type> {
         match self {
-            Self::Required(ty, _) | Self::Hint { want: ty, .. } => Some(ty),
+            Self::Required(ty, _) => Some(ty),
             Self::None | Self::Poisoned | Self::Member => None,
         }
     }
 
     /// What the part `at` of the value expects. A required optional gives its payload to a
-    /// `Some`, with no origin, so that `let x: u8? = Some("s")` names no declaration. A hinted
-    /// optional gives its payload as a hint. A hint gives `dbg` its required type. A member
+    /// `Some`, with no origin, so that `let x: u8? = Some("s")` names no declaration. A member
     /// gives each part `Member`. Any other expectation goes to the part as it is.
     pub(super) fn part(self, at: Part) -> Self {
         let payload = |ty: Type| match ty.kind() {
@@ -129,38 +105,14 @@ impl Expectation {
             (Self::Required(ty, _), Part::Payload) => {
                 payload(ty).map_or(self, |payload| Self::Required(payload, Origin::None))
             }
-            (Self::Hint { want, .. }, Part::Payload) => {
-                payload(want).map_or(self, |payload| Self::Hint {
-                    want: payload,
-                    siblings: payload,
-                    origin: Origin::None,
-                })
-            }
-            (Self::Hint { .. }, Part::Argument) => self.plain(),
             _ => self,
-        }
-    }
-
-    /// The type that a report of the value `found` names as expected. It is `ty`, but for a hint
-    /// that adds a `?` to the type of its siblings: a `found` that is not optional is not at
-    /// fault for that `?`, so the report names `siblings`, as a plain branch does. The value is
-    /// still checked against `ty`. Without an expectation it is `found`.
-    pub(super) fn shown(self, found: Type) -> Type {
-        match self {
-            Self::Hint { want, siblings, .. }
-                if matches!(want.kind(), TypeKind::Optional(payload) if payload == siblings)
-                    && !matches!(found.kind(), TypeKind::Optional(_)) =>
-            {
-                siblings
-            }
-            _ => self.ty().unwrap_or(found),
         }
     }
 
     /// Where the type comes from; `Origin::None` when nothing is expected or the context failed.
     pub(super) fn origin(self) -> Origin {
         match self {
-            Self::Required(_, origin) | Self::Hint { origin, .. } => origin,
+            Self::Required(_, origin) => origin,
             Self::None | Self::Poisoned | Self::Member => Origin::None,
         }
     }
@@ -168,15 +120,6 @@ impl Expectation {
     /// `Required`, or `Poisoned` when `ty` is none: there `None` means that the type failed.
     pub(super) fn or_poisoned(ty: Option<Type>, origin: Origin) -> Self {
         ty.map_or(Self::Poisoned, |ty| Self::Required(ty, origin))
-    }
-
-    /// `Required(want)` for a hint, with its origin, so that an operand does not see the hint;
-    /// else `self`.
-    pub(super) fn plain(self) -> Self {
-        match self {
-            Self::Hint { want, origin, .. } => Self::Required(want, origin),
-            other => other,
-        }
     }
 
     /// The origin of an operand that is held to the type `want`: the origin of this context when

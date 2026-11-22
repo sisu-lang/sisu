@@ -552,13 +552,6 @@ impl Makes {
         matches!(self, Makes::Always | Makes::Through { wraps: true, .. })
     }
 
-    /// Whether the call returns its argument at place `i` as it is: the place is of the bare return
-    /// parameter, and the return type is that parameter, not an optional of it. A literal there
-    /// passes its type on (see `Ranked::scalar`).
-    fn returns(&self, i: usize) -> bool {
-        matches!(self, Makes::Through { wraps: false, .. }) && self.through(i)
-    }
-
     /// Whether the argument at place `i` is of the bare return parameter.
     fn through(&self, i: usize) -> bool {
         matches!(self, Makes::Through { bare, .. } if has_place(*bare, i))
@@ -1886,30 +1879,10 @@ pub(super) struct Ranked {
     /// `T` makes the call an optional only when it is nested (see `Makes::Through`). It is set
     /// from the facts of the parts, as `optional` is.
     nested: bool,
-    /// For a `Literal` value: whether its type is the type of an integer literal it holds, which
-    /// is a scalar (see `sibling`). An integer literal is. So is a value that passes such a
-    /// literal on as it is: `dbg`, a block, a branch, or a call that returns a type parameter,
-    /// when each literal argument that gives the call its type is at a place of that parameter.
-    /// The `1` of `k2(1, 2)` for `fn k2<T, U>(a: T, b: U) -> U` gives the call no type, so it is
-    /// not ranked. The `1` of `Bx(v: 1)` is not passed on. An array, or a call that returns
-    /// `Some(...)` or a class, is not.
-    scalar: bool,
     /// Whether the value never ends and gives no type: `todo`, a call of `panic`, a `loop` that
     /// no `break` leaves, a block that ends in a jump, or a branch of these only. Every reader but
     /// `combine_branches` reads `rank` alone, so such a value is `Concrete` for them.
     never: bool,
-    /// Whether the value is an array fill, an arithmetic operator or a `-`, whose rank is that of
-    /// its parts. Ranking an argument looks inside such a value. A sibling does not: it ranks the
-    /// value `Concrete` (see `sibling`), so the leader of an operator and the first anchor of a
-    /// join stay as they were. The `Branch::literal` of a join's branch reads `of_literals`, which
-    /// does look inside: in a join whose context failed, `1 + id(2)`, `-id(2)` and `[5; 2]` are
-    /// branches of literals and take the type of the anchor. A value that only waited, such as
-    /// `[mk(); 2]` or `-mk()`, is not (see `waited`).
-    leads: bool,
-    /// Whether the rank is `Literal` only because the value waited (see `or_literal_if_waiting`),
-    /// so the value holds no integer literal. `combine` sets it when each `Literal` part has it,
-    /// and `combine_branches` when one branch has it.
-    waited: bool,
 }
 
 impl Ranked {
@@ -1918,20 +1891,14 @@ impl Ranked {
         optional: false,
         holds_optional: false,
         nested: false,
-        scalar: false,
         never: false,
-        leads: false,
-        waited: false,
     };
     const LITERAL: Self = Self {
         rank: Rank::Literal,
         optional: false,
         holds_optional: false,
         nested: false,
-        scalar: true,
         never: false,
-        leads: false,
-        waited: false,
     };
     /// A value that never ends (see `never`). It ranks `Concrete`, as it always did.
     const NEVER: Self = Self {
@@ -1943,10 +1910,7 @@ impl Ranked {
         optional: false,
         holds_optional: false,
         nested: false,
-        scalar: false,
         never: false,
-        leads: false,
-        waited: false,
     };
 
     /// `self`, but `Literal` when it waits. An array fill, an arithmetic operator and a `-` never
@@ -1957,46 +1921,21 @@ impl Ranked {
         if self.rank == Rank::Waits {
             Self {
                 rank: Rank::Literal,
-                waited: true,
                 ..self
             }
         } else {
             self
         }
     }
-
-    /// The rank that joins and operators order siblings by. They type a `Literal` value with
-    /// `literal_type`, which knows scalars only. So a `Literal` value that is not `scalar` is
-    /// `Concrete` for them. It is checked alone and takes its default type, as `[[1], [2]]` and
-    /// `W(x: 1) < W(x: 2)` always did.
-    // shortcut: such a value does not take the type of a sibling, so `[[1], x2]` with
-    // `x2: [u8]` does not give `[1]` the type `[u8]`; upgrade when `literal_type` knows arrays
-    // and the types of a call.
-    ///
-    /// A value that `leads` is `Concrete` too, and so is a call that does not fit its declaration
-    /// (`fit` is false). The call is checked first and alone, and reports its own mistakes, not
-    /// those of a sibling's type.
-    pub(super) fn sibling(self, fit: bool) -> Rank {
-        if !fit || self.leads || self.rank == Rank::Literal && !self.scalar {
-            Rank::Concrete
-        } else {
-            self.rank
-        }
-    }
 }
 
 /// The rank of a value made of `parts`, each a value that its type comes from. The rank is
 /// `Waits` when every part waits, `Literal` when no part is `Concrete` and one is `Literal`,
-/// else `Concrete`. It is `optional`, `holds_optional` or `nested` when a part is, and `scalar`
-/// when each `Literal` part is.
-/// It is `leads` when a part is. It is `waited` when it is `Literal` and each `Literal` part is
-/// `waited`, so `-mk() + 1` is not: it holds the literal `1`. The parts of an operator make one
-/// value. The branches of a join do not, and `combine_branches` sets `waited` by its own rule. It
-/// stops at the first `Concrete` part. The parts after it are not ranked.
+/// else `Concrete`. It is `optional`, `holds_optional` or `nested` when a part is. The parts of
+/// an operator make one value. It stops at the first `Concrete` part. The parts after it are not
+/// ranked.
 fn combine(parts: impl IntoIterator<Item = Ranked>) -> Ranked {
     let mut found = Ranked::WAITS;
-    let mut scalar = true;
-    let mut waited = true;
     for part in parts {
         match part.rank {
             Rank::Concrete => return Ranked::CONCRETE,
@@ -2006,38 +1945,19 @@ fn combine(parts: impl IntoIterator<Item = Ranked>) -> Ranked {
         found.optional |= part.optional;
         found.holds_optional |= part.holds_optional;
         found.nested |= part.nested;
-        found.leads |= part.leads;
-        if part.rank == Rank::Literal {
-            scalar &= part.scalar;
-            waited &= part.waited;
-        }
     }
-    found.scalar = scalar;
-    found.waited = waited && found.rank == Rank::Literal;
     found
 }
 
 /// `combine` of the values of `branches`: each is `None` when its branch ends in an exit, else
 /// the rank of its value. A value that never ends gives no type, so it counts as an exit. The
-/// result never ends when no branch has a value. The result is `waited` when it is `Literal` and
-/// one of the branches is: each branch is a value of its own, and a branch that only waited holds
-/// no literal. The iterator stays lazy: ranking a branch has effects (see `tail_rank`).
+/// result never ends when no branch has a value. The iterator stays lazy: ranking a branch has
+/// effects (see `tail_rank`).
 fn combine_branches(branches: impl IntoIterator<Item = Option<Ranked>>) -> Ranked {
     let mut any = false;
-    let mut waited = false;
     let values = branches.into_iter().flatten().filter(|part| !part.never);
-    let found = combine(values.inspect(|part| {
-        any = true;
-        waited |= part.waited;
-    }));
-    if any {
-        Ranked {
-            waited: waited && found.rank == Rank::Literal,
-            ..found
-        }
-    } else {
-        Ranked::NEVER
-    }
+    let found = combine(values.inspect(|_| any = true));
+    if any { found } else { Ranked::NEVER }
 }
 
 /// Whether `checked`, an argument, was rejected by its parameter's type (see `mark`).
@@ -2361,8 +2281,6 @@ impl Checker<'_> {
         // finds them, at the first join that needs them: a walk of the whole result for each
         // parameter, as in `required_join`, makes a call quadratic in its parameters.
         let mut want_parts: Option<FxHashMap<Symbol, Type>> = None;
-        // The same for the two types of a hint: the siblings' type and the hint.
-        let mut hint_parts: [Option<FxHashMap<Symbol, Type>>; 2] = [None, None];
         // The one member of a parameter's join, when it has one, which a mismatch of the result
         // names (see `close_call`): its parameter, its span, its type, and its parameter type.
         let mut lone = Vec::new();
@@ -2805,38 +2723,6 @@ impl Checker<'_> {
                             let at = (t, var, sig.bounds.get(t - owned));
                             c.required_join(members, at, (ret, &with), want)
                         }
-                        // Under a hint, as under a required type, but only a part that the
-                        // members take: the hint is no mistake. The siblings' type first, as in
-                        // `hinted_join`. So the elements of `[1]` in `id([1])` take the `u8?` of a
-                        // hint `[u8?]`.
-                        (Expectation::Hint { want, siblings, .. }, Some(ret))
-                            if failed.is_none() =>
-                        {
-                            let at = (t, var, sig.bounds.get(t - owned));
-                            let [sibling_parts, want_parts] = &mut hint_parts;
-                            let mut takes = |want: Type, parts: &mut Option<_>| {
-                                // A closed form that takes the part of the hint needs no walk
-                                // of the whole result, as under `Required`.
-                                let parts = parts.get_or_insert_with(|| c.result_parts(ret, want));
-                                if let Some(&part) = parts.get(&name)
-                                    && c.closed_takes(members, name, part)
-                                {
-                                    return None;
-                                }
-                                match c.required_join(members, at, (ret, &with), want) {
-                                    Expectation::Required(part, origin)
-                                        if c.join_type(members, Some(name), Some(part))
-                                            .is_some() =>
-                                    {
-                                        Some(Expectation::Required(part, origin))
-                                    }
-                                    _ => None,
-                                }
-                            };
-                            takes(siblings, sibling_parts)
-                                .or_else(|| takes(want, want_parts))
-                                .unwrap_or(Expectation::Member)
-                        }
                         _ => Expectation::Member,
                     };
                 let mut expected_here = joined(self, &mut members);
@@ -3045,7 +2931,7 @@ impl Checker<'_> {
         // one that waits for its context meets.
         let mut order: Vec<(bool, usize)> = (0..args.len())
             .filter(|&i| call.slots[i].is_none())
-            .map(|i| (self.sibling_rank(&args[i].value) == Rank::Waits, i))
+            .map(|i| (self.sibling_waits(&args[i].value), i))
             .collect();
         order.sort_unstable();
         for (waits, i) in order {
@@ -3188,7 +3074,7 @@ impl Checker<'_> {
             // A member argument is checked with no rank first, so its rank walks it again: that
             // walk checks its scrutinee once more. It must not report or bind a second time.
             let (snapshot, reports) = (self.table.snapshot(), self.diagnostics.mark());
-            let wait = (bad.iter()).all(|&i| self.sibling_rank(&args[i].value) == Rank::Waits);
+            let wait = (bad.iter()).all(|&i| self.sibling_waits(&args[i].value));
             self.table.rollback(snapshot);
             self.diagnostics.drop_since(reports);
             if let Some(&before) = bad.first()
@@ -4195,9 +4081,7 @@ impl Checker<'_> {
             } if self.parks_receiver(receiver, method.name, *safe) => Some(Expectation::None),
             // A method call with no argument is a member closed, as a local is, unless it waits
             // for its context to pick a method.
-            K::MethodCall { args, .. }
-                if args.is_empty() && self.sibling_rank(e) != Rank::Waits =>
-            {
+            K::MethodCall { args, .. } if args.is_empty() && !self.sibling_waits(e) => {
                 Some(Expectation::None)
             }
             // One that waits for its own type parameter stays open, as a call does (`b.none()`).
@@ -4265,7 +4149,7 @@ impl Checker<'_> {
     }
 
     /// The expectation of a waiting argument `e` at a place of type `param`, when it is a member of
-    /// its join all the same. Under a hint or a required optional, the context could decide the
+    /// its join all the same. Under a required optional, the context could decide the
     /// parameter before the call's own arguments. Its `?` is not in the program. So an argument
     /// that gives itself a type (`Rank::Concrete`) is a member then, checked with no context: the
     /// call decides each parameter from its own arguments (Q22). These stay out, and keep their
@@ -4281,7 +4165,6 @@ impl Checker<'_> {
         expected: Expectation,
     ) -> Option<Expectation> {
         let adds = match expected {
-            Expectation::Hint { .. } => true,
             Expectation::Required(want, _) => matches!(want.kind(), TypeKind::Optional(_)),
             Expectation::None | Expectation::Poisoned | Expectation::Member => false,
         };
@@ -4523,14 +4406,11 @@ impl Checker<'_> {
     /// Meets `expected`, the call's context, after the members decided what they could. Under a
     /// required type the return type meets the whole type first (unify before wrap), also for a
     /// parameter that no argument decides. A unification that breaks a bound gives way to the wrap.
-    /// Under a hint it meets the payload of an optional first, so that the call's value is wrapped.
     /// As the guide of a late argument (`whole`) it meets the whole context first, which takes the
     /// most values, and checks no bound: the late arguments decide more, and the bounds are checked
-    /// when the call is closed. A hint can add a `?` to the type of its siblings (see `branch.rs`),
-    /// which they did not write. A late argument that can make an optional takes that `?`
-    /// (`first(m.mkl())` for `-> [X?]`). Else the call meets the siblings' type first, and the hint
-    /// only when that fails, as for `id(None)` beside a `1`. Under a required optional, the late
-    /// arguments are closed first (Q26). When none can make an optional, the call meets the payload
+    /// when the call is closed. Under a required optional, the late arguments are closed first
+    /// (Q26). A late argument that can make an optional takes the `?` (`first(m.mkl())` for
+    /// `-> [X?]`). When none can make an optional, the call meets the payload
     /// first, and its result wraps once at the top. An example is `fst(p.mkb())` under `i64?`,
     /// where `mkb` gives `Pr<i64, X>`. `None` when the call is a member of an outer join, which
     /// decides its variables, or has no context to meet; else whether it met it.
@@ -4542,13 +4422,10 @@ impl Checker<'_> {
         (expected, whole): (Expectation, bool),
     ) -> Option<bool> {
         let want = match expected {
-            Expectation::Hint { want, siblings, .. } if whole && !self.late_optional(call) => {
-                (siblings, want)
-            }
             Expectation::Required(want, _) if whole && !self.late_optional(call) => {
                 (payload(want), want)
             }
-            Expectation::Required(want, _) | Expectation::Hint { want, .. } => (want, want),
+            Expectation::Required(want, _) => (want, want),
             Expectation::Member | Expectation::None | Expectation::Poisoned => return None,
         };
         let (first, want) = want;
@@ -4567,7 +4444,7 @@ impl Checker<'_> {
         let ret = ret.subst(&with);
         // Unify before wrap: under a required type, the result meets the whole type first, also
         // for a parameter that no argument decides, as the `T` of `none()`. A unification that
-        // breaks a bound gives way to the wrap. A hint meets the payload first (Task 5c). As a
+        // breaks a bound gives way to the wrap. As a
         // guide (`whole`), the call is no conversion point yet: its late arguments decide more, and
         // a bound is checked when the call is closed.
         let whole_first = whole || matches!(expected, Expectation::Required(..));
@@ -4726,8 +4603,7 @@ impl Checker<'_> {
                 if met == Some(false)
                     && matches!(ty.kind(), TypeKind::Infer(_))
                     && sig.ret.is_some_and(|ret| names_outside_assoc(ret, t))
-                    && let Expectation::Required(want, _) | Expectation::Hint { want, .. } =
-                        expected
+                    && let Expectation::Required(want, _) = expected
                     && self.known_context(call, want)
                 {
                     return Err(self.misfit(call, sig, t));
@@ -4876,7 +4752,7 @@ impl Checker<'_> {
     /// the closed form. When its result does not convert to `want`, the call is open at `want`, and
     /// a place is no member of the open form (Q19). So each parameter that a place binds, and that
     /// the call does not write, takes the type that `want` makes of it. As in `meet_context`, a
-    /// required optional comes whole first, and a hint's payload first. Each place that does not
+    /// required optional comes whole first. Each place that does not
     /// have the type of its parameter then gets E0170, and the other arguments meet the types that
     /// `want` gave. Nothing changes when a place failed already, or when `want` does not decide the
     /// type of each place. `named` is the count of the type arguments that the call writes.
@@ -4890,7 +4766,7 @@ impl Checker<'_> {
         let (Some(site), Some(ret)) = (sig.mut_site, sig.ret) else {
             return;
         };
-        let (Expectation::Required(want, _) | Expectation::Hint { want, .. }) = expected else {
+        let Expectation::Required(want, _) = expected else {
             return;
         };
         let held = |i: usize| call.mut_shapes.iter().any(|&(k, _)| k == i);
@@ -4928,7 +4804,7 @@ impl Checker<'_> {
         // Unify before wrap, as `meet_context` does: under a required type the places take the
         // whole type first, when no other argument can decide their parameters. The other
         // arguments are not checked yet: in `put(mut names, 1)` the `1` decides `T`, so the
-        // result wraps. A hint meets its payload first (Task 5c).
+        // result wraps.
         let decided_elsewhere = (0..call.args.len()).any(|i| {
             !site.muts[i]
                 && sig.params[i].is_some_and(|param| {
@@ -5348,20 +5224,13 @@ impl Checker<'_> {
         ranked
     }
 
-    /// How much `e` needs the context of the siblings it is checked with, in a join or beside an
-    /// operator: its `Ranked::sibling`. A sibling that waits is checked after the others, and
-    /// takes their type.
-    pub(super) fn sibling_rank(&mut self, e: &ast::Expr) -> Rank {
-        self.sibling_ranked(e).0
-    }
-
-    /// `sibling_rank`, and whether `e` can make an optional by itself (`Ranked::optional`). A
-    /// sibling ranked `Concrete` says `false`: it is not ranked to the end.
-    pub(super) fn sibling_ranked(&mut self, e: &ast::Expr) -> (Rank, bool) {
+    /// Whether `e` waits for the context of the siblings it is checked with. A sibling that waits
+    /// is checked after the others, and takes their type. A call that does not fit its declaration
+    /// does not wait: it is checked first and alone, and reports its own mistakes.
+    pub(super) fn sibling_waits(&mut self, e: &ast::Expr) -> bool {
         let mut fit = true;
         let ranked = self.rank_value(e, &mut fit);
-        let rank = ranked.sibling(fit);
-        (rank, ranked.optional && rank != Rank::Concrete)
+        fit && ranked.rank == Rank::Waits
     }
 
     /// Runs `f`, which ranks values and checks them. Then it drops the work that ranking kept
@@ -5398,37 +5267,28 @@ impl Checker<'_> {
                 Ranked {
                     optional: false,
                     nested: false,
-                    scalar: false,
                     ..found
                 }
             }
             K::ArrayFill { value, .. } => Ranked {
                 optional: false,
                 nested: false,
-                scalar: false,
-                leads: true,
                 ..combine([self.rank_value(value, fit)]).or_literal_if_waiting()
             },
             K::Binary { op, lhs, rhs, .. }
                 if super::expr::operator(*op).is_some_and(|(_, ty)| ty == Type::I64) =>
             {
-                Ranked {
-                    leads: true,
-                    ..combine(
-                        [&**lhs, &**rhs]
-                            .into_iter()
-                            .map(|e| self.rank_value(e, fit)),
-                    )
-                    .or_literal_if_waiting()
-                }
+                combine(
+                    [&**lhs, &**rhs]
+                        .into_iter()
+                        .map(|e| self.rank_value(e, fit)),
+                )
+                .or_literal_if_waiting()
             }
             K::Unary {
                 op: ast::UnaryOp::Neg,
                 operand,
-            } => Ranked {
-                leads: true,
-                ..combine([self.rank_value(operand, fit)]).or_literal_if_waiting()
-            },
+            } => combine([self.rank_value(operand, fit)]).or_literal_if_waiting(),
             K::Field {
                 base,
                 name,
@@ -5554,7 +5414,6 @@ impl Checker<'_> {
         let mut through = false;
         let mut nests = false;
         let mut holds = false;
-        let mut passes = true;
         let mut found = if open {
             Ranked::WAITS
         } else {
@@ -5568,12 +5427,9 @@ impl Checker<'_> {
                 through |= makes.makes_optional(i, ranked);
                 nests |= makes.passes_nested(i, ranked);
                 holds |= ranked.holds_optional && has_place(places.plain, i);
-                passes &= ranked.rank != Rank::Literal || makes.returns(i);
                 ranked
             }))
         };
-        // Only a literal at a place of the returned type parameter passes its type on.
-        found.scalar &= passes;
         found.optional = through || makes.wraps();
         found.nested = nests;
         found.holds_optional = holds || found.optional || ret_optional && found.rank == Rank::Waits;

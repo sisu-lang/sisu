@@ -119,7 +119,7 @@ struct Poisoned {
     /// A generic call in the value kept its E0050, which is its only report. The value is
     /// untyped, and an operator with such an operand adds no report for its default type. Three
     /// readers in `integers` and `binary` need the mark. An operand that waits after a kept one
-    /// takes the default `i64` as a hint and keeps its own E0050 (S18). A leader that the
+    /// takes the default `i64` and keeps its own E0050 (S18). A leader that the
     /// operator does not take is held to the operator's type after a kept operand, so
     /// `id(mk2()) - b` with `b: bool` gives its E0032. And unary `-` and `binary` pass the mark
     /// on, so a `char` beside `-(id(mk2()) + 1)` is still rejected.

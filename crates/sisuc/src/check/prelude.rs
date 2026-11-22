@@ -6,7 +6,7 @@ use super::array::pair;
 use super::expr::{path, read_jump, typed, unlabeled};
 use super::mut_args::Callee;
 use super::reports::Reported;
-use super::{Checked, Checker, Expectation, Origin, Part, Poisoned, type_of};
+use super::{Checked, Checker, Expectation, Origin, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{DiagnosticKind, Expected, MismatchFix};
 use crate::source::Span;
@@ -117,10 +117,9 @@ impl Checker<'_> {
             return Err(Err(Poisoned::new(ret, reported)));
         };
         self.refuse_mut(args, Callee::Unnamed(&function));
-        // A hint reaches the argument as a required type. The argument of `dbg` is a value
-        // position, so a member stays a member (see `Part::Argument`). Not `value()`: a `never`
-        // argument needs its own code.
-        let checked = read_jump(self.expr(&arg.value, expected.part(Part::Argument)));
+        // The argument of `dbg` is a value position, so a member stays a member. Not `value()`: a
+        // `never` argument needs its own code.
+        let checked = read_jump(self.expr(&arg.value, expected));
         let error = match type_of(&checked) {
             Some(Type::NEVER) => DiagnosticKind::PrintNever {
                 function,

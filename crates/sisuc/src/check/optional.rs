@@ -3,7 +3,6 @@
 //! these makes an enum value.
 
 use super::alias::Through;
-use super::any::is_target;
 use super::generic::{Declarer, GenericSig, Site, mark, written_args};
 use super::mut_args::Callee;
 use super::{
@@ -36,10 +35,6 @@ impl Checker<'_> {
     }
 
     /// `some`, before it records a `Some` that gave an error.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one match on the hint and the payload, so the cases of a `Some` read in one place"
-    )]
     fn some_of(
         &mut self,
         span: Span,
@@ -78,7 +73,6 @@ impl Checker<'_> {
             matches!(t.ty.kind(), TypeKind::Optional(p)
                 if t.params.len() == 1 && p == Type::intern(TypeKind::Param(t.params[0], 0)))
         });
-        let hinted = matches!(site.expected, Expectation::Hint { .. });
         let (arg, found, list) = match site.expected.ty().map(|ty| (ty, ty.kind())) {
             // An expected `T?` fixes `T`, so a literal in the argument takes that type: the
             // generic call would type an `if` of integer literals by their default first.
@@ -86,35 +80,12 @@ impl Checker<'_> {
                 if site.written.is_empty() && !want.holds_hole() && plain =>
             {
                 let e = &args[0].value;
-                // A hinted `Some` gives its hint to the argument (see `Expectation::Hint`).
                 let checked = self.value(e, site.expected.part(Part::Payload));
-                match type_of(&checked) {
-                    // An object that does not convert to the hint keeps its own type: the join
-                    // converts it to an `any` type, or the other values to it, or reports it. So
-                    // does a `Some` of one, which kept its type. So does an optional beside an
-                    // `any` type, which does not convert: the join reports the `Some`.
-                    Some(got)
-                        if hinted
-                            && got != payload
-                            && (matches!(
-                                beneath(got).kind(),
-                                TypeKind::Class(..) | TypeKind::Any(..)
-                            ) || matches!(got.kind(), TypeKind::Optional(_))
-                                && is_target(payload))
-                            && !self.converts_to_any(got, payload) =>
-                    {
-                        (checked, optional_of(got), TypeArgs::NONE)
-                    }
-                    _ => (
-                        mark(self.settled(
-                            e,
-                            checked,
-                            Expectation::Required(payload, Origin::None),
-                        )),
-                        want,
-                        TypeArgs::NONE,
-                    ),
-                }
+                (
+                    mark(self.settled(e, checked, Expectation::Required(payload, Origin::None))),
+                    want,
+                    TypeArgs::NONE,
+                )
             }
             // A member gives its argument `Member`: the payload stays open, as the argument does.
             None if matches!(site.expected, Expectation::Member)
@@ -270,14 +241,6 @@ impl Checker<'_> {
 /// through it, whatever the arguments are.
 fn closed_alias(through: Option<&Through>) -> Option<Type> {
     through.filter(|t| t.params.is_empty()).map(|t| t.ty)
-}
-
-/// `ty` without its optional layers.
-fn beneath(ty: Type) -> Type {
-    match ty.kind() {
-        TypeKind::Optional(payload) => beneath(payload),
-        _ => ty,
-    }
 }
 
 /// The type parameters of `Some`, the type of its payload and its result: the alias's `open`

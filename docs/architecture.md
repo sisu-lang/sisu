@@ -168,19 +168,17 @@ a path call share one. The module also poisons a rejected or broken item, so a u
 no error of its own
 ([ADR 0049](adr/0049-one-name-resolver-and-one-poison-rule.md)).
 `check/expectation.rs` holds `Expectation`, what the context expects of a value: nothing, a
-required type, a poisoned context (`Poisoned`), or a hint. The siblings of a value give it a
-hint, and an operator can hint its operands. A required type and a hint hold an
+required type, a poisoned context (`Poisoned`), or a member of a join. A required type holds an
 `Origin`: the declaration, the earlier value or the language rule that made the context
 ask for the type. An E0032 shows it. An origin is a declaration, an assignment to a local
-name, or an earlier `break`, element or branch. It can also be the argument that bound a type
+name, or the first bare `break` of a loop. It can also be the argument that bound a type
 parameter.
 Other forms wait and hold no origin: operators, patterns, field, index and compound assignments,
 `while` conditions and match guards. The fallback of `??`, a `Some` value, and a generic field,
 payload or prelude parameter hold no origin either. `check/expectation.rs` maps an origin to its
 fact, and the registry gives the words. A fact with a span in your code is a secondary label.
 A fact with a span in the prelude is a note. An `if` condition or an index gets a primary label
-that names its rule. A hint holds at one value and
-the parts that give the value. An operand does not see the hint of the value that holds it. A
+that names its rule. A
 mistake that follows from a poisoned context waits for the next run.
 `check/reports.rs` holds `Diagnostics`, the checker's list of diagnostics, and `Reported`, a
 zero-size token. Only an error and `proof` make one, and each poisoned value and each poisoned

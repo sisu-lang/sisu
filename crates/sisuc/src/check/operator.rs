@@ -67,12 +67,9 @@ impl Checker<'_> {
         {
             // A conflict of the branches of an `if` or a `match` is theirs: it reports at their
             // head, as with no `-`.
-            let (form, head) = self.own_join(operand).unwrap_or_else(|| {
-                (
-                    JoinForm::Operator(Operator::Arithmetic { compound: false }),
-                    self.source.head(span, "-".len()),
-                )
-            });
+            let (form, head) = self
+                .own_join(operand)
+                .unwrap_or_else(|| (JoinForm::Operator, self.source.head(span, "-".len())));
             let values = std::slice::from_mut(&mut checked);
             match self.join_operands(form, head, (&[operand], values), None, |_, _, _| None) {
                 Ok(joined) => {
@@ -170,7 +167,7 @@ impl Checker<'_> {
             return Ok((want, (Err(Poisoned::untyped(reported)), true)));
         }
         let origin = expected.origin_for(Some(want));
-        let checked = self.against(operand, checked, Expectation::Required(want, origin));
+        let checked = self.close(operand, checked, Expectation::Required(want, origin));
         Ok((want, checked))
     }
 
@@ -431,13 +428,8 @@ impl Checker<'_> {
         };
         let start = self.diagnostics.len();
         let op = |_| op.to_string();
-        // The operands are not value parts of the value, so a hint does not reach them.
-        let (checked, ty, mismatched) = self.integers(
-            &[lhs, rhs],
-            (op_span, expected.plain()),
-            operator,
-            (&op, read),
-        );
+        let (checked, ty, mismatched) =
+            self.integers(&[lhs, rhs], (op_span, expected), operator, (&op, read));
         if checked.iter().any(|c| type_of(c) == Some(Type::CHAR)) {
             let reported = self.error(DiagnosticKind::ArithmeticOnChar { at: op_span });
             return Err(Poisoned::untyped(reported));
@@ -815,7 +807,7 @@ impl Checker<'_> {
             if let Some(place) = typed(0).filter(|&t| operator.compound() && number(t)) {
                 let want = Expectation::Required(place, Origin::None);
                 let value = std::mem::replace(&mut checked[1], Ok(unit_value(operands[1].span)));
-                checked[1] = self.against(operands[1], value, want).0;
+                checked[1] = self.close(operands[1], value, want).0;
                 return true;
             }
             // A place that `+=` does not take is the mistake, as `x -= 1` with a `bool` `x` is.
@@ -931,7 +923,7 @@ impl Checker<'_> {
                     })
                 }
                 Some(_) => {
-                    let (operand, m) = self.against(e, c, unit);
+                    let (operand, m) = self.close(e, c, unit);
                     mismatched |= m;
                     operand
                 }
@@ -954,7 +946,7 @@ impl Checker<'_> {
         for (e, c) in operands.iter().zip(checked) {
             let misfit = type_of(&c).is_some_and(|ty| ty != Type::UNIT && ty != Type::NEVER);
             let c = if misfit {
-                let (operand, m) = self.against(e, c, unit);
+                let (operand, m) = self.close(e, c, unit);
                 mismatched |= m;
                 operand
             } else {
@@ -1652,8 +1644,8 @@ impl Operator {
     fn join_form(self) -> JoinForm {
         match self {
             Operator::Compare => JoinForm::Compare,
-            op if op.compound() => JoinForm::Compound { op, assigned: 0 },
-            op => JoinForm::Operator(op),
+            op if op.compound() => JoinForm::Compound { assigned: 0 },
+            _ => JoinForm::Operator,
         }
     }
 

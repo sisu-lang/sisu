@@ -33,8 +33,8 @@ pub(super) const METHODS: &[(&str, usize)] = &[
 
 impl Checker<'_> {
     /// `l + r` over two `string`s, which `mismatched` says were reported against. `decides` says
-    /// whether the join is typed: both operands are typed, or `l` is typed and of `sibling_rank`
-    /// `Concrete`.
+    /// whether the join is typed: both operands are typed, or `l` is typed and does not wait
+    /// (`sibling_waits`).
     pub(super) fn concat(
         &mut self,
         span: Span,

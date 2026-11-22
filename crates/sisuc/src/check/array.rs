@@ -96,19 +96,17 @@ impl Checker<'_> {
     }
 
     /// What each element of an array under `expected` takes: the element `E` of an expected
-    /// `[E]` or `[E]?`, required, from the origin of `expected`. A hint gives a required `E` too.
-    /// A type that is no array, or a bare variable as from a `[]` beside the array, is no type to
-    /// meet. Then the elements join, and the context meets their type.
+    /// `[E]` or `[E]?`, required, from the origin of `expected`. A type that is no array, or a bare
+    /// variable as from a `[]` beside the array, is no type to meet. Then the elements join, and
+    /// the context meets their type.
     fn element_expectation(&self, expected: Expectation) -> Expectation {
         match expected {
-            Expectation::Required(..) | Expectation::Hint { .. } => {
-                match expected_element(expected.ty()) {
-                    Some(element) if !self.bare_variable(element) => {
-                        Expectation::Required(element, expected.origin())
-                    }
-                    _ => Expectation::None,
+            Expectation::Required(..) => match expected_element(expected.ty()) {
+                Some(element) if !self.bare_variable(element) => {
+                    Expectation::Required(element, expected.origin())
                 }
-            }
+                _ => Expectation::None,
+            },
             other => other,
         }
     }
@@ -148,17 +146,15 @@ impl Checker<'_> {
             Expectation::Poisoned => {
                 return Err(Poisoned::untyped(self.poisoned_context(span)));
             }
-            Expectation::Required(ty, _) | Expectation::Hint { want: ty, .. } => {
-                DiagnosticKind::Mismatch {
-                    want: Expected::Types(vec![self.type_name(ty)]),
-                    got: "[]".to_string(),
-                    at: span,
-                    origin: self.origin_fact(expected.origin()),
-                    fix: None,
-                    conversion: false,
-                    layers: false,
-                }
-            }
+            Expectation::Required(ty, _) => DiagnosticKind::Mismatch {
+                want: Expected::Types(vec![self.type_name(ty)]),
+                got: "[]".to_string(),
+                at: span,
+                origin: self.origin_fact(expected.origin()),
+                fix: None,
+                conversion: false,
+                layers: false,
+            },
             Expectation::None => {
                 let reported = self.report_uninferred(Literal::EmptyArray, span);
                 return Err(Poisoned::untyped(reported));
@@ -187,7 +183,7 @@ impl Checker<'_> {
         }
     }
 
-    /// `[value; len]`: `value` is checked with the expected element type as its hint, then
+    /// `[value; len]`: `value` is checked with the expected element type as its expectation, then
     /// against it, and `len` against `i64`. A `value` of a class, under any layers of optional,
     /// is reported, as every slot would hold the same object; the literal `None` is not. That
     /// rule sees `value`'s own type, before a mismatch with the element type erases it.
@@ -228,7 +224,7 @@ impl Checker<'_> {
             }));
         }
         let (checked, mismatched) = match element {
-            Some(_) => self.against(value, checked, hint),
+            Some(_) => self.close(value, checked, hint),
             None => (checked, false),
         };
         let (len, len_mismatched) =
