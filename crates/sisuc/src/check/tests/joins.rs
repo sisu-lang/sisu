@@ -202,6 +202,7 @@ enum Tree<T> {\n\
 struct Sw {\n\
     fn wrap<T>(self, v: T) -> T { v }\n\
     fn nothing<T>(self) -> T? { None }\n\
+    fn wrap2<T>(self, a: T, b: T) -> T { a }\n\
 }\n\
 fn osw() -> Sw? { Some(Sw()) }\n";
 
@@ -2811,6 +2812,17 @@ fn generic_method_argument_should_take_its_type_from_the_other_arguments() {
             "let x: i64? = pick(1, { let _y = 2; osw()?.nothing() })",
             "i64?",
         ),
+        // A method call with no argument and written type arguments is a member too.
+        ("let x = pick(Sw().nothing<i64>(), 1)", "i64?"),
+        ("let x = pick(1, Sw().nothing<i64>())", "i64?"),
+        ("let x = Sw().wrap2(Sw().nothing<i64>(), 1)", "i64?"),
+        ("let x = pick(osw()?.nothing<i64>(), 1)", "i64?"),
+        (
+            "let x = pick({ let _k = 1; Sw().nothing<i64>() }, 1)",
+            "i64?",
+        ),
+        ("let x = id(pick(Sw().nothing<i64>(), 1))", "i64?"),
+        ("let s = Sw()\nlet x = pick(s.nothing<i64>(), 1)", "i64?"),
     ]);
 }
 
