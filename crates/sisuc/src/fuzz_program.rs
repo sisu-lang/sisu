@@ -1033,7 +1033,14 @@ enum Force {
     /// The checker panics, as a compiler bug would, in the bound check and in the single-mistake
     /// check.
     CheckerPanic,
+    /// The program with its joins swapped has an error, as an order bug would give.
+    OrderBroken,
 }
+
+/// What the join-order check adds to the swapped program when `Force::OrderBroken` is set: a
+/// function that reads a name that no item declares.
+#[cfg(test)]
+const FORCED_ORDER_ERROR: &str = "fn forced_order() { forced_missing }\n";
 
 #[cfg(test)]
 thread_local! {
@@ -1077,10 +1084,10 @@ mod tests {
 
     use super::dbg_location;
     use super::{
-        Answer, BUILDS, Exit, FORCE, Force, Known, LIMIT, Property, Run, build, builds, checked,
-        control_of, is_marked, judge, judge_bounds, judge_builds, judge_edit, judge_join_order,
-        judge_known, judge_marked, judge_mistakes, judge_pair, judge_source, known_cascades,
-        parse_cascades, program, program_in, run,
+        Answer, BUILDS, Exit, FORCE, FORCED_ORDER_ERROR, Force, Known, LIMIT, Property, Run, build,
+        builds, checked, control_of, is_marked, judge, judge_bounds, judge_builds, judge_edit,
+        judge_join_order, judge_known, judge_marked, judge_mistakes, judge_pair, judge_source,
+        known_cascades, parse_cascades, program, program_in, run,
     };
     use crate::Allocator;
     use crate::diagnostic::Severity;
@@ -2214,6 +2221,54 @@ mod tests {
         assert_eq!(swapped_with_probe(program), None);
         let g = with_mistakes(program, Vec::new());
         assert!(crate::on_compiler_stack(|| judge_join_order(&g)).is_ok());
+    }
+
+    /// GIVEN a `??` whose right side takes its type from the left side: `id(None)`, `first([])`
+    /// and `Some(None)` of a `u8??`
+    /// WHEN the swap reads it
+    /// THEN it leaves the `??` as written, because the right side has no type on the left
+    /// AND the join-order check passes
+    #[test]
+    fn judge_join_order_should_leave_a_coalesce_whose_right_side_needs_the_left_as_written() {
+        let items = "fn id<T>(x: T) -> T { x }\nfn first<T>(xs: [T]) -> T? { xs.first() }\n";
+        for (left, right) in [
+            ("a: u8? = Some(1)", "id(None)"),
+            ("a: u8? = Some(1)", "first([])"),
+            ("a: u8?? = Some(Some(1))", "Some(None)"),
+        ] {
+            let program = format!(
+                "{items}fn main() {{\n    let {left}\n    let x = a ?? {right}\n    print(x ?? 0)\n}}\n"
+            );
+            assert_eq!(swapped_with_probe(&program), None, "{right}");
+            let g = with_mistakes(&program, Vec::new());
+            assert!(
+                crate::on_compiler_stack(|| judge_join_order(&g)).is_ok(),
+                "{right}"
+            );
+        }
+    }
+
+    /// GIVEN a `??` whose right side has a type of its own: `b`, `Some(1)` and `id(b)`
+    /// WHEN the swap reads it
+    /// THEN it swaps the sides, and the join-order check passes
+    #[test]
+    fn judge_join_order_should_swap_a_coalesce_whose_right_side_has_its_own_type() {
+        let items = "fn id<T>(x: T) -> T { x }\n";
+        for right in ["b", "Some(1)", "id(b)"] {
+            let program = format!(
+                "{items}fn main() {{\n    let a: u8? = Some(1)\n    let b: u8? = None\n    print((a ?? {right}) ?? 0)\n}}\n"
+            );
+            let swapped = swapped_with_probe(&program).expect("the sides should swap");
+            assert!(
+                swapped.contains(&format!("({right} ?? a) ?? 0")),
+                "{swapped}"
+            );
+            let g = with_mistakes(&program, Vec::new());
+            assert!(
+                crate::on_compiler_stack(|| judge_join_order(&g)).is_ok(),
+                "{right}"
+            );
+        }
     }
 
     /// GIVEN a `??` of two `u8?`
@@ -3491,6 +3546,36 @@ mod tests {
         let failure = read("failure.txt");
         assert!(failure.starts_with("the bound check: "), "{failure}");
         assert_eq!(read("program.sisu"), g.program);
+    }
+
+    /// A failure of the join-order check leaves the swapped program in the dump, and no build
+    /// ran. The forced error makes the swapped program fail, so the test fails when `judge` does
+    /// not run the check.
+    #[test]
+    fn a_failed_join_order_should_leave_the_swapped_copy_in_the_dump() {
+        if env::var_os(CHILD).is_some() {
+            crate::on_compiler_stack(|| {
+                FORCE.set(Some(Force::OrderBroken));
+                program(&seed(0), &test_runtime(Allocator::Mimalloc));
+            });
+            return;
+        }
+        let scratch = Scratch::new();
+        let out = child(
+            "a_failed_join_order_should_leave_the_swapped_copy_in_the_dump",
+            &scratch.0,
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{stderr}");
+        let g = generate(&seed(0));
+        assert_record(&stderr, "the join-order check: ", &g, &scratch.0);
+        let swapped = swapped_with_probe(&g.program).expect("the program should have a join");
+        assert_eq!(
+            dump_file(&scratch.0, "broken.sisu"),
+            swapped + FORCED_ORDER_ERROR
+        );
+        let failure = dump_file(&scratch.0, "failure.txt");
+        assert!(failure.starts_with("the join-order check: "), "{failure}");
     }
 
     /// The first seed of the series with a mistake and no bound site. So the single-mistake check

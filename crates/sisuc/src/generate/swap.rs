@@ -789,6 +789,15 @@ mod tests {
     }
 
     #[test]
+    fn swap_joins_should_drop_a_pair_that_overlaps_an_earlier_one() {
+        // The `break` values `a` and `1` would swap through the blocks of the `if`, which swap too.
+        assert_eq!(
+            swapped("let x = loop {\n    if c { break a } else { 0 }\n    break 1\n}\n"),
+            "let x = loop {\n    if c { 0 } else { break a }\n    break 1\n}\n"
+        );
+    }
+
+    #[test]
     fn swap_joins_should_leave_a_break_value_that_reads_a_binding_of_the_loop_as_written() {
         let program = "let x = loop {\n    if let Some(v) = o { break v }\n    break 1\n}\n";
         assert_eq!(swap(program), None);
