@@ -710,17 +710,19 @@ impl Checker<'_> {
         checked: Checked,
         want: Expectation,
     ) -> (Checked, bool) {
-        // `want` was rejected inside `e`, which `against` cannot tell from an `Error` operand.
+        // `want` was rejected inside `e`, which `close` cannot tell from an `Error` operand.
         if matches!(checked, Err(Poisoned { mismatch: true, .. })) {
             return (checked, true);
         }
         self.close(e, checked, want)
     }
 
-    /// `against`, as `settled` asks it for `e`, whose context is `expected`. A member keeps its
-    /// variables open. A required type takes the value through the steps of `conversion`, else
-    /// `against` reports it. A value with no type to meet shows each `Int` as `i64`, and an
-    /// open `Any` is E0050 at its first source. Each variable of a report is poisoned.
+    /// Meets `checked`, the value of `e`, to `expected`, its context (see `settled`). A member
+    /// keeps its variables open. A required type takes the value through the steps of
+    /// `conversion`. Else the value is wrapped, converted to an `any` type or reported as a
+    /// mismatch that names where `expected` came from. A value with no type to meet shows each
+    /// `Int` as `i64`, and an open `Any` is E0050 at its first source. Each variable of a report
+    /// is poisoned.
     pub(super) fn close(
         &mut self,
         e: &ast::Expr,
@@ -741,7 +743,41 @@ impl Checker<'_> {
             (checked, _) => checked,
         };
         let found = type_of(&checked);
-        let (checked, reported) = self.against(e, checked, expected);
+        let (want, origin) = (expected.ty(), expected.origin());
+        let (checked, reported) = 'meet: {
+            if let (Some(want), Some(got)) = (want, found)
+                && want != got
+            {
+                if let TypeKind::Optional(payload) = want.kind()
+                    && payload == got
+                {
+                    let wrapped = match checked {
+                        Ok(e) => self.lift(e, want),
+                        Err(failed) => Err(Poisoned::typed(want, failed.reported())),
+                    };
+                    break 'meet (wrapped, false);
+                }
+                if let Ok(done) = self.any_conversion(e.span, checked, want, got, origin) {
+                    break 'meet done;
+                }
+                // The report shows each open part of `got` that `want` knows (`shown_against`).
+                let shown = self.shown_against(got, want);
+                let d = self.mismatch(e.span, Some(e), want, shown, origin);
+                break 'meet (Err(Poisoned::untyped(self.diagnostics.error(d))), true);
+            }
+            // A generic call that cannot meet `want` is reported with the type it found, as a
+            // concrete call is with its type.
+            if let Some(want) = want
+                && let Some(found) = self.misfit_type(&checked).filter(|&found| found != want)
+            {
+                let found = self.shown_against(found, want);
+                let d = self.mismatch(e.span, Some(e), want, found, origin);
+                let reported = self.diagnostics.error(d);
+                self.settle_misfit(&checked);
+                break 'meet (Err(Poisoned::untyped(reported)), true);
+            }
+            (checked, false)
+        };
         if reported && let Some(found) = found {
             self.table.poison(found);
         }
@@ -800,48 +836,6 @@ impl Checker<'_> {
         }
         value.ty = self.table.default_open(value.ty);
         Ok(value)
-    }
-
-    /// `operand` for `e`, already checked; a mismatch names where `want` came from.
-    pub(super) fn against(
-        &mut self,
-        e: &ast::Expr,
-        checked: Checked,
-        want: Expectation,
-    ) -> (Checked, bool) {
-        let (want, origin) = (want.ty(), want.origin());
-        if let (Some(want), Some(got)) = (want, type_of(&checked))
-            && want != got
-        {
-            if let TypeKind::Optional(payload) = want.kind()
-                && payload == got
-            {
-                let wrapped = match checked {
-                    Ok(e) => self.lift(e, want),
-                    Err(failed) => Err(Poisoned::typed(want, failed.reported())),
-                };
-                return (wrapped, false);
-            }
-            if let Ok(done) = self.any_conversion(e.span, checked, want, got, origin) {
-                return done;
-            }
-            // The report shows each open part of `got` that `want` knows (`shown_against`).
-            let shown = self.shown_against(got, want);
-            let d = self.mismatch(e.span, Some(e), want, shown, origin);
-            return (Err(Poisoned::untyped(self.diagnostics.error(d))), true);
-        }
-        // A generic call that cannot meet `want` is reported with the type it found, as a
-        // concrete call is with its type.
-        if let Some(want) = want
-            && let Some(found) = self.misfit_type(&checked).filter(|&found| found != want)
-        {
-            let found = self.shown_against(found, want);
-            let d = self.mismatch(e.span, Some(e), want, found, origin);
-            let reported = self.diagnostics.error(d);
-            self.settle_misfit(&checked);
-            return (Err(Poisoned::untyped(reported)), true);
-        }
-        (checked, false)
     }
 
     /// A `None`, of the optional type `expected`.

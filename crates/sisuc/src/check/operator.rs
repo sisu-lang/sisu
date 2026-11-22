@@ -468,6 +468,22 @@ impl Checker<'_> {
         }
     }
 
+    /// Fails `value`, the check of `operand`, with the report that its own type `got` is not the
+    /// type `want` that its operator takes. It converts nothing: an open `value` stays open, and
+    /// each variable of it is poisoned.
+    fn operand_mismatch(
+        &mut self,
+        operand: &ast::Expr,
+        value: &mut Checked,
+        (want, got): (Type, Type),
+    ) {
+        if let Some(open) = type_of(value) {
+            self.table.poison(open);
+        }
+        let d = self.mismatch(operand.span, Some(operand), want, got, Origin::None);
+        *value = Err(Poisoned::untyped(self.diagnostics.error(d)));
+    }
+
     /// The operands of one number operator, its token at `head`, each checked as a member of one
     /// join (ADR 0052); the type they join to, `None` when it is `Error`; and whether a rule of
     /// the operator reported. A `None` expects that number, else `i64`.
@@ -805,9 +821,7 @@ impl Checker<'_> {
             // A compound assignment's number place does not convert: its value is the mistake.
             let number = |t: Type| matches!(payload(t), Type::I64 | Type::U8 | Type::F64);
             if let Some(place) = typed(0).filter(|&t| operator.compound() && number(t)) {
-                let want = Expectation::Required(place, Origin::None);
-                let value = std::mem::replace(&mut checked[1], Ok(unit_value(operands[1].span)));
-                checked[1] = self.close(operands[1], value, want).0;
+                self.operand_mismatch(operands[1], &mut checked[1], (place, Type::STRING));
                 return true;
             }
             // A place that `+=` does not take is the mistake, as `x -= 1` with a `bool` `x` is.
@@ -858,9 +872,7 @@ impl Checker<'_> {
             let taken = operator.takes().contains(&payload(got));
             // A `None` beside a `X?` is not the mistake.
             if got != payload(got) && taken && !self.none_operand(operands[i]) {
-                let want = Expectation::Required(payload(got), Origin::None);
-                let value = std::mem::replace(&mut checked[i], Ok(unit_value(operands[i].span)));
-                checked[i] = self.against(operands[i], value, want).0;
+                self.operand_mismatch(operands[i], &mut checked[i], (payload(got), got));
                 reported = true;
             } else if arithmetic && !taken && !reported {
                 let d = self.takes_mismatch(operands[i].span, operator.takes(), got);

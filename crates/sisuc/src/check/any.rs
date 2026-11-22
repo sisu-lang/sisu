@@ -346,7 +346,7 @@ impl Checker<'_> {
     }
 
     /// `e`, of type `got`, where `want` is expected, when `want` is `any I` or `(any I)?`:
-    /// `Ok` holds the checked value and whether the rule failed, as `against` returns them. `Err`
+    /// `Ok` holds the checked value and whether the rule failed, as `close` returns them. `Err`
     /// gives `checked` back when no conversion applies, for the caller to report a mismatch.
     ///
     /// A value converts when its type conforms to `I`: an object keeps its pointer, an `any` of
