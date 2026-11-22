@@ -4,19 +4,45 @@
 
 use std::ops::Range;
 
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use crate::ast::{
-    Arm, Block, Expr, ExprKind, ForSource, Function, Ident, Item, Member, Pattern, Program,
-    Range as Rng, Stmt, StmtKind,
+    Arg, Arm, BinaryOp, Block, Expr, ExprKind, ForSource, Function, Ident, Item, Member, Pattern,
+    PatternKind, Program, Range as Rng, Stmt, StmtKind, TypeKind,
 };
 use crate::diagnostic::Severity;
 use crate::source::Span;
+use crate::symbol::Symbol;
 use crate::{lexer, parser};
 
-/// `program` with the two blocks of each `if` that has an `else` block swapped. It also swaps the
-/// first and last elements of each array literal of two or more elements. None when it has no such
-/// join, or does not parse. An `if let` keeps its order: its `else` block cannot see the binding.
-/// An `else if` swaps only the blocks of its inner `if`.
+/// `program` with the members of each join swapped (`swap_with`), each `??` that can swap included.
+#[cfg(test)]
 pub(crate) fn swap_joins(program: &str) -> Option<String> {
+    swap_with(program, |_| true)
+}
+
+/// `program` with the members of each join swapped, or None when it has no such join or does not
+/// parse. The forms are:
+/// - the two blocks of an `if` that has an `else` block; an `if let` keeps its order, because its
+///   `else` block cannot see the binding, and an `else if` swaps only the blocks of its inner `if`;
+/// - the first and last elements of an array literal;
+/// - the first and last arms of a `match` that has no guard. Only the arms with a variant, `None`
+///   or a literal as pattern count, so a catch-all arm stays last. The arms swap whole, with
+///   their patterns;
+/// - the first and last `break` value of a loop. No `break` of the loop may be bare. Neither
+///   value may read a name that the loop binds;
+/// - the first and last argument that a generic function takes at the places of one type
+///   parameter;
+/// - the operands of `+`, `*`, `==` and `!=`. The other operators have an order: `-`, `/`, `%`, a
+///   comparison, `&&`, `||` and `is`;
+/// - the sides of `??`, when neither is a `None`, a literal, an operator or a jump. `??` reads its
+///   left side first, and that side must be optional. The swap is valid when both sides are
+///   optionals of one type. The syntax does not say that, so `accepts` gets a probe: the program
+///   with `a ?? b` held in a block, `{ let mut p = a ?? b; p = a; p }`. The check of the probe
+///   passes when `a ?? b` has the type of `a`. `accepts` tells whether it does.
+///
+/// A pair that overlaps another is left out.
+pub(crate) fn swap_with(program: &str, mut accepts: impl FnMut(&str) -> bool) -> Option<String> {
     let lexed = lexer::lex(program).ok()?;
     let parsed = parser::parse(lexed, false);
     // A warning, such as the W0007 that the generator writes, does not count.
@@ -26,10 +52,16 @@ pub(crate) fn swap_joins(program: &str) -> Option<String> {
     }
     let mut finder = Finder {
         source: program,
+        generics: FxHashMap::default(),
         pairs: Vec::new(),
     };
     finder.program(&parsed.program);
-    let pairs = compatible(finder.pairs);
+    let mut pairs = compatible(finder.pairs);
+    pairs.retain(|pair| {
+        pair.coalesce
+            .as_ref()
+            .is_none_or(|whole| accepts(&probe(program, whole, &pair.first)))
+    });
     if pairs.is_empty() {
         return None;
     }
@@ -40,6 +72,8 @@ pub(crate) fn swap_joins(program: &str) -> Option<String> {
 struct Pair {
     first: Range<usize>,
     second: Range<usize>,
+    /// The whole `a ?? b`, when the pair is the two sides of a `??`.
+    coalesce: Option<Range<usize>>,
 }
 
 impl Pair {
@@ -68,8 +102,8 @@ impl Pair {
 }
 
 /// The pairs of `pairs` that `render` can swap together, an enclosing pair before the pairs inside
-/// it. A pair that overlaps one before it is left out. The `break` values of a loop overlap
-/// when one sits in an `if` block that swaps.
+/// it. A pair that overlaps one before it is left out. The `break` values of a loop do this when
+/// one of them sits in an `if` block that swaps.
 fn compatible(mut pairs: Vec<Pair>) -> Vec<Pair> {
     pairs.sort_by_key(|p| (p.first.start, std::cmp::Reverse(p.second.end)));
     let mut kept: Vec<Pair> = Vec::new();
@@ -81,14 +115,36 @@ fn compatible(mut pairs: Vec<Pair>) -> Vec<Pair> {
     kept
 }
 
+/// `program` with `whole`, an `a ?? b`, held in a block that assigns the result and then `lhs`, the
+/// text of `a`, to one variable: a program that passes the check only when `a ?? b` has the type
+/// of `a`.
+fn probe(program: &str, whole: &Range<usize>, lhs: &Range<usize>) -> String {
+    format!(
+        "{}{{ let mut join_probe = {}; join_probe = {}; join_probe }}{}",
+        &program[..whole.start],
+        &program[whole.clone()],
+        &program[lhs.clone()],
+        &program[whole.end..]
+    )
+}
+
 /// Finds the pairs of one program.
 struct Finder<'a> {
     source: &'a str,
+    /// The generic functions that the program declares, by name.
+    generics: FxHashMap<Symbol, &'a Function>,
     pairs: Vec<Pair>,
 }
 
 impl<'a> Finder<'a> {
     fn program(&mut self, program: &'a Program) {
+        for item in &program.items {
+            if let Item::Function(f) = item
+                && !f.type_params.is_empty()
+            {
+                self.generics.insert(f.name.name, f);
+            }
+        }
         for item in &program.items {
             match item {
                 Item::Function(f) => self.block(&f.body),
@@ -120,7 +176,55 @@ impl<'a> Finder<'a> {
         self.pairs.push(Pair {
             first: first.range(),
             second: second.range(),
+            coalesce: None,
         });
+    }
+
+    /// The first and last arm of `arms` that a value of the pattern's own shape reaches.
+    fn arms(&mut self, arms: &'a [Arm]) {
+        if arms.iter().any(|a| a.guard.is_some()) {
+            return;
+        }
+        let mut plain = arms.iter().filter(|a| {
+            matches!(
+                a.pattern.kind,
+                PatternKind::Variant { .. } | PatternKind::None | PatternKind::Literal(_)
+            )
+        });
+        if let (Some(first), Some(last)) = (plain.next(), plain.next_back()) {
+            let whole = |arm: &Arm| Span::new(arm.pattern.span.start(), arm.body.span.end());
+            self.add(whole(first), whole(last));
+        }
+    }
+
+    /// The first and last `break` value of the loop with `body`.
+    fn breaks(&mut self, body: &'a Block) {
+        let mut breaks = Breaks { found: Vec::new() };
+        breaks.block(body);
+        // A bare `break` gives `unit`, which no other value joins with.
+        let Some(values) = breaks.found.into_iter().collect::<Option<Vec<&Expr>>>() else {
+            return;
+        };
+        let (Some(first), Some(last)) = (values.first(), values.last()) else {
+            return;
+        };
+        if values.len() < 2 {
+            return;
+        }
+        // A value moves out of the block that binds a name it reads.
+        let mut bound = Bound(FxHashSet::default());
+        bound.block(body);
+        for value in [first, last] {
+            let mut reads = Reads {
+                names: &bound.0,
+                found: false,
+            };
+            reads.expr(value);
+            if reads.found {
+                return;
+            }
+        }
+        self.add(first.span, last.span);
     }
 
     /// The pair that `e` makes, when it is a join with a swap form.
@@ -139,8 +243,191 @@ impl<'a> Finder<'a> {
                     self.add(first.span, last.span);
                 }
             }
+            ExprKind::Match { arms, .. } => self.arms(arms),
+            ExprKind::Loop { body, .. } => self.breaks(body),
+            ExprKind::Call { callee, args, .. } => {
+                if let Some(f) = self.generics.get(&callee.name)
+                    && let Some((i, j)) = one_type_parameter(f, args)
+                {
+                    self.add(args[i].value.span, args[j].value.span);
+                }
+            }
+            ExprKind::Binary {
+                op: op @ (BinaryOp::Add | BinaryOp::Mul | BinaryOp::Eq | BinaryOp::Ne),
+                lhs,
+                rhs,
+                ..
+            } if Self::moves(lhs, rhs, |side| same_level(side, *op)) => {
+                self.add(lhs.span, rhs.span);
+            }
+            ExprKind::Coalesce { lhs, rhs }
+                if Self::moves(lhs, rhs, |side| {
+                    matches!(side.kind, ExprKind::Coalesce { .. }) || not_optional(side)
+                }) =>
+            {
+                self.add(lhs.span, rhs.span);
+                if let Some(last) = self.pairs.last_mut() {
+                    last.coalesce = Some(e.span.range());
+                }
+            }
             _ => {}
         }
+    }
+
+    /// Whether the operands `lhs` and `rhs` of an operator can trade places without a change of
+    /// how the text groups: neither is a jump, which takes all that follows it, and neither is one
+    /// that `not_swapped` names. The right side may not start with a block, which would start a
+    /// statement.
+    fn moves(lhs: &Expr, rhs: &Expr, not_swapped: impl Fn(&Expr) -> bool) -> bool {
+        let block = |e: &Expr| {
+            matches!(
+                e.kind,
+                ExprKind::If { .. }
+                    | ExprKind::IfLet { .. }
+                    | ExprKind::Match { .. }
+                    | ExprKind::Loop { .. }
+                    | ExprKind::Block(_)
+            )
+        };
+        ![lhs, rhs]
+            .into_iter()
+            .any(|e| e.is_jump() || not_swapped(e))
+            && !block(rhs)
+    }
+}
+
+/// How tightly `op` binds: operators of one level group with their neighbour on the left.
+fn level(op: BinaryOp) -> u8 {
+    match op {
+        BinaryOp::Or => 1,
+        BinaryOp::And => 2,
+        BinaryOp::Eq | BinaryOp::Ne => 3,
+        BinaryOp::Add | BinaryOp::Sub => 4,
+        BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => 5,
+    }
+}
+
+/// Whether `side` is an operator of the level of `op`, which would group in another way beside
+/// the other side. A parenthesized one is too.
+fn same_level(side: &Expr, op: BinaryOp) -> bool {
+    matches!(&side.kind, ExprKind::Binary { op: other, .. } if level(*other) == level(op))
+}
+
+/// Whether `e` has a form that is never an optional, or that no type comes from: a `None` takes
+/// the type of its other side, and `??` reads its left side first.
+fn not_optional(e: &Expr) -> bool {
+    matches!(
+        e.kind,
+        ExprKind::NoneLit
+            | ExprKind::Int { .. }
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Char(_)
+            | ExprKind::Str(_)
+            | ExprKind::Interpolate(_)
+            | ExprKind::Unary { .. }
+            | ExprKind::Binary { .. }
+            | ExprKind::Compare { .. }
+            | ExprKind::Is { .. }
+            | ExprKind::ArrayLit(_)
+            | ExprKind::ArrayFill { .. }
+            | ExprKind::Range(_)
+    )
+}
+
+/// The first and last place of `f` that a call with `args` fills with a value of one type
+/// parameter of `f`. Each place has the type `T` or `T?`. None when no type parameter has two
+/// places.
+fn one_type_parameter(f: &Function, args: &[Arg]) -> Option<(usize, usize)> {
+    if f.params.len() != args.len() {
+        return None;
+    }
+    let place = |at: usize| match &f.params[at].ty.kind {
+        TypeKind::Name(name)
+            if !f.params[at].mutable
+                && args[at].mut_keyword.is_none()
+                && f.type_params.iter().any(|t| t.name.name == *name) =>
+        {
+            Some((*name, f.params[at].ty.optional))
+        }
+        _ => None,
+    };
+    (0..args.len()).find_map(|first| {
+        let own = place(first)?;
+        let last = (first + 1..args.len())
+            .rev()
+            .find(|&at| place(at) == Some(own))?;
+        Some((first, last))
+    })
+}
+
+/// The `break` values of one loop, in order, `None` for a bare `break`.
+struct Breaks<'a> {
+    found: Vec<Option<&'a Expr>>,
+}
+
+impl<'a> Visit<'a> for Breaks<'a> {
+    fn expr(&mut self, e: &'a Expr) {
+        match &e.kind {
+            // A nested loop owns the `break`s of its body.
+            ExprKind::Loop { .. } => {}
+            ExprKind::Break {
+                label: None, value, ..
+            } => self.found.push(value.as_deref()),
+            _ => walk_expr(self, e),
+        }
+    }
+
+    fn stmt(&mut self, s: &'a Stmt) {
+        if !matches!(
+            s.kind,
+            StmtKind::While { .. } | StmtKind::WhileLet { .. } | StmtKind::For { .. }
+        ) {
+            walk_stmt(self, s);
+        }
+    }
+}
+
+/// The names that a part of the program binds: a `let`, a `for` and each pattern.
+struct Bound(FxHashSet<Symbol>);
+
+impl<'a> Visit<'a> for Bound {
+    fn binding(&mut self, name: &'a Ident) {
+        self.0.insert(name.name);
+    }
+
+    fn pattern(&mut self, pattern: &'a Pattern) {
+        match &pattern.kind {
+            PatternKind::Name(name) => {
+                self.0.insert(name.name);
+            }
+            PatternKind::Variant { fields, .. } | PatternKind::Or(fields) => {
+                for p in fields {
+                    self.pattern(p);
+                }
+            }
+            PatternKind::Wild
+            | PatternKind::None
+            | PatternKind::Literal(_)
+            | PatternKind::Range { .. } => {}
+        }
+    }
+}
+
+/// Whether an expression reads one of `names`.
+struct Reads<'s> {
+    names: &'s FxHashSet<Symbol>,
+    found: bool,
+}
+
+impl<'a> Visit<'a> for Reads<'_> {
+    fn expr(&mut self, e: &'a Expr) {
+        if let ExprKind::Name(name) = &e.kind
+            && self.names.contains(name)
+        {
+            self.found = true;
+        }
+        walk_expr(self, e);
     }
 }
 
@@ -343,7 +630,7 @@ fn render(program: &str, range: Range<usize>, pairs: &[Pair], next: &mut usize) 
 
 #[cfg(test)]
 mod tests {
-    use super::swap_joins;
+    use super::{swap_joins, swap_with};
 
     /// `swap_joins` of `program`, which holds the statements of a `main` unless it starts with an
     /// item. The text that comes back is that of `program`.
@@ -412,8 +699,8 @@ mod tests {
     #[test]
     fn swap_joins_should_read_a_bracket_in_a_condition() {
         assert_eq!(
-            swapped("if xs[(i)] == 1 { a } else { b }\n"),
-            "if xs[(i)] == 1 { b } else { a }\n"
+            swapped("if xs[(i)] < 1 { a } else { b }\n"),
+            "if xs[(i)] < 1 { b } else { a }\n"
         );
     }
 
@@ -542,6 +829,32 @@ mod tests {
     #[test]
     fn swap_joins_should_swap_the_sides_of_a_coalesce_of_two_optionals() {
         assert_eq!(swapped("let x = a ?? b\n"), "let x = b ?? a\n");
+    }
+
+    #[test]
+    fn swap_with_should_leave_a_coalesce_that_the_probe_refuses_as_written() {
+        let program = "fn main() {\n    let x = a ?? b\n}\n";
+        assert_eq!(swap_with(program, |_| false), None);
+    }
+
+    #[test]
+    fn swap_with_should_give_the_probe_the_coalesce_in_a_block_that_assigns_its_left_side() {
+        let program = "fn main() {\n    let x = a ?? b\n}\n";
+        let mut probes = Vec::new();
+        let swapped = swap_with(program, |probe| {
+            probes.push(probe.to_string());
+            true
+        });
+        assert_eq!(
+            probes,
+            [
+                "fn main() {\n    let x = { let mut join_probe = a ?? b; join_probe = a; join_probe }\n}\n"
+            ]
+        );
+        assert_eq!(
+            swapped.as_deref(),
+            Some("fn main() {\n    let x = b ?? a\n}\n")
+        );
     }
 
     #[test]

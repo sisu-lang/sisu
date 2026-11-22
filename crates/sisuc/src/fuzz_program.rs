@@ -13,6 +13,8 @@
 //! argument. The single-mistake check is that a copy of the program with one injected mistake
 //! gives the errors of that mistake and no other. A copy with two mistakes in two functions gives
 //! the errors of both. A pair `<kind> <code>` in `fuzz/known_cascades.txt` is a known extra error.
+//! The join-order check is that the program, with the members of each join in the other order,
+//! checks clean.
 
 use std::fmt::{self, Write as _};
 use std::fs::{self, File, OpenOptions};
@@ -328,8 +330,9 @@ fn section(out: &mut String, name: &str, text: &[u8]) {
     }
 }
 
-/// The checks for `g`, built in `dir`. The single-mistake check runs after the bound check, before
-/// the builds. A failure comes with the record of the builds that showed it.
+/// The checks for `g`, built in `dir`. The single-mistake check runs after the bound check. The
+/// join-order check runs after it, before the builds. A failure comes with the record of the
+/// builds that showed it.
 fn judge(g: &Generated, runtime: &Path, dir: &Path) -> Result<(), (Failure, String)> {
     let program = checked("program", &g.program).map_err(|f| (f, String::new()))?;
     let rewritten = checked("rewritten", &g.rewritten).map_err(|f| (f, String::new()))?;
@@ -338,6 +341,7 @@ fn judge(g: &Generated, runtime: &Path, dir: &Path) -> Result<(), (Failure, Stri
     let seen = std::env::var_os("SISU_FUZZ_CASCADES");
     judge_mistakes(g, known_cascades(), seen.as_deref().map(Path::new))
         .map_err(|f| (f, String::new()))?;
+    judge_join_order(g).map_err(|f| (f, String::new()))?;
     // The checks passed, so a later panic has no broken copy to leave.
     note_broken(None);
     let stdin = dir.join("stdin.txt");
@@ -625,11 +629,17 @@ fn append_lines(seen: &Path, lines: &[String]) {
 }
 
 /// The join-order check for `g`: its program, which checks clean, has no error with the members
-/// of each join swapped (`generate::swap_joins`). The swap changes what the program does, so the
-/// check only checks it.
-#[cfg_attr(not(test), expect(dead_code, reason = "stage 1 calls it from judge"))]
+/// of each join swapped (`generate::swap_with`). The swap changes what the program does, so the
+/// check only checks it. `??` reads its left side first, and the left side must be optional. So a
+/// `??` swaps only when its program held in the probe of `swap_with` checks clean: its two sides
+/// are optionals of one type, and the swap keeps that. Any error of the swap stays and fails the
+/// check.
 fn judge_join_order(g: &Generated) -> Result<(), Failure> {
-    let Some(swapped) = generate::swap_joins(&g.program) else {
+    let probe_checks = |probe: &str| {
+        let (_, diagnostics) = front_end::front_end(probe);
+        (diagnostics.iter()).all(|d| d.severity() != Severity::Error)
+    };
+    let Some(swapped) = generate::swap_with(&g.program, probe_checks) else {
         return Ok(());
     };
     let (_, diagnostics) = front_end::front_end(&swapped);
@@ -2187,10 +2197,41 @@ mod tests {
         assert!(judge_join_order(&g).is_ok());
     }
 
+    /// `generate::swap_with` of `program`, with the probe that `judge_join_order` checks.
+    fn swapped_with_probe(program: &str) -> Option<String> {
+        crate::generate::swap_with(program, |probe| {
+            let (_, diagnostics) = crate::on_compiler_stack(|| crate::front_end::front_end(probe));
+            (diagnostics.iter()).all(|d| d.severity() != Severity::Error)
+        })
+    }
+
+    /// GIVEN a `??` of a `bool??` and a `bool?`, which `??` takes and the swap does not
+    /// WHEN the swap reads it
+    /// THEN it leaves the `??` as written, and the join-order check passes
+    #[test]
+    fn judge_join_order_should_leave_a_coalesce_of_optionals_of_two_depths_as_written() {
+        let program = "fn main() {\n    let a: bool?? = Some(None)\n    let b: bool? = Some(true)\n    let x = a ?? b\n    print(x ?? false)\n}\n";
+        assert_eq!(swapped_with_probe(program), None);
+        let g = with_mistakes(program, Vec::new());
+        assert!(crate::on_compiler_stack(|| judge_join_order(&g)).is_ok());
+    }
+
+    /// GIVEN a `??` of two `u8?`
+    /// WHEN the swap reads it
+    /// THEN it swaps the sides, and the join-order check passes
+    #[test]
+    fn judge_join_order_should_swap_a_coalesce_of_two_optionals_of_one_type() {
+        let program = "fn main() {\n    let a: u8? = Some(1)\n    let b: u8? = None\n    print((a ?? b) ?? 0)\n}\n";
+        let swapped = swapped_with_probe(program).expect("the sides should swap");
+        assert!(swapped.contains("(b ?? a) ?? 0"), "{swapped}");
+        let g = with_mistakes(program, Vec::new());
+        assert!(crate::on_compiler_stack(|| judge_join_order(&g)).is_ok());
+    }
+
     /// The join-order check over the fuzz seeds `0..FUZZ_SEEDS`. It prints the first error of
     /// each seed that fails, and how many seeds have a join.
     #[test]
-    #[ignore = "runs only on demand, over the seeds 0..FUZZ_SEEDS of the fuzz run"]
+    #[ignore = "the fuzz judge runs the check on every program, and this sweep takes about 25 s"]
     fn join_order_check_should_hold_for_the_fuzz_seeds() {
         let (mut joined, mut failures) = (0, Vec::new());
         for n in 0..FUZZ_SEEDS {
@@ -3234,12 +3275,12 @@ mod tests {
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(0), "{}", g.program);
         // One line from each pass of the innermost loop: every loop ran to its bound. The
-        // fifty-six more lines are these. Two come from `lang_both`. Two print an `any` value.
-        // Eight print what `put` wrote through `any`. Forty come from `gap_forms`. Three come from
-        // `nest`. One prints its result.
+        // sixty-seven more lines are these. Two come from `lang_both`. Two print an `any` value.
+        // Eight print what `put` wrote through `any`. Fifty-one come from `gap_forms`. Three come
+        // from `nest`. One prints its result.
         assert_eq!(
             String::from_utf8_lossy(&stdout).lines().count(),
-            8 * 8 * 8 + 56
+            8 * 8 * 8 + 67
         );
     }
 
@@ -3304,11 +3345,11 @@ mod tests {
             stderr.find("==> stdin\n"),
             // Output without a final line break gets one. The empty input's program prints these
             // lines. Two come from `lang_both`. Two come from the `any` values. Eight come from
-            // `put` through `any`. Forty come from `gap_forms`. Three come from `nest`. One prints
-            // its result.
+            // `put` through `any`. Fifty-one come from `gap_forms`. Three come from `nest`. One
+            // prints its result.
             stderr.find("==> program -O2 stdout\nforced\n==> program -O2 stderr\n"),
             stderr.find(
-                "==> program --rc-checks stdout\nRanked\n[1, 2]\nEye\n[\"s\", 'c', 5, Wide(1)]\n@d0 9\n@d1 4\n@d2 12\n@d3 13\n@d4 15\n@d5 15\n@d6 17\n@d7 17\n4\n5\n6\n1\n1\n2\n6\n4\nb\n[11, 22]\nabc\n1\n[5, 14]\n1\n7\n7\n1\n1\ntrue\n1\n1\n1\n1\n[1]\ntrue\ntrue\n4\n7\n13\n16\n19\n21\n22\n2\nfalse\nfalse\n2\ntrue\n2\nt\nA(A(End))\ntrue\nfalse\n2\n==> program --rc-checks stderr\n",
+                "==> program --rc-checks stdout\nRanked\n[1, 2]\nEye\n[\"s\", 'c', 5, Wide(1)]\n@d0 9\n@d1 4\n@d2 12\n@d3 13\n@d4 15\n@d5 15\n@d6 17\n@d7 17\n4\n5\n6\n1\n1\n2\n6\n4\nb\n[11, 22]\nabc\n1\n[5, 14]\n1\n7\n7\n1\n1\ntrue\n1\n1\n1\n1\n[1]\ntrue\ntrue\n4\n7\n13\n16\n19\n4\n7\n11\n16\n1\n7\n1\n1\n7\n2\n2\n21\n22\n2\nfalse\nfalse\n2\ntrue\n2\nt\nA(A(End))\ntrue\nfalse\n2\n==> program --rc-checks stderr\n",
             ),
             stderr.find("program fuzzer: the exit check failed"),
         ];
