@@ -2864,3 +2864,86 @@ fn failed_operand_should_report_only_its_own_error() {
     }
     body_rows(&rows);
 }
+
+/// The (line, column) of the first `needle` in `body`, both from 1.
+fn in_body(body: &str, needle: &str) -> (usize, usize) {
+    let at = body.find(needle).expect("the body should hold the needle");
+    let line = body[..at].matches('\n').count();
+    (
+        line + 1,
+        at - body[..at].rfind('\n').map_or(0, |i| i + 1) + 1,
+    )
+}
+
+/// GIVEN a join with no required type, where a member states a type and another is a `Some` that
+/// failed
+/// WHEN its value meets `??`
+/// THEN only the mistake in the `Some` is reported: the join is optional, so no E0048
+///
+/// The rows after the first nine hold what the fix must keep. A typed join still reports a later
+/// misuse. A join of literals, a `loop` and a call were quiet already. A `Some` that holds
+/// makes a join that holds.
+#[test]
+fn failed_some_in_a_join_should_make_the_join_optional() {
+    let missing = |body: &str| [(Code::BindingNotFound, in_body(body, "missing"))];
+    let only_missing = [
+        "let a = if c { \"s\" } else { Some(missing) }\nprint(a ?? \"u\")",
+        "let a = if c { \"s\" } else if c { Some(missing) } else { \"t\" }\nprint(a ?? \"u\")",
+        "let a = match 1 { 0 => \"s\"; _ => Some(missing) }\nprint(a ?? \"u\")",
+        "let a = [\"s\", Some(missing)]\nprint(a[0] ?? \"u\")",
+        "print((if c { \"s\" } else { Some(missing) }) ?? \"u\")",
+        "let a = if c { 1.5 } else { Some(missing) }\nprint(a ?? 2.0)",
+        "let a = if c { \"s\" } else { Some(Some(missing)) }\nprint(a ?? \"u\")",
+        "let a = if c { e } else { Some(missing) }\nprint((a ?? e).seen())",
+        // The guards: quiet before the fix.
+        "let a = if c { 1 } else { Some(missing) }\nprint(a ?? 0)",
+        "let a = loop { if c { break \"s\" }; break Some(missing) }\nprint(a ?? \"u\")",
+        "let a = pick(\"s\", Some(missing))\nprint(a ?? \"u\")",
+    ];
+    let mut rows: Vec<(&str, Vec<Wanted>)> = (only_missing.iter())
+        .map(|body| (*body, missing(body).to_vec()))
+        .collect();
+    let misuse = "let a = if c { \"s\" } else { missing }\nprint(a + 1)";
+    rows.push((
+        misuse,
+        vec![
+            (Code::BindingNotFound, in_body(misuse, "missing")),
+            (Code::Mismatch, in_body(misuse, "1)")),
+        ],
+    ));
+    rows.push((
+        "let a = if c { \"s\" } else { Some(\"t\") }\nprint(a ?? \"u\")",
+        vec![],
+    ));
+    let rows: Vec<ErrorRow<'_>> = (rows.iter())
+        .map(|(body, wanted)| {
+            let wanted = (wanted.iter())
+                .map(|&(code, at)| (code, in_program(at)))
+                .collect();
+            (*body, program(body), wanted)
+        })
+        .collect();
+    error_rows(&rows);
+}
+
+/// GIVEN the fuzz form: an array of two values of one interface and a `Some` of a struct that is
+/// defined twice
+/// WHEN its element meets `??`
+/// THEN only the E0034 of the second definition is reported
+#[test]
+fn failed_some_of_a_struct_defined_twice_should_make_the_array_optional() {
+    let body = "let a = [e, Eye(v: 17), Some(Lid(v: 18))]\nprint((a[2] ?? e).seen())";
+    let src = program(body).replacen(
+        "fn main()",
+        "struct Lid: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\nfn main()",
+        1,
+    );
+    // The second definition is the one that E0034 names.
+    let line = src[..src
+        .rfind("struct Lid")
+        .expect("the program should define `Lid`")]
+        .matches('\n')
+        .count()
+        + 1;
+    error_rows(&[("array of Lid", src, vec![(Code::DefinedTwice, (line, 8))])]);
+}
