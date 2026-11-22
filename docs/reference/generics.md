@@ -157,7 +157,7 @@ fn main() {
 - From the expected type: a `let` with a type, a parameter or a return type.
 - From the call, when you write it: `first<string>([])` or `Stack<i64>(items: [])`. A method call can write them too.
 - A later use of the result gives no type.
-- In an array literal, a generic call takes its type from the other elements. In an `if` or a `match`, it takes it from the other branches. With an `x: u8`, `[x, id(None)]` is a `[u8?]`.
+- From the other members of a [join](expressions.md#joins). In an array literal, a generic call takes its type from the other elements. In an `if` or a `match`, it takes it from the other branches. The same holds for the other `break` values of a loop and the other side of `??`. It holds for the other side of an operator and the other arguments of the type parameter. The order of the members does not matter. With an `x: u8`, `[x, id(None)]` and `[id(None), x]` are each a `[u8?]`.
 - A `None` or a `[]` alone has no type. When nothing else fixes a type parameter, the call is an error. Annotate the result, or write the type arguments. [E0050](../diagnostics/E0050.md)
 
 **Calls inside calls**
@@ -166,28 +166,59 @@ fn main() {
 - An inner call also takes the parts of the parameter type that are already known. For `unwrap<T>(r: Result<T, string>)`, `unwrap(Ok(1))` gets `string` for `E` from the parameter.
 - An inner call waits when only a later argument can fix one of its type parameters. Take `fn mk2<X>() -> Two<X, bool>`, `fn mk<E>() -> Result<i64, E>` and `g<T>(c: Two<T, bool>, d: Result<T, string>)`. In `g(mk2(), mk())`, `mk()` fixes `T` as `i64`, and then `mk2()` gives `Two<i64, bool>`.
 - A call that waits is checked when its last open type parameter is fixed. If one stays open, it is checked after the other arguments.
-- A call of a function, a construction, `Ok`, `Err` and a variant can wait. A method call does not wait.
-- A call under `Some(...)`, an array literal or another call does not wait. There, the arguments are checked in order.
+- A call of a function, a construction, `Ok`, `Err`, a variant and a method with type parameters of its own can wait.
+- A call under `Some(...)`, an array literal or another call can wait too. With `fn g2<T>(c: [Two<T, bool>], d: Result<T, string>)`, `g2([mk2()], mk())` gives `Two<i64, bool>` to `mk2()`.
 
 **Integer literals**
 
 - An integer literal argument takes the type that the expected type gives. This is also true under `dbg`, a block, an `if`, a `match` or another generic call: `let d: u8 = id({ 250 })` is valid.
-- A concrete argument fixes a type parameter before a literal does. In `pick(1, x)` with an `x: u8`, `T` is `u8`.
-- A `loop` argument takes the type that an expected type gives, when that type is not optional and not `any`: `let r: Result<u8, i64> = Ok(loop { break 1 })` is valid. An earlier argument, a `mut` place, the receiver or a written type argument can also give it. With a `v: u8`, `pick(v, loop { break 1 })` is valid, and `pick(loop { break 1 }, v)` is an error. With none of these, the first `break` value gives the type: `id(loop { break 1 })` is an `i64`, and `let x: u8? = id(loop { break 1 })` is an error. Under a generic call, the left side of `??`, the other side of `==`, another branch and an earlier `break` value give the `loop` no type: with an `o: u8?`, `o ?? id(loop { break 1 })` is an error.
+- A concrete argument gives the literals of the same type parameter their type, whatever the order. In `pick(1, x)` and `pick(x, 1)` with an `x: u8`, `T` is `u8`.
+- A `loop` argument is a member of the join of its type parameter, and its `break` values are a join too ([Joins](expressions.md#joins)). With a `v: u8`, `pick(v, loop { break 1 })` and `pick(loop { break 1 }, v)` are each valid, and `T` is `u8`. With no other member, the `break` values give the type: `id(loop { break 1 })` is an `i64`. An expected type gives the type of the loop too: `let r: Result<u8, i64> = Ok(loop { break 1 })` and `let x: u8? = id(loop { break 1 })` are valid. With an `o: u8?`, so is `o ?? id(loop { break 1 })`.
 
 **Optionals**
 
 The examples use `fn pick<T>(a: T, b: T) -> T`, `fn h<T>(a: T, b: T?) -> T` and `fn opt<T>(x: T) -> T?`.
 
-- An argument that makes an optional fixes `T` before a plain literal. `pick(1, Some(2))` is an `i64?`.
-- An argument that holds an optional also comes first. `pick([1], [Some(2)])` is a `[i64?]`.
+- The arguments at the places of one type parameter are a [join](expressions.md#joins). A call decides each type parameter from its own arguments first. Its result then converts to the type that the context asks for at its top only, and wraps at most once ([ADR 0052](../adr/0052-a-join-takes-the-type-of-one-of-its-members.md)).
+- When the result does not convert, the call can take the part of the context type at the place of `T` in its return type. This applies to a call that is a member of a join, or a value under an expected type. Each argument at a place of `T` must then convert to that part. A new value, such as a literal or an array literal, converts inside. A local converts at its top only. Else the call is an error. [E0032](../diagnostics/E0032.md)
+
+```sisu
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn main() {
+    let c = [1].len() == 1
+    let m: i64? = Some(5)
+    // The call takes `[i64?]` from the other branch.
+    let a = if c { [m] } else { id([1]) }
+    print(a.len())                           // 1
+}
+```
+
+```sisu
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn main() {
+    let c = [1].len() == 1
+    let m: i64? = Some(5)
+    let xs: [i64] = [1]
+    let a = if c { [m] } else { id(xs) }     // error[E0032]
+    let b: i64?? = id(1)                     // error[E0032]
+}
+```
+
+- An argument that makes an optional gives that optional to `T`, and a plain literal wraps. `pick(1, Some(2))` is an `i64?`.
+- An argument that holds an optional does the same. `pick([1], [Some(2)])` is a `[i64?]`.
 - So does a call that wraps an optional. For `fn wrap<T>(x: T) -> [T]`, `pick([1], wrap(Some(2)))` is a `[i64?]`. A call wraps an optional when its parameter and its return type name one type parameter.
 - An optional at a `T?` place fills that `?`, so the call does not hold an optional. `pick(h(1, Some(2)), Some(3))` is an `i64?`. The call is an `i64`, so `let v: i64?? = h(1, Some(2))` is an error: expected `i64??`, found `i64`. `let v: i64?? = Some(h(1, Some(2)))` is valid.
 - A call that waits can also make the outer call hold an optional: the arguments of `T` join. For `fn okv<T>(r: Result<T, string>) -> T`, `pick(1, okv(Ok(Some(2))))` is an `i64?`.
-- A call that returns `T` can bind `T` to the whole optional context. It does so when an argument at a `T` or `[T]` place makes or holds an optional. For `first<T>(xs: [T]) -> T`, `let v: i64?? = first([None, Some(1)])` binds `T` to `i64??`, so `v` is the outer `None`.
-- A call that returns `T?` does the same when the context has no more optionals than the call makes. `let w: i64?? = opt(Some(2))` binds `T` to `i64?`.
-- When the context has more optionals, its payload meets `T?`. `let w: i64??? = opt(Some(2))` also binds `T` to `i64?`.
-- `Some(Some(2))` at a `T?` place fills the `?` and leaves one optional, so `T` is an optional. `let v: i64? = h(1, Some(Some(2)))` is valid, and a context `i64??` also binds `T` to `i64?`.
+- The arguments of `T` decide `T` before the context does. For `fn first<T>(xs: [T]) -> T`, `let v: i64?? = first([None, Some(1)])` has `T` as `i64?`, and the result wraps once, so `v` is `Some(None)`.
+- A call that returns `T?` gives the result one more `?` than `T` has. `let w: i64?? = opt(Some(2))` has `T` as `i64?`.
+- When the context has more optionals, the result wraps once. `let w: i64??? = opt(Some(2))` also has `T` as `i64?`.
+- `Some(Some(2))` at a `T?` place fills the `?` and leaves one optional, so `T` is an optional. `let v: i64? = h(1, Some(Some(2)))` is valid, and a context `i64??` wraps the result once.
 - The arguments of `T` join, so their order does not change the result. `pick(Some(Some(1)), Some(2))` and `pick(Some(2), Some(Some(1)))` are each an `i64??`.
 - A `None` at a `T?` place shows no optional. `let w: i64?? = h(1, None)` is an error: expected `i64??`, found `i64`.
 - A call that returns `T?` joins its arguments too. For `fn opt2<T>(x: T, _y: T) -> T?`, `let w: i64??? = opt2(Some(2), Some(Some(3)))` is valid: `T` is `i64??`.
