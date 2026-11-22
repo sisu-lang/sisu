@@ -150,11 +150,19 @@ fn probe_block(program: &str, whole: &Range<usize>, sides: &Pair) -> String {
 /// that starts in a block refuses that probe alone.
 ///
 /// The result of a failed block is silent in the probes that read it. So the check goes on with
-/// the blocks that are left, until a check has no error. The worst input is a chain of C probes,
-/// each of which reads the result of the one before it. The checks are then C, each of a text of N
-/// bytes, and the time is C times N. An error outside every block cannot be told to a probe. Then
-/// each probe of that depth is checked alone, with the same worst time. The generated programs
-/// give few rounds and no such error.
+/// the blocks that are left, until a check has no error. An error outside every block cannot be
+/// told to a probe. Then each probe of that depth is checked alone.
+///
+/// This is the fifth recorded exception to "A pass is linear in the program" (user, 2026-11-22).
+/// The pass runs at most 2C + D checks of a text of O(N) bytes. C is the number of `??` that can
+/// swap, and D is how deep they nest. So the time is O((2C + D) * N). The generated programs
+/// give few rounds and no error outside a block. The worst inputs are:
+/// - a chain of `??` nested on the left, d deep, as in `id(id(a ?? b) ?? b) ?? b`. Each depth
+///   holds one `??`, and a refused one costs two checks, the second after its block is gone;
+/// - a depth of C probes with an error outside every block. That costs one check of them all and
+///   one for each probe.
+///
+/// `swap_with_should_check_the_probes_within_the_recorded_bound` counts the checks of both.
 fn coalesce_errors(
     program: &str,
     pairs: &[Pair],
@@ -1060,6 +1068,63 @@ mod tests {
             swapped.as_deref(),
             Some("fn main() {\n    let x = b ?? a\n    let y = d ?? c\n}\n")
         );
+    }
+
+    /// `fn main` with `let x = id(id(a ?? b) ?? b) ?? b`, the `??` nested `depth` deep on the left.
+    fn chain(depth: usize) -> String {
+        let mut e = "a ?? b".to_string();
+        for _ in 1..depth {
+            e = format!("id({e}) ?? b");
+        }
+        format!("fn main() {{\n    let x = {e}\n}}\n")
+    }
+
+    /// `fn main` with `count` lets, each of an `a ?? b`.
+    fn level(count: usize) -> String {
+        let lets = "    let x = a ?? b\n".repeat(count);
+        format!("fn main() {{\n{lets}}}\n")
+    }
+
+    /// How many times `swap_with` of `program` calls `errors`, which `refuse` answers.
+    fn checks(program: &str, refuse: impl Fn(&str) -> Vec<usize>) -> usize {
+        let mut calls = 0;
+        swap_with(program, |probe| {
+            calls += 1;
+            refuse(probe)
+        });
+        calls
+    }
+
+    /// The error that refuses the first block of a probe, and none when it has no block.
+    fn first_block(probe: &str) -> Vec<usize> {
+        probe.find("({ let join_right").into_iter().collect()
+    }
+
+    #[test]
+    fn swap_with_should_check_the_probes_within_the_recorded_bound() {
+        for depth in [1, 2, 4, 8] {
+            let program = chain(depth);
+            // Each `??` is a depth of its own: C = D = depth.
+            let bound = 2 * depth + depth;
+            assert_eq!(
+                checks(&program, |_| Vec::new()),
+                depth,
+                "accepted, depth {depth}"
+            );
+            let refused = checks(&program, first_block);
+            assert_eq!(refused, 2 * depth, "refused, depth {depth}");
+            assert!(refused <= bound, "depth {depth}");
+        }
+        // C `??` at one depth: D = 1.
+        let program = level(5);
+        let bound = 2 * 5 + 1;
+        assert_eq!(checks(&program, |_| Vec::new()), 1);
+        // One block is refused in a round, so the C blocks take C + 1 checks.
+        assert_eq!(checks(&program, first_block), 6);
+        // An error in no block: all the probes at once, then each alone.
+        let outside = checks(&program, |_| vec![0]);
+        assert_eq!(outside, 6);
+        assert!(outside <= bound);
     }
 
     #[test]
