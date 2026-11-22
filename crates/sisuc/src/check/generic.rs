@@ -4195,8 +4195,8 @@ impl Checker<'_> {
             } if self.parks_receiver(receiver, method.name, *safe) => Some(Expectation::None),
             // A method call with no argument is a member closed, as a local is, unless it waits
             // for its context to pick a method.
-            K::MethodCall { args, types, .. }
-                if args.is_empty() && types.is_empty() && self.sibling_rank(e) != Rank::Waits =>
+            K::MethodCall { args, .. }
+                if args.is_empty() && self.sibling_rank(e) != Rank::Waits =>
             {
                 Some(Expectation::None)
             }
