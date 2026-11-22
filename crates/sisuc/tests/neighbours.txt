@@ -309,6 +309,7 @@ fn olg() -> Lg? { None }
 // A generic method with an argument on a struct, plain and after `?.`.
 struct Sw {
     fn wrap<T>(self, v: T) -> T { v }
+    fn nothing<T>(self) -> T? { None }
 }
 fn osw() -> Sw? { Sw() }
 // A method with no argument that waits for its own parameter, and whose receiver gives the
@@ -401,6 +402,9 @@ if c { 1 } else { if let Some(v) = Some(1) { v } }
 nothing()
 ob?.none()
 Bx().none()
+# A method call with written type arguments is a value of the type that they name, as the call of
+# a function with written type arguments is.
+Sw().nothing<i64>()
 # Optionals with more layers than their context, and calls whose result type waits for it.
 nn()
 n3()
