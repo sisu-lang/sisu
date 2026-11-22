@@ -31,7 +31,10 @@ impl Checker<'_> {
         if checked.is_err() {
             self.body.failed_some_spans.insert(span);
         }
-        checked
+        checked.map_err(|failed| Poisoned {
+            failed_some: true,
+            ..failed
+        })
     }
 
     /// `some`, before it records a `Some` that gave an error.

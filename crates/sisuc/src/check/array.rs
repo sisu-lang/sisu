@@ -90,6 +90,7 @@ impl Checker<'_> {
                     ty: Type::array(found.ty),
                     ..found
                 }),
+                failed_some: false,
                 ..poisoned
             }),
         }

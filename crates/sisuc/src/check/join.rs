@@ -14,7 +14,7 @@ mod join_report;
 use super::any::Conversion;
 use super::infer::Table;
 use super::reports::{Held, Reported};
-use super::{Checked, Checker, Expectation, Poisoned, WaitKey};
+use super::{Checked, Checker, Expectation, Poisoned, WaitKey, as_optional, is_failed_some};
 use crate::conformance::ensure_stack;
 use crate::source::Span;
 use crate::symbol::Symbol;
@@ -270,6 +270,8 @@ impl Checker<'_> {
             Err(poisoned) if poisoned.ty.is_none() => Some(poisoned.reported()),
             _ => None,
         });
+        // A left-out `Some` that failed makes a join with no required type optional.
+        let left_some = members.iter().any(|member| is_failed_some(&*member.value));
         let joined = match self.join_members(members, hole, fixed, required.map(|(ty, _)| ty)) {
             Ok(Joined::Typed(ty)) => {
                 for (i, member) in members.iter_mut().enumerate() {
@@ -287,6 +289,9 @@ impl Checker<'_> {
                 });
                 let ty = self.table.resolve(ty);
                 match left_out {
+                    Some(reported) if left_some && required.is_none() => {
+                        Err(Poisoned::typed(as_optional(ty), reported))
+                    }
                     Some(reported) => Err(Poisoned::typed(ty, reported)),
                     None => Ok(ty),
                 }
@@ -294,7 +299,10 @@ impl Checker<'_> {
             Ok(Joined::Never) => Ok(Type::NEVER),
             Ok(Joined::Untyped) => {
                 let reported = left_out.expect("an untyped join should have an untyped member");
-                Err(Poisoned::untyped(reported))
+                Err(Poisoned {
+                    failed_some: left_some,
+                    ..Poisoned::untyped(reported)
+                })
             }
             Err(conflict) => {
                 // A call that waits with a held conflict reports it, and the join reports nothing

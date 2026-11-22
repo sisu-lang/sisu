@@ -7,8 +7,8 @@ use super::join::{Heading, JoinForm, JoinMember, Place};
 use super::pattern::LetPattern;
 use super::reports::Reported;
 use super::{
-    Checked, CheckedBlock, Checker, Expectation, Misfit, Origin, Poisoned, block_type, is_jumped,
-    is_kept, value_span,
+    Checked, CheckedBlock, Checker, Expectation, Misfit, Origin, Poisoned, as_optional, block_type,
+    is_failed_some, is_jumped, is_kept, value_span,
 };
 use crate::ast;
 use crate::diagnostic::Unwrap;
@@ -313,8 +313,12 @@ impl Checker<'_> {
             } else {
                 // A failed branch makes the nested join poison, typed as its members join, else
                 // untyped by that branch (`None`).
+                let some = values.iter().any(is_failed_some);
                 let mut members = whole_members(values, spans);
-                self.join_type(&mut members, None, None).ok_or(None)
+                let ty = self.join_type(&mut members, None, None);
+                // A `Some` that failed makes the join optional, as `join_form` does.
+                ty.map(|ty| if some { as_optional(ty) } else { ty })
+                    .ok_or(None)
             }
         } else {
             // A branch whose generic call found a type that cannot meet its context joins by that
@@ -346,7 +350,12 @@ impl Checker<'_> {
             self.body.dropped_join = outer;
             ty.map_err(Some)
         };
-        let ty = ty.map_err(|p| p.unwrap_or_else(|| Poisoned::untyped(failed_branch(values))));
+        let ty = ty.map_err(|p| {
+            p.unwrap_or_else(|| Poisoned {
+                failed_some: values.iter().any(is_failed_some),
+                ..Poisoned::untyped(failed_branch(values))
+            })
+        });
         let ty = self.misfit_join(values, ty);
         let ty = match ty {
             // A failed branch has reported: the close is silent, as in a failed context.

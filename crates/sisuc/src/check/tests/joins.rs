@@ -2875,14 +2875,14 @@ fn in_body(body: &str, needle: &str) -> (usize, usize) {
     )
 }
 
-/// GIVEN a join with no required type, where a member states a type and another is a `Some` that
-/// failed
+/// GIVEN a join with no required type
+/// AND a member that states a type, and a member that is a `Some` that failed
 /// WHEN its value meets `??`
 /// THEN only the mistake in the `Some` is reported: the join is optional, so no E0048
 ///
-/// The rows after the first nine hold what the fix must keep. A typed join still reports a later
-/// misuse. A join of literals, a `loop` and a call were quiet already. A `Some` that holds
-/// makes a join that holds.
+/// The last rows hold what the fix must keep. A typed join still reports a later misuse. A join
+/// of literals, a `loop` and a call were quiet already. A `Some` that holds makes a join that
+/// holds.
 #[test]
 fn failed_some_in_a_join_should_make_the_join_optional() {
     let missing = |body: &str| [(Code::BindingNotFound, in_body(body, "missing"))];

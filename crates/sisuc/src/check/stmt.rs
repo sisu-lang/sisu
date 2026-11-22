@@ -156,6 +156,7 @@ impl Checker<'_> {
                     mismatch: value.mismatch && none,
                     found: value.found.filter(|_| none),
                     kept: value.kept && none,
+                    failed_some: value.failed_some && none,
                     // The block is `never` exactly when `ty` is, and then `jumped` says why.
                     jumped,
                     // A `never` before the tail leaves its `if` unused.

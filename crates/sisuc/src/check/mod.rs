@@ -103,6 +103,10 @@ use unused_names::{Owner, Pending, Use, Used};
 /// A poisoned value is typed only when the source states its type apart from the failed part
 /// (the form table of ADR 0049). Each reader reads a typed poisoned value as any value of that
 /// type.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each mark is its own fact about a failed value, and a reader reads one"
+)]
 struct Poisoned {
     ty: Option<Type>,
     /// Whether the expected type passed down was rejected. It is rejected by a `None` that is not
@@ -133,6 +137,14 @@ struct Poisoned {
     /// and whether it is an `if let`. Such an `if` has no value, so a use of it is E0043 (see
     /// `missing_value`).
     valueless: Option<(Span, bool)>,
+    /// The value is an untyped `Some` that failed, so it is optional whatever its payload. A join
+    /// with no required type that leaves such a member out is optional too. It is poison of `ty?`,
+    /// where `ty` is the type of the members that state one. So a later `??` does not report that
+    /// the join is not optional. A block tail, a branch and an untyped join that leaves such a
+    /// member out pass the mark on. An array does not, as `[Some(..)]` is not optional.
+    /// `Body::failed_some_spans` is the record that W0015 reads. It cannot reach a member of a
+    /// join.
+    failed_some: bool,
     /// The proof of the report, or of the promise, that made the value poisoned.
     reported: Reported,
 }
@@ -168,6 +180,7 @@ impl Poisoned {
             kept: false,
             jumped: false,
             valueless: None,
+            failed_some: false,
             reported,
         }
     }
@@ -189,6 +202,18 @@ impl Poisoned {
 /// Whether a generic call in `checked` kept its E0050 (see `Poisoned::kept`).
 fn is_kept<T>(checked: &Result<T, Poisoned>) -> bool {
     matches!(checked, Err(Poisoned { kept: true, .. }))
+}
+
+/// Whether `checked` is an untyped `Some` that failed (see `Poisoned::failed_some`).
+fn is_failed_some<T>(checked: &Result<T, Poisoned>) -> bool {
+    matches!(
+        checked,
+        Err(Poisoned {
+            ty: None,
+            failed_some: true,
+            ..
+        })
+    )
 }
 
 /// Whether a failed `break` or `continue` makes `checked` `never` (see `Poisoned::jumped`).
