@@ -8702,7 +8702,8 @@ fn receiver_optional_program(stmt: &str) -> String {
 /// (`b: Bx<i64?>` for `Pr<T, X>`, or a bound `M: Mk<i64?>` for `Pr<A, X>`)
 /// WHEN the call has an optional context: a written type or a hint of `??`
 /// THEN the call binds the whole optional, and the program has no error
-/// AND a context of another payload type, or with one optional more, keeps its error
+/// AND a context of another payload type keeps its error
+/// AND a context with one optional more takes the call's value, which converts to it
 /// AND a call whose type does not hold the receiver's optional binds the payload
 #[test]
 fn waiting_method_should_bind_the_whole_optional_when_its_receiver_gives_one() {
@@ -8755,11 +8756,12 @@ fn waiting_method_should_bind_the_whole_optional_when_its_receiver_gives_one() {
             receiver_optional_program("let x: i64? = fst(p.mkb())"),
             vec![],
         ),
-        // One more optional in the context than in the call's type.
+        // One more optional in the context than in the call's type: the call's value `i64?`
+        // converts to `i64??`, as the value of `fst(mkp(b))` does with a function `mkp`.
         (
             "g3",
             receiver_optional_program("let x: i64?? = fst(b.mkp())"),
-            vec![(Code::Mismatch, (RECEIVER_OPTIONAL_LINE, 24))],
+            vec![],
         ),
     ];
     error_rows(&rows);

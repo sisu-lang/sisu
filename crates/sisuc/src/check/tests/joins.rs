@@ -198,7 +198,12 @@ struct Boxed<T> {\n\
 enum Tree<T> {\n\
     Leaf\n\
     Node(v: T)\n\
-}\n";
+}\n\
+struct Sw {\n\
+    fn wrap<T>(self, v: T) -> T { v }\n\
+    fn nothing<T>(self) -> T? { None }\n\
+}\n\
+fn osw() -> Sw? { Some(Sw()) }\n";
 
 /// The locals that a row's body can read, first in `main`.
 const LOCALS: &str = "\
@@ -2627,7 +2632,7 @@ const MEMBER_CALLS: &str = "fn id<T>(x: T) -> T { x }\nfn first<T>(xs: [T]) -> T
 /// AND the call is a side of `==`, `!=` or `??`, an element or a branch beside `o: u8?`
 /// WHEN each is checked
 /// THEN the other side gives the open parameter its type at each depth, as on `main`
-/// AND the call with no context still reports E0050 at `make`
+/// AND the call with no context still reports E0050, at `id` as with a function `make`
 #[test]
 fn a_call_inside_a_member_call_should_take_its_type_from_the_join() {
     for value in [
@@ -2667,7 +2672,8 @@ fn a_call_inside_a_member_call_should_take_its_type_from_the_join() {
     let src = format!(
         "{MEMBER_CALLS}    let x = id(first(b.make(true)))\n    print(x)\n    print(w.b.v)\n}}"
     );
-    codes(&src, &[(Code::CannotInfer, (19, 24))]);
+    // As with the function `make`, the open parameter is reported at the outer call.
+    codes(&src, &[(Code::CannotInfer, (19, 13))]);
 }
 
 /// The header of `a_method_that_two_interfaces_answer_should_take_its_type_from_the_other_side`.
@@ -2765,4 +2771,81 @@ fn open_waits_should_read_each_waiting_call_once() {
         };
         assert_near_linear_for(&format!("{row}: "), read(50), read(100), read(150));
     }
+}
+
+#[test]
+fn equal_should_take_a_unit_beside_an_open_side() {
+    // GIVEN `==` and `!=` with a `unit` on one side and an open optional on the other
+    // WHEN each is checked
+    // THEN each checks clean, as `main` does: the open side takes `unit?`, which a `unit`
+    // converts to (#724)
+    type_rows(&[
+        ("let x = first([]) == u()", "bool"),
+        ("let x = none() == u()", "bool"),
+        ("let x = u() != none()", "bool"),
+        ("let x = id(none()) == u()", "bool"),
+        ("let x = id({ Sw().nothing() }) == u()", "bool"),
+        ("let x = pick(none(), none()) == u()", "bool"),
+    ]);
+}
+
+#[test]
+fn generic_method_argument_should_take_its_type_from_the_other_arguments() {
+    // GIVEN a generic method call that waits for its type, as an argument of a generic call
+    // under a required type
+    // AND the same call in a block, with or without a statement before it
+    // WHEN it is checked
+    // THEN it checks clean, as the same form with a function does: the method call is a member
+    // of the call's join
+    type_rows(&[
+        ("let x: i64? = pick(Sw().wrap(None), 1)", "i64?"),
+        ("let x: i64? = pick(1, Sw().wrap(None))", "i64?"),
+        ("let x: i64? = pick(1, osw()?.wrap(None))", "i64?"),
+        ("let x: i64? = pick(1, Sw().nothing())", "i64?"),
+        ("let x: i64? = pick(1, { Sw().nothing() })", "i64?"),
+        (
+            "let x: i64? = pick(1, { let _y = 2; Sw().nothing() })",
+            "i64?",
+        ),
+        (
+            "let x: i64? = pick(1, { let _y = 2; osw()?.nothing() })",
+            "i64?",
+        ),
+    ]);
+}
+
+#[test]
+fn failed_operand_should_report_only_its_own_error() {
+    // GIVEN a value under `-` whose block has a mistake in a statement
+    // AND a member of a join whose block ends in an `if` chain with a mistake
+    // WHEN it is checked
+    // THEN only the mistake is reported, as `main` does: no E0032 of a type against itself, no
+    // E0043 of the statement before the tail
+    let tail =
+        "    print(1)\n    if c { (if c { a } else { a }) } else if c { a } else { missing }\n}";
+    let joins = [
+        format!("let x: u8 = o ?? {{\n{tail}"),
+        format!("let x: u8 = id({{\n{tail})"),
+        format!("let x = pick(a, {{\n{tail})"),
+        format!("let x = [{{\n{tail}][0]"),
+        format!("let x = a == {{\n{tail}"),
+    ];
+    let mut rows: Vec<(&str, &[Wanted])> = vec![
+        (
+            "let x: i64 = -{\n    missing\n    2\n}",
+            &[(Code::BindingNotFound, (2, 5))],
+        ),
+        (
+            "let x: i64? = -(if c { 8 } else {\n    missing()\n    2\n})",
+            &[(Code::FunctionNotFound, (2, 5))],
+        ),
+        (
+            "let x: u8 = -{\n    missing\n    2\n}",
+            &[(Code::NegatedU8, (1, 13)), (Code::BindingNotFound, (2, 5))],
+        ),
+    ];
+    for join in &joins {
+        rows.push((join, &[(Code::BindingNotFound, (3, 61))]));
+    }
+    body_rows(&rows);
 }

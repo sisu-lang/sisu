@@ -1,0 +1,33 @@
+// A `unit` beside an open side of `==`, and a generic method call that waits for its type, as an
+// argument of a generic call.
+// GIVEN `fnone<T>() -> T?` and a function `g` that prints `g`. A struct `Sw` has generic methods
+//   `wrap` and `nothing`, and a function `pick` gives its first argument
+// WHEN `main` compares `fnone()` and `g()`, and calls `pick` with the methods of `Sw` and `1`
+// THEN the comparisons print `g` and then `false` and `true`. The calls print `0`, `1`, `1`
+//   and `0`.
+struct Sw {
+    fn wrap<T>(self, v: T) -> T { v }
+    fn nothing<T>(self) -> T? { None }
+}
+
+fn fnone<T>() -> T? { None }
+
+fn g() {
+    print("g")
+}
+
+fn pick<T>(a: T, _b: T) -> T { a }
+
+fn main() {
+    let e = fnone() == g()
+    print(e) // false
+    print(g() != fnone()) // g, true
+    let a: i64? = pick(Sw().wrap(None), 1)
+    print("{a ?? 0}") // 0
+    let b: i64? = pick(1, Sw().wrap(None))
+    print("{b ?? 0}") // 1
+    let n: i64? = pick(1, { let _k = 2; Sw().nothing() })
+    print("{n ?? 0}") // 1
+    let m: i64? = pick(Sw().nothing(), 1)
+    print("{m ?? 0}") // 0
+}

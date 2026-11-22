@@ -8,7 +8,7 @@ error[E0032]: expected `Two<string, string>?`, found `Two<i64, string>`
   --> E0032-optional-place-shows-part.sisu:12:8
    |
 12 |     sk(wk().mkb(), "s")
-   |        ^^^^^^^^^^
+   |        ^^^^^^^^^^  --- this argument gives `T` the type `string`
 
 sisu: 2 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032
