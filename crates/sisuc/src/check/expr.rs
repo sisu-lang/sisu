@@ -757,8 +757,13 @@ impl Checker<'_> {
                     };
                     break 'meet (wrapped, false);
                 }
-                if let Ok(done) = self.any_conversion(e.span, checked, want, got, origin) {
-                    break 'meet done;
+                let checked = match self.any_conversion(e.span, checked, want, got, origin) {
+                    Ok(done) => break 'meet done,
+                    Err(checked) => checked,
+                };
+                // A failed value of a known type meets `want` as a value does, through `unify`.
+                if checked.is_err() && want.holds_infer() && self.unify(got, want) {
+                    break 'meet (checked, false);
                 }
                 // The report shows each open part of `got` that `want` knows (`shown_against`).
                 let shown = self.shown_against(got, want);
