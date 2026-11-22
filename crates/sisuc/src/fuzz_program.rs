@@ -2286,6 +2286,34 @@ mod tests {
         }
     }
 
+    /// GIVEN a `??` that ends a function body, and a `??` that ends the block of an `if`
+    /// WHEN the swap reads them
+    /// THEN it swaps both, and the join-order check passes
+    #[test]
+    fn judge_join_order_should_swap_a_coalesce_at_the_end_of_a_block() {
+        for (tail, want) in [
+            (
+                "fn tail(a: u8?, b: u8?) -> u8? {\n    a ?? b\n}\n",
+                "    b ?? a\n",
+            ),
+            (
+                "fn tail(c: bool, a: u8?, b: u8?) -> u8? {\n    if c {\n        a ?? b\n    } else {\n        None\n    }\n}\n",
+                "        b ?? a\n",
+            ),
+        ] {
+            let call = if tail.contains("c: bool") {
+                "tail(true, "
+            } else {
+                "tail("
+            };
+            let program = format!("{tail}fn main() {{\n    print({call}Some(1), None) ?? 0)\n}}\n");
+            let swapped = swapped_with_probe(&program).expect("the sides should swap");
+            assert!(swapped.contains(want), "{swapped}");
+            let g = with_mistakes(&program, Vec::new());
+            assert!(crate::on_compiler_stack(|| judge_join_order(&g)).is_ok());
+        }
+    }
+
     /// GIVEN a `??` of two `u8?`
     /// WHEN the swap reads it
     /// THEN it swaps the sides, and the join-order check passes

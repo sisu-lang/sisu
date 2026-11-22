@@ -125,7 +125,10 @@ fn compatible(mut pairs: Vec<Pair>) -> Vec<Pair> {
 /// The block that holds the `a ?? b` at `whole` for a probe, with `a` and `b` the two sides of the
 /// pair `sides`:
 ///
-/// `{ let join_right = b; let mut join_probe = a ?? b; join_probe = a; join_probe }`
+/// `({ let join_right = b; let mut join_probe = a ?? b; join_probe = a; join_probe })`
+///
+/// The parentheses keep a block that ends a function body or a block of an `if` from being a
+/// statement (E0081).
 ///
 /// The `let` of `b` has no error only when `b` has a type of its own. So `id(None)`, `first([])`
 /// and the `None` of a `Some(None)` fail it. They take their type from `a`, and no type from `a`
@@ -133,7 +136,7 @@ fn compatible(mut pairs: Vec<Pair>) -> Vec<Pair> {
 /// of `a`. Then both sides are optionals of one type.
 fn probe_block(program: &str, whole: &Range<usize>, sides: &Pair) -> String {
     format!(
-        "{{ let join_right = {}; let mut join_probe = {}; join_probe = {}; join_probe }}",
+        "({{ let join_right = {}; let mut join_probe = {}; join_probe = {}; join_probe }})",
         &program[sides.second.clone()],
         &program[whole.clone()],
         &program[sides.first.clone()],
@@ -979,7 +982,7 @@ mod tests {
         assert_eq!(
             probes,
             [
-                "fn main() {\n    let x = { let join_right = b; let mut join_probe = a ?? b; join_probe = a; join_probe }\n}\n"
+                "fn main() {\n    let x = ({ let join_right = b; let mut join_probe = a ?? b; join_probe = a; join_probe })\n}\n"
             ]
         );
         assert_eq!(
@@ -1036,6 +1039,26 @@ mod tests {
         assert_eq!(
             swapped.as_deref(),
             Some("fn main() {\n    let x = a ?? b\n    let y = d ?? c\n}\n")
+        );
+    }
+
+    #[test]
+    fn swap_with_should_check_each_coalesce_alone_when_an_error_starts_at_the_end_of_a_block() {
+        let program = "fn main() {\n    let x = a ?? b\n    let y = c ?? d\n}\n";
+        let mut probes = 0;
+        let swapped = swap_with(program, |probe| {
+            probes += 1;
+            // The offset just after the first block: it lies in no block.
+            let end = "join_probe })";
+            match probes {
+                1 => vec![probe.find(end).unwrap() + end.len()],
+                _ => Vec::new(),
+            }
+        });
+        assert_eq!(probes, 3);
+        assert_eq!(
+            swapped.as_deref(),
+            Some("fn main() {\n    let x = b ?? a\n    let y = d ?? c\n}\n")
         );
     }
 
