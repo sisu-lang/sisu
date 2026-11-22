@@ -1191,10 +1191,6 @@ struct Body {
     /// What `int_literal` answered for each unary `-` and operator, by its span. The answer
     /// depends only on the node, and no two operator nodes have one span.
     int_literals: FxHashMap<Span, bool>,
-    /// Whether several methods answer a method call, by its receiver's span, as ranking found it
-    /// (`generic_method`) for a receiver with a type. `takes_member` reads it after it ranks the
-    /// call, in the call's scope, so that it reads no work kept ahead again.
-    several: FxHashMap<Span, bool>,
     /// For a loop, by its span: the first `if` without an `else` that one of its `break` values
     /// gives. It is read when the loop's `unit` lifts to `unit?` (see `unlifted`). The values are
     /// in the loop's body, where `without_value` does not walk.

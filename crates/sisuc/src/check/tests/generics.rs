@@ -2143,10 +2143,11 @@ fn type_parameters_should_be_found_in_one_step() {
     assert_eq!(steps(1000), 3002 + LANG_PARAM_STEPS);
 }
 
-/// Work kept ahead of a call is found by its span in one step, so finding it grows with the
-/// call's arguments, not with their square: one step per receiver and per block.
+/// Work kept ahead of a call is found by its span in a fixed number of steps. So finding it grows
+/// with the call's arguments, not with their square: two steps for each receiver, one for each
+/// block.
 #[test]
-fn work_kept_ahead_should_be_found_in_one_step() {
+fn work_kept_ahead_should_be_found_in_steps_that_grow_with_the_arguments() {
     let inspected = |n: usize, arg: &str, ty: &str| {
         let params: Vec<_> = (0..n).map(|i| format!("x{i}: T")).collect();
         let src = with_generics(&format!(
@@ -2158,9 +2159,9 @@ fn work_kept_ahead_should_be_found_in_one_step() {
         clean(&src);
         generic::INSPECTED.get()
     };
-    for (arg, ty) in [("b.make()", "[i64]"), ("{ let n = true; n }", "bool")] {
-        assert_eq!(inspected(64, arg, ty), 64, "{arg}");
-        assert_eq!(inspected(128, arg, ty), 128, "{arg}");
+    for (arg, ty, each) in [("b.make()", "[i64]", 2), ("{ let n = true; n }", "bool", 1)] {
+        assert_eq!(inspected(64, arg, ty), 64 * each, "{arg}");
+        assert_eq!(inspected(128, arg, ty), 128 * each, "{arg}");
     }
 }
 

@@ -4205,7 +4205,7 @@ impl Checker<'_> {
             K::MethodCall { args, types, .. }
                 if (!args.is_empty() || types.is_empty())
                     && !closed
-                    && !self.picked_by_context(e) =>
+                    && !self.picks_by_context(e) =>
             {
                 (args
                     .iter()
@@ -5859,8 +5859,6 @@ impl Checker<'_> {
         let Some(ty) = ty else {
             return CallShape::default();
         };
-        let several = self.several_answer(ty, method);
-        self.body.several.insert(receiver.span, several);
         match ty.kind() {
             TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..) => {}
             TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => {
@@ -5963,20 +5961,6 @@ impl Checker<'_> {
         }
     }
 
-    /// `picks_by_context` for `e` after `sibling_rank(e)`: the answer that ranking kept for its
-    /// receiver (`Body::several`), so the receiver's kept work is not read again (`INSPECTED`).
-    fn picked_by_context(&mut self, e: &ast::Expr) -> bool {
-        match &e.kind {
-            ast::ExprKind::MethodCall { receiver, .. } => {
-                match self.body.several.get(&receiver.span) {
-                    Some(&several) => several,
-                    None => self.picks_by_context(e),
-                }
-            }
-            _ => false,
-        }
-    }
-
     /// Whether several methods answer `receiver.method(...)`, or `receiver?.method(...)` with
     /// `safe`: the requirements of a type parameter's bounds, or the methods of the conformance
     /// blocks of a class or an enum.
@@ -5992,11 +5976,6 @@ impl Checker<'_> {
         if let (true, TypeKind::Optional(payload)) = (safe, ty.kind()) {
             ty = payload;
         }
-        self.several_answer(ty, method)
-    }
-
-    /// Whether several methods answer a call of `method` on a value of type `ty`.
-    fn several_answer(&mut self, ty: Type, method: &ast::Ident) -> bool {
         match ty.kind() {
             TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => {
                 self.required(ty, method.name).len() > 1
