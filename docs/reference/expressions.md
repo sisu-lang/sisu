@@ -161,9 +161,10 @@ Some expressions combine values into one type. Each combined value is a *member*
 - A join never makes an `any I` that no member has. With a `Lid` and an `Eye` that conform to `Seen`, `[Eye(v: 1), Lid(v: 2)]` is an error. [E0032](../diagnostics/E0032.md)
 - When the members are optional at different depths, the type has each of these `?`. So `[[[1, None], None], None]` is a `[[[i64?]?]?]`.
 - A value that is already made, such as a local, converts at its top only. With an `m: i64?` and an `xs: [i64]`, `if c { [m] } else { [1] }` is a `[i64?]`, but `if c { [m] } else { xs }` is an error. [E0032](../diagnostics/E0032.md)
-- The order of the members changes neither the type nor the error. `??` is the exception: its left side must be optional, and its right side takes its type from the payload of the left side. [E0048](../diagnostics/E0048.md)
+- The order of the members changes neither the type nor the error. `??` is the exception. Its left side must be optional, and the checker reads it first. So a `None` or a generic call there takes no type from the right side. [E0048](../diagnostics/E0048.md) [E0050](../diagnostics/E0050.md)
 - The operands of `&&` and `||` are no members. Each must be a `bool`.
-- An expected type is the type of the join. A member that does not convert to it is an error at the member: expected that type, found the type of the member. [E0032](../diagnostics/E0032.md)
+- An expected type is the type of the join for these members: branches and arms, array elements, `break` values and the `??` pair. A member that does not convert to it is an error at the member: expected that type, found the type of the member. [E0032](../diagnostics/E0032.md)
+- A generic call decides `T` from its arguments first ([Generics](generics.md#inference)). A comparison gives a `bool`, so an expected type does not go to its operands.
 - When the members agree and only the expected type differs, one error is at the whole join.
 - An integer literal in a join takes its type as [Literals](literals.md#the-type-of-an-integer-literal) says.
 - With no expected type, and when no type fits each member, the error is at the join. It gives the types of the members. [E0032](../diagnostics/E0032.md)

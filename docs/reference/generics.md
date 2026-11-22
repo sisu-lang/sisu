@@ -157,7 +157,7 @@ fn main() {
 - From the expected type: a `let` with a type, a parameter or a return type.
 - From the call, when you write it: `first<string>([])` or `Stack<i64>(items: [])`. A method call can write them too.
 - A later use of the result gives no type.
-- From the other members of a [join](expressions.md#joins). A generic call takes its type from the other elements of an array literal. It takes it from the other branches of an `if` or a `match`. It does the same from the other `break` values of a loop and the other operand of an operator. It does the same from the other arguments of the type parameter. In `??`, only the right side takes its type from the left side. With an `x: u8`, `[x, id(None)]` and `[id(None), x]` are each a `[u8?]`.
+- From the other members of a [join](expressions.md#joins). A generic call takes its type from the other elements of an array literal. It takes it from the other branches of an `if` or a `match`. It does the same from the other `break` values of a loop and the other operand of an operator. It does the same from the other arguments of the type parameter. In `??`, a generic call on the left side takes no type from the right side, except through an integer literal ([Literals](literals.md#the-type-of-an-integer-literal)). With an `x: u8`, `[x, id(None)]` and `[id(None), x]` are each a `[u8?]`.
 - A `None` or a `[]` alone has no type. When nothing else fixes a type parameter, the call is an error. Annotate the result, or write the type arguments. [E0050](../diagnostics/E0050.md)
 
 **Calls inside calls**
