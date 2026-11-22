@@ -383,7 +383,7 @@ fn a_failed_self_in_a_signature_should_give_no_error_of_its_own() {
 }
 
 /// The program of a row: `stmt` is line 6, indented by four spaces.
-fn hint_program(stmt: &str) -> String {
+fn expectation_program(stmt: &str) -> String {
     format!(
         "interface I {{}}\nclass P: I {{}}\nclass Q: I {{}}\nfn id<T>(x: T) -> T {{ x }}\nfn f(c: bool, d: bool, o: i64?, p: P, a: any I) {{\n    {stmt}\n}}\nfn main() {{}}\n"
     )
@@ -396,12 +396,12 @@ fn alias_program(stmt: &str) -> String {
     )
 }
 
-/// GIVEN a branch, an operand or a call whose value has a hint from its context
+/// GIVEN a branch, an operand or a call whose value has an expectation from its context
 /// WHEN the program is checked
-/// THEN the hint reaches exactly its own value, and no other value
+/// THEN the expectation reaches exactly its own value, and no other value
 #[test]
 #[expect(clippy::too_many_lines, reason = "a table of rows")]
-fn a_hint_should_reach_exactly_its_value() {
+fn an_expectation_should_reach_exactly_its_value() {
     let e = |pos| vec![(Mismatch, pos)];
     let mut rows: Vec<ErrorRow<'_>> = vec![
         ("none", "let _a = if c { 1 } else { None }", vec![]),
@@ -428,8 +428,8 @@ fn a_hint_should_reach_exactly_its_value() {
         (
             "coalesce neg",
             "let _a = o ?? -if d { None } else { \"a\" }",
-            // An operand is a member, which no hint reaches (Task 5d-2): the `string?` of the
-            // `if` is reported at the `if`.
+            // An operand is a member, which no expectation reaches (Task 5d-2): the `string?` of
+            // the `if` is reported at the `if`.
             e((6, 20)),
         ),
         ("neg none", "let _a = if c { 1 } else { -None }", e((6, 33))),
@@ -493,7 +493,7 @@ fn a_hint_should_reach_exactly_its_value() {
         ),
     ]
     .into_iter()
-    .map(|(name, stmt, wanted)| (name, hint_program(stmt), wanted))
+    .map(|(name, stmt, wanted)| (name, expectation_program(stmt), wanted))
     .collect();
     rows.extend(
         [
@@ -516,10 +516,10 @@ fn a_hint_should_reach_exactly_its_value() {
         ]
         .map(|(name, stmt, wanted)| (name, alias_program(stmt), wanted)),
     );
-    // The elements join as the branches of an `if` do: `O.Some(q)` takes no hint from `a`, so
+    // The elements join as the branches of an `if` do: `O.Some(q)` takes no type from `a`, so
     // its `q` is no `P`, and the array reports its conflict at its head.
     rows.push((
-        "alias keeps no hint",
+        "alias takes no type from a sibling",
         "interface I {}\nclass P: I {}\nclass Q: I {}\ntype O = P?\nfn f(a: any I, q: Q) {\n    let _a: bool = [a, O.Some(q)]\n}\nfn main() {}\n".to_string(),
         vec![(Mismatch, (6, 20)), (Mismatch, (6, 31))],
     ));

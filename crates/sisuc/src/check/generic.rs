@@ -1868,8 +1868,8 @@ pub(super) struct Ranked {
     /// its declared type holds an optional: `mkl()` for `fn mkl<X>() -> [X?]`, and a variant
     /// through an alias that builds one: `BE.B(v: None)` and `BE.E` for `type BE<X> = Bx<X?>`. Not
     /// a call of literals, as `kp(5)` for `fn kp<Y>(y: Y) -> Pr<i64?, Y>`: its argument binds `Y`,
-    /// and the optional of its declared type is not at a place that an outer call binds. The order
-    /// of the arguments of a call reads it (see `infer_call`), and joins do not.
+    /// and the optional of its declared type is not at a place that an outer call binds. The guide
+    /// of a late call reads it (see `late_optional`), and joins do not.
     pub(super) holds_optional: bool,
     /// Whether the value is an optional that has an optional payload, which the value makes by
     /// itself: `Some(Some(2))`, `opt(Some(2))` for `fn opt<T>(x: T) -> T?`, and `Some(if c {
@@ -1881,7 +1881,8 @@ pub(super) struct Ranked {
     nested: bool,
     /// Whether the value never ends and gives no type: `todo`, a call of `panic`, a `loop` that
     /// no `break` leaves, a block that ends in a jump, or a branch of these only. Every reader but
-    /// `combine_branches` reads `rank` alone, so such a value is `Concrete` for them.
+    /// `combine_branches` and `own_typed` reads `rank` alone, so such a value is `Concrete` for
+    /// them.
     never: bool,
 }
 
@@ -4444,18 +4445,14 @@ impl Checker<'_> {
         let ret = ret.subst(&with);
         // Unify before wrap: under a required type, the result meets the whole type first, also
         // for a parameter that no argument decides, as the `T` of `none()`. A unification that
-        // breaks a bound gives way to the wrap. As a
-        // guide (`whole`), the call is no conversion point yet: its late arguments decide more, and
-        // a bound is checked when the call is closed.
-        let whole_first = whole || matches!(expected, Expectation::Required(..));
+        // breaks a bound gives way to the wrap. As a guide (`whole`), the call is no conversion
+        // point yet: its late arguments decide more, and a bound is checked when the call is
+        // closed.
         let open_before: Vec<bool> = (decided.iter())
             .map(|&(_, var)| self.table.resolve(var).holds_infer())
             .collect();
         let mut meets = |want: Type| {
             let optional = matches!(want.kind(), TypeKind::Optional(_));
-            if !whole_first {
-                return self.unify(ret, payload(want)) || optional && self.unify(ret, want);
-            }
             if whole || !optional {
                 return self.unify(ret, want) || optional && self.unify(ret, payload(want));
             }
@@ -4812,9 +4809,10 @@ impl Checker<'_> {
                         .any(|(t, &open)| open && names_outside_assoc(param, t))
                 })
         });
-        let (first, then) = match expected {
-            Expectation::Required(..) if !decided_elsewhere => (want, payload(want)),
-            _ => (payload(want), want),
+        let (first, then) = if decided_elsewhere {
+            (payload(want), want)
+        } else {
+            (want, payload(want))
         };
         let snapshot_first = self.table.snapshot();
         let mut meets = self.unify(ret, first);

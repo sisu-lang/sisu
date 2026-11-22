@@ -69,16 +69,6 @@ pub(super) enum Expectation {
     Member,
 }
 
-/// A position that hands the expectation of a value on to one part of it (see
-/// [`Expectation::part`]).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Part {
-    /// The argument of a `Some`, which takes the payload of an expected optional.
-    Payload,
-    /// The value of a block, which takes what the block takes.
-    Tail,
-}
-
 const _: () = assert!(
     size_of::<Expectation>() <= 32,
     "an `Expectation` goes by value through each check, so it must stay small"
@@ -93,18 +83,15 @@ impl Expectation {
         }
     }
 
-    /// What the part `at` of the value expects. A required optional gives its payload to a
-    /// `Some`, with no origin, so that `let x: u8? = Some("s")` names no declaration. A member
-    /// gives each part `Member`. Any other expectation goes to the part as it is.
-    pub(super) fn part(self, at: Part) -> Self {
-        let payload = |ty: Type| match ty.kind() {
-            TypeKind::Optional(payload) => Some(payload),
-            _ => None,
-        };
-        match (self, at) {
-            (Self::Required(ty, _), Part::Payload) => {
-                payload(ty).map_or(self, |payload| Self::Required(payload, Origin::None))
-            }
+    /// What the argument of a `Some` expects. A required optional gives its payload, with no
+    /// origin, so that `let x: u8? = Some("s")` names no declaration. Any other expectation goes
+    /// to the argument as it is.
+    pub(super) fn payload(self) -> Self {
+        match self {
+            Self::Required(ty, _) => match ty.kind() {
+                TypeKind::Optional(payload) => Self::Required(payload, Origin::None),
+                _ => self,
+            },
             _ => self,
         }
     }

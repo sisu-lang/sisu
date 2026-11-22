@@ -6,7 +6,7 @@ use super::alias::Through;
 use super::generic::{Declarer, GenericSig, Site, mark, written_args};
 use super::mut_args::Callee;
 use super::{
-    Checked, Checker, DiagnosticKind, Expectation, Origin, Part, Poisoned, optional_of, type_of,
+    Checked, Checker, DiagnosticKind, Expectation, Origin, Poisoned, optional_of, type_of,
 };
 use crate::ast;
 use crate::diagnostic::{Definition, suggestion};
@@ -80,7 +80,7 @@ impl Checker<'_> {
                 if site.written.is_empty() && !want.holds_hole() && plain =>
             {
                 let e = &args[0].value;
-                let checked = self.value(e, site.expected.part(Part::Payload));
+                let checked = self.value(e, site.expected.payload());
                 (
                     mark(self.settled(e, checked, Expectation::Required(payload, Origin::None))),
                     want,
@@ -92,7 +92,7 @@ impl Checker<'_> {
                 && site.written.is_empty()
                 && plain =>
             {
-                let checked = self.value(&args[0].value, site.expected.part(Part::Payload));
+                let checked = self.value(&args[0].value, site.expected.payload());
                 // The type is read only when the argument holds.
                 let found = type_of(&checked).map_or(Type::NEVER, optional_of);
                 (checked, found, TypeArgs::NONE)

@@ -63,7 +63,7 @@ use alias::{AliasInfo, Aliases, FieldType, UseCheck};
 use assoc::{Choice, Choices, Named};
 use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable, reserved_name};
-use expectation::{Expectation, Origin, Part};
+use expectation::{Expectation, Origin};
 use extend::Extension;
 use infer::WriteBack;
 use interface::{Bound, Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};

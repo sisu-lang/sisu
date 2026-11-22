@@ -976,7 +976,7 @@ impl Checker<'_> {
             } else {
                 self.settled(value, checked, Expectation::Required(ty, Origin::None))
             };
-            self.concat(span, (read, true), value, mismatched)
+            self.concat(span, read, value, mismatched)
         } else {
             // The read of the place and the value join, as for a name (`compound_assign_name`).
             let want = Expectation::Required(ty, Origin::None);

@@ -445,7 +445,7 @@ impl Checker<'_> {
         // `integers` gives the type that the others decide, if any ("Poisoned members").
         if ty == Some(Type::STRING) {
             self.label_join_literals(start, [lhs, rhs]);
-            return self.concat(span, (l, true), r, mismatched);
+            return self.concat(span, l, r, mismatched);
         }
         if let Some(reported) = kept {
             return Err(Poisoned::kept_error(reported));

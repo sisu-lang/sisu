@@ -1226,12 +1226,12 @@ fn a_branch_should_steer_the_inference_of_the_branches_after_it() {
     }
 }
 
-/// A type that siblings give a value is a hint, not an expected type: the value does not convert
-/// to it. The join converts its members once it knows its type, so a nested join, a loop, a `??`
-/// default or a `Some` in a branch gives the type of its own members: never the optional that the
-/// hint is, nor a narrower `any` type than a member has.
+/// A type that siblings give a value is not an expected type: the value does not convert to it.
+/// The join converts its members once it knows its type. So a nested join, a loop, a `??` default
+/// or a `Some` in a branch gives the type of its own members. It never gives the optional that a
+/// sibling is, nor a narrower `any` type than a member has.
 #[test]
-fn a_hint_should_not_convert_a_value_to_its_any_type() {
+fn a_sibling_type_should_not_convert_a_value_to_its_any_type() {
     for (row, src) in [
         (
             "an `else if` chain of `any` values",
@@ -1246,11 +1246,11 @@ fn a_hint_should_not_convert_a_value_to_its_any_type() {
             "let r = if c { s } else {\n        match n {\n            0 => Circle(r: 1.0)\n            _ => Rect(w: 1.0)\n        }\n    }\n    let t: any Shape = r",
         ),
         (
-            "a member wider than the hint",
+            "a member wider than the sibling",
             "let r = if c { x } else if d { Cube(s: 1.0) } else { n2 }\n    let t: any Named = r",
         ),
         (
-            "a `None` after a member wider than the hint",
+            "a `None` after a member wider than the sibling",
             "let r = if c { x } else if d { n2 } else { None }\n    let t: (any Named)? = r",
         ),
         (
@@ -1262,7 +1262,7 @@ fn a_hint_should_not_convert_a_value_to_its_any_type() {
             "let r = if c { s } else {\n        loop {\n            if d { break Circle(r: 1.0) }\n            break Rect(w: 1.0)\n        }\n    }\n    let t: any Shape = r",
         ),
         (
-            "a loop value wider than the hint",
+            "a loop value wider than the sibling",
             "let r = if c { x } else { loop { break n2 } }\n    let t: any Named = r",
         ),
         (
@@ -1278,11 +1278,11 @@ fn a_hint_should_not_convert_a_value_to_its_any_type() {
             "let r = jo ?? { if d { n2 } else { Cube(s: 1.0) } }\n    let t: any Named = r",
         ),
         (
-            "a `Some` of a value wider than the hint",
+            "a `Some` of a value wider than the sibling",
             "let r = if c { x } else { Some(n2) }\n    let t: (any Named)? = r",
         ),
         (
-            "a `Some` of a join wider than the hint",
+            "a `Some` of a join wider than the sibling",
             "let r = if c { x } else { Some(if d { n2 } else { Cube(s: 1.0) }) }\n    let t: (any Named)? = r",
         ),
     ] {
@@ -1301,7 +1301,8 @@ fn nested_joins_with_an_any_member_should_check_each_branch_once() {
     let checks = |depth: usize| {
         let mut join = "Circle(r: 1.0)".to_owned();
         for level in 0..depth {
-            // The `any` member comes first on every other level, so it is the hint below it.
+            // The `any` member comes first on every other level, so it is the sibling type below
+            // it.
             join = if level % 2 == 0 {
                 format!("if c {{ Circle(r: 1.0) }} else if d {{ s }} else {{ {join} }}")
             } else {
@@ -1878,14 +1879,15 @@ fn a_branch_array_should_report_the_element_that_leaves_the_earlier_elements() {
     }
 }
 
-/// The locals of the hinted `Some` rows, before the row's own lines, which start at line 10.
-const HINTED_SOME_LOCALS: &str = "fn main() {\n    let c = true\n    let d: any Display = 1\n    let o: (any Display)? = Some(7)\n    let x: i64? = Some(5)\n    let y: i64? = None\n    let s: any Shape = Circle(r: 1.0)\n    let so: (any Shape)? = Some(Circle(r: 1.0))\n    let cx: Circle? = Some(Circle(r: 3.0))\n";
+/// The locals of the `Some` rows beside an `any` value, before the row's own lines, which start
+/// at line 10.
+const SOME_BESIDE_ANY_LOCALS: &str = "fn main() {\n    let c = true\n    let d: any Display = 1\n    let o: (any Display)? = Some(7)\n    let x: i64? = Some(5)\n    let y: i64? = None\n    let s: any Shape = Circle(r: 1.0)\n    let so: (any Shape)? = Some(Circle(r: 1.0))\n    let cx: Circle? = Some(Circle(r: 3.0))\n";
 
 /// A `Some` beside a value of an optional `any` type, with no type written, keeps an optional
 /// argument optional: the `Some` is a `T??`, which the join reports at its head (ADR 0052). It
 /// never boxes the optional into a bare `any` type, as the join of `[o, Some(y)]` does not.
 #[test]
-fn a_hinted_some_should_not_box_an_optional_argument_into_a_bare_any() {
+fn a_some_beside_an_any_should_not_box_an_optional_argument_into_a_bare_any() {
     let rows: [Row<'_>; 12] = [
         (
             "an array of a `Some` of an optional beside optional `any` values",
@@ -1950,7 +1952,11 @@ fn a_hinted_some_should_not_box_an_optional_argument_into_a_bare_any() {
         ),
     ];
     for (row, lines, expected) in rows {
-        codes_after(row, &format!("{HINTED_SOME_LOCALS}{lines}\n}}"), &expected);
+        codes_after(
+            row,
+            &format!("{SOME_BESIDE_ANY_LOCALS}{lines}\n}}"),
+            &expected,
+        );
     }
 }
 
@@ -1961,7 +1967,7 @@ fn a_hinted_some_should_not_box_an_optional_argument_into_a_bare_any() {
 /// argument converts to `h`. Then the join of the branches is an optional of an optional. Any
 /// other value is a mismatch at the head.
 #[test]
-fn a_hinted_some_should_build_only_when_its_argument_is_not_optional() {
+fn a_some_beside_an_any_should_build_only_when_its_argument_is_not_optional() {
     let builds: [(&str, &[&str], &[&str]); 2] = [
         (
             "o",
@@ -1999,7 +2005,7 @@ fn a_hinted_some_should_build_only_when_its_argument_is_not_optional() {
                 (format!("if c {{ [{h}] }} else {{ [{value}] }}"), true),
             ] {
                 cases += 1;
-                let src = format!("{DECLS}{HINTED_SOME_LOCALS}    let r = {form}\n}}");
+                let src = format!("{DECLS}{SOME_BESIDE_ANY_LOCALS}    let r = {form}\n}}");
                 let clean = clean || branches && lifted.contains(&value);
                 // The join of an `if`, a `match`, a `loop` or a `??` reports at its head: the first
                 // word of `form`, or the `??` (Task 5d-2).
