@@ -473,6 +473,83 @@ mod tests {
     }
 
     #[test]
+    fn swap_joins_should_swap_the_arms_of_a_match() {
+        assert_eq!(
+            swapped("match n {\n    Some(v) => v\n    None => 0\n}\n"),
+            "match n {\n    None => 0\n    Some(v) => v\n}\n"
+        );
+        // A catch-all arm stays last: before another arm it would hide that arm.
+        assert_eq!(
+            swapped("match n { 1 => a; 2 => b; _ => c }\n"),
+            "match n { 2 => b; 1 => a; _ => c }\n"
+        );
+    }
+
+    #[test]
+    fn swap_joins_should_leave_a_guarded_match_as_written() {
+        assert_eq!(
+            swap("match n { 1 => a; 2 => b; v if v > 3 => c; _ => d }\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn swap_joins_should_swap_the_break_values_of_a_loop() {
+        assert_eq!(
+            swapped("let x = loop {\n    if c { break a }\n    break 1\n}\n"),
+            "let x = loop {\n    if c { break 1 }\n    break a\n}\n"
+        );
+    }
+
+    #[test]
+    fn swap_joins_should_leave_a_break_value_that_reads_a_binding_of_the_loop_as_written() {
+        let program = "let x = loop {\n    if let Some(v) = o { break v }\n    break 1\n}\n";
+        assert_eq!(swap(program), None);
+    }
+
+    #[test]
+    fn swap_joins_should_swap_the_arguments_of_one_type_parameter() {
+        let program = "fn pick<T, U>(a: T, b: U, c: T) -> T { a }\nfn main() {\n    let x = pick(i, 2, 1)\n}\n";
+        assert_eq!(
+            swap(program).as_deref(),
+            Some(
+                "fn pick<T, U>(a: T, b: U, c: T) -> T { a }\nfn main() {\n    let x = pick(1, 2, i)\n}\n"
+            )
+        );
+    }
+
+    #[test]
+    fn swap_joins_should_leave_arguments_of_different_type_parameters_as_written() {
+        let program =
+            "fn two<T, U>(a: T, b: U) -> T { a }\nfn main() {\n    let x = two(i, 2)\n}\n";
+        assert_eq!(swap(program), None);
+    }
+
+    #[test]
+    fn swap_joins_should_swap_the_operands_of_a_commutative_operator() {
+        assert_eq!(
+            swapped("let x = a + 1\nlet y = a * 2\nlet z = a == 3\nlet w = a != 4\n"),
+            "let x = 1 + a\nlet y = 2 * a\nlet z = 3 == a\nlet w = 4 != a\n"
+        );
+    }
+
+    #[test]
+    fn swap_joins_should_leave_the_other_operators_as_written() {
+        let program = "let x = a - b\nlet y = a / b\nlet z = a % b\nlet u = a < b\nlet v = a && b\nlet w = a || b\nlet t = a is b\n";
+        assert_eq!(swap(program), None);
+    }
+
+    #[test]
+    fn swap_joins_should_swap_the_sides_of_a_coalesce_of_two_optionals() {
+        assert_eq!(swapped("let x = a ?? b\n"), "let x = b ?? a\n");
+    }
+
+    #[test]
+    fn swap_joins_should_leave_a_coalesce_with_a_none_as_written() {
+        assert_eq!(swap("let x = a ?? None\nlet y = None ?? a\n"), None);
+    }
+
+    #[test]
     fn swap_joins_should_swap_an_array_literal_that_holds_a_less_than_in_a_program_with_a_warning()
     {
         assert_eq!(
