@@ -4123,8 +4123,9 @@ impl Checker<'_> {
     /// the members decide (see `late_argument`). A call or an array that has such an argument or
     /// element waits too. A block does when its value does.
     ///
-    /// A method call with no argument is closed, unless it waits for its context to pick among
-    /// conformances (`Rank::Waits`). A method call that checks its receiver as a place is closed.
+    /// A method call with no argument is closed, unless it waits (`Rank::Waits`): then it is a
+    /// member, as a call is. A method call that several methods answer is no member: only its
+    /// context picks one. A method call that checks its receiver as a place is closed.
     /// Under `closed`, at a place that names two or more decided parameters (Q28), a method call
     /// with arguments waits: it meets its parameter type, so that the part that is wrong is
     /// reported (`h(true, C().m("s", 1))` at `"s"`). So does such a call in an argument that
@@ -4199,8 +4200,12 @@ impl Checker<'_> {
             {
                 Some(Expectation::None)
             }
-            K::MethodCall { args, .. }
-                if !args.is_empty() && !closed && self.sibling_rank(e) != Rank::Waits =>
+            // One that waits for its own type parameter stays open, as a call does (`b.none()`).
+            // So does one whose arguments do. One that several methods answer is no member.
+            K::MethodCall { args, types, .. }
+                if (!args.is_empty() || types.is_empty())
+                    && !closed
+                    && !self.picked_by_context(e) =>
             {
                 (args
                     .iter()
@@ -5854,6 +5859,8 @@ impl Checker<'_> {
         let Some(ty) = ty else {
             return CallShape::default();
         };
+        let several = self.several_answer(ty, method);
+        self.body.several.insert(receiver.span, several);
         match ty.kind() {
             TypeKind::Class(..) | TypeKind::Struct(..) | TypeKind::Enum(..) => {}
             TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => {
@@ -5956,6 +5963,20 @@ impl Checker<'_> {
         }
     }
 
+    /// `picks_by_context` for `e` after `sibling_rank(e)`: the answer that ranking kept for its
+    /// receiver (`Body::several`), so the receiver's kept work is not read again (`INSPECTED`).
+    fn picked_by_context(&mut self, e: &ast::Expr) -> bool {
+        match &e.kind {
+            ast::ExprKind::MethodCall { receiver, .. } => {
+                match self.body.several.get(&receiver.span) {
+                    Some(&several) => several,
+                    None => self.picks_by_context(e),
+                }
+            }
+            _ => false,
+        }
+    }
+
     /// Whether several methods answer `receiver.method(...)`, or `receiver?.method(...)` with
     /// `safe`: the requirements of a type parameter's bounds, or the methods of the conformance
     /// blocks of a class or an enum.
@@ -5971,6 +5992,11 @@ impl Checker<'_> {
         if let (true, TypeKind::Optional(payload)) = (safe, ty.kind()) {
             ty = payload;
         }
+        self.several_answer(ty, method)
+    }
+
+    /// Whether several methods answer a call of `method` on a value of type `ty`.
+    fn several_answer(&mut self, ty: Type, method: &ast::Ident) -> bool {
         match ty.kind() {
             TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Any(..) => {
                 self.required(ty, method.name).len() > 1
