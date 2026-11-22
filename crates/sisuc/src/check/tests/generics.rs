@@ -10289,3 +10289,60 @@ fn a_broken_bound_of_an_open_form_should_fail_the_candidate_in_each_order() {
         ],
     );
 }
+
+/// GIVEN a generic call whose parameter type holds two open variables (`Result<T, U>`)
+///   and an argument with a written type that fails inside (`missing`)
+/// WHEN the argument types unify with the parameter type
+/// THEN the call reports only the error inside the argument, as on `main`: no E0032 for the types
+///
+/// The guard rows hold before and after: one open variable gives no report, and a real conflict
+/// between the written type and the parameter type is still E0032.
+#[test]
+fn failed_argument_with_a_written_type_should_not_mismatch_a_generic_parameter() {
+    let decls = "enum G0<T, U> {\n    V4(U)\n    V5(T)\n}\n\
+        struct Box2<T, U> {\n    a: T\n    b: U\n    fn swap<V>(self, v: Result<V, U>) {}\n}\n\
+        fn h<T, U>(v: Result<T, U>) {}\n\
+        fn g<T, U>(v: G0<T, U>) {}\n\
+        fn hw<T, U>(v: Result<T, U>, w: T) {}\n\
+        fn h13<T, U>(v14: G0<T, U>, v15: T) -> T { v15 }\n\
+        fn k<T>(v: Result<T, bool>) {}\n\
+        fn h2<T>(v: Result<T, string>) {}\n\
+        fn main() {\n    ";
+    let (e32, e33, e52) = (
+        Code::Mismatch,
+        Code::BindingNotFound,
+        Code::FunctionNotFound,
+    );
+    join_rows(
+        decls,
+        &[
+            ("h(Result<i64, bool>.Ok(missing))", &[(e33, "missing")]),
+            ("h(Result<i64, bool>.Err(missing))", &[(e33, "missing")]),
+            ("g(G0<i64, bool>.V4(missing))", &[(e33, "missing")]),
+            ("g(G0<i64, bool>.V5(missing))", &[(e33, "missing")]),
+            ("hw(Result<i64, bool>.Ok(missing), 1)", &[(e33, "missing")]),
+            (
+                "print(h13(G0<i64, bool>.V4(missing(1)), 7))",
+                &[(e52, "missing")],
+            ),
+            (
+                "print(h13(G0<i64, bool>.V4({ let _ = missing; false }), 7))",
+                &[(e33, "missing")],
+            ),
+            // Guards.
+            ("k(Result<i64, bool>.Ok(missing))", &[(e33, "missing")]),
+            (
+                "h2(Result<i64, bool>.Ok(missing))",
+                &[(e32, "h2"), (e33, "missing")],
+            ),
+            (
+                "hw(Result<i64, bool>.Ok(missing), \"s\")",
+                &[(e32, "Result"), (e33, "missing")],
+            ),
+            (
+                "Box2(a: 1, b: true).swap(Result<i64, bool>.Ok(missing))",
+                &[(e33, "missing")],
+            ),
+        ],
+    );
+}
