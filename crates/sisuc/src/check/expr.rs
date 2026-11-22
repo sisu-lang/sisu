@@ -1187,7 +1187,7 @@ pub(super) fn takes_unit(want: Type) -> bool {
 }
 
 /// Whether `want`, after `default_open`, is an open `Any` variable or an optional of one.
-fn open_any(want: Type) -> bool {
+pub(super) fn open_any(want: Type) -> bool {
     match want.kind() {
         TypeKind::Infer(_) => true,
         TypeKind::Optional(payload) => open_any(payload),

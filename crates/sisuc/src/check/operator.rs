@@ -1,7 +1,7 @@
 //! Operators: arithmetic, comparison, equality, `is` and `??`.
 
 use super::branch::whole_members;
-use super::expr::{fits, if_some, local, operator, path, takes_unit, typed};
+use super::expr::{fits, if_some, local, open_any, operator, path, takes_unit, typed};
 use super::generic::mismatched;
 use super::infer::Kind;
 use super::infer::LiteralCheck;
@@ -1076,11 +1076,14 @@ impl Checker<'_> {
             self.member_own_type(&mut values[0], lhs.span),
             self.member_own_type(&mut values[1], rhs.span),
         ];
-        // A `unit` beside a value of another type has no value to compare.
+        // A `unit` beside a value of another type has no value to compare. An open side, as
+        // `none()`, takes it.
         if let [Some(a), Some(b)] = types
             && let Some((side, value, beside)) = [(0, a, b), (1, b, a)]
                 .into_iter()
-                .find(|&(_, ty, beside)| ty == Type::UNIT && !takes_unit(beside))
+                .find(|&(_, ty, beside)| {
+                    ty == Type::UNIT && !takes_unit(beside) && !open_any(beside)
+                })
                 .map(|(i, _, beside)| (sides[i], &values[i], beside))
         {
             let value = value.as_ref().ok();
