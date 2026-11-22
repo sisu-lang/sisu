@@ -250,6 +250,28 @@ def array_fill_depth(k: int) -> str:
     )
 
 
+def open_call_chain(k: int) -> str:
+    """Return a program with `k + 1` nested open generic calls in an `if` beside a `[u8]?`.
+
+    The innermost `[1]` takes its `u8` from the other branch, through each call.
+    """
+    call = nest(k + 1, lambda s: f"id({s})", "[1]")
+    return (
+        "fn id<T>(x: T) -> T {\n    x\n}\n\n"
+        "fn main() {\n    let c = [1].len() > 0\n    let m: [u8]? = None\n"
+        f"    let x = if c {{ m }} else {{ {call} }}\n"
+        '    print("{x?.len() ?? 0}")\n}\n'
+    )
+
+
+def unannotated_array_with_none(k: int) -> str:
+    """Return a program with an array literal of `k + 1` `u8` locals and a `None`, with no type."""
+    elements = ", ".join(["x"] * (k + 1) + ["None"])
+    return (
+        f'fn main() {{\n    let x: u8 = 1\n    let a = [{elements}]\n    print("{{a.len()}}")\n}}\n'
+    )
+
+
 def array_literal_width(k: int) -> str:
     """Return a program with an array literal of `k` elements."""
     return (
@@ -778,6 +800,8 @@ SHAPES = {
     # n = 15: 8n levels stay under the nesting limit of 256 (E0071).
     "coalesce depth": (15, coalesce_depth),
     "coalesce depth to an optional": (15, coalesce_depth_to_optional),
+    "open call chain": (24, open_call_chain),
+    "unannotated array with None": (1000, unannotated_array_with_none),
 }
 
 
