@@ -5412,8 +5412,9 @@ fn interface_signatures_should_leave_all_states_done_and_work_bodies_cleared() {
 /// Mutual parameter loops report all cycle bounds, and non-member bounds already in scope keep
 /// working.
 #[test]
+#[expect(clippy::too_many_lines, reason = "a table of rows")]
 fn interface_parameter_and_associated_bounds_should_report_loops_and_keep_resolved_bounds() {
-    let rows: [(&str, &str, &[Wanted]); 16] = [
+    let rows: [(&str, &str, &[Wanted]); 22] = [
         (
             "J1: mutual parameter bounds loop reports both sides",
             "interface A<X> {\n    type P\n}\ninterface B<X> {\n    type Q\n}\ninterface J<T: A<S.Q>, S: B<T.P>> {}\nfn main() {}",
@@ -5494,6 +5495,36 @@ fn interface_parameter_and_associated_bounds_should_report_loops_and_keep_resolv
             "interface Has<X> {\n    type Inner\n}\ninterface Has2<X> {\n    type Out\n}\ninterface Has3<X> {\n    type Inner\n}\ninterface Has4<X> {\n    type W\n}\ninterface I<T: K> {\n    fn f(self, x: T.A.Out)\n}\ninterface K {\n    type JRef: J\n    type A: Has<i64> & Has2<Self.JRef.X.Inner>\n}\ninterface J {\n    type Step: K\n    type X: Has3<Self.Step.A.Inner>\n    type Y: Has4<Self.Step.A.Out>\n}\nfn main() {}",
             &[],
         ),
+        (
+            "s15: self-reading assoc bound keeps earlier interface bound",
+            "interface Has<X> {\n    type Inner\n}\ninterface Node {\n    type Inner\n    type Next: Has<Self.Inner>\n}\ninterface I {\n    type A: Node & Has<Self.A.Inner>\n}\nfn main() {}",
+            &[],
+        ),
+        (
+            "s1: self-reading assoc bound keeps earlier applied bound",
+            "interface Has<X> {\n    type Inner\n}\ninterface Has2<X> {\n    type Inner\n}\ninterface I {\n    type A: Has<i64> & Has2<Self.A.Inner>\n}\nfn main() {}",
+            &[],
+        ),
+        (
+            "s14: sibling read of Self.A.Inner after self-reading bound reports E0156",
+            "interface Has<X> {\n    type Inner\n}\ninterface Has2<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface I {\n    type A: Has<i64> & Has2<Self.A.Inner>\n    type B: Conv<Self.A.Inner>\n}\nfn main() {}",
+            &[(Code::Ambiguous, (10, 25))],
+        ),
+        (
+            "s22u: non-declaring assoc bound does not block other bound read",
+            "interface Has<X> {\n    type Inner\n}\ninterface Conv<X> {\n    type Out\n}\ninterface I {\n    type C: Has<i64>\n    type A: Has<Self.C.Inner> & Conv<Self.B.Inner>\n    type B: Has<Self.A.Inner>\n    fn f(self, x: Self.B.Inner)\n}\nfn main() {}",
+            &[],
+        ),
+        (
+            "s22u2: swapped B before A with non-declaring Conv bound checks clean",
+            "interface Has<X> {\n    type Inner\n}\ninterface Conv<X> {\n    type Out\n}\ninterface I {\n    type C: Has<i64>\n    type B: Has<Self.A.Inner>\n    type A: Has<Self.C.Inner> & Conv<Self.B.Inner>\n    fn f(self, x: Self.B.Inner)\n}\nfn main() {}",
+            &[],
+        ),
+        (
+            "s4: non-declaring Conv bound on B allows A to resolve and B reports E0156",
+            "interface Has<X> {\n    type Inner\n}\ninterface Has2<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface I {\n    type A: Has<Self.B.Inner> & Has2<i64>\n    type B: Has<i64> & Conv<Self.A.Inner>\n}\nfn main() {}",
+            &[(Code::Ambiguous, (10, 36))],
+        ),
     ];
     check_rows(&rows);
 }
@@ -5547,6 +5578,11 @@ fn missing_associated_type_in_interface_bounds_should_report_without_loop_help()
             "N: assoc bound Has2 does not declare Inner for U",
             "interface Conv<X> {}\ninterface Has2<X> {\n    type Out\n}\ninterface N<U: Conv<Self.A.Inner>> {\n    type A: Has2<U.Inner>\n}\nfn main() {}",
             (Code::UnknownType, (6, 20)),
+        ),
+        (
+            "S13: self-declaring assoc bound Has<Self.A.Inner> gives plain E0030",
+            "interface Has<X> {\n    type Inner\n}\ninterface I {\n    type A: Has<Self.A.Inner>\n}\nfn main() {}",
+            (Code::UnknownType, (5, 24)),
         ),
     ] {
         let (_, ds) = checked(src);
