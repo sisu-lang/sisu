@@ -183,6 +183,48 @@ class DiagDiff(unittest.TestCase):
         lines = self.diff_lines(E0032 + "\n" + E0032, head)
         self.assertEqual(lines[2:], ["  code changed at 2:5: E0032 -> E0050"], lines)
 
+    def test_an_added_report_at_a_position_should_get_a_reports_changed_line(self) -> None:
+        """GIVEN a program whose head adds a cascade report at the position of a base report
+        WHEN diag_diff runs
+        THEN it prints one `reports changed` line with each side's codes, and no `code changed`
+        """
+        added = E0032.replace("E0032", "E0050")
+        lines = self.diff_lines(E0032, added + "\n" + E0032)
+        self.assertEqual(lines[2:], ["  reports changed at 2:5: E0032 -> E0050, E0032"], lines)
+        self.assertNotIn("code changed", "".join(lines))
+
+    def test_a_reorder_of_reports_at_one_position_should_get_no_line(self) -> None:
+        """GIVEN two reports at one position that swap their order in the head
+        WHEN diag_diff runs
+        THEN it prints the base and head lines only
+        """
+        other = E0032.replace("E0032", "E0050")
+        lines = self.diff_lines(E0032 + "\n" + other, other + "\n" + E0032)
+        self.assertEqual(len(lines), 2, lines)
+
+    def test_a_change_of_one_text_field_should_get_a_text_changed_line(self) -> None:
+        """GIVEN programs whose diagnostic changes only its label, only its help or only the text
+        of a secondary label, with the same code and position
+        WHEN diag_diff runs
+        THEN each prints one `text changed` line
+        """
+
+        def diagnostic(label: str = "l", help_: str = "h", other: str = "o") -> str:
+            return json.dumps(
+                {
+                    "kind": "diagnostic",
+                    "code": "E0032",
+                    "severity": "error",
+                    "help": help_,
+                    "primary": {"line": 2, "column": 5, "label": label},
+                    "secondary": [{"line": 2, "column": 9, "label": other}],
+                }
+            )
+
+        for field in ({"label": "k"}, {"help_": "g"}, {"other": "p"}):
+            lines = self.diff_lines(diagnostic(), diagnostic(**field))
+            self.assertEqual(lines[2:], ["  text changed at 2:5: E0032"], (field, lines))
+
     def test_full_should_report_each_text_field_that_alone_differs(self) -> None:
         """GIVEN programs whose diagnostic differs in one field each: the message, the label, a
         secondary label, the message of a fix, an edit of a fix and the safe flag of a fix

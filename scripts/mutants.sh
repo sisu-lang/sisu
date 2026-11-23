@@ -33,9 +33,10 @@
 # lines of a refused argument or of a refused tree do not.
 # It refuses uncommitted Rust changes, because a review takes the log of a commit only.
 # The diff is written once. A commit in this worktree during pass 1 would stop pass 2 with
-# "Diff content doesn't match source file" and no mutant tested. So the script records HEAD and
-# a hash of the Rust files at the start. Before pass 2 it checks both. When either changed, it
-# fails at once with "the tree changed during the run" and the counts of pass 1.
+# "Diff content doesn't match source file" and no mutant tested. So the script records
+# a hash of the Rust files at the start. Before pass 2, and again before its whole-suite group,
+# it checks the hash. When it changed, the script fails at once with "a Rust file changed during
+# the run" and the counts of pass 1. A commit that changes no Rust file does not stop the run.
 # PASS needs no missed mutant; a timeout counts as caught.
 # Pass 2 waits 600 s for each mutant. MUTANTS_PASS2_TIMEOUT sets another number.
 # A --timeout, -t or --timeout-multiplier of the caller replaces it.
@@ -321,16 +322,24 @@ run_group() {
   return 0
 }
 
+# A change of a Rust file after the diff was written breaks pass 2, so the run stops with the cause.
+# It names HEAD only when HEAD moved. The caller sets pass1 first.
+stop_if_rust_changed() {
+  [[ $(rust_tree) != "$rust_tree_at_start" ]] || return 0
+  local now
+  now=$(git rev-parse HEAD)
+  verdict="mutation-test: FAIL: a Rust file changed during the run"
+  [[ $now == "$head" ]] || verdict+=", HEAD $head -> $now"
+  verdict+="; $pass1; run it again, and change no Rust file and commit nothing in this worktree until it ends"
+  echo "$verdict"
+  exit 1
+}
+
 # Pass 2: exit 2 is a missed mutant and 3 a timeout; any other failure stops the run here.
 if [[ -z $test_args && -n $tested ]] && ((status == 2 || status == 3)) && ((missed + timeouts > 0)); then
-  now=$(git rev-parse HEAD)
-  if [[ $now != "$head" || $(rust_tree) != "$rust_tree_at_start" ]]; then
-    verdict="mutation-test: FAIL: the tree changed during the run (HEAD $head -> $now); pass 1 tested $((caught + unviable + missed + timeouts)): $missed missed"
-    ((timeouts == 0)) || verdict+=", $timeouts timed out"
-    verdict+="; run it again, and commit nothing in this worktree until it ends"
-    echo "$verdict"
-    exit 1
-  fi
+  pass1="pass 1 tested $((caught + unviable + missed + timeouts)): $missed missed"
+  ((timeouts == 0)) || pass1+=", $timeouts timed out"
+  stop_if_rust_changed
   echo "mutation-test: pass 1 (unit tests) missed $missed and timed out on $timeouts; pass 2 tests them in two groups"
   # Each pass rotates mutants.out, so the names of pass 1 are saved first.
   lists=$(mktemp -d)
@@ -366,6 +375,7 @@ if [[ -z $test_args && -n $tested ]] && ((status == 2 || status == 3)) && ((miss
   timeouts=0
   group_status=0
   run_group lib-only "$lib_names" "the unit tests (--lib)" -- --lib
+  stop_if_rust_changed
   run_group whole-suite "$suite_names" "the whole suite" -- --ignore-default-filter
   status=$group_status
 fi
