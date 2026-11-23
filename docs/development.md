@@ -382,6 +382,12 @@ $ scripts/mutants.sh HEAD~1 --list          # list the mutants, test none
 Commit first: the script refuses uncommitted Rust changes with
 `mutation-test: FAIL: uncommitted Rust changes`, because a review takes the
 log of a commit only.
+Change no Rust file and commit nothing in the worktree while the run goes on.
+The script writes the diff once. A change of a Rust file fails the run before
+pass 2, and again before the whole-suite group, with
+`mutation-test: FAIL: a Rust file changed during the run`. The line gives the
+counts of pass 1, and the old and new HEAD when HEAD moved. A commit that
+changes no Rust file does not stop the run.
 
 The script runs `cargo mutants` under `nice -n 19`, 2 mutants at a time.
 `-j` or `CARGO_MUTANTS_JOBS` sets another number. `.cargo/mutants.toml` sets

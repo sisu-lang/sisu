@@ -38,6 +38,9 @@ ENV = {
 # FAKE_LIB_TIMEOUT and FAKE_LIB_EXIT, each the whole-suite group's value by default. A group run
 # also writes FAKE_OUTSIDE_CAUGHT and FAKE_OUTSIDE_MISSED names that no --re gave, as cargo mutants
 # does for its "delete field" mutants.
+# FAKE_COMMIT_IN_PASS1=1 makes the first pass commit a new Rust file, as a person can do in the
+# worktree during a run. FAKE_EDIT_IN_PASS1=1 edits a.rs without a commit, FAKE_NOTES_IN_PASS1=1
+# commits a new notes.md, and FAKE_EDIT_IN_LIB=1 edits a.rs in the lib-only group of pass 2.
 # FAKE_GROUP_WRITE=0 makes a group run write nothing. A run with --list prints FAKE_LIST mutants (0 by default), records nothing and exits with FAKE_EXIT.
 # The sleep keeps lock.json strictly newer than the script's start mark.
 FAKE_CARGO = r"""#!/usr/bin/env bash
@@ -69,7 +72,19 @@ if [[ " $* " == *" ^"* ]]; then
   cp target/mutation-test.status status${name#args}
 else
   echo "$*" >args
+  if [[ -n ${FAKE_COMMIT_IN_PASS1:-} ]]; then
+    echo "fn extra() {}" >b.rs
+    git add b.rs
+    git -c user.name=t -c user.email=t@t commit -q -m during
+  fi
+  [[ -z ${FAKE_EDIT_IN_PASS1:-} ]] || echo "// edit" >>a.rs
+  if [[ -n ${FAKE_NOTES_IN_PASS1:-} ]]; then
+    echo notes >notes.md
+    git add notes.md
+    git -c user.name=t -c user.email=t@t commit -q -m notes
+  fi
 fi
+[[ $name != args_lib || -z ${FAKE_EDIT_IN_LIB:-} ]] || echo "// edit" >>a.rs
 exit_var=${prefix}_EXIT
 [[ -e mutants.out/missed.txt ]] && touch saw_old_out
 sleep 0.05
@@ -401,6 +416,54 @@ class Mutants(unittest.TestCase):
         self.assertEqual(
             self.last_line(),
             f"mutation-test: FAIL: 6 caught, 0 unviable, 1 missed, 0 timeouts (HEAD {self.head()})",
+        )
+
+    def test_a_commit_of_a_rust_file_during_the_first_pass_should_stop_the_run(self) -> None:
+        self.rust_commit()
+        old = self.head()
+        run = self.mutate(caught=5, missed=2, exit=2, pass2_caught=2, commit_in_pass1=1)
+        self.assertEqual(run.returncode, 1)
+        self.assertFalse(self.seen("args2"))
+        self.assertEqual(
+            self.last_line(),
+            "mutation-test: FAIL: a Rust file changed during the run"
+            f", HEAD {old} -> {self.head()}; pass 1 tested 7: 2 missed;"
+            " run it again, and change no Rust file and commit nothing in this worktree"
+            " until it ends",
+        )
+
+    def test_an_edit_of_a_rust_file_during_the_first_pass_should_stop_the_run(self) -> None:
+        self.rust_commit()
+        run = self.mutate(caught=5, timeout=1, exit=3, pass2_caught=1, edit_in_pass1=1)
+        self.assertEqual(run.returncode, 1)
+        self.assertFalse(self.seen("args2"))
+        self.assertEqual(
+            self.last_line(),
+            "mutation-test: FAIL: a Rust file changed during the run"
+            "; pass 1 tested 6: 0 missed, 1 timed out;"
+            " run it again, and change no Rust file and commit nothing in this worktree"
+            " until it ends",
+        )
+
+    def test_a_commit_of_no_rust_file_during_the_first_pass_should_not_stop_the_run(self) -> None:
+        self.rust_commit()
+        run = self.mutate(caught=5, missed=2, exit=2, pass2_caught=2, notes_in_pass1=1)
+        self.assertEqual(run.returncode, 0)
+        self.assertTrue(self.seen("args2"))
+
+    def test_an_edit_during_the_lib_only_group_should_stop_the_run_before_the_whole_suite(
+        self,
+    ) -> None:
+        run = self.two_groups(lib_caught=1, lib_missed=0, lib_exit=0, pass2_caught=1, edit_in_lib=1)
+        self.assertEqual(run.returncode, 1)
+        self.assertTrue(self.seen("args_lib"))
+        self.assertFalse(self.seen("args2"))
+        self.assertEqual(
+            self.last_line(),
+            "mutation-test: FAIL: a Rust file changed during the run"
+            "; pass 1 tested 2: 2 missed;"
+            " run it again, and change no Rust file and commit nothing in this worktree"
+            " until it ends",
         )
 
     def test_a_failed_first_pass_should_not_start_the_second(self) -> None:

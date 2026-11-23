@@ -90,6 +90,8 @@ gitignored, and the docs do not link to it.
   from another branch. Never write output from memory or from the diff.
 - Write the executables you compile to `$TMPDIR`, not the repository root.
   Keep source paths as the docs show them, because panic messages quote them.
+- Probe each example and each rule sentence that you write, as
+  `.agents/skills/review-sisu/fix-brief.md` says.
 - Confirm each path, flag and function name in the code. Use CodeGraph when
   `.codegraph/` exists, otherwise grep.
 - Link to a file that exists on `main` or that this change adds. Write a path

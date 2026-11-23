@@ -19,4 +19,4 @@ Some flows run mutation tests. In the final review of such a flow, a fix round c
 (cd <worktree> && env CARGO_MUTANTS_JOBS=2 nice -n 19 make mutation-test BASE=<round base> LOG=RUN/mutation-<round>.log)
 ```
 
-Put each surviving mutant into the round, with a test that kills it or a reason it is equivalent. Pass the log as another `--mutation-log`.
+Put each surviving mutant into the round, with a test that kills it or a reason it is equivalent. A mutant whose only effect is extra work that stays linear is not pinned. It gets the note `accepted: extra work only: <the work>` (`CODING_STANDARDS.md`, Tests). Pass the log as another `--mutation-log`.

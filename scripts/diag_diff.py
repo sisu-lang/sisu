@@ -10,6 +10,17 @@ that rewords many diagnostics on purpose. With `--primary`, only the code, sever
 position and count count, for a change that adds or moves secondary labels on purpose. `--full` is
 the default, and is still accepted.
 
+Under each program that is `changed`, `newly accepted` or `newly rejected`, the script prints one
+line for each primary position that both builds report. `code changed at L:C: A -> B` means the
+position is the same and the code differs. `text changed at L:C: A` means the position and the code
+are the same and the message, a label, the help, a note or a fix differs; a position alone gives no
+such line. `--codes` and `--primary` do not compare text, so they print no `text changed` line.
+`reports changed at L:C: A, B -> C` means the two builds report a different number of diagnostics at
+the position, and lists the codes of each build in source order. This shows an added cascade. When
+both builds report the same number there, the reports pair after each side is sorted by code, so a
+reorder gives no line. A report that moved gets no line, so it is not mistaken for a changed code or
+message.
+
 With `--apply`, the script looks at each safe fix that only one build gives on a changed program.
 It applies the fix alone, and the build that gave it checks the result again. Under the
 program, the script prints `lost clean fix` or `lost fix` for a fix of the base, and `new fix` or
@@ -29,6 +40,7 @@ import json
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from operator import itemgetter
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +110,40 @@ def show(ds: list[Diagnostic]) -> str:
         )
         or "none"
     )
+
+
+def wording(text: str) -> dict[str, Any]:
+    """Return the JSON of a diagnostic's `text` without its positions, but with every label."""
+    d = json.loads(text)
+    d["secondary"] = [
+        {k: v for k, v in s.items() if k not in ("line", "column", "start", "end")}
+        for s in d["secondary"]
+    ]
+    return d
+
+
+def change_lines(base: list[Diagnostic], head: list[Diagnostic]) -> list[str]:
+    """Return a line for each position of both builds where the reports, a code or the text differ.
+
+    When both builds have the same number of reports at a position, the reports pair after each side
+    is sorted by code. The text is compared only when both builds have text (`full`).
+    """
+    lines = []
+    for line, col in dict.fromkeys(d[2:4] for d in base):
+        here = [[d for d in ds if d[2:4] == (line, col)] for ds in (base, head)]
+        if not all(here):
+            continue
+        if len(here[0]) != len(here[1]):
+            codes = [", ".join(d[0] for d in ds) for ds in here]
+            lines.append(f"  reports changed at {line}:{col}: {codes[0]} -> {codes[1]}")
+            continue
+        base_here, head_here = (sorted(ds, key=itemgetter(0)) for ds in here)
+        for b, h in zip(base_here, head_here, strict=True):
+            if b[0] != h[0]:
+                lines.append(f"  code changed at {line}:{col}: {b[0]} -> {h[0]}")
+            elif b[5] and h[5] and wording(b[5]) != wording(h[5]):
+                lines.append(f"  text changed at {line}:{col}: {b[0]}")
+    return lines
 
 
 def reports(sisu: str, args: list[str]) -> list[dict[str, Any]] | None:
@@ -215,8 +261,10 @@ def main(  # noqa: PLR0913  the builds, the directories and one keyword for each
         if k := kind(base, head):
             counts[k] = counts.get(k, 0) + 1
             print(f"{k}: {path}\n  base: {show(base)}\n  head: {show(head)}")
-            if apply and k != "crash":
-                for line in fix_lines(base_sisu, head_sisu, path):
+            if k != "crash":
+                for line in change_lines(base, head):
+                    print(line)
+                for line in fix_lines(base_sisu, head_sisu, path) if apply else []:
                     print(line)
     tally = ", ".join(f"{n} {k}" for k, n in sorted(counts.items())) or "no differences"
     print(f"diag_diff: {len(paths)} programs, {tally}")

@@ -127,6 +127,107 @@ class DiagDiff(unittest.TestCase):
         self.assertIn('"help": "use a plain `let`"', lines[2])
         self.assertEqual(lines[-1], "diag_diff: 1 programs, 1 changed")
 
+    def diff_lines(self, base: str, head: str, *, full: bool = True) -> list[str]:
+        """The output lines of diag_diff on one program that reports `base` and then `head`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "p.sisu").touch()
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                dd.main(
+                    fake_sisu(tmp, "b", {"p": base}),
+                    fake_sisu(tmp, "h", {"p": head}),
+                    tmp,
+                    full=full,
+                )
+        return out.getvalue().splitlines()[1:-1]
+
+    def test_a_changed_code_at_the_same_position_should_get_a_code_changed_line(self) -> None:
+        """GIVEN a program whose diagnostic keeps its position and changes its code
+        WHEN diag_diff runs, with and without `--codes`
+        THEN it prints the code change after the head line, and nothing for the text
+        """
+        head = E0032.replace("E0032", "E0050")
+        for full in (True, False):
+            lines = self.diff_lines(E0032, head, full=full)
+            self.assertEqual(lines[2:], ["  code changed at 2:5: E0032 -> E0050"], lines)
+
+    def test_a_changed_message_at_the_same_position_should_get_a_text_changed_line(self) -> None:
+        """GIVEN a program whose diagnostic keeps its code and position and changes its message
+        WHEN diag_diff runs with and without `--codes`
+        THEN only the run that compares text prints `text changed`
+        """
+        base = E0032.replace("}]}", '}],"message":"found [i64]"}')
+        head = E0032.replace("}]}", '}],"message":"found []"}')
+        self.assertEqual(self.diff_lines(base, head)[2:], ["  text changed at 2:5: E0032"])
+        self.assertEqual(len(self.diff_lines(base, head, full=False)), 0)
+
+    def test_a_moved_position_should_get_no_code_or_text_line(self) -> None:
+        """GIVEN a program whose primary position moves in one run and whose secondary position
+        moves in another, with the same code and message
+        WHEN diag_diff runs
+        THEN it prints the base and head lines only
+        """
+        # A secondary label of `sisu check --format json` also gives its byte offsets.
+        message = E0032.replace('"column":9}', '"column":9,"start":20,"end":23}').replace(
+            "}]}", '}],"message":"m"}'
+        )
+        for moved in (
+            message.replace('"column":5', '"column":6'),
+            message.replace('"column":9,"start":20,"end":23', '"column":10,"start":21,"end":24'),
+        ):
+            self.assertEqual(len(self.diff_lines(message, moved)), 2)
+
+    def test_diagnostics_at_one_position_should_pair_in_order(self) -> None:
+        """GIVEN two diagnostics at one position, whose second code changes
+        WHEN diag_diff runs
+        THEN it prints one `code changed` line, for the second
+        """
+        head = E0032 + "\n" + E0032.replace("E0032", "E0050")
+        lines = self.diff_lines(E0032 + "\n" + E0032, head)
+        self.assertEqual(lines[2:], ["  code changed at 2:5: E0032 -> E0050"], lines)
+
+    def test_an_added_report_at_a_position_should_get_a_reports_changed_line(self) -> None:
+        """GIVEN a program whose head adds a cascade report at the position of a base report
+        WHEN diag_diff runs
+        THEN it prints one `reports changed` line with each side's codes, and no `code changed`
+        """
+        added = E0032.replace("E0032", "E0050")
+        lines = self.diff_lines(E0032, added + "\n" + E0032)
+        self.assertEqual(lines[2:], ["  reports changed at 2:5: E0032 -> E0050, E0032"], lines)
+        self.assertNotIn("code changed", "".join(lines))
+
+    def test_a_reorder_of_reports_at_one_position_should_get_no_line(self) -> None:
+        """GIVEN two reports at one position that swap their order in the head
+        WHEN diag_diff runs
+        THEN it prints the base and head lines only
+        """
+        other = E0032.replace("E0032", "E0050")
+        lines = self.diff_lines(E0032 + "\n" + other, other + "\n" + E0032)
+        self.assertEqual(len(lines), 2, lines)
+
+    def test_a_change_of_one_text_field_should_get_a_text_changed_line(self) -> None:
+        """GIVEN programs whose diagnostic changes only its label, only its help or only the text
+        of a secondary label, with the same code and position
+        WHEN diag_diff runs
+        THEN each prints one `text changed` line
+        """
+
+        def diagnostic(label: str = "l", help_: str = "h", other: str = "o") -> str:
+            return json.dumps(
+                {
+                    "kind": "diagnostic",
+                    "code": "E0032",
+                    "severity": "error",
+                    "help": help_,
+                    "primary": {"line": 2, "column": 5, "label": label},
+                    "secondary": [{"line": 2, "column": 9, "label": other}],
+                }
+            )
+
+        for field in ({"label": "k"}, {"help_": "g"}, {"other": "p"}):
+            lines = self.diff_lines(diagnostic(), diagnostic(**field))
+            self.assertEqual(lines[2:], ["  text changed at 2:5: E0032"], (field, lines))
+
     def test_full_should_report_each_text_field_that_alone_differs(self) -> None:
         """GIVEN programs whose diagnostic differs in one field each: the message, the label, a
         secondary label, the message of a fix, an edit of a fix and the safe flag of a fix
