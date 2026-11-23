@@ -410,23 +410,25 @@ impl Checker<'_> {
                 checker.interface_signature(interface, InterfaceId(i), head);
             });
         }
-        if let Some(pass1b) = self.pass1b.take() {
-            debug_assert!(
-                pass1b
-                    .params
-                    .iter()
-                    .all(|state| matches!(state, ParamsState::Done)),
-                "every interface parameter state should be Done after interface_signatures"
-            );
-            debug_assert!(
-                pass1b
-                    .assocs
-                    .iter()
-                    .flatten()
-                    .all(|state| matches!(state, AssocBoundState::Done)),
-                "every associated type state should be Done after interface_signatures"
-            );
-        }
+        let pass1b = self
+            .pass1b
+            .take()
+            .expect("pass1b should exist at end of interface_signatures");
+        debug_assert!(
+            pass1b
+                .params
+                .iter()
+                .all(|state| matches!(state, ParamsState::Done)),
+            "every interface parameter state should be Done after interface_signatures"
+        );
+        debug_assert!(
+            pass1b
+                .assocs
+                .iter()
+                .flatten()
+                .all(|state| matches!(state, AssocBoundState::Done)),
+            "every associated type state should be Done after interface_signatures"
+        );
         let edges: Vec<Vec<usize>> = self
             .interfaces
             .iter()
@@ -857,9 +859,8 @@ impl Checker<'_> {
                 changed = true;
             }
         }
-        if let Some(pass1b) = &mut self.pass1b
-            && pass1b.work_body_epochs[id.0] != pass1b.assoc_epoch
-        {
+        let pass1b = self.pass1b_mut();
+        if pass1b.work_body_epochs[id.0] != pass1b.assoc_epoch {
             pass1b.work_body_epochs[id.0] = pass1b.assoc_epoch;
             self.body.assoc_conforming.clear();
             self.body
@@ -873,6 +874,21 @@ impl Checker<'_> {
             self.body.conformed.clear();
             self.body.leaves.clear();
             self.body.scope = None;
+        }
+    }
+
+    /// Returns the active Pass 1b scratch state.
+    fn pass1b_mut(&mut self) -> &mut InterfacePass {
+        self.pass1b
+            .as_mut()
+            .expect("pass1b should exist during Pass 1b")
+    }
+
+    /// Returns the active `ResolvingParams` state of interface `id`.
+    fn resolving_params_mut(&mut self, id: InterfaceId) -> &mut ResolvingParams {
+        match &mut self.pass1b_mut().params[id.0] {
+            ParamsState::Resolving(res) => res,
+            _ => unreachable!("active interface parameter bounds should be Resolving"),
         }
     }
 
@@ -986,9 +1002,7 @@ impl Checker<'_> {
 
     /// Records that a partial associated-type closure was read, so completion clears caches.
     pub(super) fn mark_partial_assoc_read(&mut self) {
-        if let Some(pass1b) = &mut self.pass1b {
-            pass1b.partial_assoc_read = true;
-        }
+        self.pass1b_mut().partial_assoc_read = true;
     }
 
     /// Whether `entry` can supply `wanted`, or any bound when `wanted` is `None`.
@@ -1026,39 +1040,43 @@ impl Checker<'_> {
 
     /// Rebuilds `Bounds` for `(id, k)` in source order and invalidates partial closure caches.
     fn rebuild_assoc_bounds(&mut self, id: InterfaceId, k: usize) {
-        let Some(pass1b) = &mut self.pass1b else {
-            return;
-        };
-        let AssocBoundState::Active(pending) = &mut pass1b.assocs[id.0][k] else {
-            return;
-        };
-        let mut ordered = Vec::with_capacity(pending.non_member.len() + pending.entries.len());
-        ordered.extend_from_slice(&pending.non_member);
         let mut failed = self.interfaces[id.0].assoc[k].bounds.failed;
-        let mut all_done = true;
-        for entry in &pending.entries {
-            match entry.state {
-                AssocEntryState::Done => {
-                    if let Some(bound) = entry.resolved {
-                        ordered.push((entry.order, bound));
-                    } else {
-                        failed = true;
+        let (list, partial_read) = {
+            let pass1b = self.pass1b_mut();
+            let AssocBoundState::Active(pending) = &mut pass1b.assocs[id.0][k] else {
+                unreachable!("rebuild_assoc_bounds should run on Active state");
+            };
+            let mut ordered = Vec::with_capacity(pending.non_member.len() + pending.entries.len());
+            ordered.extend_from_slice(&pending.non_member);
+            let mut all_done = true;
+            for entry in &pending.entries {
+                match entry.state {
+                    AssocEntryState::Done => {
+                        if let Some(bound) = entry.resolved {
+                            ordered.push((entry.order, bound));
+                        } else {
+                            failed = true;
+                        }
+                    }
+                    AssocEntryState::Pending | AssocEntryState::Resolving => {
+                        all_done = false;
                     }
                 }
-                AssocEntryState::Pending | AssocEntryState::Resolving => {
-                    all_done = false;
-                }
             }
-        }
-        ordered.sort_by_key(|&(order, _)| order);
-        let list = ordered.into_iter().map(|(_, bound)| bound).collect();
+            ordered.sort_by_key(|&(order, _)| order);
+            let list = ordered.into_iter().map(|(_, bound)| bound).collect();
+            if all_done {
+                pass1b.assocs[id.0][k] = AssocBoundState::Done;
+            }
+            let partial_read = pass1b.partial_assoc_read;
+            if partial_read {
+                pass1b.assoc_epoch += 1;
+                pass1b.work_body_epochs[id.0] = pass1b.assoc_epoch;
+            }
+            (list, partial_read)
+        };
         self.interfaces[id.0].assoc[k].bounds = Bounds { list, failed };
-        if all_done {
-            pass1b.assocs[id.0][k] = AssocBoundState::Done;
-        }
-        if pass1b.partial_assoc_read {
-            pass1b.assoc_epoch += 1;
-            pass1b.work_body_epochs[id.0] = pass1b.assoc_epoch;
+        if partial_read {
             self.clear_assoc_caches_for(id, k);
         }
     }
@@ -1116,33 +1134,31 @@ impl Checker<'_> {
                     let bound = checker.bound(&written, ty);
                     checker.claim_assoc_checks(id, from);
                     {
-                        let pass1b = checker
-                            .pass1b
-                            .as_mut()
-                            .expect("pass1b should exist when finishing ensure_assoc_bounds");
+                        let pass1b = checker.pass1b_mut();
                         pass1b.current_assoc_entry = saved_entry;
                         pass1b.in_assoc_bound = saved_in_assoc;
                         pass1b.resolving_assocs -= 1;
-                        if let AssocBoundState::Active(pending) = &mut pass1b.assocs[id.0][k] {
-                            pending.entries[entry_idx].resolved = bound;
-                            pending.entries[entry_idx].state = AssocEntryState::Done;
-                        }
+                        let AssocBoundState::Active(pending) = &mut pass1b.assocs[id.0][k] else {
+                            unreachable!("completing entry should find Active state");
+                        };
+                        pending.entries[entry_idx].resolved = bound;
+                        pending.entries[entry_idx].state = AssocEntryState::Done;
                     }
                     if bound.is_none() {
                         checker.interfaces[id.0].assoc[k].bounds.failed = true;
                     }
                     checker.rebuild_assoc_bounds(id, k);
-                    if let Some(pass1b) = &mut checker.pass1b
-                        && pass1b.resolving_assocs == 0
-                    {
+                    let pass1b = checker.pass1b_mut();
+                    if pass1b.resolving_assocs == 0 {
                         pass1b.partial_assoc_read = false;
                     }
                 }
             });
         }
-        let Some(pass1b) = &self.pass1b else {
-            return false;
-        };
+        let pass1b = self
+            .pass1b
+            .as_ref()
+            .expect("pass1b should exist after ensure_assoc_bounds");
         let AssocBoundState::Active(pending) = &pass1b.assocs[id.0][k] else {
             return false;
         };
@@ -1210,10 +1226,9 @@ impl Checker<'_> {
                         .expect("pass1b should exist when finishing ensure_interface_params")
                         .params[id.0] = ParamsState::Done;
                 });
-                if let Some(pass1b) = &mut self.pass1b {
-                    pass1b.in_assoc_bound = saved_in_assoc;
-                    pass1b.in_on_demand = saved_on_demand;
-                }
+                let pass1b = self.pass1b_mut();
+                pass1b.in_assoc_bound = saved_in_assoc;
+                pass1b.in_on_demand = saved_on_demand;
                 false
             }
         }
@@ -1295,30 +1310,22 @@ impl Checker<'_> {
                 if entries.is_empty() {
                     continue;
                 }
-                if let Some(pass1b) = &mut checker.pass1b {
-                    pass1b.in_on_demand = on_demand;
-                }
+                checker.pass1b_mut().in_on_demand = on_demand;
                 for (j, written) in entries {
                     #[cfg(test)]
                     super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
                     let bound = checker.bound(&written, this);
                     checker.push_interface_param_bound(id, place, bound);
-                    if let Some(pass1b) = &mut checker.pass1b
-                        && let ParamsState::Resolving(res) = &mut pass1b.params[id.0]
-                    {
-                        res.pending_ifaces[idx].retain(|&(bj, _)| bj != j);
-                        res.resolved_on_demand.push((idx, j, bound));
-                    }
+                    let res = checker.resolving_params_mut(id);
+                    res.pending_ifaces[idx].retain(|&(bj, _)| bj != j);
+                    res.resolved_on_demand.push((idx, j, bound));
                 }
             }
         });
-        if let Some(pass1b) = &mut self.pass1b {
-            pass1b.in_assoc_bound = saved_in_assoc;
-            pass1b.in_on_demand = saved_on_demand;
-            if let ParamsState::Resolving(res) = &mut pass1b.params[id.0] {
-                res.active_param[idx] = false;
-            }
-        }
+        let pass1b = self.pass1b_mut();
+        pass1b.in_assoc_bound = saved_in_assoc;
+        pass1b.in_on_demand = saved_on_demand;
+        self.resolving_params_mut(id).active_param[idx] = false;
         false
     }
 
@@ -1445,14 +1452,10 @@ impl Checker<'_> {
         name: Symbol,
         written: &ast::TypeExpr,
     ) -> Option<Bound> {
-        let pass1b = self
-            .pass1b
-            .as_mut()
-            .expect("pass1b should exist during resolve_deferred_self_entry");
-        if let ParamsState::Resolving(res) = &mut pass1b.params[id.0] {
-            res.deferred_self[i].retain(|&(bj, _)| bj != j);
-            res.active_param[i] = true;
-        }
+        let res = self.resolving_params_mut(id);
+        res.deferred_self[i].retain(|&(bj, _)| bj != j);
+        res.active_param[i] = true;
+        let pass1b = self.pass1b_mut();
         let saved_in_assoc = std::mem::replace(&mut pass1b.in_assoc_bound, false);
         let saved_on_demand = std::mem::replace(&mut pass1b.in_on_demand, false);
         let place = at + i;
@@ -1460,14 +1463,12 @@ impl Checker<'_> {
             u32::try_from(place).expect("a declaration should have fewer than 2^32 parameters");
         let this = Some(Type::intern(TypeKind::Param(name, place32)));
         let bound = self.bound(written, this);
-        if let Some(pass1b) = &mut self.pass1b {
-            pass1b.in_assoc_bound = saved_in_assoc;
-            pass1b.in_on_demand = saved_on_demand;
-            if let ParamsState::Resolving(res) = &mut pass1b.params[id.0] {
-                res.active_param[i] = false;
-                res.pending_ifaces[i].retain(|&(bj, _)| bj != j);
-            }
-        }
+        let pass1b = self.pass1b_mut();
+        pass1b.in_assoc_bound = saved_in_assoc;
+        pass1b.in_on_demand = saved_on_demand;
+        let res = self.resolving_params_mut(id);
+        res.active_param[i] = false;
+        res.pending_ifaces[i].retain(|&(bj, _)| bj != j);
         self.push_interface_param_bound(id, place, bound);
         bound
     }
@@ -1482,20 +1483,12 @@ impl Checker<'_> {
         attempted: &mut [bool],
         done_ms: &mut Vec<usize>,
     ) {
-        let drained = self
-            .pass1b
-            .as_mut()
-            .and_then(|pass1b| match &mut pass1b.params[id.0] {
-                ParamsState::Resolving(res) => Some(std::mem::take(&mut res.resolved_on_demand)),
-                _ => None,
-            })
-            .unwrap_or_default();
+        let drained = std::mem::take(&mut self.resolving_params_mut(id).resolved_on_demand);
         for (i, j, bound) in drained {
             found[i][j] = bound;
-            if let Some(&m) = member_index.get(&(i, j)) {
-                attempted[m] = true;
-                done_ms.push(m);
-            }
+            let m = member_index[&(i, j)];
+            attempted[m] = true;
+            done_ms.push(m);
         }
     }
 
@@ -1521,18 +1514,14 @@ impl Checker<'_> {
             super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
             attempted[m] = true;
             let (i, j) = members[m];
-            if let Some(id) = active_id
-                && let Some(pass1b) = &mut self.pass1b
-                && let ParamsState::Resolving(res) = &mut pass1b.params[id.0]
-            {
+            if let Some(id) = active_id {
+                let res = self.resolving_params_mut(id);
                 res.active_param[i] = true;
                 res.pending_non_self[i].retain(|&(bj, _)| bj != j);
             }
             found[i][j] = self.resolve_bound(at, params, i, j);
-            if let Some(id) = active_id
-                && let Some(pass1b) = &mut self.pass1b
-                && let ParamsState::Resolving(res) = &mut pass1b.params[id.0]
-            {
+            if let Some(id) = active_id {
+                let res = self.resolving_params_mut(id);
                 res.active_param[i] = false;
                 res.pending_ifaces[i].retain(|&(bj, _)| bj != j);
             }
@@ -1565,13 +1554,10 @@ impl Checker<'_> {
             for (m, &(i, j)) in members.iter().enumerate() {
                 member_index.insert((i, j), m);
             }
-            if let Some(pass1b) = &mut self.pass1b
-                && let ParamsState::Resolving(res) = &mut pass1b.params[id.0]
-            {
-                for (m, &(i, j)) in members.iter().enumerate() {
-                    if !is_self_member[m] {
-                        res.pending_non_self[i].push((j, params[i].bounds[j].clone()));
-                    }
+            let res = self.resolving_params_mut(id);
+            for (m, &(i, j)) in members.iter().enumerate() {
+                if !is_self_member[m] {
+                    res.pending_non_self[i].push((j, params[i].bounds[j].clone()));
                 }
             }
         }
@@ -1637,12 +1623,9 @@ impl Checker<'_> {
                 }
                 if is_self_member[m] {
                     let (i, j) = members[m];
-                    if let Some(id) = active_id
-                        && let Some(pass1b) = &mut self.pass1b
-                        && let ParamsState::Resolving(res) = &mut pass1b.params[id.0]
-                    {
-                        res.deferred_self[i].push((j, params[i].bounds[j].clone()));
-                    }
+                    let id = active_id.expect("Self member bound should have active interface");
+                    self.resolving_params_mut(id).deferred_self[i]
+                        .push((j, params[i].bounds[j].clone()));
                     deferred_indices.push_back(m);
                 } else {
                     now.push(m);

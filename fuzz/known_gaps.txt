@@ -47,8 +47,10 @@ check/interface.rs	<sisuc::check::Checker>::fresh_interface_body
 check/interface.rs	<sisuc::check::Checker>::iface_declares_assoc
 check/interface.rs	<sisuc::check::Checker>::names_self_member
 check/interface.rs	<sisuc::check::Checker>::next_pending_assoc_entry
+check/interface.rs	<sisuc::check::Checker>::pass1b_mut
 check/interface.rs	<sisuc::check::Checker>::push_interface_param_bound
 check/interface.rs	<sisuc::check::Checker>::rebuild_assoc_bounds
 check/interface.rs	<sisuc::check::Checker>::resolve_deferred_self_entry
+check/interface.rs	<sisuc::check::Checker>::resolving_params_mut
 check/interface.rs	<sisuc::check::Checker>::sync_interface_body
 check/interface.rs	<sisuc::check::Checker>::with_interface_body
