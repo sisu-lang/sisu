@@ -24,6 +24,8 @@ SCRIPT = HERE / "fuzz_gaps.py"
 SRC = "/work/crates/sisuc/src/"
 HEADING = "## Generator gaps"
 NO_REASON = "## no reason yet\n"
+# The sections of docs/development.md that the message of a new gap names.
+STEP_HEADINGS = ("Add a rule for a new language feature", "Add a fixed form for a generator gap")
 
 # Real forms, as `c++filt -s rust` prints them for names of the compiler.
 METHOD = "<sisuc[31a72b24980b05b4]::check::Checker>::want_name"
@@ -155,6 +157,8 @@ class Gaps(unittest.TestCase):
             self.assertEqual(run.code, 1, run.out)
             self.assertIn(FN_KEY, run.lines)
             self.assertEqual(run.lines.count("```text"), 1)
+            for heading in STEP_HEADINGS:
+                self.assertIn(f'"{heading}"', run.out)
         with self.subTest("the same, f known"):
             known = f"## a reason\n{FN_KEY}\n"
             run = self.reached(
@@ -362,6 +366,13 @@ class Gaps(unittest.TestCase):
             )
             self.assertEqual(run.code, 1, run.out)
             self.assertIn("m.rs\tsisuc::m::g", run.lines)
+
+    def test_named_steps_should_be_headings_of_the_development_guide(self) -> None:
+        guide = (HERE.parent / "docs" / "development.md").read_text(encoding="utf-8")
+        headings = {line.removeprefix("### ") for line in guide.splitlines()}
+        for heading in STEP_HEADINGS:
+            with self.subTest(heading):
+                self.assertIn(heading, headings)
 
     def test_definitions_should_keep_their_identity(self) -> None:
         i32_value = "<sisuc[abc]::Tag<i32>>::value"

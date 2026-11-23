@@ -270,8 +270,10 @@ def compare(seeds_path: str, valid_path: str, known_path: str) -> tuple[int, str
         return 1, section(
             "Valid programs reach these functions, and no fixed seed reaches them:",
             fence([f"{file}\t{name}" for file, name in new]),
-            "Add a generator rule for each function, or add its line to `fuzz/known_gaps.txt` "
-            "under a section with a reason.",
+            "Close each gap with a drawn rule or a fixed form. Do each step of its section in "
+            '`docs/development.md`: "Add a rule for a new language feature" or '
+            '"Add a fixed form for a generator gap". A function that no generated program '
+            "should reach gets its line in `fuzz/known_gaps.txt`, under a section with a reason.",
             *stale_text,
         )
     return 0, section(
