@@ -38,6 +38,8 @@ ENV = {
 # FAKE_LIB_TIMEOUT and FAKE_LIB_EXIT, each the whole-suite group's value by default. A group run
 # also writes FAKE_OUTSIDE_CAUGHT and FAKE_OUTSIDE_MISSED names that no --re gave, as cargo mutants
 # does for its "delete field" mutants.
+# FAKE_COMMIT_IN_PASS1=1 makes the first pass commit a new Rust file, as a person can do in the
+# worktree during a run.
 # FAKE_GROUP_WRITE=0 makes a group run write nothing. A run with --list prints FAKE_LIST mutants (0 by default), records nothing and exits with FAKE_EXIT.
 # The sleep keeps lock.json strictly newer than the script's start mark.
 FAKE_CARGO = r"""#!/usr/bin/env bash
@@ -69,6 +71,11 @@ if [[ " $* " == *" ^"* ]]; then
   cp target/mutation-test.status status${name#args}
 else
   echo "$*" >args
+  if [[ -n ${FAKE_COMMIT_IN_PASS1:-} ]]; then
+    echo "fn extra() {}" >b.rs
+    git add b.rs
+    git -c user.name=t -c user.email=t@t commit -q -m during
+  fi
 fi
 exit_var=${prefix}_EXIT
 [[ -e mutants.out/missed.txt ]] && touch saw_old_out
@@ -402,6 +409,25 @@ class Mutants(unittest.TestCase):
             self.last_line(),
             f"mutation-test: FAIL: 6 caught, 0 unviable, 1 missed, 0 timeouts (HEAD {self.head()})",
         )
+
+    def test_a_commit_during_the_first_pass_should_stop_the_run_before_the_second(self) -> None:
+        self.rust_commit()
+        old = self.head()
+        run = self.mutate(caught=5, missed=2, exit=2, pass2_caught=2, commit_in_pass1=1)
+        self.assertEqual(run.returncode, 1)
+        self.assertFalse(self.seen("args2"))
+        self.assertEqual(
+            self.last_line(),
+            f"mutation-test: FAIL: the tree changed during the run (HEAD {old} -> {self.head()});"
+            " pass 1 tested 7: 2 missed;"
+            " run it again, and commit nothing in this worktree until it ends",
+        )
+
+    def test_an_unchanged_tree_should_let_the_second_pass_run(self) -> None:
+        self.rust_commit()
+        run = self.mutate(caught=5, missed=2, exit=2, pass2_caught=2)
+        self.assertEqual(run.returncode, 0)
+        self.assertTrue(self.seen("args2"))
 
     def test_a_failed_first_pass_should_not_start_the_second(self) -> None:
         self.rust_commit()

@@ -32,6 +32,10 @@
 # A summary of a run that measured a commit ends "(HEAD <sha>)"; NOT RUN lines and the
 # lines of a refused argument or of a refused tree do not.
 # It refuses uncommitted Rust changes, because a review takes the log of a commit only.
+# The diff is written once. A commit in this worktree during pass 1 would stop pass 2 with
+# "Diff content doesn't match source file" and no mutant tested. So the script records HEAD and
+# a hash of the Rust files at the start. Before pass 2 it checks both. When either changed, it
+# fails at once with "the tree changed during the run" and the counts of pass 1.
 # PASS needs no missed mutant; a timeout counts as caught.
 # Pass 2 waits 600 s for each mutant. MUTANTS_PASS2_TIMEOUT sets another number.
 # A --timeout, -t or --timeout-multiplier of the caller replaces it.
@@ -146,6 +150,9 @@ trap cleanup EXIT
 
 # The summary names the commit it measured, so a log is checked by its last line alone.
 head=$(git rev-parse HEAD)
+# The Rust files that the diff of the run describes: the index entries and the changes since HEAD.
+rust_tree() { { git ls-files -s -- '*.rs' && git diff HEAD -- '*.rs'; } | sha1sum; }
+rust_tree_at_start=$(rust_tree)
 # origin/main, not main: a local main falls behind, and then the range takes in merged work.
 base=${1:-$(git merge-base origin/main HEAD)}
 [[ $# -gt 0 ]] && shift
@@ -316,6 +323,14 @@ run_group() {
 
 # Pass 2: exit 2 is a missed mutant and 3 a timeout; any other failure stops the run here.
 if [[ -z $test_args && -n $tested ]] && ((status == 2 || status == 3)) && ((missed + timeouts > 0)); then
+  now=$(git rev-parse HEAD)
+  if [[ $now != "$head" || $(rust_tree) != "$rust_tree_at_start" ]]; then
+    verdict="mutation-test: FAIL: the tree changed during the run (HEAD $head -> $now); pass 1 tested $((caught + unviable + missed + timeouts)): $missed missed"
+    ((timeouts == 0)) || verdict+=", $timeouts timed out"
+    verdict+="; run it again, and commit nothing in this worktree until it ends"
+    echo "$verdict"
+    exit 1
+  fi
   echo "mutation-test: pass 1 (unit tests) missed $missed and timed out on $timeouts; pass 2 tests them in two groups"
   # Each pass rotates mutants.out, so the names of pass 1 are saved first.
   lists=$(mktemp -d)
