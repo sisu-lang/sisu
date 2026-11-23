@@ -10,7 +10,7 @@ use super::reports::Reported;
 use super::{Checked, Checker, Declared, Expectation, Misfit, Origin, Poisoned, payload, type_of};
 use crate::ast;
 use crate::diagnostic::{
-    Definition, Diagnostic, DiagnosticKind, Expected, IndexUsage, Literal, UnwrapHelp,
+    Definition, Diagnostic, DiagnosticKind, Expected, IndexUsage, Literal, UnwrapHelp, ValueKind,
 };
 use crate::source::Span;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
@@ -330,8 +330,21 @@ impl Checker<'_> {
                 let element = optional_element(ty);
                 // A struct element under the chain of a write, after a `?.`: part 1 cannot write
                 // through that `?.`, and an unwrap gives a copy.
-                let on_struct = self.body.write_chain.is_some()
-                    && element.is_some_and(|e| is_struct(innermost(e)));
+                let on_struct = self
+                    .body
+                    .write_chain
+                    .is_some_and(|(_, change)| match change {
+                        Change::Receiver(_, true) => element.is_some_and(|e| {
+                            matches!(
+                                innermost(e).kind(),
+                                TypeKind::Struct(..)
+                                    | TypeKind::Enum(..)
+                                    | TypeKind::Param(..)
+                                    | TypeKind::Assoc(..)
+                            )
+                        }),
+                        _ => element.is_some_and(|e| is_struct(innermost(e))),
+                    });
                 if on_struct && failed {
                     return (element, None);
                 }
@@ -344,6 +357,32 @@ impl Checker<'_> {
                     UnwrapHelp::It
                 };
                 let reported = match chain {
+                    Some(((_, Change::Receiver(method, true)), object)) => {
+                        let kind = match element.map(innermost) {
+                            Some(ty)
+                                if matches!(
+                                    ty.kind(),
+                                    TypeKind::Param(..) | TypeKind::Assoc(..)
+                                ) =>
+                            {
+                                ValueKind::Type(self.type_name(ty))
+                            }
+                            Some(ty) if matches!(ty.kind(), TypeKind::Enum(..)) => ValueKind::Enum,
+                            _ => ValueKind::Struct,
+                        };
+                        let d = match self.chain_call(base, object, (method, kind)) {
+                            DiagnosticKind::ChainCallOnValue {
+                                at, method, kind, ..
+                            } => DiagnosticKind::ChainCallOnValue {
+                                at,
+                                method,
+                                kind,
+                                replace: None,
+                            },
+                            d => d,
+                        };
+                        self.error(d)
+                    }
                     Some((write, object)) => {
                         let d = match self.chain_write(write, base, object) {
                             DiagnosticKind::ChainWriteOnStruct { at, .. } => {

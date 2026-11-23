@@ -11,7 +11,7 @@ use super::interface::{Bounds, LangPath};
 use super::member::{FieldOwner, Found};
 use super::mut_args::{Callee, MutParts, MutSite, site_of};
 use super::names::{self, ItemId, Position, Resolved};
-use super::place::{CheckedPlace, first_safe, try_unread};
+use super::place::{Change, CheckedPlace, first_safe, try_unread};
 use super::prelude::PRELUDE;
 use super::reports::Reported;
 use super::unused_names::Used;
@@ -690,6 +690,14 @@ impl Checker<'_> {
                 self.push_receiver(receiver)
             } else if parked {
                 self.receiver_place(receiver, method.name)
+            } else if !safe && self.chain_mut_self_call(receiver, method.name) {
+                let outer = self
+                    .body
+                    .write_chain
+                    .replace((span, Change::Receiver(method.name, true)));
+                let scrutinee = self.value_kept(receiver);
+                self.body.write_chain = outer;
+                scrutinee
             } else {
                 self.value_kept(receiver)
             };

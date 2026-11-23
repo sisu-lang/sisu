@@ -4079,7 +4079,7 @@ impl Checker<'_> {
                 method,
                 safe,
                 ..
-            } if self.parks_receiver(receiver, method.name, *safe) => Some(Expectation::None),
+            } if self.skips_ranking(receiver, method.name, *safe) => Some(Expectation::None),
             // A method call with no argument is a member closed, as a local is, unless it waits
             // for its context to pick a method.
             K::MethodCall { args, .. } if args.is_empty() && !self.sibling_waits(e) => {
@@ -5454,7 +5454,7 @@ impl Checker<'_> {
             safe,
             ..
         } = &e.kind
-            && self.parks_receiver(receiver, method.name, *safe)
+            && self.skips_ranking(receiver, method.name, *safe)
         {
             if method.name.as_str() != "push" {
                 self.unranked_mut_self.insert(method.name);
