@@ -1,6 +1,6 @@
-// A `unit` has no value to compare or to pass on. A block that ends in a `let` is a valid `unit`
-// value. `id({ let y = 2 }) == 1` compares it, and that is E0043 at the call. The same block as an
-// operand of `==` is E0043. An `if` whose branches never finish is E0043 as an argument.
+// A block that ends in a `let` is a `unit` value. `id({ let y = 2 }) == 1` compares a `unit`
+// with an `i64`: E0043 at the call. `{ let z = 3 } == id(1)` is the same mistake, with the block
+// as the operand. An `if` whose branches never finish has no value: E0043 at `P<A, B>` of `h`.
 struct P<A, B> {
     a: A
     b: B
