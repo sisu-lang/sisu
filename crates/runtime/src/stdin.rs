@@ -96,6 +96,7 @@ pub unsafe extern "C" fn sisu_read_line(len: *mut usize) -> *const u8 {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::cell::Cell;
     use std::collections::VecDeque;

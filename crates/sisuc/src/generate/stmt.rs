@@ -1832,6 +1832,7 @@ fn counter_var(name: String, ty: Ty, size: u64, loops: usize) -> Var {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::{Gen, Target};
 

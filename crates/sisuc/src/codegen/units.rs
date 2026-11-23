@@ -519,6 +519,7 @@ pub(crate) fn schedule<T: Send>(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::front_end::{PRELUDE_SOURCE, prelude_program};

@@ -1675,6 +1675,7 @@ fn part_in(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::check::expectation::Origin;

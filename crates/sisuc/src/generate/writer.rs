@@ -340,6 +340,7 @@ impl Writer {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::super::mistake::{Kind, MistakeSite};
     use super::{Piece, Writer};

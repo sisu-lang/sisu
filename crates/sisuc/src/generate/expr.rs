@@ -2635,6 +2635,7 @@ fn separated(n: i64) -> String {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use arbitrary::Unstructured;
 

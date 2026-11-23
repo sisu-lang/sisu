@@ -17,6 +17,7 @@ use crate::{lexer, parser};
 
 /// `program` with the members of each join swapped (`swap_with`), each `??` that can swap included.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn swap_joins(program: &str) -> Option<String> {
     swap_with(program, |_| Vec::new())
 }
@@ -761,6 +762,7 @@ fn render(program: &str, range: Range<usize>, pairs: &[Pair], next: &mut usize) 
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::{swap_joins, swap_with};
 

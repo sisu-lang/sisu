@@ -247,6 +247,7 @@ fn fnv1a(data: &[u8]) -> u64 {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::super::coverage;
     use super::super::generate;

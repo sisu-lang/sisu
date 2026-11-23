@@ -733,6 +733,7 @@ thread_local! {
 
 /// Records that the checker reached `point` on this thread.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn reached(point: &'static str) {
     POINTS.with_borrow_mut(|points| {
         points.insert(point);
@@ -1431,6 +1432,7 @@ pub(crate) fn check<'src>(
 /// follows the checker: the prelude's templates would stay in a program that `mono` has not run
 /// on.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn check_alone(
     program: &ast::Program,
     source: &str,
@@ -3212,4 +3214,5 @@ fn defined_twice(kind: Definition, name: &ast::Ident, first: Earlier) -> Diagnos
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) mod tests;

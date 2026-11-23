@@ -67,6 +67,7 @@ pub unsafe extern "C" fn sisu_write_f64_fixed(x: f64, precision: u8, out: *mut u
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::{FLOAT_BYTES, shortest, sisu_write_f64, sisu_write_f64_fixed};
 

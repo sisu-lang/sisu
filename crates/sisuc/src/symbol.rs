@@ -88,6 +88,7 @@ impl fmt::Display for Symbol {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

@@ -125,6 +125,13 @@ language = "system"
 entry = "python3 scripts/comment_width.py"
 types_or = ["rust", "toml", "yaml"]
 
+[[repos.hooks]]
+id = "coverage-off"
+name = "test-only modules and functions stay out of coverage"
+language = "system"
+entry = "python3 scripts/coverage_off.py"
+files = '^crates/[^/]+/src/.*\.rs$'
+
 # Reads the diff against HEAD. CI's `--all-files` has a clean tree, so only a commit can fail this.
 [[repos.hooks]]
 id = "text-limits"

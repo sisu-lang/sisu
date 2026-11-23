@@ -462,18 +462,21 @@ pub(crate) fn syntax_errors(source: &str) -> (bool, usize) {
 
 /// `checked_with` with `PRELUDE_SOURCE`, for the tests.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn checked(source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
     checked_with(PRELUDE_SOURCE, source)
 }
 
 /// `checked_timed` with no timings.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn checked_with(prelude: &str, source: &str) -> (Option<tir::Program>, Vec<Diagnostic>) {
     checked_timed(prelude, source, &mut Timings::off())
 }
 
 /// The sources that the W0007 tests and the fuzz tests share.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) mod w0007_rows {
     use crate::diagnostic::Code;
 
@@ -549,6 +552,7 @@ pub(crate) mod w0007_rows {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::w0007_rows::{
         AROUND_A_DROPPED_SEMICOLON, CHANGES_THE_LEXING, NO_FIX_HARMLESS, NO_FIX_NEEDED,

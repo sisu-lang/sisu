@@ -765,6 +765,7 @@ pub(super) fn declare<'ctx>(module: &Module<'ctx>, row: &RuntimeFn) -> FunctionV
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use inkwell::context::Context;

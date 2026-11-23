@@ -35,6 +35,7 @@ pub unsafe extern "C" fn sisu_stack_grow(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[expect(
     unsafe_code,
     reason = "the test calls the runtime's unsafe C ABI functions"

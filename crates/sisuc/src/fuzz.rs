@@ -252,6 +252,7 @@ fn conflict(a: Span, b: Span) -> bool {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};

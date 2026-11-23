@@ -140,6 +140,7 @@ const NONE: usize = usize::MAX;
 /// first, then the statements that read a root in place and then kill it, then each counted
 /// local in order.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn certify(function: &Function) -> Result<(), Violation> {
     certify_in(function, &[])
 }

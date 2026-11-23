@@ -56,6 +56,7 @@ pub extern "C" fn sisu_drop_drain() {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 #[expect(
     unsafe_code,
     reason = "the test calls the runtime's unsafe C ABI functions"
