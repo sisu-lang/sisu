@@ -62,6 +62,7 @@ impl Use {
 mod tests {
     use super::*;
     use crate::check::expectation::Origin;
+    use crate::tir::{InterfaceId, TypeArgs};
 
     #[test]
     fn of_change_should_name_the_use_of_each_change() {
@@ -75,8 +76,8 @@ mod tests {
             (Change::Receiver(method, false), Use::Receiver),
             (Change::Receiver(method, true), Use::Receiver),
         ];
-        for (change, want) in table {
-            assert_eq!(Use::of_change(change), want);
+        for (i, (change, want)) in table.into_iter().enumerate() {
+            assert_eq!(Use::of_change(change), want, "row {i}");
         }
     }
 
@@ -85,5 +86,19 @@ mod tests {
         let read = Use::Read(Expectation::Required(Type::I64, Origin::None));
         assert_eq!(read.converted(), read);
         assert_eq!(Use::Write.converted(), Use::Write);
+    }
+
+    #[test]
+    fn converted_should_make_a_read_under_an_any_type_a_conversion() {
+        let any = Type::intern(TypeKind::Any(InterfaceId(0), TypeArgs::NONE));
+        let required = |ty| Use::Read(Expectation::Required(ty, Origin::None));
+        let table = [
+            (required(any), Use::ToAny),
+            (required(Type::optional(any)), Use::ToAny),
+            (required(Type::array(any)), required(Type::array(any))),
+        ];
+        for (i, (read, want)) in table.into_iter().enumerate() {
+            assert_eq!(read.converted(), want, "row {i}");
+        }
     }
 }
