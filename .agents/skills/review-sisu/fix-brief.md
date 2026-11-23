@@ -32,9 +32,11 @@ A change whose tests are in `scripts/test_*.py` has no separate test commit, bec
 
    Docs text: when the fix gives a sentence for a doc, each example in the sentence is one row
    of the table, with its probe. When a probe contradicts the sentence, change the sentence and
-   report the row.
+   report the row. Probe each member kind that a new rule sentence lists, in both orders, with and
+   without an expected type. Order sweeps include a generic struct leaf and an enum leaf, not only
+   `1`, `None`, `Some(1)` and `[]`.
 
-   Tests: <the fixture or the run case that holds each row, and the mutation each new test kills>.
+   Tests: <the fixture or the run case that holds each row, and the mutation each new test kills>. A fix that adds or changes a walk names its counter test on each shape of `SHAPES` in `scripts/scaling.py` that reaches it. Examples are an else-if chain and a shared generic alias, not only n copies of one statement.
 
 Report, do not add: when a check (a hook, a lint, a test table) seems to need a new exemption,
 report the hit and the reason, and add nothing.
