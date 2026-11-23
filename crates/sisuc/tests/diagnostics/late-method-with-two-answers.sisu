@@ -1,8 +1,9 @@
 // A method that two interfaces give to one struct has two result types, and no other argument
-// picks one. The call that takes it as an argument has two outcomes. When the result of the call
-// names the type parameter, the error is E0156 at the method. When the parameter is a bare `x: T`
-// that the result does not name, the call cannot infer it: E0050. The last row is another rule:
-// `[]` has no element, so nothing gives `U` its type, and the call is E0050.
+// picks one. The call that takes it as an argument has two outcomes. When the parameter holds the
+// type parameter in a larger type, such as `[T]` or `T?`, the error is E0156 at the method. When
+// the parameter is a bare `x: T`, the call cannot infer `T`: E0050, also when the result names
+// `T`. The last row is another rule: `[]` has no element, so nothing gives `U` its type, and the
+// call is E0050.
 interface Label {
     fn name(self) -> string
 }
@@ -36,6 +37,7 @@ struct Box<T> {
 fn wrap<T>(x: [T]) -> [T] { x }
 fn opt<T>(x: T?) -> T { x ?? panic("no") }
 fn h<T>(x: T) -> i64 { 0 }
+fn id<T>(x: T) -> T { x }
 
 fn main() {
     let s = S()
@@ -43,6 +45,7 @@ fn main() {
     let a = [wrap([s.name()])]
     let b = [opt(s.name())]
     let c = [h(s.name()), 1]
+    let e = [id(s.name())]
     let d = bx.put([])
-    print(a.len() + b.len() + c.len() + d)
+    print(a.len() + b.len() + c.len() + e.len() + d)
 }
