@@ -5703,7 +5703,10 @@ impl From<DiagnosticKind> for Diagnostic {
                 let d = Diagnostic::coded(
                     code,
                     at,
-                    format!("`{receiver}?.` leaves a `{left}`, which may be `None`"),
+                    format!(
+                        "`{receiver}?.` leaves {} `{left}`, which may be `None`",
+                        indefinite(&left),
+                    ),
                 );
                 if help {
                     d.with_help(peel_text("other", &receiver, &member, layers))

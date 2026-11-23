@@ -1,0 +1,21 @@
+error[E0153]: `S` conforms to `R` twice
+  --> E0153-plain-self-write.sisu:15:11
+   |
+15 | extend S: R {
+   |           ^
+   |
+  ::: E0153-plain-self-write.sisu:9:11
+   |
+ 9 | extend S: R {
+   |           - first conformance here
+
+error[E0001]: cannot assign to a part of `self`
+  --> E0153-plain-self-write.sisu:17:9
+   |
+17 |         self.n += 1
+   |         ^^^^^^^^^^^
+   |
+   = help: copy `self` into a `let mut` variable
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0001, E0153

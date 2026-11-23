@@ -1,0 +1,40 @@
+error[E0062]: `?.` cannot write a field of a struct value yet
+  --> E0062-chain-index-struct.sisu:31:6
+   |
+31 |     o?.ps[0].x = 2
+   |      ^^^^
+
+error[E0062]: `?.` cannot call `set` on a struct value yet
+  --> E0062-chain-index-struct.sisu:35:6
+   |
+35 |     o?.ps[0].set()
+   |      ^^^^
+
+error[E0062]: `o?.ps` may be `None`
+  --> E0062-chain-index-struct.sisu:39:5
+   |
+39 |     o?.ps[0].show()
+   |     ^^^^^
+   |
+   = help: unwrap it with `if let`, `let ... else` or `?? return`
+
+error[E0062]: `?.` cannot write a field of a struct value yet
+  --> E0062-chain-index-struct.sisu:43:6
+   |
+43 |     o?.qs[0].push(2)
+   |      ^^^^
+
+error[E0062]: `?.` cannot call `flip` on an enum value yet
+  --> E0062-chain-index-struct.sisu:47:6
+   |
+47 |     o?.ds[0].flip()
+   |      ^^^^
+
+error[E0062]: `?.` cannot call `set` on a value of type `T` yet
+  --> E0062-chain-index-struct.sisu:51:6
+   |
+51 |     o?.ts[0].set()
+   |      ^^^^
+
+sisu: 6 errors
+sisu: for more on a code, run `sisu explain <code>`: E0062

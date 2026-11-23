@@ -158,6 +158,7 @@ impl Checker<'_> {
             let others = added.covered.get(&key).map_or(&[][..], Vec::as_slice);
             self.meet_requirements(p, others);
         }
+        self.mark_duplicate_requirements();
         for p in &pending {
             self.check_choices(p);
         }
@@ -707,12 +708,12 @@ impl Checker<'_> {
         for requirement in &info.requirements {
             let name = requirement.name.name;
             let found = self.written_method(p.source, name);
-            if let Some(Declared::Known(f)) = found {
-                self.named_for_requirement.insert(f);
-                if requirement.self_mut.is_none() {
-                    self.plain_self_requirement.insert(f);
-                }
-            }
+            record_requirement_method(
+                &mut self.named_for_requirement,
+                &mut self.plain_self_requirement,
+                found,
+                requirement.self_mut.is_none(),
+            );
             let elsewhere = others
                 .iter()
                 .any(|&o| self.written_method(o, name).is_some());
@@ -1250,5 +1251,46 @@ impl Checker<'_> {
     /// prelude's text only for a requirement of a language interface (`Eq`) that a class lacks.
     fn source_text(&self, span: Span) -> &str {
         self.source.text(span)
+    }
+
+    /// Marks methods in duplicate `extend` blocks that share a requirement name with the block's
+    /// interface, so plain-`self` methods keep their `copy self` help instead of `"take mut self"`.
+    fn mark_duplicate_requirements(&mut self) {
+        for block in 0..self.extensions.len() {
+            if !self.extensions[block].duplicate {
+                continue;
+            }
+            let Some((bound, _)) = self.extensions[block].interface else {
+                continue;
+            };
+            let count = self.interfaces[bound.interface.0].requirements.len();
+            for r in 0..count {
+                let req = &self.interfaces[bound.interface.0].requirements[r];
+                let (name, plain_self) = (req.name.name, req.self_mut.is_none());
+                let found = self.written_method(Source::Block(block), name);
+                record_requirement_method(
+                    &mut self.named_for_requirement,
+                    &mut self.plain_self_requirement,
+                    found,
+                    plain_self,
+                );
+            }
+        }
+    }
+}
+
+/// Records a method that meets or matches an interface requirement, and whether the requirement
+/// takes plain `self`.
+fn record_requirement_method(
+    named: &mut FxHashSet<tir::FuncId>,
+    plain: &mut FxHashSet<tir::FuncId>,
+    found: Option<Declared<tir::FuncId>>,
+    plain_self: bool,
+) {
+    if let Some(Declared::Known(f)) = found {
+        named.insert(f);
+        if plain_self {
+            plain.insert(f);
+        }
     }
 }

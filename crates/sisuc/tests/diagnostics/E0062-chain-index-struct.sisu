@@ -1,0 +1,62 @@
+interface Rm {
+    fn set(mut self)
+}
+
+struct P: Rm {
+    x: i64
+    fn set(mut self) {
+        self.x = 1
+    }
+    fn show(self) {
+        print(self.x)
+    }
+}
+
+enum D {
+    N
+    S
+    fn flip(mut self) {
+        self = D.S
+    }
+}
+
+struct L<T: Rm> {
+    ps: [P]
+    qs: [[i64]]
+    ds: [D]
+    ts: [T]
+}
+
+fn write_field(mut o: L<P>?) {
+    o?.ps[0].x = 2
+}
+
+fn call_mut(mut o: L<P>?) {
+    o?.ps[0].set()
+}
+
+fn call_plain(o: L<P>?) {
+    o?.ps[0].show()
+}
+
+fn push_elem(mut o: L<P>?) {
+    o?.qs[0].push(2)
+}
+
+fn call_enum(mut o: L<P>?) {
+    o?.ds[0].flip()
+}
+
+fn call_param<T: Rm>(mut o: L<T>?) {
+    o?.ts[0].set()
+}
+
+fn main() {
+    let mut o: L<P>? = None
+    write_field(mut o)
+    call_mut(mut o)
+    call_plain(o)
+    push_elem(mut o)
+    call_enum(mut o)
+    call_param(mut o)
+}
