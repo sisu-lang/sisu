@@ -25,7 +25,11 @@ SRC = "/work/crates/sisuc/src/"
 HEADING = "## Generator gaps"
 NO_REASON = "## no reason yet\n"
 # The sections of docs/development.md that the message of a new gap names.
-STEP_HEADINGS = ("Add a rule for a new language feature", "Add a fixed form for a generator gap")
+STEP_HEADINGS = (
+    "Add a rule for a new language feature",
+    "Add a fixed form for a generator gap",
+    "The generator gaps",
+)
 
 # Real forms, as `c++filt -s rust` prints them for names of the compiler.
 METHOD = "<sisuc[31a72b24980b05b4]::check::Checker>::want_name"
@@ -369,7 +373,9 @@ class Gaps(unittest.TestCase):
 
     def test_named_steps_should_be_headings_of_the_development_guide(self) -> None:
         guide = (HERE.parent / "docs" / "development.md").read_text(encoding="utf-8")
-        headings = {line.removeprefix("### ") for line in guide.splitlines()}
+        headings = {
+            line.removeprefix("### ") for line in guide.splitlines() if line.startswith("### ")
+        }
         for heading in STEP_HEADINGS:
             with self.subTest(heading):
                 self.assertIn(heading, headings)
