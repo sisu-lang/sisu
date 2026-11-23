@@ -924,14 +924,12 @@ fn a_query_that_is_too_deep_should_fill_each_field_of_its_report() {
     let (found, at) = with_probe(WRAPPER, ("T", "W<i64>"), "Eq", |checker, _, eq| {
         assert!(query_nest(checker, eq, 4, Type::I64));
         (
-            (checker.diagnostics.iter())
-                .map(|d| format!("{d:?}"))
-                .collect::<Vec<_>>(),
+            checker.diagnostics.iter().cloned().collect::<Vec<_>>(),
             checker.classes[class_named(checker, "W").0].name.span,
         )
     });
-    // `Diagnostic` derives only `Clone` and `Debug`, so the test compares rendered text. The
-    // registry arm that builds the message and the label uses every field of the kind.
+    // `Diagnostic` derives `PartialEq` in tests. Both sides come from
+    // `DiagnosticKind::ConformanceTooDeep`, and `diagnostic/render.rs` pins the wording.
     let expected: Diagnostic = DiagnosticKind::ConformanceTooDeep {
         interface: "Eq".to_string(),
         root: "W<W<W<W<i64>>>>".to_string(),
@@ -940,7 +938,7 @@ fn a_query_that_is_too_deep_should_fill_each_field_of_its_report() {
         at,
     }
     .into();
-    assert_eq!(found, [format!("{expected:?}")]);
+    assert_eq!(found, [expected]);
 }
 
 /// A second root that goes past the limit through the same class reports nothing more.

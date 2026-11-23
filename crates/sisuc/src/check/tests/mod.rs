@@ -583,8 +583,8 @@ fn repeated_param_is_poisoned() {
 }
 
 #[test]
-fn functions_in_any_order() {
-    assert!(diags("fn main() { print(f(1)) }\nfn f(n: i64) -> i64 { n }").is_empty());
+fn functions_should_resolve_in_any_order() {
+    clean("fn main() { print(f(1)) }\nfn f(n: i64) -> i64 { n }");
 }
 
 #[test]

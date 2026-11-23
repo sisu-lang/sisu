@@ -159,16 +159,38 @@ pub(crate) fn runtime_library(allocator: Allocator) -> Result<PathBuf, String> {
     }
 }
 
-/// The runtime archive on `allocator` for a unit test, which nextest's setup script builds: the
-/// test binary is `target/debug/deps/<name>`, so the archive is two levels up. `runtime_library`
-/// looks beside the test binary, where it is not.
+/// The runtime archive on `allocator` for a unit test.
+///
+/// Nextest's setup script writes `SISU_TEST_RUNTIME_DIR`. Without it, search ancestors above the
+/// binary's folder, then fall back two levels up.
 #[cfg(test)]
 pub(crate) fn test_runtime(allocator: Allocator) -> PathBuf {
     let exe = std::env::current_exe().expect("the test binary should know its path");
+    test_runtime_in(
+        std::env::var_os("SISU_TEST_RUNTIME_DIR").as_deref(),
+        &exe,
+        allocator,
+    )
+}
+
+#[cfg(test)]
+fn test_runtime_in(env_dir: Option<&std::ffi::OsStr>, exe: &Path, allocator: Allocator) -> PathBuf {
+    let archive = archive_name(allocator);
+    if let Some(dir) = env_dir {
+        let path = Path::new(dir).join(archive);
+        if path.is_file() {
+            return path;
+        }
+    }
+    // Skip the binary and its immediate folder (such as `deps/`) so an instrumented copy never
+    // wins over `target/debug/`.
+    if let Some(dir) = exe.ancestors().skip(2).find(|d| d.join(archive).is_file()) {
+        return dir.join(archive);
+    }
     exe.parent()
         .and_then(Path::parent)
         .expect("the test binary should be two levels inside the target directory")
-        .join(archive_name(allocator))
+        .join(archive)
 }
 
 #[cfg(test)]
@@ -179,5 +201,66 @@ mod tests {
     fn rebuild_command_should_name_the_profile_of_the_running_sisu() {
         assert_eq!(rebuild_command(true), "cargo build --workspace");
         assert_eq!(rebuild_command(false), "cargo build --workspace --release");
+    }
+
+    #[test]
+    fn test_runtime_in_should_prefer_env_dir_and_search_ancestors_for_archive() {
+        struct TempDir(PathBuf);
+        impl Drop for TempDir {
+            fn drop(&mut self) {
+                drop(std::fs::remove_dir_all(&self.0));
+            }
+        }
+
+        let root =
+            TempDir(std::env::temp_dir().join(format!("sisu-test-runtime-{}", std::process::id())));
+        drop(std::fs::remove_dir_all(&root.0));
+
+        let env_dir = root.0.join("env");
+        let empty_dir = root.0.join("empty");
+        let debug_dir = root.0.join("target/debug");
+        let deps_dir = debug_dir.join("deps");
+        let nightly_dir = debug_dir.join("build/sisuc/abc123");
+        let nowhere_exe = root.0.join("nowhere/deps/sisuc-abc");
+        for dir in [&env_dir, &empty_dir, &deps_dir, &nightly_dir] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::create_dir_all(nowhere_exe.parent().unwrap()).unwrap();
+
+        for allocator in [Allocator::Mimalloc, Allocator::System] {
+            let name = archive_name(allocator);
+            std::fs::write(env_dir.join(name), b"").unwrap();
+            std::fs::write(deps_dir.join(name), b"").unwrap();
+            std::fs::write(debug_dir.join(name), b"").unwrap();
+
+            let stable_exe = deps_dir.join("sisuc-abc");
+            let nightly_exe = nightly_dir.join("sisuc-abc");
+
+            // 1. `Some(dir)` holding the archive wins even when `exe` is elsewhere.
+            assert_eq!(
+                test_runtime_in(Some(env_dir.as_os_str()), &nowhere_exe, allocator),
+                env_dir.join(name),
+            );
+            // 2. `Some(empty_dir)` falls back to ancestor search under `exe`.
+            assert_eq!(
+                test_runtime_in(Some(empty_dir.as_os_str()), &stable_exe, allocator),
+                debug_dir.join(name),
+            );
+            // 3. Stable layout skips `deps/` so `debug/` wins over `deps/`.
+            assert_eq!(
+                test_runtime_in(None, &stable_exe, allocator),
+                debug_dir.join(name),
+            );
+            // 4. Nightly layout walks ancestors up to `target/debug/`.
+            assert_eq!(
+                test_runtime_in(None, &nightly_exe, allocator),
+                debug_dir.join(name),
+            );
+            // 5. When no ancestor has the archive, fall back two levels up.
+            assert_eq!(
+                test_runtime_in(None, &nowhere_exe, allocator),
+                root.0.join("nowhere").join(name),
+            );
+        }
     }
 }

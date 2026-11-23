@@ -29,11 +29,16 @@
 # argument. Add the form to the allow list when a test needs it.
 # shortcut: the allow list reads text, not types: `.secondary().iter().map(|(s, _)| ..)`
 # passes for any body, and a `.0` of an index passes whatever follows it.
-# An assert_eq! or assert_ne! of two `format!("{x:?}")` strings counts too: the
-# Debug text of a diagnostic holds its wording. The argument of `format!` may
-# hold calls, with parentheses nested to any depth.
-# shortcut: the Debug pair is flagged for any type, not only a diagnostic;
-# compare such values directly, or exempt the file when a hit is right.
+# Any Debug `format!` in the first two arguments of `assert_eq!` or `assert_ne!` fails, unless
+# one bare `format!` matches a plain string literal.
+# The argument of `format!` can hold calls with nested parentheses.
+# shortcut: the check flags any type, not only a diagnostic; compare values directly, or exempt
+# the file when a hit is right.
+# shortcut: turbofish commas (`x.collect::<Map<K, V>>()`) at top level split early.
+# shortcut: `.to_string()`, `String::from("...")`, a `const` string, `&format!(...)`, and
+# `format!(...).as_str()` fail against a literal.
+# shortcut: `assert!(format!("{a:?}") == b)` and a pre-collected Debug list compared with a
+# literal list pass.
 # shortcut: between `#[cfg(test)]` and `mod`, the pattern takes blank lines,
 # `//` comments and attributes with one level of inner brackets, not a
 # `/* */` comment; add the form when a file uses it.
@@ -47,6 +52,9 @@ exempt=(
   crates/sisuc/src/diagnostic/json.rs
   crates/sisuc/src/report.rs
   crates/sisuc/src/check/tests/parity.rs
+  # `exempt` skips both checks for this file; `pairs.rs` compares MIR `Block` Debug text and never
+  # touches `Diagnostic`.
+  crates/sisuc/src/mir/tests/pairs.rs
 )
 files=()
 for file in "$@"; do
@@ -76,9 +84,59 @@ perl -0777 -ne '
   }
   my $parens = qr/(\((?:[^()]++|(?-1))*+\))/;
   my $debug = qr/format!\(\s*"\{[\w.]*:\#?\?\}"\s*(?:,\s*(?:[^(),]++|$parens)+)?\)/;
+  my $str_lit = qr/(?:b?"(?:[^"\\]|\\.)*"|b?r(#*)".*?"\1)/s;
   pos = $start;
-  while (/\bassert_(?:eq|ne)!\(\s*$debug\s*,\s*$debug/g) {
-    my $line = 1 + (substr($_, 0, $-[0]) =~ tr/\n//);
+  while (/\bassert_(?:eq|ne)!\(/g) {
+    my $call_start = $-[0];
+    my $args_start = pos($_);
+    my $saved_pos = $args_start;
+    my @commas;
+    my $depth = 1;
+    my $end_pos;
+    while ($depth > 0 && pos($_) < length($_)) {
+      if (/\G\/\/[^\n]*/gc) {
+        next;
+      }
+      if (/\Gb?r(#*)".*?"\1/sgc) {
+        next;
+      }
+      if (/\Gb?"(?:[^"\\]|\\.)*"/sgc) {
+        next;
+      }
+      if (/\G\x27(?:\\.[^\x27]*|[^\x27\\])\x27/gc) {
+        next;
+      }
+      if (/\G[\(\[\{]/gc) {
+        $depth++;
+        next;
+      }
+      if (/\G[\)\]\}]/gc) {
+        $depth--;
+        if ($depth == 0) {
+          $end_pos = $-[0];
+          last;
+        }
+        next;
+      }
+      if ($depth == 1 && /\G,/gc) {
+        push @commas, $-[0];
+        next;
+      }
+      /\G[^"\x27\/\(\[\{\)\]\},br]+|\G./sgc;
+    }
+    pos($_) = $saved_pos;
+    next unless defined($end_pos) && @commas;
+    my $lhs = substr($_, $args_start, $commas[0] - $args_start);
+    my $rhs_end = @commas > 1 ? $commas[1] : $end_pos;
+    my $rhs = substr($_, $commas[0] + 1, $rhs_end - ($commas[0] + 1));
+    $lhs =~ s/^\s+|\s+$//g;
+    $rhs =~ s/^\s+|\s+$//g;
+    next unless $lhs =~ /$debug/ || $rhs =~ /$debug/;
+    my $allowed =
+      ($lhs =~ /\A$debug\z/ && $rhs =~ /\A$str_lit\z/) ||
+      ($rhs =~ /\A$debug\z/ && $lhs =~ /\A$str_lit\z/);
+    next if $allowed;
+    my $line = 1 + (substr($_, 0, $call_start) =~ tr/\n//);
     print "$ARGV:$line: a unit test compares the Debug text of two values, which holds a diagnostic\x27s wording; compare the codes, spans and fix edits\n";
     $bad = 1;
   }

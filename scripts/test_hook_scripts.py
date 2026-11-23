@@ -213,6 +213,16 @@ class TestWording(unittest.TestCase):
             '    assert_eq!(format!("{:?}", a.first()), format!("{:?}", b.first()));\n',
             '    assert_eq!(format!("{:?}", f(g(a), 1)), format!("{:?}", b.get(0, 1)));\n',
             '    assert_eq!(format!("{:?}", a.iter().map(|d| d.at).collect::<Vec<_>>()), format!("{:?}", b));\n',
+            '    assert_eq!(found, [format!("{expected:?}")]);\n',
+            '    assert_eq!([format!("{expected:?}")], found);\n',
+            '    assert_eq!(found, vec![format!("{expected:?}")]);\n',
+            '    assert_eq!(found, format!("{expected:?}"));\n',
+            '    assert_eq!(format!("{expected:?}"), found);\n',
+            '    assert_ne!(found, [format!("{:#?}", expected)]);\n',
+            "    assert_eq!(c == ',', format!(\"{x:?}\"));\n",
+            '    assert_eq!(s as &\'static str, format!("{x:?}"));\n',
+            '    assert_eq!(\n        found,\n        // don\'t (\n        [format!("{expected:?}")]\n    );\n',
+            '    assert_eq!(found, [format!("{e:?}")], "m {}", x);\n',
         ):
             with self.subTest(body=body):
                 code, out = run_hook("check-test-wording.sh", HEADERS[0] + body + "}\n")
@@ -222,6 +232,12 @@ class TestWording(unittest.TestCase):
     def test_a_debug_string_compared_with_a_literal_should_pass(self) -> None:
         for text in (
             HEADERS[0] + '    assert_eq!(format!("{pair:?}"), "[I64, String]");\n}\n',
+            HEADERS[0] + '    assert_eq!("[I64, String]", format!("{pair:?}"));\n}\n',
+            HEADERS[0] + '    assert_eq!(format!("{pair:?}"), r#"[I64, String]"#);\n}\n',
+            HEADERS[0] + '    assert_eq!(format!("{pair:?}"), r##"a"#b"##);\n}\n',
+            HEADERS[0] + '    assert_eq!(format!("{pair:?}"), br"abc");\n}\n',
+            HEADERS[0] + '    assert_eq!(a, b, "got {}", format!("{d:?}"));\n}\n',
+            HEADERS[0] + "    assert_eq!(a, b\n}\n",
             STEPS + 'assert_eq!(format!("{a:?}"), format!("{b:?}"));\n',
         ):
             with self.subTest(text=text):
@@ -237,6 +253,7 @@ class TestWording(unittest.TestCase):
             "crates/sisuc/src/diagnostic/render.rs",
             "crates/sisuc/src/diagnostic/json.rs",
             "crates/sisuc/src/report.rs",
+            "crates/sisuc/src/mir/tests/pairs.rs",
         ):
             other = exempt.replace("crates/sisuc/", "crates/runtime/")
             for relative in (False, True):
