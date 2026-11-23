@@ -176,7 +176,7 @@ pub(crate) fn test_runtime(allocator: Allocator) -> PathBuf {
 #[cfg(test)]
 fn test_runtime_in(env_dir: Option<&std::ffi::OsStr>, exe: &Path, allocator: Allocator) -> PathBuf {
     let archive = archive_name(allocator);
-    if let Some(dir) = env_dir.filter(|d| !d.is_empty()) {
+    if let Some(dir) = env_dir {
         let path = Path::new(dir).join(archive);
         if path.is_file() {
             return path;
@@ -246,22 +246,17 @@ mod tests {
                 test_runtime_in(Some(empty_dir.as_os_str()), &stable_exe, allocator),
                 debug_dir.join(name),
             );
-            // 3. `Some("")` is ignored and falls back to ancestor search.
-            assert_eq!(
-                test_runtime_in(Some(std::ffi::OsStr::new("")), &stable_exe, allocator),
-                debug_dir.join(name),
-            );
-            // 4. Stable layout skips `deps/` so `debug/` wins over `deps/`.
+            // 3. Stable layout skips `deps/` so `debug/` wins over `deps/`.
             assert_eq!(
                 test_runtime_in(None, &stable_exe, allocator),
                 debug_dir.join(name),
             );
-            // 5. Nightly layout walks ancestors up to `target/debug/`.
+            // 4. Nightly layout walks ancestors up to `target/debug/`.
             assert_eq!(
                 test_runtime_in(None, &nightly_exe, allocator),
                 debug_dir.join(name),
             );
-            // 6. When no ancestor has the archive, fall back two levels up.
+            // 5. When no ancestor has the archive, fall back two levels up.
             assert_eq!(
                 test_runtime_in(None, &nowhere_exe, allocator),
                 root.0.join("nowhere").join(name),

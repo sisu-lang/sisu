@@ -35,9 +35,10 @@
 # shortcut: the check flags any type, not only a diagnostic; compare values directly, or exempt
 # the file when a hit is right.
 # shortcut: turbofish commas (`x.collect::<Map<K, V>>()`) at top level split early.
-# shortcut: `.to_string()`, `String::from("...")`, and a `const` string on the other side fail.
-# shortcut: `assert!(format!("{a:?}") == b)` and a `.map(|d| format!("{d:?}"))` list compared
-# with a literal list pass.
+# shortcut: `.to_string()`, `String::from("...")`, a `const` string, `&format!(...)`, and
+# `format!(...).as_str()` fail against a literal.
+# shortcut: `assert!(format!("{a:?}") == b)` and a pre-collected Debug list compared with a
+# literal list pass.
 # shortcut: between `#[cfg(test)]` and `mod`, the pattern takes blank lines,
 # `//` comments and attributes with one level of inner brackets, not a
 # `/* */` comment; add the form when a file uses it.
