@@ -5575,8 +5575,13 @@ fn missing_associated_type_in_interface_bounds_should_report_without_loop_help()
             (Code::UnknownType, (3, 25)),
         ),
         (
-            "N: assoc bound Has2 does not declare Inner for U",
+            "N: non-declaring assoc bound Has2 is not forced so Self.A gives plain E0030",
             "interface Conv<X> {}\ninterface Has2<X> {\n    type Out\n}\ninterface N<U: Conv<Self.A.Inner>> {\n    type A: Has2<U.Inner>\n}\nfn main() {}",
+            (Code::UnknownType, (5, 28)),
+        ),
+        (
+            "N2: declaring assoc bound Has2 resolves on demand so U gives plain E0030",
+            "interface Conv<X> {}\ninterface Has2<X> {\n    type Inner\n}\ninterface N<U: Conv<Self.A.Inner>> {\n    type A: Has2<U.Inner>\n}\nfn main() {}",
             (Code::UnknownType, (6, 20)),
         ),
         (

@@ -1,12 +1,8 @@
-// GIVEN a self-cycle, a 2-node cycle, a cross-interface cycle, and a tree-path cycle
+// GIVEN a 2-node cycle, a cross-interface cycle, and a tree-path cycle
 // WHEN `sisu check` checks their associated-type bounds
-// THEN it reports E0030 at 9:24, 14:24, 24:29, and 29:28
+// THEN it reports E0030 at 10:24, 20:29, and 25:28
 interface Has<X> {
     type Inner
-}
-
-interface SelfLoop {
-    type A: Has<Self.A.Inner>
 }
 
 interface PairLoop {

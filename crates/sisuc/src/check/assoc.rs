@@ -271,29 +271,23 @@ impl Checker<'_> {
             return self.alias_assoc(ty, base, base_ty, name);
         }
         match base_ty.kind() {
-            TypeKind::Assoc(_, iface, _, k) => {
-                if self.ensure_assoc_bounds(iface, k as usize) {
-                    if self.pending_assoc_declares(iface, k as usize, name.name) {
-                        self.interfaces[iface.0].assoc[k as usize].bounds.failed = true;
-                        self.body.unknown_assoc.insert(base_ty);
-                        self.error(DiagnosticKind::UnknownType {
-                            name: name.name.to_string(),
-                            at: name.span,
-                            form: UnknownForm::BoundsLoop {
-                                base: self.type_name(base_ty),
-                            },
-                        });
-                        return None;
-                    }
-                    let closure = self.closure_len(base_ty);
-                    let found = self.lookup_assoc_in_closure(base_ty, closure, name.name);
-                    if !found.is_empty() {
-                        return self.finish_member_lookup(base_ty, name, &found);
-                    }
-                    if self.is_unknown(base_ty) {
-                        return None;
-                    }
-                    return self.finish_member_lookup(base_ty, name, &found);
+            TypeKind::Assoc(owner, iface, _, k) => {
+                let self_read = matches!(owner.kind(), TypeKind::Param(_, 0))
+                    && self
+                        .pass1b
+                        .as_ref()
+                        .is_some_and(|p| p.active == Some(iface));
+                if self.ensure_assoc_bounds(iface, k as usize, Some(name.name), self_read) {
+                    self.interfaces[iface.0].assoc[k as usize].bounds.failed = true;
+                    self.body.unknown_assoc.insert(base_ty);
+                    self.error(DiagnosticKind::UnknownType {
+                        name: name.name.to_string(),
+                        at: name.span,
+                        form: UnknownForm::BoundsLoop {
+                            base: self.type_name(base_ty),
+                        },
+                    });
+                    return None;
                 }
             }
             TypeKind::Param(_, place) if self.pass1b.is_some() => {
@@ -526,7 +520,7 @@ impl Checker<'_> {
         let TypeKind::Assoc(base, interface, args, k) = ty.kind() else {
             unreachable!("only an associated type should be asked for its closure");
         };
-        if self.ensure_assoc_bounds(interface, k as usize) {
+        if self.assoc_is_active(interface, k as usize) {
             self.mark_partial_assoc_read();
         }
         if !self.body.assoc_conforming.contains_key(&ty) {

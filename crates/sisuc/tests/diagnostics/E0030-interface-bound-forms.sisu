@@ -1,6 +1,6 @@
 // GIVEN interface bounds with missing associated types and bound cycles
 // WHEN `sisu check` checks their declarations
-// THEN it reports E0030 at 26:24, 27:24, 29:21, 29:32, 30:25, 30:42, 33:25, and 37:20
+// THEN it reports E0030 at 26:24, 27:24, 29:21, 29:32, 30:25, 30:42, 33:25, 37:25, and 41:20
 interface Conv<X> {}
 
 interface Has2<X> {
@@ -31,6 +31,10 @@ interface J2<S: First<S.Item> & Second<S.Item>> {}
 
 interface M {
     type A: Conv<Self.A.Inner>
+}
+
+interface SelfLoop {
+    type A: Has2<Self.A.Inner>
 }
 
 interface N<U: Conv<Self.A.Inner>> {

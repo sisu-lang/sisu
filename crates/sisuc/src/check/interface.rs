@@ -126,6 +126,7 @@ pub(super) struct InterfacePass {
     pub(super) partial_assoc_read: bool,
     pub(super) assoc_epoch: usize,
     pub(super) resolving_assocs: usize,
+    pub(super) current_assoc_entry: Option<(InterfaceId, usize, usize)>,
     pub(super) params: Vec<ParamsState>,
     pub(super) assocs: Vec<Vec<AssocBoundState>>,
     pub(super) pending_queued: Vec<Vec<std::ops::Range<usize>>>,
@@ -142,6 +143,7 @@ impl InterfacePass {
             partial_assoc_read: false,
             assoc_epoch: 0,
             resolving_assocs: 0,
+            current_assoc_entry: None,
             params: (0..interfaces).map(|_| ParamsState::Done).collect(),
             assocs: (0..interfaces).map(|_| Vec::new()).collect(),
             pending_queued: vec![Vec::new(); interfaces],
@@ -176,13 +178,38 @@ pub(super) struct PendingParams {
     members: Vec<(usize, usize)>,
 }
 
+/// Resolution state of one member-bearing associated-type bound in Pass 1b.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AssocEntryState {
+    Pending,
+    Resolving,
+    Done,
+}
+
+/// One member-bearing bound of an associated type during Pass 1b.
+struct AssocEntry {
+    /// Original index in the written bounds, to preserve source order.
+    order: usize,
+    written: ast::TypeExpr,
+    /// Declared interface named by the bound, if any.
+    iface: Option<InterfaceId>,
+    state: AssocEntryState,
+    resolved: Option<Bound>,
+}
+
+/// Per-entry resolution state for an associated type with member-bearing bounds.
+pub(super) struct AssocPending {
+    /// Non-member bounds resolved in Loop 1, with original source indices.
+    non_member: Vec<(usize, Bound)>,
+    entries: Vec<AssocEntry>,
+}
+
 /// Resolution state of an associated type's bounds during Pass 1b.
 #[derive(Default)]
 pub(super) enum AssocBoundState {
     #[default]
     Done,
-    Pending(Vec<(ast::TypeExpr, Option<Bound>)>),
-    Resolving(Vec<InterfaceId>),
+    Active(AssocPending),
 }
 
 /// An associated type of an interface.
@@ -552,16 +579,16 @@ impl Checker<'_> {
         let mut assoc_states = Vec::with_capacity(declared.len());
         for (k, assoc) in declared.iter().enumerate() {
             let ty = self.body.assoc.at(k).ty;
-            let (entries, has_member) = self.split_member_bounds(&assoc.bounds, ty);
-            let failed = entries
-                .iter()
-                .any(|(written, found)| found.is_none() && !written.names_member());
-            let list = entries.iter().filter_map(|(_, found)| *found).collect();
+            let (non_member, entries, failed) = self.split_member_bounds(&assoc.bounds, ty);
+            let list = non_member.iter().map(|&(_, bound)| bound).collect();
             self.interfaces[id.0].assoc[k].bounds = Bounds { list, failed };
-            assoc_states.push(if has_member {
-                AssocBoundState::Pending(entries)
-            } else {
+            assoc_states.push(if entries.is_empty() {
                 AssocBoundState::Done
+            } else {
+                AssocBoundState::Active(AssocPending {
+                    non_member,
+                    entries,
+                })
             });
         }
         self.pass1b
@@ -573,23 +600,31 @@ impl Checker<'_> {
         }
     }
 
-    /// Resolves non-member bounds in `written` for `target`, leaving member-bearing entries `None`.
+    /// Resolves non-member bounds in `written` for `target` and defers member-bearing entries.
     fn split_member_bounds(
         &mut self,
         written: &[ast::TypeExpr],
         target: Option<Type>,
-    ) -> (Vec<(ast::TypeExpr, Option<Bound>)>, bool) {
-        let mut entries = Vec::with_capacity(written.len());
-        let mut has_member = false;
-        for ty in written {
+    ) -> (Vec<(usize, Bound)>, Vec<AssocEntry>, bool) {
+        let mut non_member = Vec::new();
+        let mut entries = Vec::new();
+        let mut failed = false;
+        for (order, ty) in written.iter().enumerate() {
             if ty.names_member() {
-                has_member = true;
-                entries.push((ty.clone(), None));
+                entries.push(AssocEntry {
+                    order,
+                    written: ty.clone(),
+                    iface: self.written_interface(ty),
+                    state: AssocEntryState::Pending,
+                    resolved: None,
+                });
+            } else if let Some(bound) = self.bound(ty, target) {
+                non_member.push((order, bound));
             } else {
-                entries.push((ty.clone(), self.bound(ty, target)));
+                failed = true;
             }
         }
-        (entries, has_member)
+        (non_member, entries, failed)
     }
 
     /// Resolves the inheritance list of `interface`, whose id is `id` and whose associated types
@@ -668,7 +703,7 @@ impl Checker<'_> {
     fn interface_signature(&mut self, interface: &ast::Interface, id: InterfaceId, head: Head) {
         self.ensure_interface_params(id);
         for k in 0..self.interfaces[id.0].assoc.len() {
-            self.ensure_assoc_bounds(id, k);
+            self.ensure_assoc_bounds(id, k, None, false);
         }
         let this = self.enter_interface(interface, id);
         let bounds = self.interfaces[id.0].bounds.clone();
@@ -910,22 +945,11 @@ impl Checker<'_> {
         names.wide || names.by_name.contains_key(&name)
     }
 
-    /// Whether any interface in `ifaces` (or an inherited interface) declares `name`.
-    fn pending_declares_assoc(&self, ifaces: &[InterfaceId], name: Symbol) -> bool {
-        ifaces
-            .iter()
-            .any(|&iface| self.iface_declares_assoc(iface, name))
-    }
-
-    /// Whether associated type `k` of `id` has a pending bound whose interface declares `name`.
-    pub(super) fn pending_assoc_declares(&self, id: InterfaceId, k: usize, name: Symbol) -> bool {
-        let Some(pass1b) = &self.pass1b else {
-            return false;
-        };
-        match &pass1b.assocs[id.0][k] {
-            AssocBoundState::Resolving(ifaces) => self.pending_declares_assoc(ifaces, name),
-            _ => false,
-        }
+    /// Whether associated type `k` of `id` still has unresolved member-bearing bounds.
+    pub(super) fn assoc_is_active(&self, id: InterfaceId, k: usize) -> bool {
+        self.pass1b
+            .as_ref()
+            .is_some_and(|p| matches!(p.assocs[id.0][k], AssocBoundState::Active(_)))
     }
 
     /// Whether parameter `place` of `id` has a pending bound whose interface declares `name`.
@@ -960,87 +984,174 @@ impl Checker<'_> {
         self.pass1b.as_ref().is_some_and(|p| p.in_on_demand)
     }
 
-    /// Records that a `Resolving` associated-type closure was read, so completion clears caches.
+    /// Records that a partial associated-type closure was read, so completion clears caches.
     pub(super) fn mark_partial_assoc_read(&mut self) {
         if let Some(pass1b) = &mut self.pass1b {
             pass1b.partial_assoc_read = true;
         }
     }
 
-    /// Resolves member-bearing bounds in `entries` for `target` and records queued checks on `id`.
-    fn resolve_pending_entries(
-        &mut self,
+    /// Whether `entry` can supply `wanted`, or any bound when `wanted` is `None`.
+    fn assoc_entry_matches(&self, entry: &AssocEntry, wanted: Option<Symbol>) -> bool {
+        let Some(name) = wanted else {
+            return true;
+        };
+        entry
+            .iface
+            .is_none_or(|iface| self.iface_declares_assoc(iface, name))
+    }
+
+    /// Finds the next pending entry for `(id, k)` that matches `wanted` and skips `skip_entry`.
+    fn next_pending_assoc_entry(
+        &self,
         id: InterfaceId,
-        entries: &mut [(ast::TypeExpr, Option<Bound>)],
-        target: Option<Type>,
-    ) -> Bounds {
-        let from = self.queued();
-        for (written, found) in entries.iter_mut() {
-            if written.names_member() {
-                *found = self.bound(written, target);
+        k: usize,
+        wanted: Option<Symbol>,
+        skip_entry: Option<usize>,
+    ) -> Option<(usize, ast::TypeExpr)> {
+        let pass1b = self.pass1b.as_ref()?;
+        let AssocBoundState::Active(pending) = &pass1b.assocs[id.0][k] else {
+            return None;
+        };
+        for (idx, entry) in pending.entries.iter().enumerate() {
+            if Some(idx) == skip_entry || entry.state != AssocEntryState::Pending {
+                continue;
+            }
+            if self.assoc_entry_matches(entry, wanted) {
+                return Some((idx, entry.written.clone()));
             }
         }
-        self.claim_assoc_checks(id, from);
-        Bounds {
-            list: entries.iter().filter_map(|(_, b)| *b).collect(),
-            failed: entries.iter().any(|(_, b)| b.is_none()),
+        None
+    }
+
+    /// Rebuilds `Bounds` for `(id, k)` in source order and invalidates partial closure caches.
+    fn rebuild_assoc_bounds(&mut self, id: InterfaceId, k: usize) {
+        let Some(pass1b) = &mut self.pass1b else {
+            return;
+        };
+        let AssocBoundState::Active(pending) = &mut pass1b.assocs[id.0][k] else {
+            return;
+        };
+        let mut ordered = Vec::with_capacity(pending.non_member.len() + pending.entries.len());
+        ordered.extend_from_slice(&pending.non_member);
+        let mut failed = self.interfaces[id.0].assoc[k].bounds.failed;
+        let mut all_done = true;
+        for entry in &pending.entries {
+            match entry.state {
+                AssocEntryState::Done => {
+                    if let Some(bound) = entry.resolved {
+                        ordered.push((entry.order, bound));
+                    } else {
+                        failed = true;
+                    }
+                }
+                AssocEntryState::Pending | AssocEntryState::Resolving => {
+                    all_done = false;
+                }
+            }
+        }
+        ordered.sort_by_key(|&(order, _)| order);
+        let list = ordered.into_iter().map(|(_, bound)| bound).collect();
+        self.interfaces[id.0].assoc[k].bounds = Bounds { list, failed };
+        if all_done {
+            pass1b.assocs[id.0][k] = AssocBoundState::Done;
+        }
+        if pass1b.partial_assoc_read {
+            pass1b.assoc_epoch += 1;
+            pass1b.work_body_epochs[id.0] = pass1b.assoc_epoch;
+            self.clear_assoc_caches_for(id, k);
         }
     }
 
-    /// Resolves member-bearing bounds of associated type `k` on interface `id` if still pending.
-    /// Returns `true` when `k` is already being resolved on the active stack (cycle).
-    pub(super) fn ensure_assoc_bounds(&mut self, id: InterfaceId, k: usize) -> bool {
-        let Some(pass1b) = self.pass1b.as_mut() else {
+    /// Resolves matching member-bearing bounds of `(id, k)` on demand.
+    /// Returns `true` when another matching interface bound of `(id, k)` is actively resolving.
+    pub(super) fn ensure_assoc_bounds(
+        &mut self,
+        id: InterfaceId,
+        k: usize,
+        wanted: Option<Symbol>,
+        self_read: bool,
+    ) -> bool {
+        let Some(pass1b) = &self.pass1b else {
             return false;
         };
-        match std::mem::take(&mut pass1b.assocs[id.0][k]) {
-            AssocBoundState::Done => false,
-            AssocBoundState::Resolving(ifaces) => {
-                pass1b.assocs[id.0][k] = AssocBoundState::Resolving(ifaces);
-                true
-            }
-            AssocBoundState::Pending(mut entries) => {
-                let pending_ifaces: Vec<InterfaceId> = entries
-                    .iter()
-                    .filter(|(written, _)| written.names_member())
-                    .filter_map(|(written, _)| self.written_interface(written))
-                    .collect();
-                let pass1b = self
-                    .pass1b
-                    .as_mut()
-                    .expect("pass1b should exist during ensure_assoc_bounds");
-                pass1b.assocs[id.0][k] = AssocBoundState::Resolving(pending_ifaces);
-                pass1b.resolving_assocs += 1;
-                let saved_in_assoc = std::mem::replace(&mut pass1b.in_assoc_bound, true);
-                self.with_interface_body(id, |checker| {
-                    let ty = checker.body.assoc.at(k).ty;
-                    let resolved = checker.resolve_pending_entries(id, &mut entries, ty);
-                    let failed = checker.interfaces[id.0].assoc[k].bounds.failed || resolved.failed;
-                    checker.interfaces[id.0].assoc[k].bounds = Bounds {
-                        list: resolved.list,
-                        failed,
-                    };
-                    let pass1b = checker
-                        .pass1b
-                        .as_mut()
-                        .expect("pass1b should exist when finishing ensure_assoc_bounds");
-                    pass1b.assocs[id.0][k] = AssocBoundState::Done;
-                    pass1b.resolving_assocs -= 1;
-                    if pass1b.partial_assoc_read {
-                        pass1b.assoc_epoch += 1;
-                        pass1b.work_body_epochs[id.0] = pass1b.assoc_epoch;
-                        if pass1b.resolving_assocs == 0 {
-                            pass1b.partial_assoc_read = false;
-                        }
-                        checker.clear_assoc_caches_for(id, k);
-                    }
-                });
-                if let Some(pass1b) = &mut self.pass1b {
-                    pass1b.in_assoc_bound = saved_in_assoc;
-                }
-                false
-            }
+        if matches!(pass1b.assocs[id.0][k], AssocBoundState::Done) {
+            return false;
         }
+        let skip_entry = if self_read {
+            pass1b
+                .current_assoc_entry
+                .filter(|&(eid, ek, _)| eid == id && ek == k)
+                .map(|(_, _, idx)| idx)
+        } else {
+            None
+        };
+        if self
+            .next_pending_assoc_entry(id, k, wanted, skip_entry)
+            .is_some()
+        {
+            self.with_interface_body(id, |checker| {
+                let ty = checker.body.assoc.at(k).ty;
+                while let Some((entry_idx, written)) =
+                    checker.next_pending_assoc_entry(id, k, wanted, skip_entry)
+                {
+                    let (saved_in_assoc, saved_entry) = {
+                        let pass1b = checker
+                            .pass1b
+                            .as_mut()
+                            .expect("pass1b should exist during ensure_assoc_bounds");
+                        let AssocBoundState::Active(pending) = &mut pass1b.assocs[id.0][k] else {
+                            unreachable!(
+                                "next_pending_assoc_entry should return only from Active state"
+                            );
+                        };
+                        pending.entries[entry_idx].state = AssocEntryState::Resolving;
+                        pass1b.resolving_assocs += 1;
+                        (
+                            std::mem::replace(&mut pass1b.in_assoc_bound, true),
+                            pass1b.current_assoc_entry.replace((id, k, entry_idx)),
+                        )
+                    };
+                    let from = checker.queued();
+                    let bound = checker.bound(&written, ty);
+                    checker.claim_assoc_checks(id, from);
+                    {
+                        let pass1b = checker
+                            .pass1b
+                            .as_mut()
+                            .expect("pass1b should exist when finishing ensure_assoc_bounds");
+                        pass1b.current_assoc_entry = saved_entry;
+                        pass1b.in_assoc_bound = saved_in_assoc;
+                        pass1b.resolving_assocs -= 1;
+                        if let AssocBoundState::Active(pending) = &mut pass1b.assocs[id.0][k] {
+                            pending.entries[entry_idx].resolved = bound;
+                            pending.entries[entry_idx].state = AssocEntryState::Done;
+                        }
+                    }
+                    if bound.is_none() {
+                        checker.interfaces[id.0].assoc[k].bounds.failed = true;
+                    }
+                    checker.rebuild_assoc_bounds(id, k);
+                    if let Some(pass1b) = &mut checker.pass1b
+                        && pass1b.resolving_assocs == 0
+                    {
+                        pass1b.partial_assoc_read = false;
+                    }
+                }
+            });
+        }
+        let Some(pass1b) = &self.pass1b else {
+            return false;
+        };
+        let AssocBoundState::Active(pending) = &pass1b.assocs[id.0][k] else {
+            return false;
+        };
+        pending.entries.iter().enumerate().any(|(idx, entry)| {
+            Some(idx) != skip_entry
+                && entry.state == AssocEntryState::Resolving
+                && entry.iface.is_some()
+                && self.assoc_entry_matches(entry, wanted)
+        })
     }
 
     /// Resolves member-bearing parameter bounds on interface `id` via `resolve_member_bounds`.

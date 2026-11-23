@@ -48,11 +48,17 @@ error[E0030]: `Self.A` has no associated type `Inner`
 33 |     type A: Conv<Self.A.Inner>
    |                         ^^^^^
 
-error[E0030]: `U` has no associated type `Inner`
-  --> E0030-interface-bound-forms.sisu:37:20
+error[E0030]: `Self.A` has no associated type `Inner`
+  --> E0030-interface-bound-forms.sisu:37:25
    |
-37 |     type A: Has2<U.Inner>
+37 |     type A: Has2<Self.A.Inner>
+   |                         ^^^^^
+
+error[E0030]: `U` has no associated type `Inner`
+  --> E0030-interface-bound-forms.sisu:41:20
+   |
+41 |     type A: Has2<U.Inner>
    |                    ^^^^^
 
-sisu: 8 errors
+sisu: 9 errors
 sisu: for more on a code, run `sisu explain <code>`: E0030
