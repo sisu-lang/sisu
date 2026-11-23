@@ -5388,3 +5388,77 @@ fn interface_signatures_should_leave_all_states_done_and_work_bodies_cleared() {
         );
     }
 }
+
+/// Mutual parameter loops report all cycle bounds, and non-member bounds already in scope keep
+/// working.
+#[test]
+fn interface_parameter_and_associated_bounds_should_report_loops_and_keep_resolved_bounds() {
+    let rows: [(&str, &str, &[Wanted]); 3] = [
+        (
+            "J1: mutual parameter bounds loop reports both sides",
+            "interface A<X> {\n    type P\n}\ninterface B<X> {\n    type Q\n}\ninterface J<T: A<S.Q>, S: B<T.P>> {}\nfn main() {}",
+            &[(Code::UnknownType, (7, 20)), (Code::UnknownType, (7, 31))],
+        ),
+        (
+            "J2: two bounds on one parameter waiting for each other report both",
+            "interface First<X> {\n    type Item\n}\ninterface Second<X> {\n    type Item\n}\ninterface J<S: First<S.Item> & Second<S.Item>> {}\nfn main() {}",
+            &[(Code::UnknownType, (7, 24)), (Code::UnknownType, (7, 41))],
+        ),
+        (
+            "type A with resolved Has<i64> and Conv<Self.A.Inner> checks clean",
+            "interface Has<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface N {\n    type A: Has<i64> & Conv<Self.A.Inner>\n}\nfn main() {}",
+            &[],
+        ),
+    ];
+    check_rows(&rows);
+}
+
+/// Missing associated types in interface parameter and associated-type bounds emit plain E0030
+/// without loop help.
+#[test]
+fn missing_associated_type_in_interface_bounds_should_report_without_loop_help() {
+    for (name, src, want) in [
+        (
+            "K1: Conv does not declare Inner",
+            "interface Conv<X> {}\ninterface K<U: Conv<U.Inner>> {}\nfn main() {}",
+            (Code::UnknownType, (2, 23)),
+        ),
+        (
+            "K2: self-declaring bound Has2<U.Inner> gives plain E0030",
+            "interface Has2<X> {\n    type Inner\n}\ninterface K<U: Has2<U.Inner>> {}\nfn main() {}",
+            (Code::UnknownType, (4, 23)),
+        ),
+        (
+            "M: assoc bound Conv does not declare Inner",
+            "interface Conv<X> {}\ninterface M {\n    type A: Conv<Self.A.Inner>\n}\nfn main() {}",
+            (Code::UnknownType, (3, 25)),
+        ),
+        (
+            "N: assoc bound Has2 does not declare Inner for U",
+            "interface Conv<X> {}\ninterface Has2<X> {\n    type Out\n}\ninterface N<U: Conv<Self.A.Inner>> {\n    type A: Has2<U.Inner>\n}\nfn main() {}",
+            (Code::UnknownType, (6, 20)),
+        ),
+    ] {
+        let (_, ds) = checked(src);
+        let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
+        assert_eq!(found, [want], "{name}");
+        assert!(
+            ds[0].help().is_none(),
+            "{name}: missing associated type should not emit BoundsLoop help"
+        );
+    }
+}
+
+/// A deep single-interface chain of member-bearing associated-type bounds resolves without stack
+/// overflow.
+#[test]
+fn single_interface_deep_assoc_bound_chain_should_resolve_without_overflow() {
+    crate::on_compiler_stack(|| {
+        let mut src = String::from("interface Has<X> {\n    type Inner\n}\ninterface I {\n");
+        for i in 0..6000 {
+            let _ = writeln!(src, "    type A{i}: Has<Self.A{}.Inner>", i + 1);
+        }
+        src.push_str("    type A6000: Has<i64>\n}\nfn main() {}");
+        clean(&src);
+    });
+}

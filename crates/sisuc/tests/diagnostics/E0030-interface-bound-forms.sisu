@@ -1,0 +1,40 @@
+// GIVEN interface bounds with missing associated types and bound cycles
+// WHEN `sisu check` checks their declarations
+// THEN it reports E0030 at 26:24, 27:24, 29:21, 29:32, 30:25, 30:42, 33:25, and 37:20
+interface Conv<X> {}
+
+interface Has2<X> {
+    type Inner
+}
+
+interface A<X> {
+    type P
+}
+
+interface B<X> {
+    type Q
+}
+
+interface First<X> {
+    type Item
+}
+
+interface Second<X> {
+    type Item
+}
+
+interface K1<U: Conv<U.Inner>> {}
+interface K2<U: Has2<U.Inner>> {}
+
+interface J1<T: A<S.Q>, S: B<T.P>> {}
+interface J2<S: First<S.Item> & Second<S.Item>> {}
+
+interface M {
+    type A: Conv<Self.A.Inner>
+}
+
+interface N<U: Conv<Self.A.Inner>> {
+    type A: Has2<U.Inner>
+}
+
+fn main() {}
