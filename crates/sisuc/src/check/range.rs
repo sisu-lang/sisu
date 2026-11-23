@@ -339,7 +339,7 @@ impl Checker<'_> {
         let found = range_index(target)?;
         self.stamp_push(target);
         // The base is read, as `xs[0..2]` reads it, and reports its own mistakes.
-        let base_type = known_type(&self.value(found.base, Expectation::None));
+        let base_type = known_type(&self.value_as(found.base, Use::Receiver));
         let range = found.range;
         // `xs[..][i]` is an element of `xs`, which E0021 helps; `xs[..]` is `xs`.
         let element_of_all = found.parent.is_some() && range.start.is_none() && !range.inclusive;

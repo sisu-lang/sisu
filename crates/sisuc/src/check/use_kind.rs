@@ -1,8 +1,9 @@
 //! The position of a read of a local.
 
+use super::Checker;
+use super::any::any_target;
 use super::expectation::Expectation;
 use super::place::Change;
-use crate::tir::{Type, TypeKind};
 
 /// How the program uses the local that a name stands for. The lookup of the name gets it, so a
 /// local with no type can settle by the rule of its position.
@@ -18,15 +19,18 @@ pub(super) enum Use {
     MutArgument,
     /// The receiver of a method, the base of a field or an index, or the iterable of a `for`.
     Receiver,
-    /// The value of a conversion to `any I`.
-    ToAny,
+    /// A read under `any I` or `(any I)?`, which expects `Expectation`. The value converts there
+    /// after the read, unless its type is an open `Any`: that root unifies, so a reader treats it
+    /// as `Required`. A conversion in a join, a generic argument or an `==` is no `ToAny`: the
+    /// lookup sees `Read(Member)` or `Read(None)`, and `conversion` settles the value.
+    ToAny(Expectation),
 }
 
 impl Use {
-    /// The expectation of a read; none for any other use.
+    /// The expectation of a read or a conversion; none for any other use.
     pub(super) fn expectation(self) -> Expectation {
         match self {
-            Self::Read(expected) => expected,
+            Self::Read(expected) | Self::ToAny(expected) => expected,
             _ => Expectation::None,
         }
     }
@@ -40,20 +44,22 @@ impl Use {
         }
     }
 
-    /// `self`, with a read where an `any I` or `(any I)?` is required made a `ToAny`: the
-    /// value converts to it after the read.
+    /// `self`, with a read where an `any I` or `(any I)?` is required made a `ToAny`.
     pub(super) fn converted(self) -> Self {
-        let Self::Read(expected) = self else {
-            return self;
-        };
-        let target = expected.ty().map(|ty| match ty.kind() {
-            TypeKind::Optional(payload) => payload,
-            _ => ty,
-        });
-        match target.map(Type::kind) {
-            Some(TypeKind::Any(..)) => Self::ToAny,
+        match self {
+            Self::Read(expected) if expected.ty().and_then(any_target).is_some() => {
+                Self::ToAny(expected)
+            }
             _ => self,
         }
+    }
+}
+
+impl Checker<'_> {
+    /// The use of the root name of the base of a field or an index: the use of the place that
+    /// the chain writes or passes, at any depth, else `Receiver`.
+    pub(super) fn chain_use(&self) -> Use {
+        (self.body.write_chain).map_or(Use::Receiver, |(_, change)| Use::of_change(change))
     }
 }
 
@@ -62,7 +68,7 @@ impl Use {
 mod tests {
     use super::*;
     use crate::check::expectation::Origin;
-    use crate::tir::{InterfaceId, TypeArgs};
+    use crate::tir::{InterfaceId, Type, TypeArgs, TypeKind};
 
     #[test]
     fn of_change_should_name_the_use_of_each_change() {
@@ -93,8 +99,14 @@ mod tests {
         let any = Type::intern(TypeKind::Any(InterfaceId(0), TypeArgs::NONE));
         let required = |ty| Use::Read(Expectation::Required(ty, Origin::None));
         let table = [
-            (required(any), Use::ToAny),
-            (required(Type::optional(any)), Use::ToAny),
+            (
+                required(any),
+                Use::ToAny(Expectation::Required(any, Origin::None)),
+            ),
+            (
+                required(Type::optional(any)),
+                Use::ToAny(Expectation::Required(Type::optional(any), Origin::None)),
+            ),
             (required(Type::array(any)), required(Type::array(any))),
         ];
         for (i, (read, want)) in table.into_iter().enumerate() {

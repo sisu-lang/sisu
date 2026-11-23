@@ -223,7 +223,7 @@ impl Checker<'_> {
         ty
     }
 
-    /// `expr` for each kind of expression.
+    /// `expr` for each kind of expression. `expected` is `use_.expectation()`.
     #[expect(
         clippy::too_many_lines,
         reason = "one arm per node kind, so the dispatch reads in one place"
