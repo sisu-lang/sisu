@@ -369,6 +369,11 @@ const GAP_POINTS: &[&str] = &[
     "a dbg of an enum in a generic function",
     "an any conversion in a generic function",
     "never_at for a part of a string",
+    "settle_open",
+    "open_any",
+    "own_params",
+    "unknown_param",
+    "put_back",
 ];
 
 /// The joins that `Gen::gap_forms` writes in both orders of their members, each with how to find
@@ -7222,6 +7227,80 @@ class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn b(x: Eye) -> any Seen { x }
 fn main() { print(b(Eye(v: 1)).seen()) }",
+            &[],
+        ),
+        (
+            "a generic call takes its type from an `any` beside it",
+            r"interface Seen { fn seen(self) -> i64 }
+struct Owl: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+struct Fin: Seen { v: i64; fn seen(self) -> i64 { self.v + 2 } }
+fn pick<T>(a: T, _b: T) -> T { a }
+fn main() { let o: any Seen = Owl(v: 1); let c = [1].len() == 2; let j = if c { o } else { pick(Fin(v: 2), Owl(v: 3)) }; print(j.seen()) }",
+            &["settle_open"],
+        ),
+        (
+            "a generic call of one struct beside an `any`",
+            r"interface Seen { fn seen(self) -> i64 }
+struct Owl: Seen { v: i64; fn seen(self) -> i64 { self.v } }
+fn pick<T>(a: T, _b: T) -> T { a }
+fn main() { let o: any Seen = Owl(v: 1); let c = [1].len() == 2; let j = if c { o } else { pick(Owl(v: 2), Owl(v: 3)) }; print(j.seen()) }",
+            &[],
+        ),
+        (
+            "a `unit` beside an open optional",
+            r"fn fnone<T>() -> T? { None }
+fn blank() {}
+fn main() { print(fnone() == blank()) }",
+            &["open_any"],
+        ),
+        (
+            "an optional beside an optional",
+            r"fn fnone<T>() -> T? { None }
+fn main() { let n: i64? = None; print(fnone() == n) }",
+            &[],
+        ),
+        (
+            "a generic method waits for its type in an argument",
+            r"struct Sw { fn nothing<T>(self) -> T? { None } }
+fn pick<T>(a: T, _b: T) -> T { a }
+fn main() { let n: i64? = pick(Sw().nothing(), 1); print(n ?? 0) }",
+            &["own_params"],
+        ),
+        (
+            "a generic method with written type arguments",
+            r"struct Sw { fn nothing<T>(self) -> T? { None } }
+fn main() { let n: i64? = Sw().nothing<i64>(); print(n ?? 0) }",
+            &["path_method"],
+        ),
+        (
+            "a bound takes a type argument, a generic `mut self` method",
+            r"interface Put<V> { fn put<U>(mut self, v: V, u: U) -> U }
+struct Slot<T>: Put<T> { v: T; fn put<U>(mut self, v: T, u: U) -> U { self.v = v; u } }
+fn bump<T: Put<i64>>(mut t: T) -> bool { t.put(5, true) }
+fn main() { let mut s = Slot(v: 1); print(bump(mut s)); print(s.v) }",
+            &["unknown_param"],
+        ),
+        (
+            "the same method, called on the struct",
+            r"interface Put<V> { fn put<U>(mut self, v: V, u: U) -> U }
+struct Slot<T>: Put<T> { v: T; fn put<U>(mut self, v: T, u: U) -> U { self.v = v; u } }
+fn main() { let mut s = Slot(v: 1); print(s.put(5, true)); print(s.v) }",
+            &[],
+        ),
+        (
+            "an argument at an associated type that the join decides",
+            r"interface Source { type Item; fn next(self) -> Item }
+struct Bit: Source { type Item = bool; v: bool; fn next(self) -> bool { self.v } }
+fn put<S: Source>(_v: S.Item) -> S? { None }
+fn main() { let c = [1].len() == 2; let b: Bit? = if c { Bit(v: true) } else { None }; print([put(loop { break true }), b].len()) }",
+            &["put_back"],
+        ),
+        (
+            "an argument at an associated type with a written type argument",
+            r"interface Source { type Item; fn next(self) -> Item }
+struct Bit: Source { type Item = bool; v: bool; fn next(self) -> bool { self.v } }
+fn put<S: Source>(_v: S.Item) -> S? { None }
+fn main() { let b: Bit? = put<Bit>(true); print(b == None) }",
             &[],
         ),
     ];

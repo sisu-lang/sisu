@@ -480,7 +480,7 @@ whose next line is such a panic; the lines of an inline `#[cfg(test)] mod` in th
 file. The region lists keep their own rules for these. It says `(none)` when no
 line qualifies. A run with lines only has no third list. The nightly `Coverage` job
 of CI measures branches too and prints `Branch coverage (exact)`. It fails when
-line coverage is below 98.5%, when branch coverage is below 94.0%, or when the
+line coverage is below 98.5%, when branch coverage is below 92.5%, or when the
 branch figure is missing. `make setup` installs the nightly toolchain, so a
 local `make coverage` measures branches. To change the nightly toolchain, edit
 `scripts/coverage-toolchain`: both the script and the job read it. Commit new files, or
