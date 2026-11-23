@@ -1,0 +1,24 @@
+// A binding that does not exist is E0033 at its name. The call keeps its other arguments, an
+// array of `if` expressions with an open type parameter among them, and gives no second error.
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+struct M {
+    v: i64
+
+    fn two(self, n: i64) -> Two<i64, bool> { Two(a: n, b: true) }
+    fn none<T>(self, n: i64) -> T? { None }
+}
+
+fn g<A, B>(x: A, xs: [Two<A, B>]) -> i64 { 0 }
+fn h<A, B>(x: A?, xs: [Two<A, B>]) -> i64 { 0 }
+
+fn main() {
+    let c = [1].len() == 1
+    let m = M(v: 1)
+    print(h(m.none(1), [if c { m.two(1) } else { m.two(2) }]))
+    print(g(nope, [if c { m.two(1) } else { m.two(2) }]))
+    print(m.v)
+}

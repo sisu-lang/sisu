@@ -1,0 +1,13 @@
+// GIVEN a struct named `never`, and a generic function `id`
+// WHEN `id<never>` names the struct as its type argument
+// THEN the call checks and prints `3`: `never` is the name of a struct here
+struct never {
+    n: i64
+}
+
+fn id<T>(x: T) -> T { x }
+
+fn main() {
+    let a = id<never>(never(n: 3))
+    print(a.n)
+}

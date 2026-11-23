@@ -1,0 +1,22 @@
+// A method call that waits for its type takes the part of the parameter type that other arguments
+// fix. A result that gives that part another type is E0032 at the call. The error shows `_` for
+// the part that nothing fixes. An optional call, `o?.w(1)`, keeps the `?` in the type it found.
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+struct O {
+    fn w<X>(self, _x: i64?) -> Two<X, bool> { panic("no") }
+    fn v<X, Y>(self, _y: Y) -> Two<X, bool> { panic("no") }
+}
+
+fn mko() -> O? { None }
+fn pair<A, B>(_b: B, t: Two<A, B>) -> A { t.a }
+
+fn main() {
+    let a = pair("s", O().w(1))
+    let o = mko()
+    let b = pair("s", o?.w(1))
+    let c = pair("s", O().v(1))
+}

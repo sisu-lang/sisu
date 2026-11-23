@@ -1,0 +1,27 @@
+// A generic call that waits for the type of the other members of an array still checks its
+// arguments. A function takes no labels, so each label is E0055.
+interface Source {
+    type Item
+    fn first(self) -> Item
+}
+
+struct Named: Source, Eq {
+    type Item = string
+    v: string
+
+    fn first(self) -> string { self.v }
+}
+
+fn puts2<S: Source>(v: S.Item, s: string) -> S? {
+    None
+}
+
+fn mk(name: string) -> Named? {
+    Named(v: name)
+}
+
+fn main() {
+    let a = [mk("a"), puts2(s: "x", v: "y")]
+    let b = [mk("a"), puts2("y", "x")]
+    print(a.len() + b.len())
+}

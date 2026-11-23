@@ -1,0 +1,8 @@
+error[E0063]: `i64` has no method `Some`
+ --> E0063-some-method-on-number.sisu:7:18
+  |
+7 |     let a = id(v.Some(1))
+  |                  ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0063

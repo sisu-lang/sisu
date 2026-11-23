@@ -1,0 +1,5 @@
+// `+` takes numbers and strings. An optional operand is E0032 at the operand, and the error lists
+// the types that `+` takes.
+fn main() {
+    let d = Some(1) + Some(2)
+}

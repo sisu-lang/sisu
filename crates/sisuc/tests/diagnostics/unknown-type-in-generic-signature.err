@@ -1,0 +1,122 @@
+error[E0030]: cannot find type `Nope`
+  --> unknown-type-in-generic-signature.sisu:14:21
+   |
+14 |     fn get(self) -> Nope
+   |                     ^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+
+error[E0030]: cannot find type `Nope`
+  --> unknown-type-in-generic-signature.sisu:36:21
+   |
+36 |     fn get(self) -> Nope { 1 }
+   |                     ^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+
+error[E0030]: cannot find type `Nope`
+  --> unknown-type-in-generic-signature.sisu:40:23
+   |
+40 | fn f<T: Ia>(a: T, _b: Nope) -> T { a }
+   |                       ^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+
+error[E0030]: cannot find type `Nope`
+  --> unknown-type-in-generic-signature.sisu:41:22
+   |
+41 | fn g<T: Ia>(a: T) -> Nope { 1 }
+   |                      ^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+
+error[E0030]: cannot find type `Nope`
+  --> unknown-type-in-generic-signature.sisu:42:35
+   |
+42 | fn f2<T: Ia, U>(a: T, _b: U?, _c: Nope) -> U? { None }
+   |                                   ^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+
+error[E0030]: cannot find type `Nope`
+  --> unknown-type-in-generic-signature.sisu:43:34
+   |
+43 | fn g2<T: Ia, U>(a: T, _b: U?) -> Nope { 1 }
+   |                                  ^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+
+warning[W0002]: `a` is never reassigned, so its `mut` changes nothing for the caller
+  --> unknown-type-in-generic-signature.sisu:44:14
+   |
+44 | fn sg<T>(mut a: T, b: T) -> Nope { 1 }
+   |              ^ never reassigned
+
+error[E0030]: cannot find type `Nope`
+  --> unknown-type-in-generic-signature.sisu:44:29
+   |
+44 | fn sg<T>(mut a: T, b: T) -> Nope { 1 }
+   |                             ^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+
+warning[W0002]: `a` is never reassigned, so its `mut` changes nothing for the caller
+  --> unknown-type-in-generic-signature.sisu:45:16
+   |
+45 | fn keep<T>(mut a: [T]) -> [T] { a }
+   |                ^ never reassigned
+
+error[E0154]: `i64` does not conform to `Ia`
+  --> unknown-type-in-generic-signature.sisu:48:15
+   |
+48 |     let a = f(5, 1)
+   |               ^
+   |
+  ::: unknown-type-in-generic-signature.sisu:40:9
+   |
+40 | fn f<T: Ia>(a: T, _b: Nope) -> T { a }
+   |         -- required by this bound
+
+error[E0154]: `i64` does not conform to `Ia`
+  --> unknown-type-in-generic-signature.sisu:49:15
+   |
+49 |     let b = g(5)
+   |               ^
+   |
+  ::: unknown-type-in-generic-signature.sisu:41:9
+   |
+41 | fn g<T: Ia>(a: T) -> Nope { 1 }
+   |         -- required by this bound
+
+error[E0154]: `i64` does not conform to `Ia`
+  --> unknown-type-in-generic-signature.sisu:50:16
+   |
+50 |     let c = f2(5, None, 1)
+   |                ^
+   |
+  ::: unknown-type-in-generic-signature.sisu:42:10
+   |
+42 | fn f2<T: Ia, U>(a: T, _b: U?, _c: Nope) -> U? { None }
+   |          -- required by this bound
+
+error[E0154]: `i64` does not conform to `Ia`
+  --> unknown-type-in-generic-signature.sisu:51:16
+   |
+51 |     let d = g2(5, None)
+   |                ^
+   |
+  ::: unknown-type-in-generic-signature.sisu:43:10
+   |
+43 | fn g2<T: Ia, U>(a: T, _b: U?) -> Nope { 1 }
+   |          -- required by this bound
+
+error[E0032]: expected `string`, found `[i64]`
+  --> unknown-type-in-generic-signature.sisu:55:21
+   |
+55 |     let s: string = keep(mut ys)
+   |            ------   ^^^^^^^^^^^^
+   |            |
+   |            declared as `string` here
+
+sisu: 12 errors, 2 warnings
+sisu: for more on a code, run `sisu explain <code>`: E0030, E0032, E0154, W0002

@@ -1,0 +1,36 @@
+// GIVEN a struct `Tri<A, B, C>`, an interface `Source` with an associated type, and a function
+//       `take<S: Source, U>` that takes a `Tri<S, U, S.Item>`
+// WHEN `take` gets the `Tri` that a method call gives
+// THEN the call checks: `S` and `U` come from the argument, and `S.Item` is `i64`
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+struct Ints: Source {
+    n: i64
+    type Item = i64
+
+    fn next(self) -> i64? { self.n }
+}
+
+struct Tri<A, B, C> {
+    _a: A
+    _b: B
+    c: C
+}
+
+struct Mk {
+    fn tri(self, n: i64) -> Tri<Ints, bool, i64> {
+        Tri(_a: Ints(n: n), _b: true, c: n)
+    }
+}
+
+fn take<S: Source, U>(t: Tri<S, U, S.Item>) -> S.Item {
+    t.c
+}
+
+fn main() {
+    let a = take(Mk().tri(1))
+    print(a)
+}

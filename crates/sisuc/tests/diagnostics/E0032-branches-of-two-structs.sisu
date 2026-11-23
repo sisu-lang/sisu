@@ -1,0 +1,9 @@
+// The branches of an `if` are two structs of different declarations. The error names both types,
+// also when one of them has a type argument that nothing fixes, written `_`.
+struct A<T> { x: T }
+struct B<T> { x: T }
+
+fn main() {
+    let c = true
+    let v = if c { A(x: [1]) } else { B(x: []) }
+}

@@ -1,0 +1,8 @@
+// `Some` and `Ok` take no labels, also as the argument of a generic call. The error is E0055 at the
+// label, and the fix removes it.
+fn id<T>(x: T) -> T { x }
+
+fn main() {
+    let a = id(Some(v: 1))
+    let b = id(Ok(v: 1))
+}

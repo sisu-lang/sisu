@@ -1,0 +1,47 @@
+// A method that two interfaces give to one struct has two result types. When a type parameter of
+// a call gets its type only from that method, the call is E0156. It is E0050 when the parameter
+// appears nowhere else.
+interface Label {
+    fn name(self) -> string
+}
+
+interface Code {
+    fn name(self) -> i64
+}
+
+struct S {
+}
+
+extend S: Label {
+    fn name(self) -> string { "a" }
+}
+
+extend S: Code {
+    fn name(self) -> i64 { 7 }
+}
+
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+struct Box<T> {
+    v: T
+
+    fn put<U>(self, y: [Two<T, U>]) -> i64 { 0 }
+}
+
+fn wrap<T>(x: [T]) -> [T] { x }
+fn opt<T>(x: T?) -> T { x ?? panic("no") }
+fn h<T>(x: T) -> i64 { 0 }
+
+fn main() {
+    let s = S()
+    let t = "a"
+    let bx = Box(v: 1)
+    let a = [wrap([s.name()]), [t]]
+    let b = [opt(s.name()), t]
+    let c = [h(s.name()), 1]
+    let d = bx.put([])
+    print(a.len() + b.len() + c.len() + d)
+}

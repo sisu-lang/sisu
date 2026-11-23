@@ -1,0 +1,8 @@
+// A number has no method `Some`. The call is E0063 at the name, also as the argument of a generic
+// call: `Some` is a name of the prelude, and no method has it.
+fn id<T>(x: T) -> T { x }
+
+fn main() {
+    let v = 1
+    let a = id(v.Some(1))
+}

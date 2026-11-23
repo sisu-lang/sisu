@@ -1,0 +1,39 @@
+// GIVEN a method with a bound on the parameter `V` of its struct, and a function with a bound
+//       on its other parameter `U`
+// WHEN each is called with a type that conforms to the bound, and the function gets a `mut` place
+// THEN the calls check, and each prints the result of `put`
+interface K<V> {
+    fn put(self, v: V) -> i64
+}
+
+struct A: K<B> {
+    n: i64
+
+    fn put(self, _v: B) -> i64 {
+        1
+    }
+}
+
+struct B {
+    n: i64
+}
+
+struct S<V> {
+    v: V
+
+    fn m<T: K<V>>(self, t: T) -> i64 {
+        t.put(self.v)
+    }
+}
+
+fn f<T: K<U>, U>(t: T, mut u: U) -> i64 {
+    u = u
+    t.put(u)
+}
+
+fn main() {
+    let s = S(v: B(n: 1))
+    print(s.m(A(n: 2)))
+    let mut b = B(n: 3)
+    print(f(A(n: 1), mut b))
+}

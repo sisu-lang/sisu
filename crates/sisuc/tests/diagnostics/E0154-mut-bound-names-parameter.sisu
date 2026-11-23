@@ -1,0 +1,47 @@
+// A bound that names another type parameter is checked as soon as the `mut` arguments give both
+// types. The first argument that breaks a bound gets the E0154, whatever the order of the
+// parameters.
+interface K<V> {
+    fn put(self, v: V) -> V
+}
+
+struct Cell<T>: K<T> {
+    v: T
+
+    fn put(self, v: T) -> T {
+        v
+    }
+}
+
+fn f<T: K<U>, U>(mut t: T, u: U) -> U {
+    t.put(u)
+}
+
+fn g<U, T: K<U>>(mut u: U, mut t: T) -> U {
+    t.put(u)
+}
+
+fn h<T: K<[U]>, U>(mut t: T, u: U) -> U {
+    u
+}
+
+fn k<U, T: K<[U]>>(mut u: U, mut t: T) -> U {
+    u
+}
+
+fn f2<U: K<i64>, T: K<U>>(mut u: U, mut t: T) -> i64 {
+    1
+}
+
+fn main() {
+    let mut c = Cell(v: 1)
+    let mut d = Cell(v: [1])
+    let mut n = 2
+    let mut text = "s"
+    print(f(mut c, 3))
+    print(g(mut n, mut c))
+    print(h(mut d, 3))
+    print(k(mut n, mut d))
+    print(k(mut n, mut c))
+    print(f2(mut text, mut c))
+}

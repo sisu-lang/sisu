@@ -1,0 +1,91 @@
+warning[W0002]: `x` is never reassigned, so its `mut` changes nothing for the caller
+  --> E0170-generic-mut-kinds.sisu:40:14
+   |
+40 | fn fs<T>(mut x: S1<T>) -> T {
+   |              ^ never reassigned
+
+warning[W0002]: `x` is never reassigned, so its `mut` changes nothing for the caller
+  --> E0170-generic-mut-kinds.sisu:44:14
+   |
+44 | fn fe<T>(mut x: E1<T>) -> i64 {
+   |              ^ never reassigned
+
+warning[W0002]: `x` is never reassigned, so its `mut` changes nothing for the caller
+  --> E0170-generic-mut-kinds.sisu:48:14
+   |
+48 | fn fa<T>(mut x: any Source<T>) -> T {
+   |              ^ never reassigned
+
+warning[W0002]: `x` is never reassigned, so its `mut` changes nothing for the caller
+  --> E0170-generic-mut-kinds.sisu:52:14
+   |
+52 | fn fo<T>(mut x: T??) -> i64 {
+   |              ^ never reassigned
+
+error[E0170]: the `mut` argument `s` has type `S2<i64>`, but the parameter `x` of `fs` has type `S1<_>`
+  --> E0170-generic-mut-kinds.sisu:68:18
+   |
+68 |     print(fs(mut s))
+   |                  ^ has type `S2<i64>`
+   |
+  ::: E0170-generic-mut-kinds.sisu:40:14
+   |
+40 | fn fs<T>(mut x: S1<T>) -> T {
+   |              - declared `S1<T>` here
+   |
+   = help: a `mut` argument must have exactly the parameter's type: the callee stores a `S1<_>` back into the place
+
+error[E0170]: the `mut` argument `e` has type `E2<i64>`, but the parameter `x` of `fe` has type `E1<_>`
+  --> E0170-generic-mut-kinds.sisu:69:18
+   |
+69 |     print(fe(mut e))
+   |                  ^ has type `E2<i64>`
+   |
+  ::: E0170-generic-mut-kinds.sisu:44:14
+   |
+44 | fn fe<T>(mut x: E1<T>) -> i64 {
+   |              - declared `E1<T>` here
+   |
+   = help: a `mut` argument must have exactly the parameter's type: the callee stores an `E1<_>` back into the place
+
+error[E0170]: the `mut` argument `o` has type `any Other<i64>`, but the parameter `x` of `fa` has type `any Source<_>`
+  --> E0170-generic-mut-kinds.sisu:71:18
+   |
+71 |     print(fa(mut o))
+   |                  ^ has type `any Other<i64>`
+   |
+  ::: E0170-generic-mut-kinds.sisu:48:14
+   |
+48 | fn fa<T>(mut x: any Source<T>) -> T {
+   |              - declared `any Source<T>` here
+   |
+   = help: a `mut` argument must have exactly the parameter's type: the callee stores an `any Source<_>` back into the place
+
+error[E0170]: the `mut` argument `n` has type `i64`, but the parameter `x` of `fo` has type `_??`
+  --> E0170-generic-mut-kinds.sisu:72:18
+   |
+72 |     print(fo(mut n))
+   |                  ^ has type `i64`
+   |
+  ::: E0170-generic-mut-kinds.sisu:52:14
+   |
+52 | fn fo<T>(mut x: T??) -> i64 {
+   |              - declared `T??` here
+   |
+   = help: a `mut` argument must have exactly the parameter's type: the callee stores a `_??` back into the place
+
+error[E0170]: the `mut` argument `ys` has type `[i64]`, but the parameter `a` of `keep` has type `[u8]`
+  --> E0170-generic-mut-kinds.sisu:73:29
+   |
+73 |     let t: [u8]? = keep(mut ys)
+   |                             ^^ has type `[i64]`
+   |
+  ::: E0170-generic-mut-kinds.sisu:56:16
+   |
+56 | fn keep<T>(mut a: [T]) -> [T] {
+   |                - declared `[T]` here
+   |
+   = help: a `mut` argument must have exactly the parameter's type: the callee stores a `[u8]` back into the place
+
+sisu: 5 errors, 4 warnings
+sisu: for more on a code, run `sisu explain <code>`: E0170, W0002

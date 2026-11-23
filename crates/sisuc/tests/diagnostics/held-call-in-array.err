@@ -1,0 +1,16 @@
+error[E0052]: cannot find function `nosuch`
+  --> held-call-in-array.sisu:26:14
+   |
+26 |     let a = [nosuch(), puts("x", "y"), mk("a")]
+   |              ^^^^^^
+
+error[E0050]: cannot infer `S` for `puts`
+  --> held-call-in-array.sisu:31:23
+   |
+31 |     let a = [mk("a"), puts("x", "y").nosuch]
+   |                       ^^^^
+   |
+   = help: annotate the result, or write the type: `puts<...>(...)`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0050, E0052

@@ -1,0 +1,74 @@
+warning[W0002]: `t` is never reassigned, so its `mut` changes nothing for the caller
+  --> E0154-mut-bound-names-parameter.sisu:16:22
+   |
+16 | fn f<T: K<U>, U>(mut t: T, u: U) -> U {
+   |                      ^ never reassigned
+
+warning[W0002]: `u` is never reassigned, so its `mut` changes nothing for the caller
+  --> E0154-mut-bound-names-parameter.sisu:20:22
+   |
+20 | fn g<U, T: K<U>>(mut u: U, mut t: T) -> U {
+   |                      ^ never reassigned
+
+warning[W0002]: `t` is never reassigned, so its `mut` changes nothing for the caller
+  --> E0154-mut-bound-names-parameter.sisu:20:32
+   |
+20 | fn g<U, T: K<U>>(mut u: U, mut t: T) -> U {
+   |                                ^ never reassigned
+
+warning[W0002]: `t` is never reassigned, so its `mut` changes nothing for the caller
+  --> E0154-mut-bound-names-parameter.sisu:24:24
+   |
+24 | fn h<T: K<[U]>, U>(mut t: T, u: U) -> U {
+   |                        ^ never reassigned
+
+warning[W0002]: `u` is never reassigned, so its `mut` changes nothing for the caller
+  --> E0154-mut-bound-names-parameter.sisu:28:24
+   |
+28 | fn k<U, T: K<[U]>>(mut u: U, mut t: T) -> U {
+   |                        ^ never reassigned
+
+warning[W0002]: `t` is never reassigned, so its `mut` changes nothing for the caller
+  --> E0154-mut-bound-names-parameter.sisu:28:34
+   |
+28 | fn k<U, T: K<[U]>>(mut u: U, mut t: T) -> U {
+   |                                  ^ never reassigned
+
+warning[W0002]: `u` is never reassigned, so its `mut` changes nothing for the caller
+  --> E0154-mut-bound-names-parameter.sisu:32:31
+   |
+32 | fn f2<U: K<i64>, T: K<U>>(mut u: U, mut t: T) -> i64 {
+   |                               ^ never reassigned
+
+warning[W0002]: `t` is never reassigned, so its `mut` changes nothing for the caller
+  --> E0154-mut-bound-names-parameter.sisu:32:41
+   |
+32 | fn f2<U: K<i64>, T: K<U>>(mut u: U, mut t: T) -> i64 {
+   |                                         ^ never reassigned
+
+error[E0154]: `Cell<i64>` does not conform to `K<[i64]>`
+  --> E0154-mut-bound-names-parameter.sisu:45:24
+   |
+45 |     print(k(mut n, mut c))
+   |                        ^
+   |
+  ::: E0154-mut-bound-names-parameter.sisu:28:12
+   |
+28 | fn k<U, T: K<[U]>>(mut u: U, mut t: T) -> U {
+   |            ------ required by this bound
+   |
+   = help: make `Cell<i64>` conform to `K<[i64]>`
+
+error[E0154]: `string` does not conform to `K<i64>`
+  --> E0154-mut-bound-names-parameter.sisu:46:18
+   |
+46 |     print(f2(mut text, mut c))
+   |                  ^^^^
+   |
+  ::: E0154-mut-bound-names-parameter.sisu:32:10
+   |
+32 | fn f2<U: K<i64>, T: K<U>>(mut u: U, mut t: T) -> i64 {
+   |          ------ required by this bound
+
+sisu: 2 errors, 8 warnings
+sisu: for more on a code, run `sisu explain <code>`: E0154, W0002

@@ -1,0 +1,47 @@
+// A generic call in an array waits for the type of the other members. When another member fails,
+// the call gets no error of its own. When the call is the receiver of a field that does not exist,
+// its type parameter stays open: E0050. A call under an `if` or in `dbg` takes the type of the
+// other member.
+interface Source {
+    type Item
+    fn first(self) -> Item
+}
+
+struct Named: Source, Eq {
+    type Item = string
+    v: string
+
+    fn first(self) -> string { self.v }
+}
+
+fn puts<S: Source>(_s: string, _v: S.Item) -> S? {
+    None
+}
+
+fn mk(name: string) -> Named? {
+    Named(v: name)
+}
+
+fn bad_a(c: bool) -> i64 {
+    let a = [nosuch(), puts("x", "y"), mk("a")]
+    a.len()
+}
+
+fn bad_b(c: bool) -> i64 {
+    let a = [mk("a"), puts("x", "y").nosuch]
+    a.len()
+}
+
+fn nest_c(c: bool) -> i64 {
+    let a = [mk("a"), if c { puts("x", "y") } else { None }]
+    a.len()
+}
+
+fn nest_d(c: bool) -> i64 {
+    let a = [mk("a"), dbg(puts("x", "y"))]
+    a.len()
+}
+
+fn main() {
+    print(bad_a(true))
+}

@@ -1,0 +1,18 @@
+// A method that two interfaces give to a type parameter is E0156 when a generic call takes it
+// as a number operand. A call with a type argument written does not make the method wait.
+interface Ia {
+    fn get(self, n: i64) -> i64
+    fn mk<U>(self) -> i64
+}
+interface Ib {
+    fn get(self, n: i64) -> string
+    fn mk<U>(self) -> string
+}
+fn id<T>(x: T) -> T { x }
+fn one<T: Ia & Ib>(t: T) -> i64 {
+    let x: i64? = id(t.mk<u8>())
+    let y: i64? = id(t.get(1) + 2)
+    (x ?? 0) + (y ?? 0)
+}
+fn main() {
+}

@@ -1,0 +1,10 @@
+error[E0032]: expected `Two<i64, bool?>?`, found `Two<string, bool>`
+  --> E0032-method-result-against-optional.sisu:16:31
+   |
+16 |     let y: Two<i64, bool?>? = bx.mk(true)
+   |            ----------------   ^^^^^^^^^^^
+   |            |
+   |            declared as `Two<i64, bool?>?` here
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

@@ -1,0 +1,35 @@
+// The result of a generic call with an open type parameter is checked against the declared type
+// of its `let`. A struct or an enum of another declaration is E0032. An `any` type that does not
+// conform to the interface is E0154. An `any` type with the written argument is fine.
+struct Bx<T> {
+    v: T
+}
+struct By<T> {
+    v: T
+}
+enum Ea<T> {
+    A(T)
+}
+enum Eb<T> {
+    B(T)
+}
+interface Src<T> {
+    fn get(self) -> T
+}
+interface Snk<T> {
+    fn put(self, x: T) -> i64
+}
+struct G<T>: Src<T> {
+    v: T
+    fn get(self) -> T { self.v }
+}
+fn mkb<T>(x: T) -> Bx<T> { Bx(v: x) }
+fn mke<T>(x: T) -> Ea<T> { Ea.A(x) }
+fn mka<T>(x: T) -> any Src<T> { G(v: x) }
+fn main() {
+    let a: By<i64> = mkb(1)
+    let b: Eb<i64> = mke(1)
+    let c: any Src<u8> = mka(1)
+    let d: any Snk<i64> = mka(1)
+    print(c.get())
+}

@@ -1,0 +1,34 @@
+error[E0156]: `name` on `S` could come from `Label` or `Code`
+  --> late-method-with-two-answers.sisu:42:22
+   |
+42 |     let a = [wrap([s.name()]), [t]]
+   |                      ^^^^
+   |
+   = help: annotate the result: `let x: string = s.name()`
+
+error[E0156]: `name` on `S` could come from `Label` or `Code`
+  --> late-method-with-two-answers.sisu:43:20
+   |
+43 |     let b = [opt(s.name()), t]
+   |                    ^^^^
+   |
+   = help: annotate the result: `let x: string = s.name()`
+
+error[E0050]: cannot infer `T` for `h`
+  --> late-method-with-two-answers.sisu:44:14
+   |
+44 |     let c = [h(s.name()), 1]
+   |              ^
+   |
+   = help: write the type: `h<...>(...)`
+
+error[E0050]: cannot infer `U` for `put`
+  --> late-method-with-two-answers.sisu:45:16
+   |
+45 |     let d = bx.put([])
+   |                ^^^
+   |
+   = help: write the type: `put<...>(...)`
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0050, E0156

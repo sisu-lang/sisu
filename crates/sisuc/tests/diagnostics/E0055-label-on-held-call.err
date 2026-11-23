@@ -1,0 +1,18 @@
+error[E0055]: this call takes no labels on its arguments
+  --> E0055-label-on-held-call.sisu:24:29
+   |
+24 |     let a = [mk("a"), puts2(s: "x", v: "y")]
+   |                             ^
+   |
+   = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+error[E0055]: this call takes no labels on its arguments
+  --> E0055-label-on-held-call.sisu:24:37
+   |
+24 |     let a = [mk("a"), puts2(s: "x", v: "y")]
+   |                                     ^
+   |
+   = help: remove the labels: only a constructor, or a variant that declares labels, takes labeled arguments
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0055

@@ -1,0 +1,22 @@
+// An argument of a generic call that has no value is E0043: a block that ends in a `let`, and an
+// `if` whose branches never finish. The call does not hide the error.
+struct P<A, B> {
+    a: A
+    b: B
+}
+
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn h<A, B>(_c: bool, p: P<A, B>) -> A {
+    p.a
+}
+
+fn main() {
+    let c = true
+    let a = id({ let y = 2 }) == 1
+    let b = { let z = 3 } == id(1)
+    let z: i64? = h(c, if c { todo("a") } else { panic("b") })
+    print(a)
+}
