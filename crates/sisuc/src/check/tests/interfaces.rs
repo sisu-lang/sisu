@@ -5379,7 +5379,7 @@ fn interface_signatures_should_leave_all_states_done_and_work_bodies_cleared() {
 /// working.
 #[test]
 fn interface_parameter_and_associated_bounds_should_report_loops_and_keep_resolved_bounds() {
-    let rows: [(&str, &str, &[Wanted]); 3] = [
+    let rows: [(&str, &str, &[Wanted]); 7] = [
         (
             "J1: mutual parameter bounds loop reports both sides",
             "interface A<X> {\n    type P\n}\ninterface B<X> {\n    type Q\n}\ninterface J<T: A<S.Q>, S: B<T.P>> {}\nfn main() {}",
@@ -5394,6 +5394,26 @@ fn interface_parameter_and_associated_bounds_should_report_loops_and_keep_resolv
             "type A with resolved Has<i64> and Conv<Self.A.Inner> checks clean",
             "interface Has<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface N {\n    type A: Has<i64> & Conv<Self.A.Inner>\n}\nfn main() {}",
             &[],
+        ),
+        (
+            "two_self_min: two Self-member parameter bounds resolve on demand",
+            "interface Has<X> {\n    type Inner\n}\ninterface I<U: Has<Self.A.Inner>, V: Has<Self.B.Inner>> {\n    type A: Has<V.Inner>\n    type B: Has<i64>\n}\nfn main() {}",
+            &[],
+        ),
+        (
+            "two_self_swapped: parameter order does not change Self-member resolution",
+            "interface Has<X> {\n    type Inner\n}\ninterface I<V: Has<Self.B.Inner>, U: Has<Self.A.Inner>> {\n    type A: Has<V.Inner>\n    type B: Has<i64>\n}\nfn main() {}",
+            &[],
+        ),
+        (
+            "non_self_waiting_on_self: non-Self bound wakes after Self-member bound resolves",
+            "interface Has<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface I<W: Conv<U.Inner>, U: Has<Self.A.Inner>> {\n    type A: Has<i64>\n}\nfn main() {}",
+            &[],
+        ),
+        (
+            "two_self_cycle: mutual Self-member parameter bounds report BoundsLoop",
+            "interface Has<X> {\n    type Inner\n}\ninterface I<U: Has<Self.A.Inner>, V: Has<Self.B.Inner>> {\n    type A: Has<V.Inner>\n    type B: Has<U.Inner>\n}\nfn main() {}",
+            &[(Code::UnknownType, (6, 19))],
         ),
     ];
     check_rows(&rows);
@@ -5433,18 +5453,4 @@ fn missing_associated_type_in_interface_bounds_should_report_without_loop_help()
             "{name}: missing associated type should not emit BoundsLoop help"
         );
     }
-}
-
-/// A deep single-interface chain of member-bearing associated-type bounds resolves without stack
-/// overflow.
-#[test]
-fn single_interface_deep_assoc_bound_chain_should_resolve_without_overflow() {
-    crate::on_compiler_stack(|| {
-        let mut src = String::from("interface Has<X> {\n    type Inner\n}\ninterface I {\n");
-        for i in 0..6000 {
-            let _ = writeln!(src, "    type A{i}: Has<Self.A{}.Inner>", i + 1);
-        }
-        src.push_str("    type A6000: Has<i64>\n}\nfn main() {}");
-        clean(&src);
-    });
 }

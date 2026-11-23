@@ -1386,4 +1386,29 @@ mod tests {
             "{text}"
         );
     }
+
+    /// A deeply nested type substitutes on a 64 KiB stack without stack overflow.
+    #[test]
+    fn subst_walk_should_follow_a_deep_type_on_a_small_stack() {
+        const STACK: usize = 64 * 1024;
+        // Without `ensure_stack` in `subst_walk`, 449 levels abort on this stack and 448 pass:
+        // 4,500 levels give about ten times the abort depth.
+        let levels = 4_500;
+        let result = std::thread::Builder::new()
+            .stack_size(STACK)
+            .spawn(move || {
+                let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+                let mut ty = param;
+                let mut want = Type::I64;
+                for _ in 0..levels {
+                    ty = Type::array(ty);
+                    want = Type::array(want);
+                }
+                (ty.subst(&[Type::I64]), want)
+            })
+            .expect("the thread should start")
+            .join()
+            .expect("the walk should not panic");
+        assert_eq!(result.0, result.1);
+    }
 }
