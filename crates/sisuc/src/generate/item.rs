@@ -669,7 +669,10 @@ fn gap_shown<T: Display>(x: T) -> T {
     dbg(x)
 }
 fn gap_boxed<T: GapSeen>(x: T) -> any GapSeen { x }
-fn gap_saw(x: any GapSeen) -> i64 { x.seen() }";
+fn gap_saw(x: any GapSeen) -> i64 { x.seen() }
+struct GapFin: GapSeen { v: i64; fn seen(self) -> i64 { self.v + 2 } }
+fn gap_pick<T>(a: T, _b: T) -> T { a }
+fn gap_unseen<T: GapSeen>() -> T? { None }";
 
 /// The declarations of the generic forms of `gap_forms`. Their names start with `Gap` or `gap_`.
 /// The text is fixed and makes no draw. `gap_forms` writes the statements of `shapes` that use it.
@@ -734,7 +737,21 @@ interface GapNamed { type Named }
 class GapName: GapNamed {
     type Named = i64
 }
-type GapItem<S> = [S.Named]";
+type GapItem<S> = [S.Named]
+fn gap_fnone<T>() -> T? { None }
+fn gap_unit() {}
+struct GapSw { fn nothing<T>(self) -> T? { None } }
+interface GapPut<V> { fn put<U>(mut self, v: V, u: U) -> U }
+struct GapSlot<T>: GapPut<T> {
+    v: T
+    fn put<U>(mut self, v: T, u: U) -> U {
+        self.v = v
+        u
+    }
+}
+fn gap_bump<T: GapPut<i64>>(mut t: T) -> bool { t.put(5, true) }
+struct GapBit: GapSource { type Item = bool; v: bool; fn next(self) -> bool { self.v } }
+fn gap_put<S: GapSource>(_v: S.Item) -> S? { None }";
 
 /// The declarations of the forms of `gap_forms` that reach lowering and the runtime. Their names
 /// start with `Gap` or `gap_`. The text is fixed and makes no draw. `gap_forms` writes the
@@ -2021,7 +2038,15 @@ impl Gen<'_> {
     ///     `string`;
     ///   - `gap_cells`: a consuming `match` with `Some(x)` under a boxed optional field;
     ///   - `gap_tail`: a self call in tail position that passes a named argument;
-    /// - a `never` part of a string, as a statement on a branch that does not run.
+    /// - a `never` part of a string, as a statement on a branch that does not run;
+    /// - the forms of joins and of type inference, each for a function that `tests/run`
+    ///   reaches and no drawn rule does (`make fuzz-gaps`):
+    ///   - `gap_open`: a generic call that takes its type from an `any` beside it (`settle_open`);
+    ///   - `gap_wrapped`: a call whose bound waits for a `T??` beside it (`obligation_breaks`);
+    ///   - `gap_fnone() == gap_unit()`: a `unit` beside an open `T?` (`open_any`);
+    ///   - `gap_nothing`: a generic method that waits for its type in an argument (`own_params`);
+    ///   - `gap_bump`: a generic `mut self` method through a bound (`unknown_param`);
+    ///   - `gap_put`: an argument at an associated type that the join decides (`put_back`).
     ///
     /// `main` takes `gap_args` in the programs of `MAIN_ARGS_GATE`. `open_main` and
     /// `print_gap_args` write it.
@@ -2140,6 +2165,20 @@ impl Gen<'_> {
             "print(gap_sorted(\"a\", \"b\", \"c\"))",
             "print(gap_cells(GapRun.Cell(\"x\", Some(GapRun.Cell(\"y\", None)))))",
             "print(gap_tail(\"t\", 2))",
+            "let gap_owl: any GapSeen = GapOwl(v: 1)",
+            "let gap_open = if gap_off { gap_owl } else { gap_pick(GapFin(v: 2), GapOwl(v: 3)) }",
+            "print(gap_open.seen())",
+            "let gap_owls: GapOwl?? = Some(Some(GapOwl(v: 4)))",
+            "let gap_wrapped = if gap_off { gap_owls } else { gap_unseen() }",
+            "print(gap_wrapped == None)",
+            "print(gap_fnone() == gap_unit())",
+            "let gap_nothing: i64? = gap_pick(GapSw().nothing(), 1)",
+            "print(gap_nothing ?? 0)",
+            "let mut gap_slot = GapSlot(v: 1)",
+            "print(gap_bump(mut gap_slot))",
+            "print(gap_slot.v)",
+            "let gap_bit: GapBit? = if gap_off { GapBit(v: true) } else { None }",
+            "print([gap_put(loop { break true }), gap_bit].len())",
         ] {
             calls.push(line);
         }
