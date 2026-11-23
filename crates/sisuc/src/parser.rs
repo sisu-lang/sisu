@@ -1573,9 +1573,35 @@ impl<'a> Parser<'a> {
         self.lexer[start..at(bytes.end).max(start)].iter()
     }
 
+    /// Resolves a broken item's error from `fatal` and `self.recovered[recovered..]`: when a
+    /// lexer error at `lexed_start` caused `fatal`, keeps recovered diagnostics strictly before
+    /// `fatal`; otherwise folds them into `fatal`.
+    fn resolve_broken(
+        &mut self,
+        recovered: usize,
+        fatal: Diagnostic,
+        lexed_start: Option<usize>,
+    ) -> Diagnostic {
+        if lexed_start.is_some_and(|start| start <= fatal.span().start()) {
+            let limit = fatal.span().start();
+            let mut keep = recovered;
+            for i in recovered..self.recovered.len() {
+                if self.recovered[i].span().start() < limit {
+                    self.recovered.swap(keep, i);
+                    keep += 1;
+                }
+            }
+            self.recovered.truncate(keep);
+            fatal
+        } else {
+            self.recovered.drain(recovered..).fold(fatal, earlier)
+        }
+    }
+
     /// Parses with `parse` the item or member that starts here and runs to `end`. Its error is
     /// the earlier of its first lexer diagnostic and its parse error, which a skip may have
-    /// caused. After an error, the parser resumes at `end`.
+    /// caused. Keeps recovered diagnostics strictly before a fatal lexer error. After an error, the
+    /// parser resumes at `end`.
     fn checked<T>(
         &mut self,
         end: usize,
@@ -1584,23 +1610,30 @@ impl<'a> Parser<'a> {
         let bytes = self.bytes(self.pos, end);
         let recovered = self.recovered.len();
         let parsed = parse(self);
-        let lexed = self.lexer_in(bytes).next().cloned();
+        let lexed_end = if parsed.is_ok() && self.pos < end {
+            self.tokens[self.pos].span.start().min(bytes.end)
+        } else {
+            bytes.end
+        };
+        let lexed = self.lexer_in(bytes.start..lexed_end).next().cloned();
         if let (Ok(_), None) = (&parsed, &lexed) {
             return parsed;
         }
-        let error = lexed
+        let lexed_start = lexed.as_ref().map(|d| d.span().start());
+        let fatal = lexed
             .into_iter()
-            .chain(self.recovered.drain(recovered..))
             .chain(parsed.err())
             .reduce(earlier)
             .expect("a broken item should hold an error");
+        let error = self.resolve_broken(recovered, fatal, lexed_start);
         self.pos = end;
         Err(error)
     }
 
     /// The class or enum that `body` parses, from here to `end`, and the error of each broken
     /// method. A method whose error follows its name is broken alone and leaves the item; any
-    /// other error breaks the whole item, whose one error is then the earliest in it.
+    /// other error breaks the whole item, whose one error is then the earliest in it. Keeps
+    /// recovered diagnostics strictly before a fatal lexer error outside methods.
     fn with_methods(
         &mut self,
         end: usize,
@@ -1624,13 +1657,14 @@ impl<'a> Parser<'a> {
             (Ok(item), None) => Ok((item, errors)),
             (parsed, outside) => {
                 self.pos = end;
-                let error = errors
+                let outside_start = outside.as_ref().map(|d| d.span().start());
+                let fatal = errors
                     .into_iter()
                     .chain(outside)
-                    .chain(self.recovered.drain(recovered..))
                     .chain(parsed.err())
                     .reduce(earlier)
                     .expect("a broken item should hold an error");
+                let error = self.resolve_broken(recovered, fatal, outside_start);
                 Err(error)
             }
         }
@@ -1795,7 +1829,11 @@ impl<'a> Parser<'a> {
     fn member_line(&mut self, owner: &Owner) -> Result<Member, Diagnostic> {
         let member = self.member(owner)?;
         if matches!(member, Member::Field(_)) && self.at(&TokenKind::Comma) {
-            return Err(self.member_comma(diagnostic::Member::Field));
+            self.recovered
+                .push(self.member_comma(diagnostic::Member::Field));
+            self.bump();
+            self.eat(&TokenKind::Semicolon);
+            return Ok(member);
         }
         self.line_end()?;
         Ok(member)
@@ -1888,6 +1926,7 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::Enum)?;
         // `class` is not `Eof`, so the token after it exists.
         if self.at(&TokenKind::Class)
+            && !self.starts_item_line(self.pos)
             && let next = &self.tokens[self.pos + 1]
             && let TokenKind::Ident(_) = next.kind
         {
@@ -1965,7 +2004,11 @@ impl<'a> Parser<'a> {
                 .into());
             }
             if self.at(&TokenKind::Comma) {
-                return Err(self.member_comma(diagnostic::Member::Variant));
+                self.recovered
+                    .push(self.member_comma(diagnostic::Member::Variant));
+                self.bump();
+                self.eat(&TokenKind::Semicolon);
+                return Ok(EnumMember::Variant(variant));
             }
             EnumMember::Variant(variant)
         };
@@ -3189,7 +3232,7 @@ impl<'a> Parser<'a> {
                         parens: None,
                     };
                     (kind, span)
-                } else if let Some(op) = self.range_op() {
+                } else if let Some(op) = self.range_op_after(token.span.end()) {
                     return self.range_end(Bound::Name(name), token.span, op);
                 } else {
                     (PatternKind::Name(name), token.span)
@@ -3200,7 +3243,9 @@ impl<'a> Parser<'a> {
             _ => return Err(self.expected("a pattern")),
         };
         // A name or a literal can start a range; no other pattern is a bound.
-        if matches!(self.peek().kind, TokenKind::DotDot | TokenKind::DotDotEq) {
+        if matches!(self.peek().kind, TokenKind::DotDot | TokenKind::DotDotEq)
+            && !self.has_lexer_error_before_peek(span.end())
+        {
             return Err(self.expected_at(token, "a literal"));
         }
         self.depth = reach;
@@ -3333,7 +3378,7 @@ impl<'a> Parser<'a> {
     /// A literal pattern, or a range that starts with one, at the next token.
     fn literal_pattern(&mut self) -> Result<Pattern, Diagnostic> {
         let (start, start_span) = self.literal()?;
-        match self.range_op() {
+        match self.range_op_after(start_span.end()) {
             Some(op) => self.range_end(Bound::Literal(start), start_span, op),
             None => Ok(Pattern {
                 kind: PatternKind::Literal(start),
@@ -3419,11 +3464,19 @@ impl<'a> Parser<'a> {
         let end = self.range_bound().ok().map(|(_, span)| span);
         // Rust writes a rest pattern as a bare `..`, and Dart as a bare `...`, in a
         // sub-pattern: no range is meant there. `..<` is no rest pattern.
-        if matches!(op, RangeOp::Exclusive | RangeOp::Foreign { lt: None, .. })
-            && end.is_none()
-            && self.pattern_site == PatternSite::Sub
-        {
-            return self.expected_at(token, "a pattern");
+        if end.is_none() && self.pattern_site == PatternSite::Sub {
+            match op {
+                RangeOp::Exclusive => return self.expected_at(token, "a pattern"),
+                RangeOp::Foreign { at, lt: None } => {
+                    return DiagnosticKind::Expected {
+                        what: "a pattern".to_string(),
+                        found: "`...`".to_string(),
+                        at,
+                    }
+                    .into();
+                }
+                _ => {}
+            }
         }
         if let RangeOp::Foreign { at, lt } = op {
             return self.foreign_range(at, lt, None, end, false);
@@ -3483,6 +3536,22 @@ impl<'a> Parser<'a> {
         };
         let end = self.bump().span;
         Ok((literal, minus.map_or(end, |minus| minus.to(end))))
+    }
+
+    /// Whether a lexer diagnostic sits between `after` and the next token.
+    fn has_lexer_error_before_peek(&self, after: usize) -> bool {
+        self.lexer_in(after..self.peek().span.start())
+            .next()
+            .is_some()
+    }
+
+    /// The range operator at the next token, consumed, when no lexer error sits between `after`
+    /// and the operator.
+    fn range_op_after(&mut self, after: usize) -> Option<RangeOp> {
+        if self.has_lexer_error_before_peek(after) {
+            return None;
+        }
+        self.range_op()
     }
 
     /// The range operator at the next token, consumed: `..`, `..=`, or another language's
@@ -3600,10 +3669,13 @@ impl<'a> Parser<'a> {
 
     /// The end of a removal whose code ends at byte `after`, when the next token starts at byte
     /// `next`: see `source::removal_end`. Unlike `mut_not_argument`, which removes spaces and tabs
-    /// only, it keeps a line break in the removal. A comment before the last removed token
-    /// (`x // c`, then `: a`) is still lost.
+    /// only, it keeps a line break in the removal. Stops before a comment or a skipped lexer
+    /// diagnostic so the fix keeps skipped text.
     fn removal_end(&self, after: usize, next: usize) -> usize {
-        removal_end(self.comments, after, next)
+        let end = removal_end(self.comments, after, next);
+        self.lexer_in(after..end)
+            .next()
+            .map_or(end, |d| d.span().start())
     }
 
     /// The E0018 for the `mut self` at the next token, in a method of `owner`.
@@ -3744,7 +3816,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `case`, `default:` or `else =>` where an arm starts.
-    fn arm_idiom(&self) -> Option<Diagnostic> {
+    fn arm_idiom(&mut self) -> Option<Diagnostic> {
         let token = self.peek();
         if !matches!(token.kind, TokenKind::Ident(_) | TokenKind::Else) {
             return None;
@@ -3764,8 +3836,10 @@ impl<'a> Parser<'a> {
                 let mut remove = vec![Span::new(token.span.start(), end)];
                 let mut after = next;
                 let with_let = next.kind == TokenKind::Let;
+                let mut subject_pos = at;
                 if with_let {
-                    after = &self.tokens[at + 1];
+                    subject_pos += 1;
+                    after = &self.tokens[subject_pos];
                     let end = self.removal_end(next.span.end(), after.span.start());
                     remove.push(Span::new(next.span.start(), end));
                 }
@@ -3773,7 +3847,8 @@ impl<'a> Parser<'a> {
                 if after.kind == TokenKind::Dot {
                     remove.push(after.span);
                     // A `.` is not `Eof`, so the token after it exists.
-                    subject = &self.tokens[at + 1 + usize::from(with_let)];
+                    subject_pos += 1;
+                    subject = &self.tokens[subject_pos];
                 }
                 // `case` is Swift's idiom only when a pattern follows. A `;` ends the arm, so it
                 // keeps the fix. Else `case` is a binding, but only before a token that follows a
@@ -3788,12 +3863,23 @@ impl<'a> Parser<'a> {
                 if binding && !with_let {
                     return None;
                 }
-                (
-                    MatchIdiomForm::Case {
+                let diagnostic: Diagnostic = DiagnosticKind::MatchIdiom {
+                    form: MatchIdiomForm::Case {
                         remove: pattern.then_some(remove),
                     },
-                    token.span,
-                )
+                    at: token.span,
+                }
+                .into();
+                if self
+                    .lexer_in(token.span.end()..subject.span.start())
+                    .next()
+                    .is_some()
+                {
+                    self.recovered.push(diagnostic);
+                    self.pos = subject_pos;
+                    return None;
+                }
+                return Some(diagnostic);
             }
             (TokenKind::Ident(_), TokenKind::Colon) if text == "default" => {
                 (MatchIdiomForm::Default, token.span.to(next.span))
@@ -3820,7 +3906,12 @@ impl<'a> Parser<'a> {
         while !self.at(&TokenKind::RBrace) {
             arms.push(self.child(base, &mut reach, Self::arm)?);
             if self.at(&TokenKind::Comma) {
-                return Err(self.member_comma(diagnostic::Member::Arm));
+                self.recovered
+                    .push(self.member_comma(diagnostic::Member::Arm));
+                self.bump();
+                self.eat(&TokenKind::Semicolon);
+                self.skip_newlines();
+                continue;
             }
             if !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Newline) {
                 return Err(self.end_of_line());
