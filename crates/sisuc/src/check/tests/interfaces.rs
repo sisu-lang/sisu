@@ -5220,7 +5220,7 @@ fn deep_associated_type_bound_chain_should_resolve_without_overflow() {
 fn associated_type_bound_checks_should_keep_outer_parameters_typed_and_rescope() {
     let rows: [(&str, &str, &[Wanted]); 4] = [
         (
-            "finding 2: failed check in J.A does not poison I.f param x",
+            "failed check in J.A does not poison I.f param x",
             "interface Has3<X, Y> {\n    type Inner\n}\nstruct Box<X: Eq> {\n    v: X\n}\ninterface I<T: J<i64>> {\n    fn f(self, x: T.A.Inner)\n}\ninterface J<U> {\n    type B\n    type A: Has3<Box<U>, Self.B>\n}\nfn g<T: J<i64>, X: I<T>>(x: X) {\n    x.f(1)\n}\nfn main() {}",
             &[(Code::NotConform, (12, 22)), (Code::Mismatch, (15, 9))],
         ),
@@ -5246,7 +5246,7 @@ fn associated_type_bound_checks_should_keep_outer_parameters_typed_and_rescope()
 /// Cyclic member-bearing bounds report E0030 once per cycle without panicking or cascading.
 #[test]
 fn associated_type_bound_cycles_should_report_loop_without_cascading() {
-    let rows: [(&str, &str, &[Wanted]); 7] = [
+    let rows: [(&str, &str, &[Wanted]); 10] = [
         (
             "self-cycle",
             "interface Has<X> {\n    type Inner\n}\ninterface I {\n    type A: Has<Self.A.Inner>\n}\nfn main() {}",
@@ -5273,7 +5273,7 @@ fn associated_type_bound_cycles_should_report_loop_without_cascading() {
             &[(Code::UnknownType, (5, 13)), (Code::UnknownType, (6, 24))],
         ),
         (
-            "finding 4: recursive Self.Kid.A.Inner cycle",
+            "recursive Self.Kid.A.Inner cycle",
             "interface Has<X> {\n    type Inner\n}\ninterface Tree {\n    type Kid: Tree\n    type A: Has<Self.Kid.A.Inner>\n}\nfn main() {}",
             &[(Code::UnknownType, (6, 28))],
         ),
@@ -5281,6 +5281,21 @@ fn associated_type_bound_cycles_should_report_loop_without_cascading() {
             "mutual param and assoc cycle",
             "interface Has<X> {\n    type Inner\n}\ninterface J<U: Has<Self.A.Inner>> {\n    type A: Has<U.Inner>\n}\nfn main() {}",
             &[(Code::UnknownType, (5, 19))],
+        ),
+        (
+            "partial assoc closure with pending Inner bound reports loop",
+            "interface Has<X> {\n    type Inner\n}\ninterface Has2<X> {\n    type Inner\n}\ninterface I {\n    type A: Has<i64> & Has2<Self.B.Inner>\n    type B: Has<Self.A.Inner>\n}\nfn main() {}",
+            &[(Code::UnknownType, (9, 24))],
+        ),
+        (
+            "swapped partial assoc closure with pending Inner bound reports loop",
+            "interface Has<X> {\n    type Inner\n}\ninterface Has2<X> {\n    type Inner\n}\ninterface I {\n    type B: Has<Self.A.Inner>\n    type A: Has<i64> & Has2<Self.B.Inner>\n}\nfn main() {}",
+            &[(Code::UnknownType, (9, 36))],
+        ),
+        (
+            "partial param closure with pending Inner bound reports loop",
+            "interface Has<X> {\n    type Inner\n}\ninterface Has2<X> {\n    type Inner\n}\ninterface I<U: Has<i64> & Has2<Self.A.Inner>> {\n    type A: Has<U.Inner>\n}\nfn main() {}",
+            &[(Code::UnknownType, (8, 19))],
         ),
     ];
     check_rows(&rows);
@@ -5360,6 +5375,25 @@ fn associated_type_member_bounds_should_compute_parameter_closures_once() {
     let (c40, _) = measure(&chain_src(40));
     let (c60, _) = measure(&chain_src(60));
     assert_near_linear(c20, c40, c60);
+
+    // Deferred Self-member parameter bounds do not clone scopes per parameter.
+    let self_params_src = |n: usize| {
+        let mut src = String::from("interface Has<X> {\n    type Inner\n}\ninterface P<");
+        for i in 0..n {
+            if i > 0 {
+                src.push_str(", ");
+            }
+            let _ = write!(src, "U{i}: Has<Self.A.Inner>");
+        }
+        src.push_str("> {\n    type A: Has<i64>\n}\nfn main() {}");
+        src
+    };
+    let (p20, scopes20) = measure(&self_params_src(20));
+    let (p40, scopes40) = measure(&self_params_src(40));
+    let (p60, scopes60) = measure(&self_params_src(60));
+    assert_near_linear(p20, p40, p60);
+    assert_eq!(scopes20, scopes40);
+    assert_eq!(scopes40, scopes60);
 }
 
 /// Temporary Pass 1b state is dropped once `interface_signatures` completes.
@@ -5379,7 +5413,7 @@ fn interface_signatures_should_leave_all_states_done_and_work_bodies_cleared() {
 /// working.
 #[test]
 fn interface_parameter_and_associated_bounds_should_report_loops_and_keep_resolved_bounds() {
-    let rows: [(&str, &str, &[Wanted]); 12] = [
+    let rows: [(&str, &str, &[Wanted]); 16] = [
         (
             "J1: mutual parameter bounds loop reports both sides",
             "interface A<X> {\n    type P\n}\ninterface B<X> {\n    type Q\n}\ninterface J<T: A<S.Q>, S: B<T.P>> {}\nfn main() {}",
@@ -5439,6 +5473,26 @@ fn interface_parameter_and_associated_bounds_should_report_loops_and_keep_resolv
             "two_self_cycle: mutual Self-member parameter bounds report BoundsLoop",
             "interface Has<X> {\n    type Inner\n}\ninterface I<U: Has<Self.A.Inner>, V: Has<Self.B.Inner>> {\n    type A: Has<V.Inner>\n    type B: Has<U.Inner>\n}\nfn main() {}",
             &[(Code::UnknownType, (6, 19))],
+        ),
+        (
+            "later param bound failure does not hide earlier param error",
+            "interface Has<X> {\n    type Inner\n}\ninterface J<X, U: Has<V.Nope>, V: Has<i64>> {\n    fn f(self, x: X.Nopee)\n}\nfn main() {}",
+            &[(Code::UnknownType, (4, 25)), (Code::UnknownType, (5, 21))],
+        ),
+        (
+            "on-demand failure on V emits single error without duplicate",
+            "interface Has<X> {\n    type Inner\n}\ninterface I<U: Has<Self.A.Inner>, V: Has<Self.B.Nope>> {\n    type A: Has<V.Inner>\n    type B: Has<i64>\n}\nfn main() {}",
+            &[(Code::UnknownType, (4, 49))],
+        ),
+        (
+            "re-entrant cross-interface callback syncs outer param bounds",
+            "interface Has<X> {\n    type Inner\n}\ninterface Has2<X> {\n    type Out\n}\ninterface I<U: Has<T.D.Inner>, T: J<U>> {\n    fn f(self, x: T.X.Out)\n}\ninterface J<U: Has<Self.D.Inner>> {\n    type D: Has<i64>\n    type Step: K<U, Self>\n    type C: Has<U.Inner>\n    type X: Has<Self.Step.B.Inner> & Has2<U.Inner>\n}\ninterface K<U: Has<T.D.Inner>, T: J<U>> {\n    type B: Has<T.C.Inner>\n}\nfn main() {}",
+            &[],
+        ),
+        (
+            "re-entrant partial assoc read invalidates cached body via epoch",
+            "interface Has<X> {\n    type Inner\n}\ninterface Has2<X> {\n    type Out\n}\ninterface Has3<X> {\n    type Inner\n}\ninterface Has4<X> {\n    type W\n}\ninterface I<T: K> {\n    fn f(self, x: T.A.Out)\n}\ninterface K {\n    type JRef: J\n    type A: Has<i64> & Has2<Self.JRef.X.Inner>\n}\ninterface J {\n    type Step: K\n    type X: Has3<Self.Step.A.Inner>\n    type Y: Has4<Self.Step.A.Out>\n}\nfn main() {}",
+            &[],
         ),
     ];
     check_rows(&rows);
