@@ -9,6 +9,20 @@ use std::sync::{LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
 use crate::symbol::Symbol;
 use crate::tir::{ClassId, EnumId, InterfaceId, StructId};
 
+/// The free stack that a walk over the depth of a type keeps. rustc's `ensure_sufficient_stack`
+/// uses the same value.
+const STACK_RED_ZONE: usize = 100 * 1024;
+
+/// The size of each new piece of stack. rustc's `ensure_sufficient_stack` uses the same value.
+const STACK_SEGMENT: usize = 1024 * 1024;
+
+/// Runs `f` on a new piece of stack when the stack that is left is less than `STACK_RED_ZONE`. A
+/// type can nest deeper than the call stack allows, and walks over its depth call themselves once
+/// for each level.
+pub(crate) fn ensure_stack<R>(f: impl FnOnce() -> R) -> R {
+    stacker::maybe_grow(STACK_RED_ZONE, STACK_SEGMENT, f)
+}
+
 /// A type, interned: two types are equal exactly when their structures are. `kind` reads the
 /// structure.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -804,7 +818,7 @@ impl Type {
                 SUBSTITUTED_BUDGET.get()
             );
         }
-        let done = match self.kind() {
+        let done = ensure_stack(|| match self.kind() {
             TypeKind::Param(_, i) => args[i as usize],
             TypeKind::Array(element) => Type::array(element.subst_in(args, memo)),
             TypeKind::Optional(payload) => Type::optional(payload.subst_in(args, memo)),
@@ -833,7 +847,7 @@ impl Type {
             | TypeKind::Infer(_) => {
                 unreachable!("only a kind with a child can name a parameter")
             }
-        };
+        });
         if !memo.over() {
             memo.put(self, done);
         }

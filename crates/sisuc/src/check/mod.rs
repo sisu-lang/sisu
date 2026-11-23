@@ -846,6 +846,8 @@ struct Checker<'src> {
     /// Whether pass 1b is done: every interface has its inheritance, so what an interface
     /// declares will not change.
     interfaces_resolved: bool,
+    /// Scratch state for Pass 1b (`interface_signatures`), dropped once every interface resolves.
+    pass1b: Option<interface::InterfacePass>,
     /// The types that `probe_associated` has probed for a bound, by interface and arguments: a
     /// type is probed once for a bound, however many calls ask.
     probed_types: FxHashSet<(Type, tir::InterfaceId, TypeArgs)>,
@@ -1577,6 +1579,7 @@ impl<'src> Checker<'src> {
             loops: std::cell::RefCell::default(),
             declared: std::cell::RefCell::default(),
             interfaces_resolved: false,
+            pass1b: None,
             probed_types: FxHashSet::default(),
             probed_assoc: FxHashSet::default(),
             probe_budget: 0,
@@ -1894,9 +1897,6 @@ impl Checker<'_> {
                         inherits_failed: false,
                         requirements: Vec::new(),
                         bounds: Vec::new(),
-                        param_states: Vec::new(),
-                        pending_queued: Vec::new(),
-                        work_body: None,
                         assoc: Vec::new(),
                     });
                     self.index_assoc(interface, id);

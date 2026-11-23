@@ -5355,15 +5355,14 @@ fn associated_type_member_bounds_should_compute_parameter_closures_once() {
     let (both60, _) = measure(&wide_src(60, 60));
     assert_near_linear(both20, both40, both60);
 
-    // Reverse chain of interfaces scales linearly in N.
+    // Reverse chain of interfaces: closure, lookup, and bound steps scale linearly in N.
     let (c20, _) = measure(&chain_src(20));
     let (c40, _) = measure(&chain_src(40));
     let (c60, _) = measure(&chain_src(60));
     assert_near_linear(c20, c40, c60);
 }
 
-/// Every parameter and associated-type state is Done and temporary bodies are cleared once
-/// `interface_signatures` completes.
+/// Temporary Pass 1b state is dropped once `interface_signatures` completes.
 #[test]
 fn interface_signatures_should_leave_all_states_done_and_work_bodies_cleared() {
     let src = "interface Has<X> {\n    type Inner\n}\ninterface I<T: J<i64>> {\n    fn f(self, x: T.A.Inner)\n}\ninterface J<U: Has<Self.B.Inner>> {\n    type B: Has<i64>\n    type A: Has<Self.B>\n}\ninterface Loop {\n    type A: Has<Self.A.Inner>\n}\nfn main() {}";
@@ -5373,20 +5372,7 @@ fn interface_signatures_should_leave_all_states_done_and_work_bodies_cleared() {
     checker.collect_names(&items, items.len(), &program.broken);
     checker.interface_signatures(&items);
     assert!(checker.interfaces_resolved);
-    for info in &checker.interfaces {
-        assert!(info.work_body.is_none());
-        assert_eq!(info.pending_queued.len(), 0);
-        assert!(
-            info.param_states
-                .iter()
-                .all(|state| matches!(state, interface::ParamState::Done))
-        );
-        assert!(
-            info.assoc
-                .iter()
-                .all(|assoc| matches!(assoc.state, interface::AssocState::Done))
-        );
-    }
+    assert!(checker.pass1b.is_none());
 }
 
 /// Mutual parameter loops report all cycle bounds, and non-member bounds already in scope keep

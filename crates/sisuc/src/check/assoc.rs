@@ -273,32 +273,14 @@ impl Checker<'_> {
         match base_ty.kind() {
             TypeKind::Assoc(_, iface, _, k) => {
                 if self.ensure_assoc_bounds(iface, k as usize) {
-                    self.body.unknown_assoc.insert(base_ty);
-                    self.error(DiagnosticKind::UnknownType {
-                        name: name.name.to_string(),
-                        at: name.span,
-                        form: UnknownForm::BoundsLoop {
-                            base: self.type_name(base_ty),
-                        },
-                    });
-                    return None;
-                }
-            }
-            TypeKind::Param(_, place) if !self.interfaces_resolved => {
-                if let Some(id) = self.current_interface_id()
-                    && self.ensure_param_bounds(id, place as usize)
-                {
-                    let place = place as usize;
                     let closure = self.closure_len(base_ty);
-                    if self.is_unknown(base_ty) {
-                        return None;
-                    }
                     let found = self.lookup_assoc_in_closure(base_ty, closure, name.name);
-                    if found.is_empty() {
-                        self.interfaces[id.0].bounds[place].failed = true;
-                        if !self.body.unknown.contains(&place) {
-                            self.body.unknown.push(place);
-                        }
+                    if !found.is_empty() {
+                        return self.finish_member_lookup(base_ty, name, &found);
+                    }
+                    if self.pending_assoc_declares(iface, k as usize, name.name) {
+                        self.interfaces[iface.0].assoc[k as usize].bounds.failed = true;
+                        self.body.unknown_assoc.insert(base_ty);
                         self.error(DiagnosticKind::UnknownType {
                             name: name.name.to_string(),
                             at: name.span,
@@ -308,7 +290,45 @@ impl Checker<'_> {
                         });
                         return None;
                     }
+                    if self.is_unknown(base_ty) {
+                        return None;
+                    }
                     return self.finish_member_lookup(base_ty, name, &found);
+                }
+            }
+            TypeKind::Param(_, place) if self.pass1b.is_some() => {
+                let active_id = self.pass1b.as_ref().and_then(|p| p.active);
+                if let Some(id) = active_id
+                    && (place as usize) >= 1
+                    && (place as usize) < self.interfaces[id.0].type_params.len()
+                {
+                    let resolving = self.ensure_interface_params(id);
+                    if resolving && self.in_assoc_bound() {
+                        let place = place as usize;
+                        let closure = self.closure_len(base_ty);
+                        let found = self.lookup_assoc_in_closure(base_ty, closure, name.name);
+                        if !found.is_empty() {
+                            return self.finish_member_lookup(base_ty, name, &found);
+                        }
+                        if self.pending_param_declares(id, place, name.name) {
+                            self.interfaces[id.0].bounds[place].failed = true;
+                            if !self.body.unknown.contains(&place) {
+                                self.body.unknown.push(place);
+                            }
+                            self.error(DiagnosticKind::UnknownType {
+                                name: name.name.to_string(),
+                                at: name.span,
+                                form: UnknownForm::BoundsLoop {
+                                    base: self.type_name(base_ty),
+                                },
+                            });
+                            return None;
+                        }
+                        if self.is_unknown(base_ty) {
+                            return None;
+                        }
+                        return self.finish_member_lookup(base_ty, name, &found);
+                    }
                 }
             }
             _ => {}
@@ -505,7 +525,7 @@ impl Checker<'_> {
             unreachable!("only an associated type should be asked for its closure");
         };
         if self.ensure_assoc_bounds(interface, k as usize) {
-            self.body.unknown_assoc.insert(ty);
+            self.mark_partial_assoc_read();
         }
         if !self.body.assoc_conforming.contains_key(&ty) {
             // The declaration's bounds are over the interface's parameters, `Self` first.
