@@ -17,14 +17,21 @@ if [[ -z ${SISU_COVERAGE_TARGET_DIR:-} ]]; then
 		exit 1
 	}
 	cargo build --quiet -p sisu-runtime-mimalloc -p sisu-runtime-system
+	target_dir=${CARGO_TARGET_DIR:-$PWD/target}
+	[[ $target_dir = /* ]] || target_dir="$PWD/$target_dir"
+	runtime_dir="$target_dir/debug"
 else
 	# cargo-llvm-cov instruments through RUSTC_WRAPPER, so a build without it is plain.
 	env -u RUSTC_WRAPPER -u __CARGO_LLVM_COV_RUSTC_WRAPPER \
 		cargo build --quiet -p sisu-runtime-mimalloc -p sisu-runtime-system \
 		--target-dir target/llvm-cov-runtime
+	runtime_dir="$SISU_COVERAGE_TARGET_DIR/debug"
 	for archive in libsisu_runtime_mimalloc.a libsisu_runtime_system.a; do
 		# --remove-destination: cargo hardlinks the old file to its copy in deps/.
 		cp --remove-destination "target/llvm-cov-runtime/debug/$archive" \
-			"$SISU_COVERAGE_TARGET_DIR/debug/$archive"
+			"$runtime_dir/$archive"
 	done
+fi
+if [[ -n ${NEXTEST_ENV:-} && -f "$runtime_dir/libsisu_runtime_mimalloc.a" ]]; then
+	printf 'SISU_TEST_RUNTIME_DIR=%s\n' "$runtime_dir" >>"$NEXTEST_ENV"
 fi
