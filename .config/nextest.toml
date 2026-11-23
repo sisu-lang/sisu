@@ -21,7 +21,8 @@ fail-fast = false
 failure-output = "immediate-final"
 
 [profile.ci]
-# CI runs the form matrix too, so this filter leaves out the memory tests only.
+# CI runs the form matrix too, so this filter leaves out the memory tests only. Keep its memory
+# part the same as the default filter.
 default-filter = 'not (binary(cases) & test(memory::))'
 # Report every failure, not just the first.
 fail-fast = false

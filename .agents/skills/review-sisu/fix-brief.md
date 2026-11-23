@@ -39,7 +39,8 @@ A change whose tests are in `scripts/test_*.py` has no separate test commit, bec
 Report, do not add: when a check (a hook, a lint, a test table) seems to need a new exemption,
 report the hit and the reason, and add nothing.
 
-After the fix: `make test`, `prek run --all-files`, clippy clean. Compare the probes with
+After the fix: `make test`, `prek run --all-files`, clippy clean. After a change to the front end or the form matrix files (`docs/development.md`, Build and test), also run
+`make form-matrix`. Compare the probes with
 `python3 scripts/diag_diff.py --apply BASE_SISU HEAD_SISU RUN/probes`. Report each row's output at
 the head, and each `lost fix` and `new broken fix` line with its reason.
 No mutation test. Do not push, open a pull request or merge.
