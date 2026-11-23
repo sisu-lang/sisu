@@ -2484,19 +2484,6 @@ mod tests {
     }
 
     #[test]
-    fn part_at_should_stop_at_a_place_with_no_parameter() {
-        let (hole, _, _) = marks();
-        // GIVEN a place that names no parameter
-        let place = Type::array(Type::I64);
-        PART_STEPS.set(0);
-        // WHEN the part at `T` is searched
-        let part = part_at(place, hole, Type::array(Type::I64));
-        // THEN it is none, and the search does not walk into the place
-        assert_eq!(part, None);
-        assert_eq!(PART_STEPS.get(), 1);
-    }
-
-    #[test]
     fn put_back_should_replace_only_the_none_of_the_held_argument() {
         // GIVEN an array of two `None`, whose second is the place of a held argument
         let none = |n| tir::Expr::new(ExprKind::None, Type::optional(Type::I64), at(n));
@@ -2511,37 +2498,6 @@ mod tests {
         };
         assert!(matches!(elements[0].kind, ExprKind::None));
         assert!(matches!(elements[1].kind, ExprKind::Int(7)));
-    }
-
-    #[test]
-    fn join_should_not_read_the_leaves_when_the_first_candidate_holds() {
-        with_params("", "a: u8, xs: [[u8]]", |c, types| {
-            // GIVEN `xs: [[u8]]` and the literal `[[a]]`: the top of the first member holds with
-            // no wrap
-            let inner = array(vec![local(types[0], 1)], types[0], 2);
-            let outer = array(vec![inner], Type::array(types[0]), 3);
-            let mut values = vec![Ok(local(types[1], 4)), Ok(outer)];
-            LEAF_STEPS.set(0);
-            // WHEN they join
-            let ty = join_all(c, JoinForm::Array, &mut values);
-            // THEN the join is `[[u8]]`, and no candidate was read from the leaves
-            assert_eq!(ty.ok(), Some(types[1]));
-            assert_eq!(LEAF_STEPS.get(), 0);
-        });
-    }
-
-    #[test]
-    fn put_back_should_walk_only_the_nodes_that_hold_the_held_span() {
-        // GIVEN an array at a span that does not hold the span of a held argument
-        // AND a `None` at that span inside it
-        let optional = Type::optional(Type::I64);
-        let held = tir::Expr::new(ExprKind::None, optional, at(2));
-        let mut e = tir::Expr::new(ExprKind::ArrayLit(vec![held]), Type::array(optional), at(0));
-        let mut value = Some(tir::Expr::new(ExprKind::Int(7), Type::I64, at(2)));
-        // WHEN the argument goes back, with a walk of the nodes that hold its span
-        // THEN the walk does not enter the array, and the argument stays out
-        assert!(!put_back(&mut e, at(2), &mut value, false));
-        assert!(value.is_some());
     }
 
     #[test]

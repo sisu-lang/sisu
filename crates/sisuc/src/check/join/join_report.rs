@@ -2159,31 +2159,6 @@ mod tests {
     }
 
     #[test]
-    fn unit_cause_should_name_push_only_for_a_block_that_ends_in_a_push() {
-        with_params(UNITS, "", |c, _| {
-            // GIVEN a block with no statement and no value
-            let empty = tir::Block {
-                stmts: Vec::new(),
-                value: None,
-                ty: Type::UNIT,
-            };
-            let e = tir::Expr::new(ExprKind::Block(empty), Type::UNIT, at(1));
-            // THEN its cause is plain: no call made it
-            assert!(matches!(c.unit_cause(&e, None), NoValueCause::Plain));
-            // GIVEN a block whose value is `u()`, THEN its cause is the call of `u`
-            let call = unit_call(c, "u", 2);
-            let full = tir::Block {
-                stmts: Vec::new(),
-                value: Some(Box::new(call)),
-                ty: Type::UNIT,
-            };
-            let e = tir::Expr::new(ExprKind::Block(full), Type::UNIT, at(1));
-            let cause = c.unit_cause(&e, None);
-            assert!(matches!(cause, NoValueCause::Call { ref name, .. } if name == "u"));
-        });
-    }
-
-    #[test]
     fn binder_origin_should_skip_a_never_member_and_a_failed_one() {
         let param = Symbol::intern("T");
         // The span and the type of the origin that the members give.

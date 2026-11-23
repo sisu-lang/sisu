@@ -2966,8 +2966,8 @@ fn array_of_ifs_at_a_place_of_two_parameters_should_report_the_none_beside_it() 
     //       parameters
     // AND a `None` and a literal as the two other arguments
     // WHEN it is checked
-    // THEN it reports one E0032 at the `if`: the `None` is no `i64`, so the elements cannot
-    //      take `T` from it
+    // THEN it reports one E0032, at the `if`
+    // The same call without the `if` is accepted: this is an open issue.
     let row = |line: &str| {
         format!("{PLACE_FUNCTIONS}fn main() {{\n    let c = [1].len() == 1\n    {line}\n}}\n")
     };
