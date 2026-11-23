@@ -11305,7 +11305,7 @@ mod tests {
     }
 
     #[test]
-    fn comma_fix_parses_clean() {
+    fn comma_fix_should_parse_clean() {
         // Each fix, applied to the one comma error, leaves a program that parses clean.
         for src in [
             "class P { x: i64, y: i64 }",
@@ -11316,10 +11316,24 @@ mod tests {
         }
         // A comma before `}` goes, because a `;` there would be a redundant one.
         let src = "enum E { A, B, }";
-        assert_eq!(parse_err(src), (Code::FieldComma, 1, 11));
-        let src = fixed(src);
-        assert_eq!(parse_err(&src), (Code::FieldComma, 1, 14));
-        parse_ok(&fixed(&src));
+        let parsed = parsed(src);
+        let positions: Vec<_> = parsed
+            .diagnostics
+            .iter()
+            .map(|d| (d.code(), line_col(src, d.span().start())))
+            .collect();
+        assert_eq!(
+            positions,
+            [(Code::FieldComma, (1, 11)), (Code::FieldComma, (1, 14))]
+        );
+        let fix_first = apply_fix(src, &parsed.diagnostics[0]);
+        assert_eq!(fix_first, "enum E { A; B, }");
+        assert_eq!(parse_err(&fix_first), (Code::FieldComma, 1, 14));
+        parse_ok(&fixed(&fix_first));
+        let fix_second = apply_fix(src, &parsed.diagnostics[1]);
+        assert_eq!(fix_second, "enum E { A, B }");
+        assert_eq!(parse_err(&fix_second), (Code::FieldComma, 1, 11));
+        parse_ok(&fixed(&fix_second));
     }
 
     #[test]
@@ -11797,5 +11811,473 @@ mod tests {
         assert_eq!(d.code(), Code::PowerOperator);
         assert_eq!(line_col(src, d.span().start()), (3, 7));
         assert!(fix_edits(&d).is_none());
+    }
+
+    #[test]
+    fn enum_before_class_on_next_line_should_not_emit_enum_class_fix() {
+        let split_rows = [
+            (
+                "comment before newline",
+                "enum // c\nclass Tray<T> {\n    item: T\n\npub  -> C2 {\n}\n}",
+                vec![(Code::Expected, (2, 1)), (Code::ReservedWord, (5, 1))],
+            ),
+            (
+                "direct newline with reserved word",
+                "enum\nclass Tray {\n    x: i64\n    pub -> C2 {}\n}",
+                vec![(Code::Expected, (2, 1)), (Code::ReservedWord, (4, 5))],
+            ),
+            (
+                "blank line before class",
+                "enum\n\nclass Tray {\n    x: i64\n}",
+                vec![(Code::Expected, (3, 1))],
+            ),
+            (
+                "indented class on next line",
+                "enum\n    class Tray {\n    x: i64\n}",
+                vec![(Code::Expected, (2, 5))],
+            ),
+            (
+                "bodyless class on next line",
+                "enum // c\nclass Tray",
+                vec![(Code::Expected, (2, 1)), (Code::Expected, (2, 11))],
+            ),
+            (
+                "valid class after comment newline",
+                "enum // c\nclass Tray {\n    x: i64\n}\nfn main() {}",
+                vec![(Code::Expected, (2, 1))],
+            ),
+        ];
+        for (name, src, want) in split_rows {
+            let ds = parsed(src).diagnostics;
+            let got: Vec<_> = ds
+                .iter()
+                .map(|d| (d.code(), line_col(src, d.span().start())))
+                .collect();
+            assert_eq!(got, want, "row `{name}`");
+            assert!(
+                ds.iter().all(|d| fix_edits(d).is_none()),
+                "row `{name}` should have no fix"
+            );
+        }
+
+        let mixed = "enum class Foo {\n    A\n}\nenum\nclass Bar {\n    x: i64\n}";
+        let ds = parsed(mixed).diagnostics;
+        let got: Vec<_> = ds
+            .iter()
+            .map(|d| (d.code(), line_col(mixed, d.span().start())))
+            .collect();
+        assert_eq!(
+            got,
+            [(Code::MatchIdiom, (1, 6)), (Code::Expected, (5, 1))],
+            "mixed enum class and split enum/class"
+        );
+        assert_eq!(
+            fix_edits(&ds[0]),
+            Some((true, vec![(5, 11, String::new())])),
+            "mixed safe fix"
+        );
+        assert!(fix_edits(&ds[1]).is_none(), "mixed second error has no fix");
+
+        for (name, src, at, edit, want) in [
+            (
+                "same-line enum class",
+                "enum class Color {\n    Red\n    Blue\n}\nfn main() {}",
+                (1, 6),
+                (5, 11),
+                "enum Color {\n    Red\n    Blue\n}\nfn main() {}",
+            ),
+            (
+                "same-line enum class with comment before name",
+                "enum class // c\nFoo {\n    A\n}",
+                (1, 6),
+                (5, 11),
+                "enum // c\nFoo {\n    A\n}",
+            ),
+            (
+                "same-line enum class with newline before name",
+                "enum class\nFoo {\n    A\n}",
+                (1, 6),
+                (5, 11),
+                "enum Foo {\n    A\n}",
+            ),
+        ] {
+            let d = parse_diagnostic(src);
+            assert_eq!(d.code(), Code::MatchIdiom, "row `{name}`");
+            assert_eq!(line_col(src, d.span().start()), at, "row `{name}`");
+            assert_eq!(
+                fix_edits(&d),
+                Some((true, vec![(edit.0, edit.1, String::new())])),
+                "row `{name}`"
+            );
+            assert_eq!(apply_fix(src, &d), want, "row `{name}`");
+        }
+    }
+
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "table covers 15 skipped-character recovery forms"
+    )]
+    fn case_with_skipped_character_should_keep_character_and_report_both() {
+        let wrap_arm = |arm_src: &str| {
+            format!(
+                "enum E {{\n    P(x: i64, y: i64)\n    Q\n}}\nfn f(e: E) {{\n    match e {{\n        {arm_src}\n    }}\n}}\nfn main() {{}}"
+            )
+        };
+        let rows = [
+            (
+                "case @ x",
+                wrap_arm("case @ x => print(1)"),
+                vec![(Code::MatchIdiom, (7, 9)), (Code::UnexpectedCharacter, (7, 14))],
+                Some((0, false, wrap_arm("@ x => print(1)"))),
+            ),
+            (
+                "case let @ x",
+                wrap_arm("case let @ x => print(1)"),
+                vec![(Code::MatchIdiom, (7, 9)), (Code::UnexpectedCharacter, (7, 18))],
+                Some((0, false, wrap_arm("@ x => print(1)"))),
+            ),
+            (
+                "case let .@ A(x)",
+                wrap_arm("case let .@ A(x) => print(1)"),
+                vec![(Code::MatchIdiom, (7, 9)), (Code::UnexpectedCharacter, (7, 19))],
+                Some((0, false, wrap_arm("@ A(x) => print(1)"))),
+            ),
+            (
+                "case @ let x",
+                wrap_arm("case @ let x => print(1)"),
+                vec![(Code::MatchIdiom, (7, 9)), (Code::UnexpectedCharacter, (7, 14))],
+                Some((0, false, wrap_arm("@ x => print(1)"))),
+            ),
+            (
+                "case @ .P(x, y)",
+                wrap_arm("case @ .P(x, y) => print(1)"),
+                vec![(Code::MatchIdiom, (7, 9)), (Code::UnexpectedCharacter, (7, 14))],
+                Some((0, false, wrap_arm("@ P(x, y) => print(1)"))),
+            ),
+            (
+                "case let @",
+                wrap_arm("case let @ => print(1)"),
+                vec![(Code::MatchIdiom, (7, 9)), (Code::UnexpectedCharacter, (7, 18))],
+                None,
+            ),
+            (
+                "case newline @ x",
+                wrap_arm("case\n        @ x => print(1)"),
+                vec![(Code::MatchIdiom, (7, 9)), (Code::UnexpectedCharacter, (8, 9))],
+                Some((0, false, wrap_arm("@ x => print(1)"))),
+            ),
+            (
+                "case @ x in class method",
+                "enum E {\n    P(x: i64, y: i64)\n    Q\n}\nclass C {\n    fn f(self, e: E) {\n        match e {\n            case @ x => print(1)\n        }\n    }\n}\nfn main() {}".to_string(),
+                vec![(Code::MatchIdiom, (8, 13)), (Code::UnexpectedCharacter, (8, 18))],
+                Some((
+                    0,
+                    false,
+                    "enum E {\n    P(x: i64, y: i64)\n    Q\n}\nclass C {\n    fn f(self, e: E) {\n        match e {\n            @ x => print(1)\n        }\n    }\n}\nfn main() {}".to_string(),
+                )),
+            ),
+            (
+                "case @ binding",
+                wrap_arm("case @ => print(1)"),
+                vec![(Code::UnexpectedCharacter, (7, 14))],
+                None,
+            ),
+            (
+                "enum class @ E",
+                "enum class @ E {\n    A\n}".to_string(),
+                vec![(Code::MatchIdiom, (1, 6))],
+                Some((0, true, "enum @ E {\n    A\n}".to_string())),
+            ),
+            (
+                "struct mut @ x",
+                "struct S {\n    mut @ x: i64\n}".to_string(),
+                vec![(Code::StructFieldMut, (2, 5)), (Code::UnexpectedCharacter, (2, 9))],
+                Some((0, true, "struct S {\n    @ x: i64\n}".to_string())),
+            ),
+            (
+                "fn mut @ self",
+                "class C {\n    fn f(mut @ self) {}\n}".to_string(),
+                vec![(Code::MutSelf, (2, 10))],
+                Some((0, true, "class C {\n    fn f(@ self) {}\n}".to_string())),
+            ),
+            (
+                "slice colon before lexer error",
+                "fn main() {\n    let a = [1]\n    let _ = a[1:]\n    $\n}".to_string(),
+                vec![(Code::ForeignRange, (3, 16)), (Code::UnexpectedCharacter, (4, 5))],
+                Some((
+                    0,
+                    false,
+                    "fn main() {\n    let a = [1]\n    let _ = a[1..]\n    $\n}".to_string(),
+                )),
+            ),
+            (
+                "slice colon before parse error",
+                "fn main() {\n    let a = [1]\n    let _ = a[1:]\n    let = 2\n}".to_string(),
+                vec![(Code::ForeignRange, (3, 16))],
+                Some((
+                    0,
+                    false,
+                    "fn main() {\n    let a = [1]\n    let _ = a[1..]\n    let = 2\n}".to_string(),
+                )),
+            ),
+            (
+                "lexer error before slice colon",
+                "fn main() {\n    let a = [1]\n    $\n    let _ = a[1:]\n}".to_string(),
+                vec![(Code::UnexpectedCharacter, (3, 5))],
+                None,
+            ),
+        ];
+        for (name, src, want_codes, want_fix) in rows {
+            let ds = parsed(&src).diagnostics;
+            let got: Vec<_> = ds
+                .iter()
+                .map(|d| (d.code(), line_col(&src, d.span().start())))
+                .collect();
+            assert_eq!(got, want_codes, "row `{name}`");
+            match want_fix {
+                Some((idx, safe, want_after)) => {
+                    let edits = fix_edits(&ds[idx]).expect("row should have fix");
+                    assert_eq!(edits.0, safe, "row `{name}` fix safety");
+                    assert_eq!(
+                        apply_fix(&src, &ds[idx]),
+                        want_after,
+                        "row `{name}` fix output"
+                    );
+                }
+                None => {
+                    assert!(
+                        ds.iter().all(|d| fix_edits(d).is_none()),
+                        "row `{name}` should have no fix"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn range_pattern_across_skipped_character_should_report_unexpected_character() {
+        let wrap_arm = |arm_src: &str| {
+            format!(
+                "enum E {{\n    P(x: i64, y: i64)\n    Q\n}}\nfn f(e: E) {{\n    match e {{\n        {arm_src}\n        _ => print(2)\n    }}\n}}\nfn main() {{}}"
+            )
+        };
+        let wrap_fn = |stmt: &str| {
+            format!(
+                "enum E {{\n    P(x: i64, y: i64)\n    Q\n}}\nfn f(e: E) {{\n    {stmt}\n}}\nfn main() {{}}"
+            )
+        };
+        let rows = [
+            (
+                "variant rest @ ..",
+                wrap_arm("E.P(x, rest @ ..) => print(x)"),
+            ),
+            (
+                "variant rest @ ..=",
+                wrap_arm("E.P(x, rest @ ..=) => print(x)"),
+            ),
+            (
+                "variant rest @ ..5",
+                wrap_arm("E.P(x, rest @ ..5) => print(x)"),
+            ),
+            (
+                "variant rest @ ...",
+                wrap_arm("E.P(x, rest @ ...) => print(x)"),
+            ),
+            (
+                "variant rest @ ..<",
+                wrap_arm("E.P(x, rest @ ..<) => print(x)"),
+            ),
+            (
+                "let else rest @ ..",
+                wrap_fn("let E.P(x, rest @ ..) = e else { return }"),
+            ),
+            (
+                "if let rest @ ..",
+                wrap_fn("if let E.P(x, rest @ ..) = e {}"),
+            ),
+            ("arm rest @ ..", wrap_arm("rest @ .. => print(1)")),
+            ("arm 1 @ ..", wrap_arm("1 @ .. => print(1)")),
+            ("arm -1 @ ..", wrap_arm("-1 @ .. => print(1)")),
+            ("arm _ @ ..", wrap_arm("_ @ .. => print(1)")),
+            ("arm E.Q @ ..", wrap_arm("E.Q @ .. => print(1)")),
+            ("arm None @ ..", wrap_arm("None @ .. => print(1)")),
+        ];
+        for (name, src) in rows {
+            let ds = parsed(&src).diagnostics;
+            let at_pos = src.find('@').expect("row should contain `@`");
+            let want_pos = line_col(&src, at_pos);
+            let got: Vec<_> = ds
+                .iter()
+                .map(|d| (d.code(), line_col(&src, d.span().start())))
+                .collect();
+            assert_eq!(got, [(Code::UnexpectedCharacter, want_pos)], "row `{name}`");
+            assert!(ds[0].help().is_none(), "row `{name}` should have no help");
+            assert!(
+                fix_edits(&ds[0]).is_none(),
+                "row `{name}` should have no fix"
+            );
+        }
+    }
+
+    #[test]
+    fn ellipsis_sub_pattern_should_report_three_character_span() {
+        let wrap_arm = |arm_src: &str| {
+            format!(
+                "enum E {{\n    P(x: i64, y: i64)\n    Q\n}}\nfn f(e: E) {{\n    match e {{\n        {arm_src}\n        _ => print(2)\n    }}\n}}\nfn main() {{}}"
+            )
+        };
+        let wrap_fn = |stmt: &str| {
+            format!(
+                "enum E {{\n    P(x: i64, y: i64)\n    Q\n}}\nfn f(e: E) {{\n    {stmt}\n}}\nfn main() {{}}"
+            )
+        };
+        let rows = [
+            (
+                "after field",
+                wrap_arm("E.P(x, ...) => print(x)"),
+                Code::Expected,
+                "...",
+            ),
+            (
+                "before field",
+                wrap_arm("E.P(..., y) => print(y)"),
+                Code::Expected,
+                "...",
+            ),
+            (
+                "if let",
+                wrap_fn("if let E.P(x, ...) = e {}"),
+                Code::Expected,
+                "...",
+            ),
+            (
+                "let else",
+                wrap_fn("let E.P(x, ...) = e else { return }"),
+                Code::Expected,
+                "...",
+            ),
+            (
+                "in braces",
+                wrap_arm("E.P { x, ... } => print(x)"),
+                Code::Expected,
+                "...",
+            ),
+            (
+                "rust rest ..",
+                wrap_arm("E.P(x, ..) => print(x)"),
+                Code::Expected,
+                "..",
+            ),
+            (
+                "arm ellipsis",
+                wrap_arm("... => print(1)"),
+                Code::ForeignRange,
+                "...",
+            ),
+        ];
+        for (name, src, want_code, want_text) in rows {
+            let d = parse_diagnostic(&src);
+            assert_eq!(d.code(), want_code, "row `{name}`");
+            assert_eq!(&src[d.span().range()], want_text, "row `{name}`");
+            assert!(fix_edits(&d).is_none(), "row `{name}`");
+        }
+    }
+
+    #[test]
+    fn field_comma_should_recover_and_report_later_errors() {
+        let rows = [
+            (
+                "struct broken method",
+                "// G\nstruct Point {\n    x: i6,\n    y: i \n    fn move_by( self, ad_l \"\").len()\n}\nfn f(mut p: Point) {\n    p.move_by(1, 1)\n}\n\nfn local() {d()\n}\n",
+                vec![(Code::FieldComma, (3, 10)), (Code::Expected, (5, 28))],
+                None,
+            ),
+            (
+                "enum broken method",
+                "enum E {\n    A,\n    B\n    fn bump(mut self, x \"\") {}\n}\nfn f(mut e: E) {\n    e.bump(1)\n}\nfn main() {}",
+                vec![(Code::FieldComma, (2, 6)), (Code::Expected, (4, 25))],
+                None,
+            ),
+            (
+                "class broken method",
+                "class C {\n    x: i64,\n    y: i64\n    fn f(self, x \"\") {}\n}",
+                vec![(Code::FieldComma, (2, 11)), (Code::Expected, (4, 18))],
+                None,
+            ),
+            (
+                "struct same-line lexer error",
+                "struct S {\n    x: i64, fn f(self, @) {}\n}\nfn g(mut s: S) {\n    s.f()\n}\nfn main() {}",
+                vec![
+                    (Code::FieldComma, (2, 11)),
+                    (Code::UnexpectedCharacter, (2, 24)),
+                ],
+                None,
+            ),
+            (
+                "class comma semicolon",
+                "class C { x: i64,; y: i64 }",
+                vec![(Code::FieldComma, (1, 17))],
+                Some((0, "class C { x: i64; y: i64 }")),
+            ),
+            (
+                "enum comma semicolon",
+                "enum E { A,; B }",
+                vec![(Code::FieldComma, (1, 11))],
+                Some((0, "enum E { A; B }")),
+            ),
+            (
+                "match arm comma semicolon",
+                "fn main() { match 1 { 0 => print(1),; _ => print(2) } }",
+                vec![(Code::FieldComma, (1, 36))],
+                Some((0, "fn main() { match 1 { 0 => print(1); _ => print(2) } }")),
+            ),
+            (
+                "struct comma space semicolon",
+                "struct S {\n    x: i64, ;\n    y: i64\n}",
+                vec![(Code::FieldComma, (2, 11))],
+                Some((0, "struct S {\n    x: i64 ;\n    y: i64\n}")),
+            ),
+            (
+                "enum two commas",
+                "enum E { A, B, }",
+                vec![(Code::FieldComma, (1, 11)), (Code::FieldComma, (1, 14))],
+                None,
+            ),
+            (
+                "enum comma and lexer error",
+                "enum E { A, $B }",
+                vec![
+                    (Code::FieldComma, (1, 11)),
+                    (Code::UnexpectedCharacter, (1, 13)),
+                ],
+                Some((0, "enum E { A; $B }")),
+            ),
+            (
+                "match two commas",
+                "fn main() { match 1 { 0 => 1, 1 => 2, _ => 3 } }",
+                vec![(Code::FieldComma, (1, 29)), (Code::FieldComma, (1, 37))],
+                None,
+            ),
+            (
+                "struct comma before parse error",
+                "struct S {\n    x: i64,\n    123\n}",
+                vec![(Code::FieldComma, (2, 11))],
+                Some((0, "struct S {\n    x: i64\n    123\n}")),
+            ),
+        ];
+        for (name, src, want_codes, want_fix) in rows {
+            let ds = parsed(src).diagnostics;
+            let got: Vec<_> = ds
+                .iter()
+                .map(|d| (d.code(), line_col(src, d.span().start())))
+                .collect();
+            assert_eq!(got, want_codes, "row `{name}`");
+            if let Some((idx, want_after)) = want_fix {
+                let edits = fix_edits(&ds[idx]).expect("row should have fix");
+                assert!(edits.0, "row `{name}` fix should be safe");
+                assert_eq!(apply_fix(src, &ds[idx]), want_after, "row `{name}`");
+            }
+        }
     }
 }

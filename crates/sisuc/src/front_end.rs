@@ -720,9 +720,8 @@ mod tests {
         assert_eq!(fixed.next_back(), Some(false));
     }
 
-    /// A safe fix that deletes up to a token is unsafe when a comment or a stray character lies in
-    /// what it deletes: the rule behind it sees only tokens. The fixes of the parser and of the
-    /// checker stop at a comment, so a comment does not make them unsafe; a stray character does.
+    /// Parser and checker fixes stop before comments, and parser `removal_end` stops before lexer
+    /// errors. Any fix that still spans a lexer error becomes unsafe.
     #[test]
     fn a_safe_fix_should_be_unsafe_when_it_deletes_a_comment_or_a_lexer_error() {
         for (src, code, safe) in [
@@ -742,7 +741,7 @@ mod tests {
             (
                 "class C {\n    fn f(mut $ self) {}\n}\n",
                 Code::MutSelf,
-                false,
+                true,
             ),
             (
                 "fn main() {\n    let mut // c\n        n = 0\n    print(n)\n}\n",
