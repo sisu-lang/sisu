@@ -5,10 +5,10 @@ use super::parity::parity_found;
 use super::*;
 use Code::{
     AssignToExpression, AssignToImmutable, AssignToSelf, BindingNotFound, CannotBeAny,
-    CannotExtend, CannotInfer, ConformanceBody, Expected, FunctionNotFound, InterfaceAsType,
-    MayBeNone, Mismatch, MutArgumentNotPlace, MutMarkerMissing, MutPlaceTwice, MutSelf,
-    NeverReassigned, NoMember, SelfOutsideMethod, TypeArguments, UnchangedLoopCondition,
-    UnknownType, UnusedMember, UnusedVariable,
+    CannotExtend, CannotInfer, ConformanceBody, ConformsTwice, Expected, FunctionNotFound,
+    InterfaceAsType, MayBeNone, Mismatch, MutArgumentNotPlace, MutMarkerMissing, MutPlaceTwice,
+    MutSelf, NeverReassigned, NoMember, SelfOutsideMethod, TypeArguments, UnchangedLoopCondition,
+    UnexpectedReturnValue, UnknownType, UnusedMember, UnusedVariable,
 };
 
 /// `Point` with the `mut self` method `move_by`, in eight lines.
@@ -243,12 +243,12 @@ fn mut_self_call_through_an_optional_value_should_be_e0062() {
         (
             "an index after the `?.`",
             "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nstruct L { p: P; ps: [P] }\nfn main() { let mut o: L? = Some(L(p: P(x: 1), ps: [P(x: 1)])); o?.ps[0].m(); print(o != None) }",
-            (MayBeNone, (3, 65)),
+            (MayBeNone, (3, 66)),
         ),
         (
             "an index after the `?.`, of an enum",
             "enum D { N; S; fn flip(mut self) { self = D.S } }\nstruct L { ds: [D] }\nfn main() { let mut o: L? = Some(L(ds: [D.N])); o?.ds[0].flip(); print(o != None) }",
-            (MayBeNone, (3, 49)),
+            (MayBeNone, (3, 50)),
         ),
         (
             "`?.` on an optional of an optional",
@@ -283,12 +283,12 @@ fn mut_self_call_through_an_optional_value_should_be_e0062() {
         (
             "an element of a `mut` parameter after the `?.`",
             "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nstruct L { ps: [P] }\nfn f(mut o: L?) { o?.ps[0].m() }\nfn main() { let mut x: L? = None; f(mut x) }",
-            (MayBeNone, (3, 19)),
+            (MayBeNone, (3, 20)),
         ),
         (
             "an element of an array of arrays before the `?.`",
             "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nstruct L { ps: [P] }\nfn main() { let mut a: [[L?]] = [[None]]; a[0][0]?.ps[0].m(); print(a.len()) }",
-            (MayBeNone, (3, 43)),
+            (MayBeNone, (3, 50)),
         ),
     ];
     for (row, src, wanted) in chained {
@@ -384,12 +384,13 @@ fn mut_self_call_through_an_optional_value_should_be_e0062() {
     for (row, src, wanted) in &rows {
         assert_eq!(all_codes(src), *wanted, "a failed receiver: {row}");
     }
-    // An optional element after the `?.` has an E0062 of its own, as for a plain method.
-    // The call writes `o`, as a field write does, so `o` has no W0002.
+    // The optional element `o?.pss[0]` reports E0062 at `o?.pss[0]` (as for a plain method)
+    // and the `?.pss` chain reports `ChainCallOnValue` at `?.pss`. The call writes `o`, so `o`
+    // has no W0002.
     let src = "struct P { x: i64; fn m(mut self) { self.x = 1 } }\nstruct L { pss: [P?] }\nfn main() { let mut o: L? = Some(L(pss: [None])); o?.pss[0].m(); print(o != None) }";
     assert_eq!(
         all_codes(src),
-        [(MayBeNone, (3, 51)), (MayBeNone, (3, 51))],
+        [(MayBeNone, (3, 51)), (MayBeNone, (3, 52))],
         "an optional element"
     );
     // The peel help of `?.` on an optional of an optional stays, as on a field write.
@@ -2093,4 +2094,385 @@ fn call_as_method_error_should_count_as_a_write_of_a_mut_self_receiver() {
         red.len(),
         red.join("\n")
     );
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a table of duplicate conformance cases"
+)]
+fn duplicate_conformance_methods_should_respect_requirement_self_and_mut_rules() {
+    let decls = "interface R { fn bump(self) }\n\
+                 interface SubR: R { fn extra(self) }\n\
+                 interface Rm { fn bump(mut self) }\n\
+                 interface Rp { fn f(self, mut k: i64) }\n\
+                 interface Rv { fn f(self) }\n\
+                 interface Gen<T> { fn g(self, x: T) }\n\
+                 struct S { n: i64 }\n\
+                 fn take(mut s: S) { s.n = 2 }\n";
+    let plain_rows = [
+        (
+            "duplicate block, field write",
+            format!(
+                "{decls}extend S: R {{ fn bump(self) {{ print(self.n) }} }}\n\
+                 extend S: R {{ fn bump(self) {{ self.n += 1 }} }}\n\
+                 fn main() {{ let s = S(n: 1); s.bump() }}"
+            ),
+            AssignToImmutable,
+        ),
+        (
+            "duplicate block, whole self write",
+            format!(
+                "{decls}extend S: R {{ fn bump(self) {{ print(self.n) }} }}\n\
+                 extend S: R {{ fn bump(self) {{ self = S(n: 1) }} }}\n\
+                 fn main() {{ let s = S(n: 1); s.bump() }}"
+            ),
+            AssignToSelf,
+        ),
+        (
+            "duplicate block, mut argument on self",
+            format!(
+                "{decls}extend S: R {{ fn bump(self) {{ print(self.n) }} }}\n\
+                 extend S: R {{ fn bump(self) {{ take(mut self) }} }}\n\
+                 fn main() {{ let s = S(n: 1); s.bump() }}"
+            ),
+            MutArgumentNotPlace,
+        ),
+        (
+            "duplicate block clashing with listed struct",
+            format!(
+                "{decls}struct S2: R {{ n: i64; fn bump(self) {{ print(self.n) }} }}\n\
+                 extend S2: R {{ fn bump(self) {{ self.n += 1 }} }}\n\
+                 fn main() {{ let s = S2(n: 1); s.bump() }}"
+            ),
+            AssignToImmutable,
+        ),
+        (
+            "duplicate block clashing with inherited conformance from SubR",
+            format!(
+                "{decls}struct S4: SubR {{ n: i64; fn bump(self) {{ print(self.n) }}; fn extra(self) {{}} }}\n\
+                 extend S4: R {{ fn bump(self) {{ self.n += 1 }} }}\n\
+                 fn main() {{ let s = S4(n: 1); s.bump() }}"
+            ),
+            AssignToImmutable,
+        ),
+        (
+            "duplicate SubR block requirement",
+            format!(
+                "{decls}extend S: R {{ fn bump(self) {{ print(self.n) }} }}\n\
+                 extend S: SubR {{ fn extra(self) {{}} }}\n\
+                 extend S: SubR {{ fn extra(self) {{ self.n += 1 }} }}\n\
+                 fn main() {{ let s = S(n: 1); s.extra() }}"
+            ),
+            AssignToImmutable,
+        ),
+        (
+            "non-duplicate block, unchanged",
+            format!(
+                "{decls}struct T {{ n: i64 }}\n\
+                 extend T: R {{ fn bump(self) {{ self.n += 1 }} }}\n\
+                 fn main() {{ let t = T(n: 1); t.bump() }}"
+            ),
+            AssignToImmutable,
+        ),
+        (
+            "duplicate listed conformance on struct, unchanged",
+            format!(
+                "{decls}struct S3: R, R {{ n: i64; fn bump(self) {{ self.n += 1 }} }}\n\
+                 fn main() {{ let s = S3(n: 1); s.bump() }}"
+            ),
+            AssignToImmutable,
+        ),
+    ];
+    for (row, src, code) in plain_rows {
+        let (_, ds) = checked(&src);
+        let found = ds
+            .iter()
+            .find(|d| d.code() == code)
+            .unwrap_or_else(|| panic!("row `{row}`: missing {code:?} in {ds:?}"));
+        assert!(found.fixes().is_empty(), "row `{row}`: {found:?}");
+        assert!(found.help().is_some(), "row `{row}`: {found:?}");
+    }
+
+    let no_w0002_rows = [
+        (
+            "duplicate mut self requirement with empty body",
+            format!(
+                "{decls}extend S: Rm {{ fn bump(mut self) {{}} }}\n\
+                 extend S: Rm {{ fn bump(mut self) {{}} }}\n\
+                 fn main() {{ let mut s = S(n: 1); s.bump(); print(s.n) }}"
+            ),
+        ),
+        (
+            "duplicate plain requirement with mut self implementation",
+            format!(
+                "{decls}extend S: R {{ fn bump(self) {{ print(self.n) }} }}\n\
+                 extend S: R {{ fn bump(mut self) {{ print(self.n) }} }}\n\
+                 fn main() {{ let s = S(n: 1); s.bump() }}"
+            ),
+        ),
+        (
+            "duplicate requirement with unused mut parameter",
+            format!(
+                "{decls}extend S: Rp {{ fn f(self, mut k: i64) {{ print(k) }} }}\n\
+                 extend S: Rp {{ fn f(self, mut k: i64) {{ print(k) }} }}\n\
+                 fn main() {{ let s = S(n: 1); s.f(1) }}"
+            ),
+        ),
+    ];
+    for (row, src) in no_w0002_rows {
+        let (_, ds) = checked(&src);
+        assert!(
+            !ds.iter().any(|d| d.code() == NeverReassigned),
+            "row `{row}`: unexpected W0002 in {ds:?}"
+        );
+    }
+
+    let void_return = format!(
+        "{decls}extend S: Rv {{ fn f(self) {{}} }}\n\
+         extend S: Rv {{ fn f(self) {{ return 1 }} }}\n\
+         fn main() {{ let s = S(n: 1); s.f() }}"
+    );
+    let (_, ds) = checked(&void_return);
+    let ret = ds
+        .iter()
+        .find(|d| d.code() == UnexpectedReturnValue)
+        .unwrap_or_else(|| panic!("void return: missing E0037 in {ds:?}"));
+    assert!(ret.fixes().is_empty(), "void return: {ret:?}");
+
+    let edge_rows = [
+        (
+            "broken method in duplicate block",
+            format!(
+                "{decls}extend S: R {{ fn bump(self) {{ print(self.n) }} }}\n\
+                 extend S: R {{ fn bump(self) {{ let = 1 }} }}\n\
+                 fn main() {{}}"
+            ),
+            ConformsTwice,
+        ),
+        (
+            "broken method header in duplicate block",
+            format!(
+                "{decls}extend S: R {{ fn bump(self) {{ print(self.n) }} }}\n\
+                 extend S: R {{ fn bump(self: i64) {{ print(1) }} }}\n\
+                 fn main() {{}}"
+            ),
+            ConformsTwice,
+        ),
+        (
+            "bad interface bound in duplicate block",
+            format!(
+                "{decls}extend S: Gen<i64> {{ fn g(self, x: i64) {{ print(x) }} }}\n\
+                 extend S: Gen<i64, i64> {{ fn g(self, x: i64) {{ print(x) }} }}\n\
+                 fn main() {{}}"
+            ),
+            TypeArguments,
+        ),
+    ];
+    let empty_prelude = prelude_program("");
+    for (row, src, code) in edge_rows {
+        let lexed = crate::lexer::lex(&src).expect("the source should lex");
+        let parsed = crate::parser::parse(lexed, false);
+        let (_, ds) = check(&parsed.program, &empty_prelude, &src, &parsed.diagnostics);
+        assert!(
+            ds.iter().any(|d| d.code() == code),
+            "row `{row}`: missing {code:?} in {ds:?}"
+        );
+    }
+}
+
+#[test]
+#[expect(clippy::too_many_lines, reason = "a table of chain-index forms")]
+fn safe_chain_index_forms_should_report_one_consistent_error() {
+    judge_unused();
+    let decls = "interface Rm { fn set(mut self) }\n\
+                 interface R { fn act(self) }\n\
+                 struct P: Rm {\n\
+                     x: i64\n\
+                     fn set(mut self) { self.x = 1 }\n\
+                     fn show(self) { print(self.x) }\n\
+                 }\n\
+                 struct Collider { x: i64; fn show(mut self) { self.x = 2 } }\n\
+                 struct Sp { x: i64; fn push(self, k: i64) -> i64 { self.x + k } }\n\
+                 struct Mp { n: i64; fn push(mut self, k: i64) { self.n += k } }\n\
+                 enum D { N; S; fn flip(mut self) { self = D.S } }\n\
+                 struct L<T: Rm> { ps: [P]; qs: [[i64]]; qss: [[[i64]]]; sp: [Sp]; mp: [Mp]; ds: [D]; ts: [T] }\n\
+                 struct Lo { ps: [P]? }\n\
+                 fn id<U>(u: U) -> U { u }\n";
+    let main_call = "\nfn main() { let mut o: L<P>? = None; f(mut o); print(o != None) }";
+    let mut_o_rows = [
+        (
+            "field assign, unchanged",
+            "fn f(mut o: L<P>?) { o?.ps[0].x = 2 }",
+            "?.ps",
+            vec![MayBeNone],
+        ),
+        (
+            "compound field assign, unchanged",
+            "fn f(mut o: L<P>?) { o?.ps[0].x += 1 }",
+            "?.ps",
+            vec![MayBeNone],
+        ),
+        (
+            "mut self call",
+            "fn f(mut o: L<P>?) { o?.ps[0].set() }",
+            "?.ps",
+            vec![MayBeNone],
+        ),
+        (
+            "enum mut self call",
+            "fn f(mut o: L<P>?) { o?.ds[0].flip() }",
+            "?.ds",
+            vec![MayBeNone],
+        ),
+        (
+            "generic param mut self call",
+            "fn g<T: Rm>(mut o: L<T>?) { o?.ts[0].set() }",
+            "?.ts",
+            vec![MayBeNone],
+        ),
+        (
+            "plain self call with mut o, unchanged",
+            "fn f(mut o: L<P>?) { o?.ps[0].show() }",
+            "o?.ps",
+            vec![NeverReassigned, MayBeNone],
+        ),
+        (
+            "array push",
+            "fn f(mut o: L<P>?) { o?.qs[0].push(2) }",
+            "?.qs",
+            vec![MayBeNone],
+        ),
+        (
+            "nested array push",
+            "fn f(mut o: L<P>?) { o?.qss[0][0].push(2) }",
+            "?.qss",
+            vec![MayBeNone],
+        ),
+        (
+            "plain struct push, unchanged",
+            "fn f(mut o: L<P>?) { let k = o?.sp[0].push(2); print(k) }",
+            "o?.sp",
+            vec![MayBeNone],
+        ),
+        (
+            "mut self struct push",
+            "fn f(mut o: L<P>?) { o?.mp[0].push(2) }",
+            "?.mp",
+            vec![MayBeNone],
+        ),
+        (
+            "optional array field mut self call",
+            "fn f(mut o: Lo?) { o?.ps[0].set() }",
+            "?.ps",
+            vec![MayBeNone],
+        ),
+        (
+            "generic context mut self call",
+            "fn f(mut o: L<P>?) { id(o?.ps[0].set()) }",
+            "?.ps",
+            vec![MayBeNone],
+        ),
+        (
+            "generic context plain self call, unchanged",
+            "fn f(mut o: L<P>?) { id(o?.ps[0].show()) }",
+            "o?.ps",
+            vec![NeverReassigned, MayBeNone],
+        ),
+    ];
+    for (row, body, needle, want) in mut_o_rows {
+        let src = if body.contains("fn g<") {
+            format!(
+                "{decls}{body}\nfn main() {{ let mut o: L<P>? = None; g(mut o); print(o != None) }}"
+            )
+        } else if body.contains("Lo?") {
+            format!(
+                "{decls}{body}\nfn main() {{ let mut o: Lo? = None; f(mut o); print(o != None) }}"
+            )
+        } else {
+            format!("{decls}{body}{main_call}")
+        };
+        let (_, ds) = checked(&src);
+        let got: Vec<Code> = ds.iter().map(Diagnostic::code).collect();
+        assert_eq!(got, want, "row `{row}`: {ds:?}");
+        let err = ds
+            .iter()
+            .find(|d| d.code() == MayBeNone)
+            .expect("row should have E0062");
+        let line = src.lines().count() - 1;
+        assert_eq!(at(&src, err.span()), on(&src, line, needle), "row `{row}`");
+    }
+
+    // Colliding `show` name in `mut_self_names` (`Collider`) must not affect `o?.ps[0].show()`.
+    let colliding = format!(
+        "{decls}fn use_col(mut c: Collider) {{ c.show() }}\n\
+         fn f(mut o: L<P>?) {{ o?.ps[0].show() }}\n\
+         fn main() {{\n\
+             let mut c = Collider(x: 1); use_col(mut c); print(c.x)\n\
+             let mut o: L<P>? = None; f(mut o); print(o != None)\n\
+         }}"
+    );
+    let (_, ds) = checked(&colliding);
+    assert_eq!(
+        ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
+        vec![NeverReassigned, MayBeNone]
+    );
+    let line = colliding.lines().count() - 4;
+    let err = ds
+        .iter()
+        .find(|d| d.code() == MayBeNone)
+        .expect("colliding should have E0062");
+    assert_eq!(at(&colliding, err.span()), on(&colliding, line, "o?.ps"));
+
+    // Immutable parameter roots give 1 E0001.
+    let immut_rows = [
+        (
+            "immutable param mut self call",
+            format!("{decls}fn f(o: L<P>?) {{ o?.ps[0].set() }}\nfn main() {{ f(None) }}"),
+        ),
+        (
+            "immutable param array push",
+            format!("{decls}fn f(o: L<P>?) {{ o?.qs[0].push(2) }}\nfn main() {{ f(None) }}"),
+        ),
+    ];
+    for (row, src) in immut_rows {
+        let (_, ds) = checked(&src);
+        assert_eq!(
+            ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
+            vec![AssignToImmutable],
+            "row `{row}`: {ds:?}"
+        );
+    }
+
+    // `self.o?.ps[0].set()` in plain-self method vs duplicate conformance.
+    let plain_self_src = format!(
+        "{decls}struct H {{ o: L<P>?; fn act(self) {{ self.o?.ps[0].set() }} }}\n\
+         fn main() {{ H(o: None).act() }}"
+    );
+    let (_, ds) = checked(&plain_self_src);
+    assert_eq!(
+        ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
+        vec![AssignToImmutable]
+    );
+    assert!(
+        !ds[0].fixes().is_empty(),
+        "plain self method should offer self_take fix: {ds:?}"
+    );
+
+    let dup_self_src = format!(
+        "{decls}struct H {{ o: L<P>? }}\n\
+         extend H: R {{ fn act(self) {{ print(self.o != None) }} }}\n\
+         extend H: R {{ fn act(self) {{ self.o?.ps[0].set() }} }}\n\
+         fn main() {{ H(o: None).act() }}"
+    );
+    let (_, ds) = checked(&dup_self_src);
+    let e0001 = ds
+        .iter()
+        .find(|d| d.code() == AssignToImmutable)
+        .unwrap_or_else(|| panic!("dup self should have E0001: {ds:?}"));
+    assert!(
+        e0001.fixes().is_empty(),
+        "duplicate conformance should have no self_take fix: {e0001:?}"
+    );
+    assert!(e0001.help().is_some());
 }

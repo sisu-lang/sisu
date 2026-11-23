@@ -1,0 +1,38 @@
+enum E {
+    A
+    fn v(self) -> i64 {
+        1
+    }
+}
+
+struct Box {
+    v: i64
+}
+
+fn on_enum(e: E??) -> i64? {
+    e?.v()
+}
+
+fn on_int(x: i64??) -> string? {
+    x?.to_string()
+}
+
+fn on_u8(x: u8??) -> string? {
+    x?.to_string()
+}
+
+fn on_unit(x: unit??) -> string? {
+    x?.to_string()
+}
+
+fn on_box(b: Box??) -> i64? {
+    b?.v
+}
+
+fn main() {
+    print(on_enum(None) ?? 0)
+    print(on_int(None) ?? "")
+    print(on_u8(None) ?? "")
+    print(on_unit(None) ?? "")
+    print(on_box(None) ?? 0)
+}
