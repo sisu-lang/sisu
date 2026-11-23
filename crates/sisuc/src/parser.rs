@@ -335,6 +335,8 @@ impl Ord for Height {
 thread_local! {
     /// How many tokens `type_args_follow` has visited on this thread.
     static SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many tokens `item_end` has scanned on this thread.
+    static ITEM_END_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// An infix operator other than the comparisons of level 4.
@@ -1493,6 +1495,8 @@ impl<'a> Parser<'a> {
         let line = matches!(self.tokens[start].kind, TokenKind::Const | TokenKind::Type);
         let mut depth = 0usize;
         for (i, token) in self.tokens.iter().enumerate().skip(start) {
+            #[cfg(test)]
+            ITEM_END_STEPS.set(ITEM_END_STEPS.get() + 1);
             match token.kind {
                 TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
                 TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
@@ -12369,6 +12373,47 @@ mod tests {
                 assert!(edits.0, "row `{name}` fix should be safe");
                 assert_eq!(apply_fix(src, &ds[idx]), want_after, "row `{name}`");
             }
+        }
+    }
+
+    #[test]
+    fn comma_separated_members_should_scan_linearly() {
+        use std::fmt::Write as _;
+        let steps = |src: &str| {
+            ITEM_END_STEPS.set(0);
+            parsed(src);
+            ITEM_END_STEPS.get()
+        };
+        let enum_src = |n: usize| {
+            let mut body = String::new();
+            for i in 0..n {
+                let _ = writeln!(body, "    V{i},");
+            }
+            format!("enum E {{\n{body}}}")
+        };
+        let struct_src = |n: usize| {
+            let fields: Vec<_> = (0..n).map(|i| format!("f{i}: i64")).collect();
+            format!("struct S {{ {} }}", fields.join(", "))
+        };
+        let struct_methods_src = |n: usize| {
+            let mut body = String::new();
+            for i in 0..n {
+                let _ = writeln!(body, "    f{i}: i64,\n    fn m{i}(self) {{}}");
+            }
+            format!("struct S {{\n{body}}}")
+        };
+        let cases: [(&str, &dyn Fn(usize) -> String); 3] = [
+            ("multiline enum", &enum_src),
+            ("single-line struct", &struct_src),
+            ("struct with methods", &struct_methods_src),
+        ];
+        for (row, build) in cases {
+            crate::mir::tests::assert_near_linear_for(
+                &format!("{row}: "),
+                steps(&build(100)),
+                steps(&build(200)),
+                steps(&build(300)),
+            );
         }
     }
 }
