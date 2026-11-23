@@ -1894,6 +1894,9 @@ impl Checker<'_> {
                         inherits_failed: false,
                         requirements: Vec::new(),
                         bounds: Vec::new(),
+                        param_states: Vec::new(),
+                        pending_queued: Vec::new(),
+                        work_body: None,
                         assoc: Vec::new(),
                     });
                     self.index_assoc(interface, id);

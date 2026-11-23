@@ -5361,3 +5361,30 @@ fn associated_type_member_bounds_should_compute_parameter_closures_once() {
     let (c60, _) = measure(&chain_src(60));
     assert_near_linear(c20, c40, c60);
 }
+
+/// Every parameter and associated-type state is Done and temporary bodies are cleared once
+/// `interface_signatures` completes.
+#[test]
+fn interface_signatures_should_leave_all_states_done_and_work_bodies_cleared() {
+    let src = "interface Has<X> {\n    type Inner\n}\ninterface I<T: J<i64>> {\n    fn f(self, x: T.A.Inner)\n}\ninterface J<U: Has<Self.B.Inner>> {\n    type B: Has<i64>\n    type A: Has<Self.B>\n}\ninterface Loop {\n    type A: Has<Self.A.Inner>\n}\nfn main() {}";
+    let program = parse_ok(src);
+    let mut checker = Checker::new(&program, src, "");
+    let items: Vec<&ast::Item> = program.items.iter().collect();
+    checker.collect_names(&items, items.len(), &program.broken);
+    checker.interface_signatures(&items);
+    assert!(checker.interfaces_resolved);
+    for info in &checker.interfaces {
+        assert!(info.work_body.is_none());
+        assert_eq!(info.pending_queued.len(), 0);
+        assert!(
+            info.param_states
+                .iter()
+                .all(|state| matches!(state, interface::ParamState::Done))
+        );
+        assert!(
+            info.assoc
+                .iter()
+                .all(|assoc| matches!(assoc.state, interface::AssocState::Done))
+        );
+    }
+}

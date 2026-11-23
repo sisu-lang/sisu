@@ -270,22 +270,76 @@ impl Checker<'_> {
             // The parameter of an alias takes no bound: no closure says which interface it means.
             return self.alias_assoc(ty, base, base_ty, name);
         }
+        match base_ty.kind() {
+            TypeKind::Assoc(_, iface, _, k) => {
+                if self.ensure_assoc_bounds(iface, k as usize) {
+                    self.body.unknown_assoc.insert(base_ty);
+                    self.error(DiagnosticKind::UnknownType {
+                        name: name.name.to_string(),
+                        at: name.span,
+                        form: UnknownForm::BoundsLoop {
+                            base: self.type_name(base_ty),
+                        },
+                    });
+                    return None;
+                }
+            }
+            TypeKind::Param(_, place) if !self.interfaces_resolved => {
+                if let Some(id) = self.current_interface_id()
+                    && self.ensure_param_bounds(id, place as usize)
+                {
+                    let place = place as usize;
+                    let closure = self.closure_len(base_ty);
+                    if self.is_unknown(base_ty) {
+                        return None;
+                    }
+                    let found = self.lookup_assoc_in_closure(base_ty, closure, name.name);
+                    if found.is_empty() {
+                        self.interfaces[id.0].bounds[place].failed = true;
+                        if !self.body.unknown.contains(&place) {
+                            self.body.unknown.push(place);
+                        }
+                        self.error(DiagnosticKind::UnknownType {
+                            name: name.name.to_string(),
+                            at: name.span,
+                            form: UnknownForm::BoundsLoop {
+                                base: self.type_name(base_ty),
+                            },
+                        });
+                        return None;
+                    }
+                    return self.finish_member_lookup(base_ty, name, &found);
+                }
+            }
+            _ => {}
+        }
         let closure = self.closure_len(base_ty);
         // A base whose bounds went past the limit, or whose bound failed, is reported already, and
         // unknown.
         if self.is_unknown(base_ty) {
             return None;
         }
+        let found = self.lookup_assoc_in_closure(base_ty, closure, name.name);
+        self.finish_member_lookup(base_ty, name, &found)
+    }
+
+    /// Finds every `(interface, args, k)` in `base_ty`'s closure that declares `name`.
+    fn lookup_assoc_in_closure(
+        &mut self,
+        base_ty: Type,
+        closure: usize,
+        name: Symbol,
+    ) -> Vec<(InterfaceId, TypeArgs, usize)> {
         // The declarations in the order of the closure. The lookup reads the shorter of the closure
         // and the interfaces that declare the name: the closure, entry by entry, or the entries of
         // each such interface in an index that grows with the closure.
-        let declared = self.declaring_assoc.get(&name.name).map_or(0, Vec::len);
+        let declared = self.declaring_assoc.get(&name).map_or(0, Vec::len);
         let mut found = Vec::new();
         if closure <= declared {
             for (at, &(interface, args)) in self.closure_entries(base_ty).iter().enumerate() {
                 #[cfg(test)]
                 super::LOOKUP_STEPS.set(super::LOOKUP_STEPS.get() + 1);
-                if let Some(&k) = self.assoc_at.get(&(interface, name.name)) {
+                if let Some(&k) = self.assoc_at.get(&(interface, name)) {
                     found.push((at, interface, args, k));
                 }
             }
@@ -296,7 +350,7 @@ impl Checker<'_> {
                 .named
                 .get(&base_ty)
                 .map(|index| &index.by_interface);
-            for &(interface, k) in self.declaring_assoc.get(&name.name).into_iter().flatten() {
+            for &(interface, k) in self.declaring_assoc.get(&name).into_iter().flatten() {
                 #[cfg(test)]
                 super::LOOKUP_STEPS.set(super::LOOKUP_STEPS.get() + 1);
                 for &(at, args) in by_interface
@@ -311,9 +365,19 @@ impl Checker<'_> {
             }
             found.sort_by_key(|&(at, ..)| at);
         }
-        let found: Vec<(InterfaceId, TypeArgs, usize)> = (found.into_iter())
+        found
+            .into_iter()
             .map(|(_, interface, args, k)| (interface, args, k))
-            .collect();
+            .collect()
+    }
+
+    /// Resolves `found` for `base_ty.name`, reporting missing or ambiguous declarations.
+    fn finish_member_lookup(
+        &mut self,
+        base_ty: Type,
+        name: &ast::Ident,
+        found: &[(InterfaceId, TypeArgs, usize)],
+    ) -> Option<Type> {
         match found[..] {
             [(interface, args, k)] => {
                 let k = u32::try_from(k).expect("an interface should have fewer than 2^32 types");
@@ -440,6 +504,9 @@ impl Checker<'_> {
         let TypeKind::Assoc(base, interface, args, k) = ty.kind() else {
             unreachable!("only an associated type should be asked for its closure");
         };
+        if self.ensure_assoc_bounds(interface, k as usize) {
+            self.body.unknown_assoc.insert(ty);
+        }
         if !self.body.assoc_conforming.contains_key(&ty) {
             // The declaration's bounds are over the interface's parameters, `Self` first.
             let mut with = vec![base];

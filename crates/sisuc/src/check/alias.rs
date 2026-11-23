@@ -996,6 +996,16 @@ impl Checker<'_> {
         Some(resolved)
     }
 
+    /// Runs `f` with the alias written-type limit state isolated from any enclosing written type.
+    pub(super) fn isolate_written<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let saved_base = self.aliases.base.take();
+        let saved_too_large = self.aliases.too_large.take();
+        let out = f(self);
+        self.aliases.base = saved_base;
+        self.aliases.too_large = saved_too_large;
+        out
+    }
+
     /// Starts to count the entries of the memo that the written type being resolved adds, unless
     /// a written type around it counts them. Whether this type is the outermost.
     pub(super) fn begin_written(&mut self) -> bool {
