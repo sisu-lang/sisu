@@ -290,8 +290,11 @@ impl Checker<'_> {
                 checked
             })
         };
+        // A bound is only read, also in the place of a write: `xs[0..s.k][0].n = 5` writes no `s`.
+        let chain = std::mem::take(&mut self.body.write_chain);
         let start = bound(self, &range.start);
         let end = bound(self, &range.end);
+        self.body.write_chain = chain;
         (start, end, mismatched)
     }
 
