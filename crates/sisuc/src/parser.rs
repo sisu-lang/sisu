@@ -12443,6 +12443,20 @@ mod tests {
     }
 
     #[test]
+    fn trailing_lexer_error_after_open_range_const_should_not_be_dropped() {
+        // `..` cannot end a statement, so `Eof` sits before the trailing `@`.
+        let src = "const A = 1.. @";
+        let out = parsed(src);
+        let found: Vec<_> = out
+            .diagnostics
+            .iter()
+            .map(|d| (d.code(), line_col(src, d.span().start())))
+            .collect();
+        assert_eq!(found, [(Code::UnexpectedCharacter, (1, 15))]);
+        assert_eq!(out.program.items.len(), 0);
+    }
+
+    #[test]
     fn comma_separated_members_should_scan_linearly() {
         use std::fmt::Write as _;
         let steps = |src: &str| {
