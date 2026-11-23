@@ -841,6 +841,7 @@ pub(super) fn fresh_name(counter: &mut usize, prefix: &str) -> String {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use rustc_hash::FxHashSet;
 

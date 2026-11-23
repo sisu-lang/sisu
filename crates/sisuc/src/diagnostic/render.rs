@@ -483,6 +483,7 @@ fn true_headers(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use annotate_snippets::{AnnotationKind, Level, Patch, Renderer, Snippet};
 

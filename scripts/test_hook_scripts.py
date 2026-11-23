@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import comment_width
+import coverage_off
 import registry_debug_format
 import session_url
 import test_names
@@ -24,6 +25,39 @@ def run(main: Callable[[list[str]], int], text: str, name: str = "f.rs") -> tupl
         with contextlib.redirect_stdout(out):
             code = main([str(path)])
     return code, out.getvalue()
+
+
+class CoverageOff(unittest.TestCase):
+    MARK = "#[cfg_attr(coverage_nightly, coverage(off))]\n"
+
+    def test_an_unmarked_test_module_should_fail_at_its_mod_line(self) -> None:
+        for header in HEADERS:
+            with self.subTest(header=header):
+                code, out = run(coverage_off.main, "use a;\n" + header + "}\n")
+                self.assertEqual(code, 1)
+                self.assertIn(f"f.rs:{header.count(chr(10)) + 1}: test-only item needs", out)
+
+    def test_an_unmarked_test_function_and_method_should_fail(self) -> None:
+        for item in ("pub(crate) fn helper() {}\n", "    fn method(&self) {}\n", "mod tests;\n"):
+            with self.subTest(item=item):
+                code, _ = run(coverage_off.main, "#[cfg(test)]\n" + item)
+                self.assertEqual(code, 1)
+
+    def test_a_marked_item_should_pass_with_the_mark_anywhere_in_its_attributes(self) -> None:
+        for header in HEADERS:
+            with self.subTest(header=header):
+                marked = header.replace("#[cfg(test)]\n", "#[cfg(test)]\n" + self.MARK, 1)
+                self.assertEqual(run(coverage_off.main, marked + "}\n"), (0, ""))
+        late = (
+            '#[cfg(test)]\n#[expect(\n    unsafe_code,\n    reason = "r"\n)]\n'
+            + self.MARK
+            + "mod tests {}\n"
+        )
+        self.assertEqual(run(coverage_off.main, late), (0, ""))
+
+    def test_a_test_only_statement_or_static_should_pass(self) -> None:
+        text = STEPS + "fn f() {\n    #[cfg(test)]\n    STEPS.set(1);\n}\n#[cfg(test)]\nuse a::b;\n"
+        self.assertEqual(run(coverage_off.main, text), (0, ""))
 
 
 class CommentWidth(unittest.TestCase):

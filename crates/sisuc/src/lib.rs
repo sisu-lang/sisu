@@ -1,4 +1,5 @@
 //! `sisuc`, the Sisu compiler.
+#![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 
 mod args;
 mod ast;
@@ -150,6 +151,7 @@ pub const STACK_SIZE: usize = 64 << 20;
 /// parser uses about 30 KiB of stack for each level of nesting, so a test that parses a program
 /// some 60 levels deep overflows the 2 MiB stack of a test thread, first on ARM64.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn on_compiler_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
@@ -1046,6 +1048,7 @@ fn create_object(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

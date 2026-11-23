@@ -148,6 +148,7 @@ pub(crate) fn use_color(stderr_is_terminal: bool, no_color: Option<&OsStr>) -> b
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::diagnostic::{DiagnosticKind, Immutable, NeverReassignedForm, Written};

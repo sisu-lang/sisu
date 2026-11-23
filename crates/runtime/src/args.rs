@@ -68,6 +68,7 @@ pub unsafe extern "C" fn sisu_arg(
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::ffi::{CString, c_char};
 

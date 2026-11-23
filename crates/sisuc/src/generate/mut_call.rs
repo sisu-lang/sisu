@@ -695,6 +695,7 @@ impl Gen<'_> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::{Adds, Gen, Kind, PLACE_STEPS, Place, Ty, Want, placeable};
     use crate::generate::DEPTHS;

@@ -1066,6 +1066,7 @@ impl Inline {
 
     /// The enum, when this is one.
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(crate) fn enum_id(self) -> Option<EnumId> {
         match self {
             Inline::Enum(id) => Some(id),
@@ -2489,6 +2490,7 @@ fn jump_depth(f: &mut fmt::Formatter<'_>, depth: usize) -> fmt::Result {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::symbol::Symbol;

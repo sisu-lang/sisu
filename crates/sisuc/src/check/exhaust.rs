@@ -45,6 +45,7 @@ thread_local! {
 
 /// Adds `work` to `STEPS`.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn step(work: usize) {
     STEPS.set(STEPS.get() + work);
 }
@@ -1194,6 +1195,7 @@ impl Solver<'_> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::check::tests::checked;

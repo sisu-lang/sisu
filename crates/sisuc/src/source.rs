@@ -287,11 +287,13 @@ impl LineIndex {
 
 /// The 1-based line and column of byte `offset`; the column counts chars, not bytes.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn line_col(source: &str, offset: usize) -> (usize, usize) {
     LineIndex::new(source).line_col(source, offset)
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

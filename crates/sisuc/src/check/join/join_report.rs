@@ -947,6 +947,7 @@ impl Checker<'_> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::super::tests::{
         array, at, eye, heading, if_else, if_without_else, int, local, none, orders,

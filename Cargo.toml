@@ -26,6 +26,7 @@ unused_qualifications = "warn"
 elided_lifetimes_in_paths = "warn" # write `Checker<'_>`, so a signature shows each borrow
 let_underscore_drop = "warn" # `let _ = x` drops a value with a destructor at once
 trivial_casts = "warn"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)"] } # cargo-llvm-cov sets it on nightly; test code takes `coverage(off)` under it
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

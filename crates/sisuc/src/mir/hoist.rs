@@ -23,6 +23,7 @@ use super::{Function, LocalId, Loop, Operand, Place, Rvalue, Statement, Terminat
 ///   included). A read through a place rooted at `L`, a `take` and a store do not bar it, and
 ///   neither does a scope release, which only an edge leaving the loop runs for `L`.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(super) fn unique_roots(function: &Function, lp: &Loop) -> Vec<LocalId> {
     let top = function
         .loops

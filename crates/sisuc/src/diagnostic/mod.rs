@@ -1,6 +1,7 @@
 //! Diagnostics: what the compiler reports about the source, and how it renders them.
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) mod explanations;
 pub(crate) mod json;
 mod registry;
@@ -196,6 +197,7 @@ impl Diagnostic {
     /// A diagnostic at `span`, with each of `secondary`, and one fix of `edits` unless there is
     /// none: spans that no rule makes, for the tests of the span checks.
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(crate) fn for_test(span: Span, secondary: &[Span], edits: &[(Span, &str)]) -> Diagnostic {
         let mut d = Diagnostic::coded(Code::InvalidUtf8, span, "");
         d.secondary = secondary.iter().map(|&s| (s, String::new())).collect();
@@ -218,6 +220,7 @@ impl Diagnostic {
     /// `self` with only the safe fix `edits`: a fix that no rule makes, for the tests of the
     /// safe-fix checks.
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(crate) fn with_safe_fix_for_test(mut self, edits: &[(Span, &str)]) -> Diagnostic {
         self.fixes = vec![Fix {
             message: String::new(),

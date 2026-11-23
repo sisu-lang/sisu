@@ -1,4 +1,5 @@
 //! The Sisu runtime: functions that compiled Sisu programs call over the C ABI.
+#![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 
 pub mod args;
 pub mod deferred;
@@ -603,6 +604,7 @@ pub extern "C" fn sisu_rc_fault(kind: u32) -> ! {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::{
         BUFFER_CAPACITY, RANGE_END_PAST_LENGTH, RANGE_HAS_END, RANGE_INCLUSIVE,
