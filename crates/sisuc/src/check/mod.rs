@@ -65,7 +65,7 @@ use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable, reserved_name};
 use expectation::{Expectation, Origin};
 use extend::Extension;
-use infer::WriteBack;
+use infer::{WriteBack, Written};
 use interface::{Bound, Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
 use names::{ConstantId, ItemId, NameMaps, Position, Resolved};
 use prelude::PRELUDE;
@@ -152,7 +152,7 @@ struct Poisoned {
 /// The result type of a generic call that cannot meet its context (see `report_unbound`). The
 /// type names the callee's unbound parameters, so it is never a value's type. The code that uses
 /// the value reports the mismatch with it, as it does for a callee that is not generic. `entry`
-/// is the place of the call's E0050 in `Body::misfits`, which that report cancels. It is not the
+/// is the place of the call's E0050 in `Checker::misfits`, which that report cancels. It is not the
 /// type of a poisoned value: a value with it is untyped, and only the readers of `found` see it.
 #[derive(Clone, Copy)]
 struct Misfit {
@@ -907,6 +907,10 @@ struct Checker<'src> {
     /// The bounds of the decided type parameters of the calls of `table`'s function, by
     /// `ObligationId`, each waiting for the types that it names (see `Table::obligation`).
     obligations: Vec<generic::BoundObligation>,
+    /// The E0050 of each generic call of `table`'s function whose result cannot meet its context
+    /// (see `Misfit`). A report that uses the result takes its entry. `with_table` pushes each
+    /// entry left when the function ends.
+    misfits: Vec<Option<Diagnostic>>,
     /// While `signature` resolves the parameter and return types: the interface of each `any`
     /// type they write, with the span as written. `record` keeps a use here when the body has
     /// no owner, because a signature is resolved outside a body. No other body is resolved while
@@ -1095,9 +1099,6 @@ struct Body {
     self_type: SelfType,
     /// Loops open around the code being checked, innermost last: what a `break` would act on.
     loops: Vec<LoopContext>,
-    /// The E0050 of each generic call whose result cannot meet its context (see `Misfit`). A
-    /// report that uses the result takes its entry. Each entry left is pushed when the body ends.
-    misfits: Vec<Option<Diagnostic>>,
     /// The E0050 of each generic call that a join took as a member with a parameter left open,
     /// by the call's span: each such parameter's variable and what its report reads (see
     /// `OpenParam`). The call around it makes and gives the report when it settles no type for
@@ -1616,6 +1617,7 @@ impl<'src> Checker<'src> {
             body: Body::default(),
             table: infer::Table::default(),
             obligations: Vec::new(),
+            misfits: Vec::new(),
             signature_anys: None,
             extend_head: None,
             uses: Vec::new(),
@@ -1632,26 +1634,31 @@ impl<'src> Checker<'src> {
 
     /// Checks with `body` as the current body, then restores the one before it, and returns
     /// `f`'s result with the finished body (its `locals` become the function's).
-    /// A misfit that no report used gives its E0050 then.
     fn with_body<R>(&mut self, body: Body, f: impl FnOnce(&mut Self) -> R) -> (R, Body) {
         let outer = std::mem::replace(&mut self.body, body);
         let result = f(self);
-        let mut body = std::mem::replace(&mut self.body, outer);
-        for d in body.misfits.drain(..).flatten() {
-            self.diagnostics.error(d);
-        }
+        let body = std::mem::replace(&mut self.body, outer);
         (result, body)
     }
 
     /// Checks with a fresh inference table, then puts the type of each variable in `result`
     /// (`infer::WriteBack`). It reports each `Any` variable that no type reached (E0050), and
-    /// restores the table before it. A top-level function, a method and the value of a constant
-    /// call it. No other code takes the table, and each of them has its own variables.
+    /// restores the table before it. A misfit that no report used gives its E0050 first. A
+    /// top-level function, a method and the value of a constant call it. No other code takes the
+    /// table, and each of them has its own variables.
     fn with_table<R: WriteBack>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         let outer = std::mem::take(&mut self.table);
         let outer_obligations = std::mem::take(&mut self.obligations);
+        let outer_misfits = std::mem::take(&mut self.misfits);
+        let shown_from = (self.dbg_shown.len(), self.read_shown.len());
         let errors = self.diagnostics.errors();
         let mut result = f(self);
+        for d in std::mem::replace(&mut self.misfits, outer_misfits)
+            .into_iter()
+            .flatten()
+        {
+            self.diagnostics.error(d);
+        }
         // A held argument that no join put back goes back in place now.
         self.settle_held(None, &mut |at, value| {
             result.each_root_mut(&mut |e| {
@@ -1669,6 +1676,19 @@ impl<'src> Checker<'src> {
         self.obligations = outer_obligations;
         if !table.is_empty() {
             let written = result.write_back_all(&mut table);
+            // The warnings read the shown types after the table is gone.
+            let (dbg, read) = (
+                &mut self.dbg_shown[shown_from.0..],
+                &mut self.read_shown[shown_from.1..],
+            );
+            Written::walk_types(&mut table, &mut |each| {
+                for shown in dbg.iter_mut() {
+                    each(&mut shown.1);
+                }
+                for shown in read.iter_mut() {
+                    each(&mut shown.1);
+                }
+            });
             for unsettled in written.unsettled {
                 let _reported = self.report_unsettled(unsettled);
             }
@@ -1684,11 +1704,7 @@ impl<'src> Checker<'src> {
     /// its context with (see `Misfit`), while no report has used it. A block gives its value's.
     fn misfit_type<T>(&self, checked: &Result<T, Poisoned>) -> Option<Type> {
         let misfit = checked.as_ref().err()?.found?;
-        let open = self
-            .body
-            .misfits
-            .get(misfit.entry)
-            .is_some_and(Option::is_some);
+        let open = self.misfits.get(misfit.entry).is_some_and(Option::is_some);
         open.then_some(misfit.ty)
     }
 
@@ -1698,7 +1714,7 @@ impl<'src> Checker<'src> {
             found: Some(misfit),
             ..
         }) = checked
-            && let Some(entry) = self.body.misfits.get_mut(misfit.entry)
+            && let Some(entry) = self.misfits.get_mut(misfit.entry)
         {
             *entry = None;
         }

@@ -5151,7 +5151,7 @@ impl Checker<'_> {
 
     /// The failed `call`, whose result could not meet its known context and left its parameter
     /// `param` open. The code that uses the value reports the mismatch with the result type, as
-    /// for a callee that is not generic; the call's E0050 waits in `Body::misfits` until that
+    /// for a callee that is not generic; the call's E0050 waits in `Checker::misfits` until that
     /// report cancels it (see `Misfit`). An open parameter shows as a hole.
     fn misfit(&mut self, call: &Inference<'_>, sig: &GenericSig<'_>, param: usize) -> Poisoned {
         let with: Vec<Type> = (call.bindings.found.iter())
@@ -5167,10 +5167,10 @@ impl Checker<'_> {
         } else {
             ret
         };
-        let entry = self.body.misfits.len();
+        let entry = self.misfits.len();
         let in_result = sig.ret.is_some_and(|ret| names_outside_assoc(ret, param));
         let d = OpenParam::of(sig, param).kind(in_result).into();
-        self.body.misfits.push(Some(d));
+        self.misfits.push(Some(d));
         let reported = self.proof(call.at); // proof: held misfit
         Poisoned {
             found: Some(super::Misfit { ty, entry }),
