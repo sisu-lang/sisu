@@ -783,6 +783,140 @@ mod tests {
         assert_eq!(fix_edits(&sound[0]).map(|(safe, _)| safe), Some(true));
     }
 
+    /// A syntax fix that reveals a new or extra syntax diagnostic becomes unsafe and leaves no
+    /// safe-fix breach. A fix that adds no syntax diagnostic count stays safe.
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "one row of the table for each case")]
+    fn sound_fixes_should_demote_a_syntax_fix_that_reveals_another_syntax_diagnostic() {
+        for (name, src, code, kept) in [
+            (
+                "enum class before skipped character",
+                "enum class @ Tray { A }\nfn main() {}",
+                Code::MatchIdiom,
+                "@",
+            ),
+            (
+                "mut self before skipped character",
+                "class C {\n    fn f(mut @ self) {}\n}\nfn main() {}",
+                Code::MutSelf,
+                "@",
+            ),
+            (
+                "struct let field before skipped character",
+                "struct S {\n    let @ x: i64\n}\nfn main() {}",
+                Code::FieldLet,
+                "@",
+            ),
+            (
+                "unnamed loop label before skipped character",
+                "fn main() {\n    _: @ loop { break }\n}",
+                Code::LabelNotOnLoop,
+                "@",
+            ),
+            (
+                "enum class before a second skipped character",
+                "fn f() { @ }\nenum class @ Tray { A }\nfn main() {}",
+                Code::MatchIdiom,
+                "@",
+            ),
+        ] {
+            let shown = sound_fixes(src, &front_end(src).1);
+            let d = (shown.iter())
+                .find(|d| d.code() == code)
+                .unwrap_or_else(|| panic!("row `{name}`: missing {code:?}"));
+            assert_eq!(
+                fix_edits(d).map(|(safe, _)| safe),
+                Some(false),
+                "row `{name}`"
+            );
+            assert!(apply_fix(src, d).contains(kept), "row `{name}`");
+            assert_eq!(safe_fix_breaches(src), Vec::<String>::new(), "row `{name}`");
+        }
+
+        for (name, src, code, edit, replacement, want_safe) in [
+            (
+                "fix that reveals a redundant semicolon",
+                "fn main() {\n    let x = 1 + ;\n}\n",
+                Code::Expected,
+                Span::new(26, 28),
+                "",
+                false,
+            ),
+            (
+                "fix that changes a lexer bracket error code",
+                "fn main() {\n    (\n}\n",
+                Code::UnexpectedClosingBracket,
+                Span::new(18, 19),
+                "",
+                false,
+            ),
+            (
+                "fix that keeps the same lexer bracket error code, unchanged",
+                "fn main() {\n    (\n}\n",
+                Code::UnexpectedClosingBracket,
+                Span::new(16, 17),
+                "[",
+                true,
+            ),
+        ] {
+            let d = (front_end(src).1.into_iter())
+                .find(|d| d.code() == code)
+                .unwrap_or_else(|| panic!("row `{name}`: missing {code:?}"))
+                .with_safe_fix_for_test(&[(edit, replacement)]);
+            let sound = sound_fixes(src, std::slice::from_ref(&d));
+            assert_eq!(
+                fix_edits(&sound[0]).map(|(safe, _)| safe),
+                Some(want_safe),
+                "row `{name}`"
+            );
+        }
+
+        for (name, src, target) in [
+            (
+                "struct mut field before already-reported skipped character, unchanged",
+                "struct S {\n    mut @ x: i64\n}\nfn main() {}",
+                Some((Code::StructFieldMut, true, "@")),
+            ),
+            (
+                "enum class without skipped character, unchanged",
+                "enum class Tray { A }\nfn main() {}",
+                Some((Code::MatchIdiom, true, "enum Tray")),
+            ),
+            (
+                "enum class with comment before name, unchanged",
+                "enum class // c\nTray { A }\nfn main() {}",
+                Some((Code::MatchIdiom, true, "// c")),
+            ),
+            (
+                "enum class with trailing semicolon, unchanged",
+                "enum class Tray { A; }\nfn main() {}",
+                Some((Code::MatchIdiom, true, ";")),
+            ),
+            (
+                "mut on underscore after skipped character reports skipped character, unchanged",
+                "fn main() {\n    let mut @ _ = 1\n}",
+                None,
+            ),
+        ] {
+            assert_eq!(safe_fix_breaches(src), Vec::<String>::new(), "row `{name}`");
+            let shown = sound_fixes(src, &front_end(src).1);
+            if let Some((code, want_safe, kept)) = target {
+                let d = (shown.iter())
+                    .find(|d| d.code() == code)
+                    .unwrap_or_else(|| panic!("row `{name}`: missing {code:?}"));
+                assert_eq!(
+                    fix_edits(d).map(|(safe, _)| safe),
+                    Some(want_safe),
+                    "row `{name}`"
+                );
+                assert!(apply_fix(src, d).contains(kept), "row `{name}`");
+            } else {
+                let codes: Vec<_> = shown.iter().map(Diagnostic::code).collect();
+                assert_eq!(codes, [Code::UnexpectedCharacter], "row `{name}`");
+            }
+        }
+    }
+
     /// The W0007 diagnostics among `ds`.
     fn semicolons(ds: &[Diagnostic]) -> Vec<&Diagnostic> {
         (ds.iter())
