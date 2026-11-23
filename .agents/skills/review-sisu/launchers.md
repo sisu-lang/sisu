@@ -22,7 +22,7 @@ directory read-only, and the `write_file` rule for `RUN` makes `RUN`
 writable. Give `read_file` for the main checkout, the directory above
 `git -C <repository root> rev-parse --path-format=absolute --git-common-dir`.
 A worktree's `.git` points into it, so git fails without it. Give one
-`read_file` rule for each skill directory in the brief, and one `command`
+`read_file` rule for each skill directory in the brief. Give one `command`
 rule with the full path of each `sisu` build in `RUN/bin`:
 
 ```json
@@ -47,7 +47,7 @@ rule with the full path of each `sisu` build in `RUN/bin`:
 Then run it from `RUN`:
 
 ```
-cd RUN && agy -p "Read RUN/brief.md and follow it. Your scratch directory is RUN/outside-scratch. Run only the commands that RUN/agy-settings.json allows, each in its own call, as git -C <repository root> ... for git. Use no pipe, no redirection and no \$(...). A command that the settings do not allow ends your run with no report, so do not try one; name each check you could not run under Unverified. Your final reply is the whole report." --settings RUN/agy-settings.json --sandbox --model <model> > RUN/<stem>.md 2> RUN/<stem>-cli.log
+cd RUN && agy -p "Read RUN/brief.md and follow it. Your scratch directory is RUN/outside-scratch. Run only the commands that RUN/agy-settings.json allows, each in its own call, as git -C <repository root> ... for git. Use no pipe, no redirection and no \$(...). A command that the settings do not allow ends your run with no report. Name each check that you could not run under Unverified. Use rg and rg --files, not grep or find. To export a commit, run git -C <repository root> archive -o RUN/outside-scratch/<sha>.tar <sha>, then python3 -m tarfile -e RUN/outside-scratch/<sha>.tar <dir>. Do not run cargo or make, also not through python3. Your final reply is the whole report." --settings RUN/agy-settings.json --sandbox --model <model> > RUN/<stem>.md 2> RUN/<stem>-cli.log
 ```
 
 A rule matches the first words of a command, not a glob, so a rule for a
@@ -59,13 +59,10 @@ tool needed. A pipe, a redirection or `$(...)` turns off the prefix match,
 so the command fails in the same way. A `deny` rule gives the model an
 error, and the run goes on.
 
-The rules give no `grep`, `find` or `tar`. Use `rg` and `rg --files`. To
-export a commit, run `git -C <repository root> archive -o
-RUN/outside-scratch/<sha>.tar <sha>`, then `python3 -m tarfile -e
-RUN/outside-scratch/<sha>.tar <dir>`. Do not let the reviewer run `cargo` or
-`make`. A script that runs git with no `-C`, such as
-`scripts/golden_diff.py`, fails in `RUN`. Run these yourself, and put their
-output into `RUN`.
+The prompt tells the reviewer which commands to use in place of `grep`,
+`find`, `tar`, `cargo` and `make`. A script that runs git with no `-C`, such
+as `scripts/golden_diff.py`, fails in `RUN`. Run these scripts yourself, and
+put their output into `RUN`.
 
 ## copilot
 
