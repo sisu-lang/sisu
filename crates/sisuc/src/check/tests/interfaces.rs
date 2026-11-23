@@ -5379,7 +5379,7 @@ fn interface_signatures_should_leave_all_states_done_and_work_bodies_cleared() {
 /// working.
 #[test]
 fn interface_parameter_and_associated_bounds_should_report_loops_and_keep_resolved_bounds() {
-    let rows: [(&str, &str, &[Wanted]); 7] = [
+    let rows: [(&str, &str, &[Wanted]); 12] = [
         (
             "J1: mutual parameter bounds loop reports both sides",
             "interface A<X> {\n    type P\n}\ninterface B<X> {\n    type Q\n}\ninterface J<T: A<S.Q>, S: B<T.P>> {}\nfn main() {}",
@@ -5393,6 +5393,16 @@ fn interface_parameter_and_associated_bounds_should_report_loops_and_keep_resolv
         (
             "type A with resolved Has<i64> and Conv<Self.A.Inner> checks clean",
             "interface Has<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface N {\n    type A: Has<i64> & Conv<Self.A.Inner>\n}\nfn main() {}",
+            &[],
+        ),
+        (
+            "partial assoc read clears stale cache for later sibling bound",
+            "interface Has<X> {\n    type Inner\n}\ninterface Conv<X> {\n    type Out\n}\ninterface N {\n    type A: Has<i64> & Conv<Self.A.Inner>\n    type B: Has<Self.A.Out>\n}\nfn main() {}",
+            &[],
+        ),
+        (
+            "active param with resolved non-member bound keeps Item during assoc resolution",
+            "interface Source {\n    type Item\n}\ninterface Has<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface I<U: Source & Conv<Self.A.Inner>> {\n    type A: Has<U.Item>\n}\nfn main() {}",
             &[],
         ),
         (
@@ -5411,12 +5421,52 @@ fn interface_parameter_and_associated_bounds_should_report_loops_and_keep_resolv
             &[],
         ),
         (
+            "drain_on_demand wakes bound waiting on an on-demand Self-member parameter",
+            "interface Has<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface I<W: Conv<V.Inner>, U: Has<Self.A.Inner>, V: Has<Self.B.Inner>> {\n    type A: Has<V.Inner>\n    type B: Has<i64>\n}\nfn main() {}",
+            &[],
+        ),
+        (
+            "cached working body syncs when parameter bounds resolve after an assoc read",
+            "interface Has<X> {\n    type Inner\n}\ninterface I1<U: Has<T.A.Inner>, T: J<U>> {\n    fn f(self, x: T.A.Inner)\n}\ninterface J<U: Has<Self.A.Inner>> {\n    type A: Has<i64>\n    type C: Has<U.Inner>\n}\ninterface I2<U: Has<T.A.Inner>, T: J<U>> {\n    fn g(self, y: T.C.Inner)\n}\nfn main() {}",
+            &[],
+        ),
+        (
+            "second param with failed non-member bound and clean member bound stays failed",
+            "interface Has<X> {\n    type Inner\n}\ninterface J<X, U: Missing & Has<Self.A.Inner>> {\n    type A: Has<i64>\n    fn f(self, x: U.Nope)\n}\nfn main() {}",
+            &[(Code::UnknownType, (4, 19))],
+        ),
+        (
             "two_self_cycle: mutual Self-member parameter bounds report BoundsLoop",
             "interface Has<X> {\n    type Inner\n}\ninterface I<U: Has<Self.A.Inner>, V: Has<Self.B.Inner>> {\n    type A: Has<V.Inner>\n    type B: Has<U.Inner>\n}\nfn main() {}",
             &[(Code::UnknownType, (6, 19))],
         ),
     ];
     check_rows(&rows);
+}
+
+/// Mutual parameter and associated-type cycles emit `BoundsLoop` help for first and later params.
+#[test]
+fn mutual_param_assoc_cycle_should_emit_bounds_loop_help() {
+    for (name, src, want) in [
+        (
+            "first param mutual cycle",
+            "interface Has<X> {\n    type Inner\n}\ninterface J<U: Has<Self.A.Inner>> {\n    type A: Has<U.Inner>\n}\nfn main() {}",
+            (Code::UnknownType, (5, 19)),
+        ),
+        (
+            "second param mutual cycle",
+            "interface Has<X> {\n    type Inner\n}\ninterface J<X, U: Has<Self.A.Inner>> {\n    type A: Has<U.Inner>\n}\nfn main() {}",
+            (Code::UnknownType, (5, 19)),
+        ),
+    ] {
+        let (_, ds) = checked(src);
+        let found: Vec<_> = ds.iter().map(|d| (d.code(), at(src, d.span()))).collect();
+        assert_eq!(found, [want], "{name}");
+        assert!(
+            ds[0].help().is_some(),
+            "{name}: mutual param-assoc cycle should emit BoundsLoop help"
+        );
+    }
 }
 
 /// Missing associated types in interface parameter and associated-type bounds emit plain E0030
