@@ -12189,6 +12189,16 @@ mod tests {
                 vec![(Code::UnexpectedCharacter, (2, 5))],
                 None,
             ),
+            (
+                "struct comma, parse error, then lexer error, unchanged",
+                "struct S {\n    x: i64,\n    y: ,\n    z: $\n}".to_string(),
+                vec![(Code::FieldComma, (2, 11))],
+                Some((
+                    0,
+                    true,
+                    "struct S {\n    x: i64\n    y: ,\n    z: $\n}".to_string(),
+                )),
+            ),
         ];
         assert_diagnostic_fix_table(&rows);
     }
@@ -12461,7 +12471,7 @@ mod tests {
         let cases: [(&str, &dyn Fn(usize) -> String); 3] = [
             ("multiline enum", &enum_src),
             ("single-line struct", &struct_src),
-            ("struct with methods", &struct_methods_src),
+            ("struct with methods, unchanged", &struct_methods_src),
         ];
         for (row, build) in cases {
             crate::mir::tests::assert_near_linear_for(
