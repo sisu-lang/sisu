@@ -96,6 +96,9 @@ fn unbv<T>(b: Bv<T>) -> T { unbv(b) }
 fn nothing<T>() -> T? { None }
 fn nn<T>() -> T?? { None }
 fn n3<T>() -> T??? { None }
+// A call whose arguments do not decide its bounded type parameter: a unification that breaks the
+// bound makes it wrap.
+fn named_none<T: Named>() -> T? { None }
 class Oa {
     oa: [i64]?
 }
@@ -103,6 +106,45 @@ fn oa_none() -> Oa? { None }
 fn mk<T>() -> T { loop {} }
 fn some<T>(v: T) -> T? { Some(v) }
 fn id<T>(v: T) -> T { v }
+// A call whose argument is at an associated type: only the join around the call decides `S`.
+interface Source {
+    type Elem
+    fn first(self) -> Elem
+}
+struct Pr: Source, Eq {
+    type Elem = bool
+    v: bool
+    fn first(self) -> bool { self.v }
+}
+struct Hb {
+    a: Pr?
+}
+fn hput<S: Source>(_v: S.Elem) -> S? { None }
+fn hpick<T>(a: T, _b: T) -> T { a }
+fn opr() -> Pr? { None }
+// A method call that leaves its parameter open, inside a generic call: only the join around the
+// outer call decides it.
+struct Bm {
+    v: i64
+    fn make<T>(self, _c: bool) -> [T] { [] }
+    fn opt<T>(self, _c: bool) -> T? { None }
+}
+fn nfirst<T>(_xs: [T]) -> T? { None }
+// A method that two interfaces answer, each with its own type: only a type from outside picks it.
+interface Lb {
+    fn name(self) -> string
+}
+interface Cd {
+    fn name(self) -> i64
+}
+struct Tw {
+}
+extend Tw: Lb {
+    fn name(self) -> string { "a" }
+}
+extend Tw: Cd {
+    fn name(self) -> i64 { 7 }
+}
 class Sn {
     name: string?
 }
@@ -215,6 +257,45 @@ fn take2<T>(mut x: T?, n: i64) { x = None }
 fn keep<T>(mut x: T?) -> T? { x }
 fn opt<T>(v: T?) -> T? { v }
 fn g() {}
+fn pick<T>(a: T, b: T) -> T { a }
+// A field and a parameter of a nested optional, which a call whose arguments leave a part open
+// meets whole, with no wrap.
+struct Nq {
+    v: i64??
+}
+fn nq(_v: i64??) {}
+// A place that names two parameters (Q28): `outer` decides `T` and `U` from its other arguments.
+struct Two<A, B> {
+    a: A
+    b: B
+}
+fn pair<A, B>(a: A, b: B) -> Two<A, B> { Two(a: a, b: b) }
+fn outer<T, U>(p: Two<T, U>, _a: T, _b: U) -> Two<T, U> { p }
+fn outer2<T, U>(p: Two<T, U>?, _a: T, _b: U) -> Two<T, U>? { p }
+// A `mut` place that binds the result's parameter, under a required type.
+fn mfirst<T>(mut xs: [T]) -> T { xs[0] }
+fn mput<T>(mut xs: [T], x: T) -> T { x }
+// A join of a call under a required type, beside a member that takes it (`None`).
+fn both<T>(a: T, b: T) -> [T] { [a, b] }
+fn count<T>(xs: [T]) -> i64 { xs.len() }
+fn flat<T>(xs: [[T]]) -> i64 { xs.len() }
+// A bounded call at a part and at the whole place, a call that gives an open variable, and a
+// bound of a closed parameter that names an open one (`fk`).
+fn eo<T>() -> [T?] { [] }
+fn named_part<T: Named>(x: T) -> [T] { [x] }
+fn named_whole<T: Named>(x: T) -> T { x }
+fn named_two<T: Named>(x: T, _y: T) -> T { x }
+interface Kn<U> {
+    fn kn(self, u: U) -> i64
+}
+struct Kc: Kn<i64> {
+    fn kn(self, u: i64) -> i64 { u }
+}
+struct Bk<U> {
+    v: U
+}
+fn fk<T: Kn<U>, U>(_x: T, u: U) -> Bk<U> { Bk(v: u) }
+fn oi() -> i64? { None }
 fn setu(mut x: unit) { x = {} }
 struct Su {
     u: unit
@@ -225,6 +306,26 @@ enum Lg {
     fn log(self) {}
 }
 fn olg() -> Lg? { None }
+// A generic method with an argument on a struct, plain and after `?.`.
+struct Sw {
+    fn wrap<T>(self, v: T) -> T { v }
+    fn nothing<T>(self) -> T? { None }
+}
+fn osw() -> Sw? { Sw() }
+// A method with no argument that waits for its own parameter, and whose receiver gives the
+// call's other part: `wk().mkb()` is `Two<i64, X>`, with no optional.
+struct Wk {
+    fn mkb<X>(self) -> Two<i64, X> { panic("no") }
+}
+fn wk() -> Wk { Wk() }
+// A place whose known part `string` clashes with `wk().mkb()`, beside a parameter that waits for
+// its other part: E0032 at the late method call, as on `main`.
+fn sk<T>(_p: Two<string, T>?, _a: T) {}
+// An open call whose known part clashes with the type that one argument gives alone: E0032 at
+// that argument, as on `main`, also after a broken bound of the outer call.
+fn pyb<X, Y>(_y: Y, _x: X) -> Two<X, Y> { panic("no") }
+fn gbm<T: Named>(_a: Two<T?, i64>, _b: T) {}
+fn tfst<A>(p: Two<A, u8>, _a: A) -> A { p.a }
 fn generic<U: Named, V, W: Km>(u: U, v: V, c: bool, d: bool, k: i64, n: any Named, p: any Pet, op: (any Pet)?, ob: Bx?, w: W?, st: St) {
     let mut mq: (any Pet)? = op
     let mut mu = g()
@@ -301,6 +402,9 @@ if c { 1 } else { if let Some(v) = Some(1) { v } }
 nothing()
 ob?.none()
 Bx().none()
+# A method call with written type arguments is a value of the type that they name, as the call of
+# a function with written type arguments is.
+Sw().nothing<i64>()
 # Optionals with more layers than their context, and calls whose result type waits for it.
 nn()
 n3()
@@ -382,6 +486,14 @@ nothing[0]
 zz.x
 i64.x
 E.A
+# Calls whose arguments leave a part of their result open: a `None`, an open call and a call that
+# waits, with one and two arguments.
+id(nothing())
+id(id(None))
+pick(None, None)
+pick(None, nothing())
+named_none()
+id(named_none())
 # Values that fail to give a range to a string's `get`, with a mistake of their own or none.
 id(None)
 id([])
@@ -418,6 +530,9 @@ su.u
 xu[0]
 # An `if` without an `else` that gives a `unit`: it has no value to lift to `unit?`.
 if d { g() }
+# A join of two `unit` values.
+if c { g() } else { g() }
+match k { _ => g() }
 # An `if` whose `then` block jumps before an `if` without an `else`: the tail of a `never` block
 # is unreachable, so no code reads its value.
 if c { return; if d { 1 } } else { g() }
@@ -447,6 +562,32 @@ id(u)
 Some(u)
 
 [contexts]
+# A call whose argument is at an associated type, held until the join around the call decides it:
+# as an element, a side of `==` and of `??`, a call argument, a branch and a match arm, a struct
+# field and an assigned value. Then the argument holds a labeled `break` and a `continue`.
+let _a = [hput($), opr()]
+let _a = hput($) == opr()
+let _a = opr() ?? hput($)
+let _a = hpick(hput($), opr())
+let _a = if c { hput($) } else { opr() }
+let _a = match k { 0 => hput($); _ => opr() }
+let _a = Hb(a: hput($))
+let mut _a = opr(); _a = hput($)
+w: loop { let _a = [hput(if c { break w } else { $ }), opr()]; break }
+for _i in [1] { let _a = [opr(), hput(if c { continue } else { $ })] }
+# A method call that leaves its parameter open, two calls down in a side of `==`, `!=` and `??`,
+# an element and a branch, beside the value: the value gives the parameter its type.
+let _a = id(nfirst(Bm(v: 1).make(c))) == $
+let _a = $ != id(nfirst(Bm(v: 1).make(c)))
+let _a = $ ?? id(nfirst(Bm(v: 1).make(c)))
+let _a = [id(nfirst(Bm(v: 1).make(c))), $]
+let _a = if c { id(nfirst(Bm(v: 1).make(c))) } else { $ }
+let _a = hpick(Bm(v: 1).opt(c), Bm(v: 1).opt(c)) == $
+let _a = id({ Bm(v: 1).opt(c) }) == $
+# A method that two interfaces answer, in a generic call in a side of `==` and `??`: the value
+# picks the method.
+let _a = id(Tw().name()) == $
+let _a = $ ?? id(Tw().name())
 # A call of a `mut self` method on each value: bare, on a `let mut` copy, on the binding of a
 # `let`-`else` and of an `if let`, in the argument of a generic call, of `Some` and of a join, on an
 # element, through `?.` and on a field. The last is a plain generic method that shares its name
@@ -502,6 +643,29 @@ let _a = if c { Some(p) } else if d { $ } else { None }
 let _a = match k { 0 => Some(p); 1 => $; _ => None }
 let _a = if c { Some(Some(Some(n))) } else { match k { 0 => $; _ => Rock() } }
 let _a = op ?? $
+# Operators and `??`, whose operands join: each side of `+`, `*` and `-`, of `==`, `!=` and `<`,
+# the value and the target of a compound assignment, a compound assignment beside a join value, and
+# each side of `??`, beside an `i64`, a `u8`, a literal and the same value. Also an operator under a
+# written type, as an argument, and as a branch.
+let _a = $ + k
+let _a = u8(1) + $
+let _a = $ * 1
+let _a = 1 - $
+let _a = $ + $
+let _a = $ == k
+let _a = u8(1) != $
+let _a = $ < 1
+let mut _t = $; _t += k
+let mut _t = u8(1); _t += $
+let mut _t = 1; _t += if c { $ } else { "b" }
+let mut _t = 1; _t += match k { 0 => $; _ => "b" }
+let mut _t = 1; _t += loop { break $ }
+let _a = $ ?? k
+let _a = $ ?? u8(1)
+let _a = op ?? $ ?? p
+let _a: u8 = $ + 1
+let _a = id($ + k)
+let _a = if c { $ + 1 } else { u8(1) }
 # The left side of a `??` whose default jumps or makes a `let ... else` value: a fix that removes
 # the `??` must keep the jump's effect and leave a value that a `let ... else` takes. The `break`
 # value disagrees with the later one, so a fix that deletes it removes that report too.
@@ -512,6 +676,15 @@ let _l = $ ?? 0 else { return }
 # Written types.
 let _a: (any Pet)? = $
 let _a: [(any Pet)?] = [$]
+# Nested optional types, which a closed call with an open result meets whole, also as a field, as
+# an argument and in a branch.
+let _a: i64?? = $
+let _a: i64??? = $
+let _a: [i64?]? = $
+let _a: Result<i64?, bool>? = $
+Nq(v: $)
+nq($)
+let _a: i64?? = if c { Some(Some(1)) } else { $ }
 let _v: any Pet = $
 let _k: any Km = $
 # A loop over a join.
@@ -684,3 +857,151 @@ let _a = loop { if c { break $ }; break }
 loop { if c { break $ }; break }
 outer: loop { loop { if c { break outer $ }; break outer } }
 outer: loop { loop { if c { break outer $ }; break }; break outer }
+# A loop whose body has a failed statement.
+let _a = loop { nope(); break $ }
+let _a = loop { nope(); if c { break }; break $ }
+# A loop with a bare `break`, at each position: a `let`, a branch, an element, under a written
+# type, beside a loop that has no value, through a label, in an arm, at the right side of `??`, and
+# in a `Some`. Then a value under a written type beside a `unit`.
+let _a = if c { loop { if c { break $ }; break } } else { $ }
+let _a = [loop { if c { break $ }; break }]
+let _a: u8? = loop { if c { break }; break $ }
+let _a = [loop { break }, $]
+let _a = if c { $ } else { o: loop { loop { if c { break o }; break o $ } } }
+let _a = match k { _ => loop { if c { break }; break $ } }
+let _a = oi() ?? loop { if c { break }; break $ }
+let _a = Some(loop { if c { break }; break $ })
+let _a: u8 = loop { if c { break }; break $ }
+let _a: u8 = if c { $ } else { g() }
+let _a: [u8] = [$, g()]
+let _a: u8 = id($)
+let _a: [u8] = [$]
+let _a: u8 = pick($, g())
+let _a: u8 = loop { break $ }
+# A loop with a bare `break` beside a value, as the arguments for one `T` of a generic call.
+let _a = pick(loop { if c { break }; break $ }, $)
+# A bounded call beside a call or a literal that gives an open variable: the open form must check
+# the bound of the type that the join gives. At a part and at the whole place, in each order, from
+# `eo()`, `[None]` and `None`, and under a required type. Then a bound of a closed parameter that
+# names an open one, beside a `Box` of `None` and in each order.
+let _a = pick(eo(), named_part($))
+let _a = pick(named_part($), eo())
+let _a = pick([None], named_part($))
+let _a: [Cat?] = pick(eo(), named_part($))
+let _a = pick(None, named_whole($))
+let _a = pick(named_whole($), nothing())
+let _a = pick(fk(Kc(), $), Bk(v: None))
+let _a = pick(Bk(v: None), fk(Kc(), $))
+# A generic call at a bare `T` whose argument is late, beside siblings that a hint gives: it meets
+# their type, not the `?` that the hint adds. In an `if`, a `match`, a loop, an `if let` and on the
+# right side of a `??`. Then a late argument that can be optional, which takes that `?`.
+let _a = if c { $ } else { id([$]) }
+let _a = if c { [$] } else { id([$]) }
+let _a = match k { 1 => $; _ => id([$]) }
+let _a = loop { if c { break $ }; break id([$]) }
+let _a = if let v = oi() { $ } else { id(if c { $ } else { $ }) }
+let _a = oi() ?? id(if c { $ } else { None })
+# A method call with no argument and a block that is only its value are members of a call's join.
+# In each order, through `dbg` and an inner call, as a safe call, as a generic method that waits
+# for its context, and a block with a statement, which still waits.
+let _a = pick($, "s".len())
+let _a = pick("s".len(), $)
+let _a = pick(dbg("s".len()), $)
+let _a = pick(id("s".len()), $)
+let _a = pick($, ob?.none())
+let _a = pick({ $ }, $)
+let _a = pick($, { $ })
+let _a = pick($, { let _y = 1; $ })
+# A call at a place of two decided parameters stays closed through `dbg`, a wrap and a block.
+let _a = outer(dbg(pair($, $)), $, $)
+let _a = outer(dbg(dbg(pair($, $))), $, $)
+let _a = outer({ pair($, $) }, $, $)
+let _a = outer({ dbg(pair($, $)) }, $, $)
+let _a = outer2(dbg(pair($, $)), $, $)
+# A `mut` place is checked against the type that a required context makes of its parameter, before
+# the result is. Each with a bare and an optional required type, and with a second argument.
+let _a: i64 = mfirst(mut $)
+let _a: i64? = mfirst(mut $)
+let _a: i64 = mput(mut $, $)
+let _a: i64 = id(mfirst(mut $))
+# A required type picks its report from every member, an open one too, in each order: only
+# members that all fail are reported at the whole call.
+let _a: [i64?] = both($, None)
+let _a: [i64?] = both(None, $)
+let _a: i64? = pick($, None)
+let _a: i64? = pick(None, $)
+# A `mut` argument is no member of the join under a required type, with a literal and with the
+# value as the other argument.
+let _a: i64 = mput(mut $, 1)
+let _a: i64 = mput(mut ["a"], $)
+# A generic method call with an argument is a member of the join: plain and after `?.`, in each
+# order, under a required type and with none.
+let _a: i64? = pick(1, osw()?.wrap($))
+let _a = pick($, osw()?.wrap(1))
+let _a: i64? = pick(Sw().wrap($), 1)
+# A block with statements is a member of the join, in each order.
+let _a: i64? = pick(1, { let _y = 2; $ })
+let _a = pick({ let _y = 2; $ }, 1)
+# A bound of an open form fails the candidate that breaks it, in each order: the value is the
+# member that closes the bound's types.
+let _a = pick(eo(), named_part($))
+let _a = pick(named_part($), eo())
+let _a = pick(fk(Kc(), 3), Bk(v: $))
+# A method with no argument that waits is closed first under a required optional: its receiver
+# gives the payload, and the call's result wraps once at the top.
+let _a: i64? = tfst(wk().mkb(), $)
+let _a: i64?? = tfst(wk().mkb(), $)
+# A bounded call under a required type that breaks the bound: with closed members the call reports
+# as a whole, and with a literal member the report is at the member that the type does not fit.
+let _a: i64 = named_whole($)
+let _a: i64 = named_two($, $)
+let _a: Rock = named_two($, Cat())
+# A generic call that gives its one argument's type is a nested join: under a required type, an
+# open argument takes the report, and a closed one leaves it at the inner call. The result wraps
+# once at the top of an optional.
+let _a: i64 = id(id($))
+let _a: i64? = id(id($))
+let _a: i64?? = id($)
+# The bound of a parameter that the context decides, because each member leaves it open, reports at
+# the call. A closed member that needs two wraps gets the directed report.
+let _a: Rock? = named_whole($)
+let _a: Cat?? = named_whole($)
+let _a: Cat?? = pick($, $)
+# An optional result under a type that is not optional: a function reports at the call, and the
+# variant `Some` at its argument, as on `main`.
+let _a: string = some($)
+let _a: string = Some($)
+# A member that never finishes beside a join that fails at a member with a value, and a join of
+# members that all never finish: E0043 at each such member, or E0138 at the first, as on `main`.
+let _a: [string] = [pick(panic("x"), $)]
+let _a = pick("a{return}b", $)
+# A late method call whose result clashes with a known part of its place.
+sk(wk().mkb(), $)
+# An open call whose known part clashes with the type of one argument, beside a broken bound.
+gbm(pyb(true, nothing()), $)
+gbm(pyb($, nothing()), 1)
+# A join whose head failed: a condition, a scrutinee, a guard and an `if let` value, in a
+# generic call and in `Some`, at one and at two levels. Only the head reports.
+let _a = if true { $ } else if nope { $ } else { $ }
+let _a = id(id(match nope { _ => $ }))
+let _a = Some(Some(if let Some(_v) = nope { $ } else { $ }))
+let _a = match true { true => $; _ if nope => $; _ => $ }
+# A join under an element type that a `[]` beside it leaves open: the join takes its members'
+# type, as on `main`.
+let _a = pick([if true { $ } else { $ }], [])
+let _a = pick([$, if true { $ } else { $ }], [])
+let _a = pick([match true { true => $; _ => $ }], [nothing()])
+# A held conflict in a join that a candidate of the failed join can open.
+let _a = pick(if true { pick($, $) } else { 1 }, $)
+# A nested leaf of a generic argument that fits no type of the parameter, as `0` at `[T]` and at
+# `[[T]]`, beside the value: one E0032 at the head of the call.
+let _a = count(if c { $ } else { 0 })
+let _a = flat([$, 0])
+let _a = flat([if c { $ } else { 0 }, [1]])
+# A generic call whose argument is an array under a written type: the report names the closed
+# form of the array.
+let _a: i64 = id([$, 1])
+let _a: i64 = id([1, $])
+# A nested array with a `[]` beside each layer, and a nested fill.
+let _a = [[[$], []], []]
+let _a = [[[$; 2]; 2]; 2]

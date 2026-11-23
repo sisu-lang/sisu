@@ -426,6 +426,7 @@ pub(crate) fn parts<P: Payloads + ?Sized, S: StructFields + ?Sized>(
         | TypeKind::String
         | TypeKind::Unit
         | TypeKind::Never
+        | TypeKind::Infer(_)
         | TypeKind::Class(..)
         | TypeKind::Param(..)
         | TypeKind::Assoc(..)
@@ -1262,6 +1263,7 @@ fn matches(pattern: Type, ty: Type, slots: &mut [Option<Type>]) -> Option<()> {
             | TypeKind::String
             | TypeKind::Unit
             | TypeKind::Never
+            | TypeKind::Infer(_)
             | TypeKind::Array(_)
             | TypeKind::Optional(_)
             | TypeKind::Class(..)
@@ -1440,6 +1442,7 @@ impl Unifier {
             | TypeKind::String
             | TypeKind::Unit
             | TypeKind::Never
+            | TypeKind::Infer(_)
             | TypeKind::Assoc(..) => ty,
         })
     }
@@ -1512,6 +1515,7 @@ impl Unifier {
                 | TypeKind::String
                 | TypeKind::Unit
                 | TypeKind::Never
+                | TypeKind::Infer(_)
                 | TypeKind::Array(_)
                 | TypeKind::Optional(_)
                 | TypeKind::Class(..)

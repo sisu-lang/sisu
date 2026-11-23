@@ -139,3 +139,7 @@ fn enum_argument_holds_optional() {
 }
 
 fn main() {}
+
+// An `==`, a `!=`, a `??`, an `if` and a `match` report at their head (ADR 0052).
+// valid: the spec gives `id(loop { break 1 })` under `u8` no error (lines 36, 41, 62, 82, 88).
+// Q33: the call `pick(v, ao)` under `i64?` gives one E0032 at the call (line 131).

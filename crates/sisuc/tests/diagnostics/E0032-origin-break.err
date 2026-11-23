@@ -1,50 +1,58 @@
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-break.sisu:10:19
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-break.sisu:8:13
    |
+ 8 |     let a = loop {
+   |             ^^^^
  9 |         if c { break [1] }
-   |                --------- this `break` gave the loop the type `[i64]`
+   |                       - `[i64]`
 10 |         break [2, "x"]
-   |                   ^^^
+   |                -  --- `[string]`
+   |                |
+   |                `[i64]`
 
-error[E0032]: expected `i64`, found `None`
-  --> E0032-origin-break.sisu:17:17
+warning[W0015]: `a` can be `None`, and then this writes the word "None"
+  --> E0032-origin-break.sisu:19:11
    |
-16 |         if c { break 1 }
-   |                ------- this `break` gave the loop the type `i64`
-17 |         break { None }
-   |                 ^^^^
+19 |     print(a)
+   |           ^
+   |
+   = help: use `if let`, give a default with `??`, or call `a.to_string()` to write "None" on purpose
 
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-break.sisu:24:36
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-break.sisu:22:13
    |
+22 |     let a = loop {
+   |             ^^^^
 23 |         if true { break 1 }
-   |                   ------- this `break` gave the loop the type `i64`
+   |                         - `i64`
 24 |         break if true { 1 } else { "x" }
-   |                                    ^^^
+   |                         - `i64`    --- `string`
 
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-break.sisu:31:22
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-break.sisu:29:13
    |
+29 |     let a = loop {
+   |             ^^^^
 30 |         if c { break 1 }
-   |                ------- this `break` gave the loop the type `i64`
+   |                      - `i64`
 31 |         break if d { "x" } else { 2 }
-   |                      ^^^
+   |                      --- `string` - `i64`
 
-error[E0032]: expected `i64`, found `[]`
-  --> E0032-origin-break.sisu:38:22
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-break.sisu:36:13
    |
+36 |     let a = loop {
+   |             ^^^^
 37 |         if c { break 1 }
-   |                ------- this `break` gave the loop the type `i64`
+   |                      - `i64`
 38 |         break if d { [] } else { "x" }
-   |                      ^^
+   |                      -- `[]`     --- `string`
 
 error[E0032]: expected `i64`, found `None`
   --> E0032-origin-break.sisu:45:19
    |
-44 |         if c { break 1 }
-   |                ------- this `break` gave the loop the type `i64`
 45 |         break 1 + None
    |                   ^^^^
 
-sisu: 6 errors
-sisu: for more on a code, run `sisu explain <code>`: E0032
+sisu: 5 errors, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0032, W0015

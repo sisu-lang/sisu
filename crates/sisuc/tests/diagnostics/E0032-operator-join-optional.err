@@ -1,0 +1,26 @@
+error[E0032]: expected `string`, found `string?`
+ --> E0032-operator-join-optional.sisu:4:17
+  |
+4 |     let a = 1 + if c { None } else { "a" }
+  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0032]: expected `string`, found `string?`
+ --> E0032-operator-join-optional.sisu:5:13
+  |
+5 |     let b = if c { None } else { "a" } + 1
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0032]: expected `string`, found `string?`
+ --> E0032-operator-join-optional.sisu:6:17
+  |
+6 |     let d = 1 + match c { true => None; false => s }
+  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0032]: expected `string`, found `string?`
+ --> E0032-operator-join-optional.sisu:7:17
+  |
+7 |     let e = 1 < if c { None } else { "a" }
+  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

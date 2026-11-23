@@ -1372,7 +1372,10 @@ impl Checker<'_> {
         self.record_type_args(types);
         let parts = self.mut_overlaps(parts);
         let failed = labeled.is_some() || checked.iter().any(mismatched);
-        let parted = labeled.is_some() || checked.iter().any(Result::is_err);
+        // A rejected label leaves the result its type, so a variable in it is reported later;
+        // a `mut` argument's binding is not done, so then the result keeps no type.
+        let parted = (labeled.is_some() && args.iter().any(|a| a.mut_keyword.is_some()))
+            || checked.iter().any(Result::is_err);
         match (receiver.into_iter().chain(checked).collect(), solved) {
             (Ok(args), Some(solved)) if !failed && parts.is_empty() => Ok(self.spilled(
                 span,

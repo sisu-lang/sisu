@@ -1,0 +1,76 @@
+// Operands of `+ - * /`, of the comparisons and of `??` are the members of one join (Task 5d-2).
+// A generic call, an `if`, a loop or a literal beside a `u8` or an `f64` takes its type, in each
+// order. The left member of `??` is its payload.
+// GIVEN valid operators, comparisons and `??` whose operands meet in each order
+// WHEN each is the value of a `let` with no type and is printed
+// THEN each prints the value that `main` gives
+interface Seen { fn see(self) -> i64 }
+struct Eye { v: i64 }
+extend Eye: Seen { fn see(self) -> i64 { self.v } }
+fn id<T>(v: T) -> T { v }
+fn k2<T, U>(_a: T, b: U) -> U { b }
+fn pick<T>(_x: T, y: T) -> T { y }
+fn main() {
+    let c = [1].len() == 1
+    let x: u8 = 3
+    let f: f64 = 1.5
+    let o: u8? = None
+    let p: u8? = Some(4)
+    let oo: i64?? = Some(None)
+    let a1 = id(2) + x
+    let a2 = x + id(2)
+    let a3 = k2(1, 2) + x
+    let a4 = (2 + 3) * x / 5
+    let a5 = x + if c { 1 } else { 2 }
+    let a6 = (if c { 1 } else { 2 }) + x
+    let a7 = x + loop { break 1 }
+    let a8 = f + 1
+    let a9 = 1 + f
+    let b1 = o ?? 1
+    let b2 = o ?? p
+    let b3 = oo ?? 5
+    let b4 = oo ?? None
+    let b5 = 3 < x
+    let b6 = x == 3
+    let b7 = 3 == x
+    let b8 = pick(1 + 2, x)
+    let b9 = pick(x, 1 + 2)
+    let c1 = pick(-1 + 2, f)
+    let c2: u8 = 1 + loop { break 2 }
+    let c4 = [1 + 2, x]
+    let c5 = if c { x } else { 1 + 2 }
+    let c6 = pick(o ?? 5, x)
+    let c7 = "a" + "b"
+    print(a1)
+    print(a2)
+    print(a3)
+    print(a4)
+    print(a5)
+    print(a6)
+    print(a7)
+    print(a8)
+    print(a9)
+    print(b1)
+    print("{b2}")
+    print("{b3}")
+    print("{b4}")
+    print(b5)
+    print(b6)
+    print(b7)
+    print(b8)
+    print(b9)
+    print(c1)
+    print(c2)
+    print(c4)
+    print(c5)
+    print(c6)
+    print(c7)
+    let e: any Seen = Eye(v: 1)
+    let oe: Eye? = None
+    let r = oe ?? e
+    print(r.see())
+    // The local that binds the payload of `Some(1)` takes `u8` from the default after the join
+    // (risk i of Task 5d-2): `main` rejects it.
+    let q = Some(1) ?? o
+    print(q)
+}

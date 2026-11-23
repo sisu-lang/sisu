@@ -3,10 +3,9 @@
 use std::rc::Rc;
 
 use super::array::{innermost, is_optional_array, must_unwrap, optional_element};
-use super::expr::{if_some, literal_type, local, operator};
+use super::expr::{if_some, local, operator};
 use super::member::{Access, FieldOwner, FoundField, safe_value};
 use super::names::{Resolved, Site};
-use super::operator::Operator;
 use super::reports::Reported;
 use super::unused_names::{Copied, Owner, Used};
 use super::{
@@ -837,8 +836,11 @@ impl Checker<'_> {
             let reported = self.char_compound(op_span, value);
             return Err(unit(reported));
         }
-        let (op, _) = operator(op).expect(
-            "the parser should produce only arithmetic operators for a compound assignment",
+        let (ast_op, (op, _)) = (
+            op,
+            operator(op).expect(
+                "the parser should produce only arithmetic operators for a compound assignment",
+            ),
         );
         let mut lets = Vec::new();
         let path = place.path.map(|path| {
@@ -877,7 +879,7 @@ impl Checker<'_> {
                     .expect("a place with no path should have failed"),
             )),
         };
-        let value = self.compound_value(span, (op, op_span), target, value, (ty, read));
+        let value = self.compound_value(span, ((ast_op, op), op_span), target, value, (ty, read));
         let failed = (value.as_ref().err().map(Poisoned::reported)).or(place.reported);
         let (Some((shape, temps)), Ok(value), true) = (path, value, place.writable) else {
             return Err(unit(failed.expect(
@@ -917,7 +919,7 @@ impl Checker<'_> {
             target,
             value,
             Expectation::or_poisoned(want, Origin::None),
-            true,
+            (true, None),
         );
         let expanded = ast::Expr {
             kind: ast::ExprKind::Binary {
@@ -943,17 +945,11 @@ impl Checker<'_> {
     fn compound_value(
         &mut self,
         span: Span,
-        (op, op_span): (tir::BinaryOp, Span),
+        ((ast_op, op), op_span): ((ast::BinaryOp, tir::BinaryOp), Span),
         target: &ast::Expr,
         value: &ast::Expr,
         (ty, read): (Type, Checked),
     ) -> Checked {
-        let want = literal_type(Some(ty));
-        let operator = if op == tir::BinaryOp::Add {
-            Operator::Plus { compound: true }
-        } else {
-            Operator::Arithmetic
-        };
         if payload(ty) == Type::STRING && op == tir::BinaryOp::Add {
             let start = self.diagnostics.len();
             // A `string?` place is what `binary` reports first, and the value is checked with no
@@ -980,20 +976,18 @@ impl Checker<'_> {
             } else {
                 self.settled(value, checked, Expectation::Required(ty, Origin::None))
             };
-            self.concat(span, (read, true), value, mismatched)
+            self.concat(span, read, value, mismatched)
         } else {
-            // The place's own mismatch waits for `arithmetic`, which drops it beside a `char`.
-            let start = self.diagnostics.mark();
-            let place = self.settled_by(
+            // The read of the place and the value join, as for a name (`compound_assign_name`).
+            let want = Expectation::Required(ty, Origin::None);
+            self.binary(
+                span,
+                (ast_op, op_span),
                 target,
-                read,
-                Some(want),
-                Origin::None,
-                Some(operator.takes()),
-            );
-            // `arithmetic` restores them, or cuts them with the place, which is `Error` then.
-            let held = self.diagnostics.take_since(start);
-            self.arithmetic(span, (op, op_span), want, place, value, held)
+                value,
+                want,
+                (true, Some(read)),
+            )
         }
     }
 

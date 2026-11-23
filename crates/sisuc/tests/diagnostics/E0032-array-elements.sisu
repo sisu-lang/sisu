@@ -1,0 +1,8 @@
+fn main() {
+    let a: u8 = 3
+    let b: i64 = 4
+    let x = [a, b]
+    print(x.len())
+}
+
+// The elements of an array are a join: the join reports at the array (ADR 0052).

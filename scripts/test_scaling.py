@@ -229,9 +229,9 @@ Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 | optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
-## fields
+## else-if chain with a result type
 
-Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
+Sizes: 0, 30, 60, 120, 240. Growth is the count less the count at size 0.
 
 | stage | g(n) | g(2n) | g(4n) | g(8n) | r1 | r2 | r3 | verdict |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -244,7 +244,7 @@ Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 | optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
-## conformers
+## fields
 
 Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 
@@ -259,9 +259,9 @@ Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 | optimize | 0 | 0 | 0 | 0 | - | - | - | not judged |
 | object | 0 | 0 | 0 | 0 | - | - | - | not judged |
 
-## type depth
+## conformers
 
-Sizes: 0, 24, 48, 96, 192. Growth is the count less the count at size 0.
+Sizes: 0, 50, 100, 200, 400. Growth is the count less the count at size 0.
 
 | stage | g(n) | g(2n) | g(4n) | g(8n) | r1 | r2 | r3 | verdict |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -658,6 +658,7 @@ class ScalingTest(unittest.TestCase):
             ("array literal width", 250),
             ("string literal width", 100),
             ("match arms", 50),
+            ("else-if chain with a result type", 30),
             ("fields", 50),
             ("conformers", 50),
             ("type depth", 24),
@@ -685,11 +686,18 @@ class ScalingTest(unittest.TestCase):
             ("mutable locals", 250),
             ("nested array ==", 5),
             ("failed bounds", 64),
+            ("constructor type parameters", 100),
             ("struct fields", 50),
             ("struct paths", 24),
             ("struct writes", 100),
             ("struct ==", 50),
             ("never built", 16),
+            ("array literal depth beside []", 24),
+            ("array fill depth", 24),
+            ("coalesce depth", 15),
+            ("coalesce depth to an optional", 15),
+            ("open call chain", 24),
+            ("unannotated array with None", 1000),
         ]
         self.assertEqual([(name, n) for name, (n, _) in sc.SHAPES.items()], sizes)
 
@@ -730,6 +738,7 @@ class ScalingTest(unittest.TestCase):
             "array literal width": (lambda t: t.count("7"), 0),
             "string literal width": (lambda t: t.count('"w'), 0),
             "match arms": (lambda t: t.count("=>"), 1),
+            "else-if chain with a result type": (lambda t: t.count("else if"), 0),
             "fields": (lambda t: t.count(": i64"), 1),
             "conformers": (lambda t: t.count("class "), 1),
             "type depth": (lambda t: depth(line(t, "let v"), "(", ")"), 1),
@@ -757,11 +766,18 @@ class ScalingTest(unittest.TestCase):
             "mutable locals": (lambda t: min(t.count("let mut"), t.count("+= 1")), 0),
             "nested array ==": (lambda t: depth(line(t, "let a"), "[", "]"), 0),
             "failed bounds": (lambda t: min(t.count("type U"), t.count("C<i64>")), 0),
+            "constructor type parameters": (lambda t: t.count("total += t.f"), 1),
             "struct fields": (lambda t: t.count("total += w.f"), 0),
             "struct paths": (lambda t: t.count("struct Level"), 1),
             "struct writes": (lambda t: t.count("t.i.xs.push"), 1),
             "struct ==": (lambda t: t.count("\n    f"), 0),
             "never built": (lambda t: t.count("class C"), 0),
+            "array literal depth beside []": (lambda t: depth(t, "[", "]"), 1),
+            "array fill depth": (lambda t: depth(t, "[", "]"), 1),
+            "coalesce depth": (lambda t: t.count("Some(1) ??"), 0),
+            "coalesce depth to an optional": (lambda t: t.count("Some(1) ??"), 0),
+            "open call chain": (lambda t: line(t, "let x").count("id("), 1),
+            "unannotated array with None": (lambda t: line(t, "let a").count("x, "), 1),
         }
         self.assertEqual(list(parts), list(sc.SHAPES))
         for name, (_, make) in sc.SHAPES.items():

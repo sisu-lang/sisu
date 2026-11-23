@@ -1,0 +1,21 @@
+warning[W0002]: `xs` is never reassigned, so its `mut` changes nothing for the caller
+ --> E0032-mut-argument-comparison.sisu:1:17
+  |
+1 | fn first<T>(mut xs: [T]) -> T { xs[0] }
+  |                 ^^ never reassigned
+
+error[E0032]: the operands of this comparison have different types
+ --> E0032-mut-argument-comparison.sisu:5:13
+  |
+5 |     print(b == first(mut ys))
+  |           - ^^ ------------- `i64`
+  |           |
+  |           `u8`
+  |
+help: if the types are right, convert it with `i64(...)`
+  |
+5 |     print(i64(b) == first(mut ys))
+  |           ++++ +
+
+sisu: 1 error, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0032, W0002

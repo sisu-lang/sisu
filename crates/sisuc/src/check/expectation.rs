@@ -8,15 +8,12 @@ use crate::symbol::Symbol;
 use crate::tir::{Type, TypeKind};
 use std::rc::Rc;
 
-/// Where the type that a context requires or hints comes from: a declaration, an earlier value or
+/// Where the type that a context requires comes from: a declaration, an earlier value or
 /// a language rule. A report that names the type points at it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Origin {
     /// No origin that a report names.
     None,
-    /// The `break` at `at`, which gave the loop its type `ty`. `outer` is set when that loop
-    /// is around the loop that reports.
-    Break { at: Span, ty: Type, outer: bool },
     /// Parameter `index` of the function or method `function` (a `FuncId`).
     Parameter { function: u32, index: u32 },
     /// The return type of the function or method `function`.
@@ -41,12 +38,11 @@ pub(super) enum Origin {
     Index,
     /// The rule that an index of a place is an `i64`: a place takes no range.
     PlaceIndex,
-    /// The element at `at` of an inferred array, which gave the array its type `ty`.
-    Element { at: Span, ty: Type },
-    /// The branch value at `at`, which gave its `if` or `match` the type `ty`.
-    Branch { at: Span, ty: Type },
     /// The argument at `at`, which bound the type parameter `param` of a call to `ty`.
     Inferred { at: Span, param: Symbol, ty: Type },
+    /// The first bare `break` of a loop, at `at`, which gives the loop the value `unit`. A report
+    /// of a `break` that has a value points at it.
+    BareBreak { at: Span },
 }
 
 impl Origin {
@@ -68,24 +64,9 @@ pub(super) enum Expectation {
     Poisoned,
     /// The context expects this type, which comes from the origin.
     Required(Type, Origin),
-    /// The siblings that the value joins give it `want`, the type of the siblings (`siblings`).
-    /// Siblings are the branches before it and the earlier values of its loop. They are also the
-    /// other side of its `==`, the left side of its `??`, and an element beside an `any` element
-    /// (`value_beside`). An operator can also hint each operand except its leader, the first
-    /// operand of a concrete type, or each operand when it has no leader. The hint is the type
-    /// that the operator takes by default (`i64`), or takes from a leader of a type that it does
-    /// not take. The context did not write it. `want` steers inference as a required type does.
-    /// But the value does not convert to an `any` type for it. A join in the value takes
-    /// `siblings` as its first anchor, not as its expected type (see `split_hint`). A value part
-    /// of the value keeps the hint. Such a part is the tail of a block, a branch of a hinted `if`
-    /// or `match`, or the argument of a hinted `Some`. It is also an argument that a hinted
-    /// call's context bound, or a `break` value of a hinted loop. An operand does not take the
-    /// hint of the value: it takes `plain`. `origin` is where `want` and `siblings` come from.
-    Hint {
-        want: Type,
-        siblings: Type,
-        origin: Origin,
-    },
+    /// The value is a member of a join, or at a value position inside one: its inference
+    /// variables stay open. The join closes them when it applies its own expectation.
+    Member,
 }
 
 const _: () = assert!(
@@ -97,32 +78,29 @@ impl Expectation {
     /// The type that the value should have; none when nothing is expected or the context failed.
     pub(super) fn ty(self) -> Option<Type> {
         match self {
-            Self::Required(ty, _) | Self::Hint { want: ty, .. } => Some(ty),
-            Self::None | Self::Poisoned => None,
+            Self::Required(ty, _) => Some(ty),
+            Self::None | Self::Poisoned | Self::Member => None,
         }
     }
 
-    /// The type that a report of the value `found` names as expected. It is `ty`, but for a hint
-    /// that adds a `?` to the type of its siblings: a `found` that is not optional is not at
-    /// fault for that `?`, so the report names `siblings`, as a plain branch does. The value is
-    /// still checked against `ty`. Without an expectation it is `found`.
-    pub(super) fn shown(self, found: Type) -> Type {
+    /// What the argument of a `Some` expects. A required optional gives its payload, with no
+    /// origin, so that `let x: u8? = Some("s")` names no declaration. Any other expectation goes
+    /// to the argument as it is.
+    pub(super) fn payload(self) -> Self {
         match self {
-            Self::Hint { want, siblings, .. }
-                if matches!(want.kind(), TypeKind::Optional(payload) if payload == siblings)
-                    && !matches!(found.kind(), TypeKind::Optional(_)) =>
-            {
-                siblings
-            }
-            _ => self.ty().unwrap_or(found),
+            Self::Required(ty, _) => match ty.kind() {
+                TypeKind::Optional(payload) => Self::Required(payload, Origin::None),
+                _ => self,
+            },
+            _ => self,
         }
     }
 
     /// Where the type comes from; `Origin::None` when nothing is expected or the context failed.
     pub(super) fn origin(self) -> Origin {
         match self {
-            Self::Required(_, origin) | Self::Hint { origin, .. } => origin,
-            Self::None | Self::Poisoned => Origin::None,
+            Self::Required(_, origin) => origin,
+            Self::None | Self::Poisoned | Self::Member => Origin::None,
         }
     }
 
@@ -131,66 +109,14 @@ impl Expectation {
         ty.map_or(Self::Poisoned, |ty| Self::Required(ty, origin))
     }
 
-    /// `Required(want)` for a hint, with its origin, so that an operand does not see the hint;
-    /// else `self`.
-    pub(super) fn plain(self) -> Self {
-        match self {
-            Self::Hint { want, origin, .. } => Self::Required(want, origin),
-            other => other,
-        }
-    }
-
     /// The origin of an operand that is held to the type `want`: the origin of this context when
-    /// `want` is the type that it expects. A branch hints its type made optional, so an operand
-    /// held to the branch's own type keeps the origin too. Else none.
+    /// `want` is the type that it expects. Else none.
     pub(super) fn origin_for(self, want: Option<Type>) -> Origin {
-        let origin = self.origin();
-        let branch = matches!(origin, Origin::Branch { ty, .. } if want == Some(ty));
-        if (want.is_some() && want == self.ty()) || branch {
-            origin
+        if want.is_some() && want == self.ty() {
+            self.origin()
         } else {
             Origin::None
         }
-    }
-
-    /// `self` for a loop in the value: a `break` origin is of a loop around it, so it is `outer`.
-    pub(super) fn for_inner_loop(self) -> Self {
-        let outer = |origin| match origin {
-            Origin::Break { at, ty, .. } => Origin::Break {
-                at,
-                ty,
-                outer: true,
-            },
-            other => other,
-        };
-        match self {
-            Self::Required(ty, origin) => Self::Required(ty, outer(origin)),
-            Self::Hint {
-                want,
-                siblings,
-                origin,
-            } => Self::Hint {
-                want,
-                siblings,
-                origin: outer(origin),
-            },
-            other => other,
-        }
-    }
-
-    /// For a hint: `None`, and the type of its siblings with its origin. Else `self` and none.
-    pub(super) fn split_hint(self) -> (Self, Option<(Type, Origin)>) {
-        match self {
-            Self::Hint {
-                siblings, origin, ..
-            } => (Self::None, Some((siblings, origin))),
-            other => (other, None),
-        }
-    }
-
-    /// The type of the siblings of a hint; else none.
-    pub(super) fn siblings(self) -> Option<Type> {
-        self.split_hint().1.map(|(ty, _)| ty)
     }
 }
 
@@ -214,12 +140,7 @@ impl Checker<'_> {
             shown.map_or_else(|| self.type_name(ty), ToString::to_string)
         };
         match origin {
-            Origin::None => None,
-            Origin::Break { at, ty, outer } => Some(MismatchOrigin::Break {
-                at,
-                ty: self.type_name(ty),
-                outer,
-            }),
+            Origin::None | Origin::BareBreak { .. } => None,
             Origin::Parameter { function, index } => {
                 let sig = &self.signatures[function as usize];
                 let i = index as usize;
@@ -282,14 +203,6 @@ impl Checker<'_> {
             Origin::Condition => Some(MismatchOrigin::Condition),
             Origin::Index => Some(MismatchOrigin::Index),
             Origin::PlaceIndex => Some(MismatchOrigin::PlaceIndex),
-            Origin::Element { at, ty } => Some(MismatchOrigin::Element {
-                at,
-                ty: self.type_name(ty),
-            }),
-            Origin::Branch { at, ty } => Some(MismatchOrigin::Branch {
-                at,
-                ty: self.type_name(ty),
-            }),
             Origin::Inferred { at, param, ty } => Some(MismatchOrigin::Inferred {
                 at,
                 param: param.to_string(),

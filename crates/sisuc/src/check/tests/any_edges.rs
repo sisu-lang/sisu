@@ -199,21 +199,23 @@ fn a_grouped_type_argument_should_parse() {
     );
 }
 
-/// A value that cannot convert to the `any` type of its siblings is the one that a report names.
+/// An element that cannot join the `any` type of the earlier branch array makes the join of the
+/// `if` fail. The `if` then reports at its head (ADR 0052). A `None` beside an `any` element joins
+/// as it does in a scalar `if`, to an optional of the `any` type.
 #[test]
-fn a_conversion_mistake_should_be_reported_at_the_value_that_cannot_convert() {
+fn a_branch_array_that_leaves_its_any_type_should_report_at_the_head() {
     codes_row(
         "an element of an array branch",
         &format!(
             "{PRE}{}",
             "fn main() {\n    let b = true\n    let xs: [any Shape] = [Circle(r: 1.0)]\n    let ys = if b { xs } else { [Circle(r: 2.0), None] }\n    print(ys.len())\n}\n"
         ),
-        &[(Mismatch, (39, 50))],
+        &[(Mismatch, (39, 14))],
     );
     codes_row(
         "an element beside an `any` element",
         "fn main() {\n    let d: any Display = 3\n    let xs = if true { [d] } else { [1, None] }\n    print(xs.len())\n}\n",
-        &[(Mismatch, (3, 41))],
+        &[],
     );
     codes_row(
         "a `break` of two optionals",
@@ -221,7 +223,8 @@ fn a_conversion_mistake_should_be_reported_at_the_value_that_cannot_convert() {
             "{PRE}{}",
             "fn main() {\n    let b = true\n    let a: any Shape = Circle(r: 1.0)\n    let r = loop {\n        if b { break a }\n        break Some(Some(Rock(w: 1.0)))\n    }\n    print(0)\n}\n"
         ),
-        &[(Mismatch, (41, 15))],
+        // The `break` values join: E0032 at the `loop` (ADR 0052).
+        &[(Mismatch, (39, 13))],
     );
     codes_row(
         "an `any` of another interface",
@@ -242,7 +245,9 @@ fn a_coalesce_should_be_reported_where_its_code_says() {
             "{PRE}{}",
             "fn main() {\n    let c: Circle? = None\n    let x: i64 = c ?? Rock(w: 1.0)\n    print(x)\n}\n"
         ),
-        &[(Mismatch, (38, 23))],
+        // The payload and the default are members, so the written `i64` reports each, as it
+        // does each branch of an `if` (Task 5d-2).
+        &[(Mismatch, (38, 18)), (Mismatch, (38, 23))],
     );
     codes_row(
         "`None` after an optional class",
@@ -250,7 +255,8 @@ fn a_coalesce_should_be_reported_where_its_code_says() {
             "{PRE}{}",
             "fn main() {\n    let c: Circle? = None\n    let r: any Shape = c ?? None\n    print(0)\n}\n"
         ),
-        &[(Mismatch, (38, 24))],
+        // The payload converts to the written type, and the `None` does not (Task 5d-2).
+        &[(Mismatch, (38, 29))],
     );
     codes_row(
         "`None` after an optional `any` of a child",
@@ -258,7 +264,7 @@ fn a_coalesce_should_be_reported_where_its_code_says() {
             "{PRE}{}",
             "interface Named {\n    fn name(self) -> string\n}\n\ninterface Both: Shape, Named {}\n\nfn main() {\n    let c: (any Both)? = None\n    let r: any Shape = c ?? None\n    print(0)\n}\n"
         ),
-        &[(Mismatch, (44, 24))],
+        &[(Mismatch, (44, 29))],
     );
     codes_row(
         "`None` after an optional `any`",
@@ -274,7 +280,9 @@ fn a_coalesce_should_be_reported_where_its_code_says() {
             "{PRE}{}",
             "fn main() {\n    let c: Circle? = None\n    let r: any Shape = c ?? Square(s: 2.0)\n    print(r.area())\n}\n"
         ),
-        &[(Mismatch, (38, 29))],
+        // valid: the written type wins over the members of the join (S3, S12), as over the
+        // branches of an `if`
+        &[],
     );
     codes_row(
         "a default that does not conform",
@@ -299,14 +307,14 @@ fn a_written_any_type_should_convert_each_break_value() {
     );
 }
 
-/// An array after an array branch of a plain type expects that type, so each element that is not of
-/// it is reported.
+/// An array whose elements do not join the elements of the earlier array branch, of a plain type,
+/// makes the join of the `if` fail: one report at its head (ADR 0052), as the scalar `if` gives.
 #[test]
-fn a_hinted_array_with_no_any_element_should_report_each_element() {
+fn a_branch_array_with_no_any_element_should_report_once_at_the_head() {
     codes_row(
         "two strings after an `i64` array",
         "fn main() {\n    let b = true\n    let ys = if b { [1] } else { [\"a\", \"b\"] }\n    print(ys)\n}\n",
-        &[(Mismatch, (3, 35)), (Mismatch, (3, 40))],
+        &[(Mismatch, (3, 14))],
     );
 }
 
@@ -322,12 +330,12 @@ fn a_generic_call_in_an_any_context_should_bind_from_each_argument_of_the_any_ty
     codes_row(
         "a fixed argument meets a context part that is open",
         "interface P<A, B> {}\nclass W<T> {\n    v: T\n}\nfn fix<A>(x: A) -> W<any P<i64, A>> { panic(\"e\") }\nfn h<U, V>(c: V, b: W<any P<U, V>>) {}\nfn main() {\n    h(true, fix(\"s\"))\n}\n",
-        &[(Mismatch, (8, 17))],
+        &[(Mismatch, (8, 5))],
     );
     codes_row(
-        "an open context part gives a later argument context",
+        "a call decides its own parameters before the context part, which then reports the call",
         "interface P<A, B> {}\nclass W<T> {\n    v: T\n}\nclass Box<A, B> {\n    a: A\n    b: B\n}\nfn mk<A, B>(a: A, b: B) -> W<any P<A, B>> { panic(\"e\") }\nfn h<U, V>(a: U, b: W<any P<U, Box<V, i64>>>) {}\nfn main() {\n    h(true, mk(\"s\", Box(a: 1, b: \"x\")))\n}\n",
-        &[(Mismatch, (12, 16)), (Mismatch, (12, 34))],
+        &[(Mismatch, (12, 13))],
     );
     codes_row(
         "an `any` of another interface gives no context",

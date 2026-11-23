@@ -17,17 +17,18 @@ error[E0033]: cannot find binding `missing`
 5 |             missing
   |             ^^^^^^^
 
-error[E0032]: expected `i64`, found `string`
-  --> recovery-break-failed-value.sisu:15:15
+error[E0032]: the `break` values of this loop have different types
+  --> recovery-break-failed-value.sisu:13:13
    |
+13 |       let x = loop {
+   |               ^^^^
 14 |           if c { break 1 }
-   |                  ------- this `break` gave the loop the type `i64`
-15 |           break {
-   |  _______________^
+   |                        - `i64`
+15 | /         break {
 16 | |             missing
 17 | |             "s"
 18 | |         }
-   | |_________^
+   | |_________- `string`
 
 error[E0033]: cannot find binding `missing`
   --> recovery-break-failed-value.sisu:16:13

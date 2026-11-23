@@ -1,0 +1,30 @@
+struct S {
+    ou: u8?
+}
+
+struct Holder {
+    v: i64
+}
+
+fn take_i64(v: i64) -> i64 { v }
+
+fn get() -> u8? { None }
+
+fn ret(ou: u8?, n: i64) -> i64 {
+    return ou ?? n
+}
+
+fn f(o: i64?, u: u8, ou: u8?, n: i64, s: S) -> i64 {
+    let z: u8? = o ?? u
+    let y: i64 = ou ?? n
+    let w: u8 = o ?? 1
+    let v: f64 = ou ?? 1.5
+    let t = take_i64(ou ?? n)
+    let h = Holder(v: ou ?? n)
+    let a: [i64] = [ou ?? n]
+    let p: i64 = s.ou ?? n
+    let q: i64 = get() ?? n
+    0
+}
+
+fn main() {}

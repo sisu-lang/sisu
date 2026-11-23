@@ -8,6 +8,8 @@ use super::*;
 enum Explained {
     /// Exactly one secondary label, at this line and column, and no note.
     Label(u32, u32),
+    /// A secondary label at each of these places, in order, and no note: a join report.
+    Labels(&'static [(u32, u32)]),
     /// Exactly one note, and no secondary label: the origin is in the prelude.
     Note,
     /// A label at the primary span, and no secondary label and no note: a language rule.
@@ -51,6 +53,7 @@ fn origin_rows(rows: &[(&str, &str, (u32, u32), Explained)]) {
         let rule = d.label().is_some();
         let (wanted, wanted_notes, wanted_rule) = match explained {
             Explained::Label(line, col) => (vec![(*line, *col)], 0, false),
+            Explained::Labels(places) => (places.to_vec(), 0, false),
             Explained::Note => (Vec::new(), 1, false),
             Explained::Rule => (Vec::new(), 0, true),
             Explained::Nothing => (Vec::new(), 0, false),
@@ -70,104 +73,109 @@ fn origin_rows(rows: &[(&str, &str, (u32, u32), Explained)]) {
     );
 }
 
+/// The `break` values of a loop are the members of its join, and each leaf of a value is a
+/// member: an element, a branch or a payload. Members that do not join give E0032 at the `loop`,
+/// with a label at each member (ADR 0052). A `None` in a block joins with `1` to `i64?`.
 #[test]
-fn a_break_origin_should_reach_each_part_of_the_value() {
+fn a_break_value_that_does_not_join_should_be_reported_at_its_loop() {
+    codes(
+        "fn f(c: bool) {\n    let a = loop {\n        if c { break 1 }\n        break { None }\n    }\n    print(a)\n}\nfn main() {\n    f(true)\n}\n",
+        &[(Code::PrintsOptional, (6, 11))],
+    );
     origin_rows(&[
         (
             "an element of a `break` value",
             "fn f(c: bool) {\n    let a = loop {\n        if c { break [1] }\n        break [2, \"x\"]\n    }\n    print(a)\n}\nfn main() {\n    f(true)\n}\n",
-            (4, 19),
-            Explained::Label(3, 16),
-        ),
-        (
-            "a block of a `break` value",
-            "fn f(c: bool) {\n    let a = loop {\n        if c { break 1 }\n        break { None }\n    }\n    print(a)\n}\nfn main() {\n    f(true)\n}\n",
-            (4, 17),
-            Explained::Label(3, 16),
+            (2, 13),
+            Explained::Labels(&[(3, 23), (4, 16), (4, 19)]),
         ),
         (
             "a branch of a `break` value",
             "fn main() {\n    let a = loop {\n        if true { break 1 }\n        break if true { 1 } else { \"x\" }\n    }\n    print(a)\n}\n",
-            (4, 36),
-            Explained::Label(3, 19),
+            (2, 13),
+            Explained::Labels(&[(3, 25), (4, 25), (4, 36)]),
         ),
         (
             "a branch of a `break` value after a `string` branch",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break if d { \"x\" } else { 2 }\n    }\n    print(a)\n}\nfn main() {\n    f(true, true)\n}\n",
-            (4, 22),
-            Explained::Label(3, 16),
+            (2, 13),
+            Explained::Labels(&[(3, 22), (4, 22), (4, 35)]),
         ),
         (
             "a `break` value, the row of S21",
             "fn f(c: bool) {\n    let a = loop {\n        if c { break 1 }\n        break \"x\"\n    }\n    print(a)\n}\nfn main() {\n    f(true)\n}\n",
-            (4, 15),
-            Explained::Label(3, 16),
+            (2, 13),
+            Explained::Labels(&[(3, 22), (4, 15)]),
         ),
         (
             "a `Some` payload in a `break` value, a form that waits",
             "fn f(c: bool) {\n    let a = loop {\n        if c { break Some(1) }\n        break Some(\"x\")\n    }\n    print(a)\n}\nfn main() { f(true) }\n",
-            (4, 20),
-            Explained::Nothing,
+            (2, 13),
+            Explained::Labels(&[(3, 27), (4, 20)]),
         ),
         (
             "an `if` in a `break` value with a hint from its siblings",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break if d { [] } else { \"x\" }\n    }\n    print(a)\n}\nfn main() {\n    f(true, true)\n}\n",
-            (4, 22),
-            Explained::Label(3, 16),
+            (2, 13),
+            Explained::Labels(&[(3, 22), (4, 22), (4, 34)]),
         ),
     ]);
 }
 
+/// An operand of a `break` value is a member of its operator's join, which the loop's join does
+/// not reach (Task 5d-2): an E0032 at an operand has no label from the loop. A `??` and a
+/// `string` leader keep the labels of their own join. An `f64` operand gives its literal sibling
+/// `f64`, and the loop's `1` joins it, as in an `if`.
 #[test]
-fn a_break_origin_should_reach_each_operand_of_the_value() {
+fn an_operand_of_a_break_value_should_get_no_label_from_the_loop() {
+    codes(
+        "fn f(c: bool, x: f64) {\n    let a = loop {\n        if c { break 1 }\n        break x + 1\n    }\n    print(a)\n}\nfn main() { f(true, 1.5) }\n",
+        &[],
+    );
     origin_rows(&[
         (
             "the right operand of `+`",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break 1 + None\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
             (4, 19),
-            Explained::Label(3, 16),
+            Explained::Nothing,
         ),
         (
             "the left operand of `+`",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break None + 1\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
             (4, 15),
-            Explained::Label(3, 16),
+            Explained::Nothing,
         ),
         (
             "a block operand of `+`",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break 1 + { None }\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
             (4, 21),
-            Explained::Label(3, 16),
+            Explained::Nothing,
         ),
         (
             "the right operand of `-`",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break 1 - None\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
             (4, 19),
-            Explained::Label(3, 16),
+            Explained::Nothing,
         ),
         (
             "the left operand of `*`",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break None * 1\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
             (4, 15),
-            Explained::Label(3, 16),
+            Explained::Nothing,
         ),
         (
             "an operand of `+` in an `f64` loop",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1.0 }\n        break None + 1\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
             (4, 15),
-            Explained::Label(3, 16),
+            Explained::Nothing,
         ),
         (
             "an operand of a nested `+`",
             "fn f(c: bool) {\n    let a = loop {\n        if c { break 1 }\n        break 1 + (2 + None)\n    }\n    print(a)\n}\nfn main() { f(true) }\n",
             (4, 24),
-            Explained::Label(3, 16),
-        ),
-        (
-            "an `f64` leader of `+` in an `i64` loop",
-            "fn f(c: bool, x: f64) {\n    let a = loop {\n        if c { break 1 }\n        break x + None\n    }\n    print(a)\n}\nfn main() { f(true, 1.5) }\n",
-            (4, 15),
-            Explained::Label(3, 16),
+            // An operand is a member of its operator's join (Task 5d-2): the context reaches
+            // only the outer operator, so no label explains the type.
+            Explained::Nothing,
         ),
         (
             "an operand of `<`, which the loop does not reach: a comparison has no expected type",
@@ -188,10 +196,12 @@ fn a_break_origin_should_reach_each_operand_of_the_value() {
             Explained::Nothing,
         ),
         (
-            "the fallback of `??`, which takes the payload of its left side",
+            // The payload and the default join: the report is at `??`, with a label at each side
+            // and no origin (Task 5d-2).
+            "the fallback of `??`, which joins the payload of its left side",
             "fn f(c: bool, d: bool) {\n    let a = loop {\n        if c { break 1 }\n        break Some(1) ?? \"x\"\n    }\n    print(a)\n}\nfn main() { f(true, false) }\n",
-            (4, 26),
-            Explained::Nothing,
+            (4, 23),
+            Explained::Labels(&[(4, 15), (4, 26)]),
         ),
         (
             "a `string` leader of `+`, whose join is the origin",
@@ -200,6 +210,12 @@ fn a_break_origin_should_reach_each_operand_of_the_value() {
             Explained::Label(4, 15),
         ),
     ]);
+    // The `None` is reported in the operator's own join. The operator fails, and a failed member
+    // reports nothing more in the loop's join, as in an `if` of `1` and `x + None`.
+    codes(
+        "fn f(c: bool, x: f64) {\n    let a = loop {\n        if c { break 1 }\n        break x + None\n    }\n    print(a)\n}\nfn main() { f(true, 1.5) }\n",
+        &[(Code::Mismatch, (4, 19))],
+    );
 }
 
 #[test]
@@ -221,6 +237,14 @@ fn a_declaration_should_explain_its_required_type() {
             "let",
             "fn main() {\n    let a: i64 = \"x\"\n    print(a)\n}\n",
             (2, 18),
+            Explained::Label(2, 12),
+        ),
+        // The default of `??` is a member of its join, and the written type is what the join is
+        // reported against (Task 5d-2).
+        (
+            "the fallback of `??` (opus-6)",
+            "fn f(o: i64?) {\n    let a: i64 = o ?? \"x\"\n    print(a)\n}\nfn main() {\n    f(None)\n}\n",
+            (2, 23),
             Explained::Label(2, 12),
         ),
         (
@@ -352,166 +376,174 @@ fn a_passed_down_expectation_should_keep_its_origin() {
     ]);
 }
 
+/// An earlier value explains the type that a later one does not meet. Elements that do not join
+/// give E0032 at the head of the array, or at the call that holds it (ADR 0052). Each element of
+/// its own type gets a label.
 #[test]
 fn an_earlier_value_should_explain_the_type() {
     origin_rows(&[
         (
             "element inferred",
             "fn main() {\n    let a = [1, \"x\"]\n    print(a)\n}\n",
-            (2, 17),
-            Explained::Label(2, 14),
+            (2, 13),
+            Explained::Labels(&[(2, 14), (2, 17)]),
         ),
         (
             "branch",
             "fn main() {\n    let a = if true { 1 } else { \"x\" }\n    print(a)\n}\n",
-            (2, 34),
-            Explained::Label(2, 23),
+            (2, 13),
+            Explained::Labels(&[(2, 23), (2, 34)]),
         ),
         (
             "type parameter",
             "fn g<T>(a: T, b: T) -> T { a }\nfn main() {\n    g(1, \"x\")\n}\n",
-            (3, 7),
-            Explained::Label(3, 10),
+            (3, 5),
+            Explained::Labels(&[(3, 7), (3, 10)]),
         ),
         (
             "an inner `if` against the outer first branch (fable-9)",
             "fn f(c: bool, d: bool) {\n    let a = if c { 1 } else { if d { \"x\" } else { \"y\" } }\n    print(a)\n}\nfn main() {\n    f(true, true)\n}\n",
-            (2, 31),
-            Explained::Label(2, 20),
+            (2, 13),
+            Explained::Labels(&[(2, 20), (2, 38), (2, 51)]),
         ),
         (
             "an inner join whose first branch gives the type (fable-10)",
             "fn f(c: bool, d: bool) {\n    let a = if c { 1 } else { if d { \"x\" } else { 2 } }\n    print(a)\n}\nfn main() {\n    f(true, true)\n}\n",
-            (2, 51),
-            Explained::Label(2, 38),
+            (2, 13),
+            Explained::Labels(&[(2, 20), (2, 38), (2, 51)]),
         ),
         (
             "a value that reads the join's hint (fable-20)",
             "fn f(c: bool) {\n    let a = if c { 1 } else { [] }\n    print(a)\n}\nfn main() {\n    f(true)\n}\n",
-            (2, 31),
-            Explained::Label(2, 20),
+            (2, 13),
+            Explained::Labels(&[(2, 20), (2, 31)]),
         ),
         (
             "an operand under the hint of a branch",
             "fn f(c: bool, n: i64) {\n    let a = if c { n } else { 1 + None }\n    print(a)\n}\nfn main() { f(true, 1) }\n",
             (2, 35),
-            Explained::Label(2, 20),
+            // An operand is a member of its operator's join (Task 5d-2): the context reaches
+            // only the outer operator, so no label explains the type.
+            Explained::Nothing,
         ),
         (
             "a later arm makes the join optional (opus-41)",
             "fn f(n: i64) {\n    let a = match n {\n        1 => 5\n        2 => Some(1)\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {\n    f(1)\n}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(3, 14), (4, 19), (5, 14)]),
         ),
         (
             "a later element makes the array optional (opus-43)",
             "fn main() {\n    let a = [5, Some(1), \"x\"]\n    print(a)\n}\n",
-            (2, 26),
-            Explained::Label(2, 17),
+            (2, 13),
+            Explained::Labels(&[(2, 14), (2, 22), (2, 26)]),
         ),
         (
             "the element that set the bound of `T` (opus-12)",
             "fn f<T>(a: [T]) -> i64 { 0 }\nfn g(n: i64) {\n    print(f([None, n, \"x\"]))\n}\nfn main() { g(1) }\n",
-            (3, 23),
-            Explained::Label(3, 20),
-        ),
-        (
-            "the argument that holds the binding element (opus4-3)",
-            "fn has<T>(a: [T], x: T) -> bool { true }\nfn g(n: i64) {\n    print(has([\"a\", \"b\"], n))\n}\nfn main() { g(1) }\n",
-            (3, 27),
-            Explained::Label(3, 15),
+            (3, 11),
+            Explained::Labels(&[(3, 14), (3, 20), (3, 23)]),
         ),
     ]);
+    origin_rows(&[(
+        "the argument that holds the binding element (opus4-3)",
+        "fn has<T>(a: [T], x: T) -> bool { true }\nfn g(n: i64) {\n    print(has([\"a\", \"b\"], n))\n}\nfn main() { g(1) }\n",
+        (3, 11),
+        Explained::Labels(&[(3, 16), (3, 21), (3, 27)]),
+    )]);
 }
 
 /// A branch or an element that took its type from a sibling's hint did not give that type: the
-/// label names the value that gave it, in the order of the check.
+/// label names the value that gave it, in the order of the check. Branches, arms and elements
+/// that do not join give E0032 at the head of their `if`, `match` or array (ADR 0052). An array
+/// argument reports at its call. Each value that gives its own type gets a label, and a value
+/// that took one gets none.
 #[test]
 fn a_value_that_took_a_hint_should_not_be_the_origin() {
     origin_rows(&[
         (
             "a literal arm that took a later arm's type (opus-1)",
             "fn f(n: i64, b: u8) {\n    let a = match n {\n        1 => 5\n        2 => b\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(4, 14), (5, 14)]),
         ),
         (
             "an empty array arm that took a later arm's type",
             "fn f(n: i64, b: [i64]) {\n    let a = match n {\n        1 => []\n        2 => b\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(4, 14), (5, 14)]),
         ),
         (
             "a `None` arm before an optional arm (sol-1)",
             "fn f(n: i64, v: i64?) {\n    let a = match n {\n        0 => None\n        1 => v\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(4, 14), (5, 14)]),
         ),
         (
             "a block arm that holds `None`",
             "fn f(n: i64, v: i64?) {\n    let a = match n {\n        0 => { None }\n        1 => v\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(4, 14), (5, 14)]),
         ),
         (
             "an `if` arm whose branches are both `None`",
             "fn f(n: i64, v: i64?, c: bool) {\n    let a = match n {\n        0 => if c { None } else { None }\n        1 => v\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(4, 14), (5, 14)]),
         ),
         (
             "a `None` arm that makes a later arm optional: that arm gives its own type",
             "fn f(n: i64, v: i64) {\n    let a = match n {\n        0 => None\n        1 => v\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(3, 14), (4, 14), (5, 14)]),
         ),
         (
             "a `None` arm before an inner join that gives the type",
             "fn f(n: i64, v: i64?, c: bool) {\n    let a = match n {\n        0 => None\n        1 => if c { v } else { 1 }\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(4, 14),
+            (2, 13),
+            Explained::Labels(&[(4, 21), (4, 32), (5, 14)]),
         ),
         (
             "a control that passes before and after the fix: an `else if` chain whose first branch took the type",
             "fn f(c: bool, d: bool, b: u8) {\n    let a = if c { 5 } else if d { b } else { \"x\" }\n    print(a)\n}\nfn main() {}\n",
-            (2, 47),
-            Explained::Label(2, 36),
+            (2, 13),
+            Explained::Labels(&[(2, 36), (2, 47)]),
         ),
         (
             "a literal element that took a later element's type (opus-2)",
             "fn f(b: u8) {\n    let a = [5, b, \"x\"]\n    print(a)\n}\nfn main() {}\n",
-            (2, 20),
-            Explained::Label(2, 17),
+            (2, 13),
+            Explained::Labels(&[(2, 17), (2, 20)]),
         ),
         (
             "a literal element that took a later element's type, against a `bool`",
             "fn f(b: u8) {\n    let a = [5, b, true]\n    print(a)\n}\nfn main() {}\n",
-            (2, 20),
-            Explained::Label(2, 17),
+            (2, 13),
+            Explained::Labels(&[(2, 17), (2, 20)]),
         ),
         (
             "a literal element of a generic call's array that took a later element's type",
             "fn g<T>(a: [T]) -> i64 { 0 }\nfn f(b: u8) {\n    print(g([5, b, \"x\"]))\n}\nfn main() {}\n",
-            (3, 20),
-            Explained::Label(3, 17),
+            (3, 11),
+            Explained::Labels(&[(3, 17), (3, 20)]),
         ),
         (
             "a control that passes before and after the fix: a `Some` element after `None` and a concrete element",
             "fn f(n: i64) {\n    let a = [None, n, Some(2), \"x\"]\n    print(a)\n}\nfn main() {}\n",
-            (2, 32),
-            Explained::Label(2, 23),
+            (2, 13),
+            Explained::Labels(&[(2, 14), (2, 20), (2, 28), (2, 32)]),
         ),
         (
             "an `if` arm of a literal and `None` that took a `u8` arm's type",
             "fn f(n: i64, b: u8, c: bool) {\n    let a = match n {\n        1 => b\n        2 => if c { 5 } else { None }\n        _ => \"x\"\n    }\n    print(a)\n}\nfn main() {}\n",
-            (5, 14),
-            Explained::Label(3, 14),
+            (2, 13),
+            Explained::Labels(&[(3, 14), (4, 32), (5, 14)]),
         ),
         (
             "an `if` element of a literal and `None` that took a `u8` element's type",
             "fn f(b: u8, c: bool) {\n    let a = [b, if c { 5 } else { None }, \"x\"]\n    print(a)\n}\nfn main() {}\n",
-            (2, 43),
-            Explained::Nothing,
+            (2, 13),
+            Explained::Labels(&[(2, 14), (2, 35), (2, 43)]),
         ),
     ]);
 }
@@ -553,12 +585,6 @@ fn a_form_that_waits_should_have_no_origin() {
             "a type parameter that the context binds (fable-17)",
             "fn g<T>(a: T, b: T) -> T { a }\nfn main() {\n    let a: i64 = g(\"x\", 2)\n    print(a)\n}\n",
             (3, 20),
-            Explained::Nothing,
-        ),
-        (
-            "the fallback of `??` (opus-6)",
-            "fn f(o: i64?) {\n    let a: i64 = o ?? \"x\"\n    print(a)\n}\nfn main() {\n    f(None)\n}\n",
-            (2, 23),
             Explained::Nothing,
         ),
         (
@@ -684,23 +710,23 @@ fn an_index_on_a_base_with_no_element_should_state_no_rule() {
     }
 }
 
-/// A fixture in `tests/diagnostics` pins the wording "the outer loop". These rows pin where the
-/// label is: at the first `break` of the loop that gave the type.
+/// The `break` values of a loop in a `break` value are members of the outer loop's join: the
+/// outer loop reports, with a label at each member (ADR 0052). A loop in a `let` is no part of
+/// the value.
 #[test]
-fn a_loop_in_a_break_value_should_label_the_first_break_of_the_outer_loop() {
+fn a_loop_in_a_break_value_should_be_a_member_of_the_outer_loop() {
     origin_rows(&[
         (
             "a loop in the value of a `break`",
             "fn f(c: bool) {\n    let _a = loop {\n        if c { break 1 }\n        break loop { break \"x\" }\n    }\n}\nfn main() { f(true) }\n",
-            (4, 28),
-            Explained::Label(3, 16),
+            (2, 14),
+            Explained::Labels(&[(3, 22), (4, 28)]),
         ),
-        // A loop in a `let` is no part of the value: its `break` is of the loop that reports.
         (
             "a loop in a `let`",
             "fn f(c: bool) {\n    let _a = loop {\n        if c { break 1 }\n        let _y = loop { break \"x\" }\n        break \"y\"\n    }\n}\nfn main() { f(true) }\n",
-            (5, 15),
-            Explained::Label(3, 16),
+            (2, 14),
+            Explained::Labels(&[(3, 22), (5, 15)]),
         ),
     ]);
 }
@@ -718,7 +744,9 @@ fn a_negated_operand_should_keep_the_origin_of_its_context() {
             "a negation of a negation",
             "fn main() {\n    let b: i64 = -(-\"x\")\n    print(b)\n}\n",
             (2, 21),
-            Explained::Label(2, 12),
+            // An operand is a member of its operator's join (Task 5d-2): the context reaches
+            // only the outer operator, so no label explains the type.
+            Explained::Nothing,
         ),
         (
             "an `f64` context, which names `i64` or `f64`",
@@ -772,8 +800,8 @@ fn a_generic_constructor_should_give_the_origin_of_each_field() {
         (
             "a field of the type parameter",
             "struct P<U> {\n    a: U\n    b: U\n}\nfn main() {\n    let p = P(a: 1, b: \"x\")\n    print(p.a)\n}\n",
-            (6, 18),
-            Explained::Label(6, 24),
+            (6, 13),
+            Explained::Labels(&[(6, 18), (6, 24)]),
         ),
         (
             "an optional of another type",

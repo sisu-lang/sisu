@@ -1,0 +1,10 @@
+// GIVEN an array of a nested `if` of `None` and an `i64?`, and an `i64??`
+// WHEN the nested `if` gives its `None`
+// THEN the first element is the outer `None`
+fn main() {
+    let d = [1].len() == 1
+    let o: i64? = Some(1)
+    let o2: i64?? = Some(Some(2))
+    let x = [if d { None } else { o }, o2]
+    print(x[0] == None) // true
+}

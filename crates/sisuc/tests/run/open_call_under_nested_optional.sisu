@@ -1,0 +1,80 @@
+// GIVEN a generic call whose arguments do not decide its type parameter
+// WHEN its value converts to a nested optional, in each position and each order
+// THEN its type unifies before it wraps: the value is the outer `None`, as `None` is
+// AND a type that the arguments decide, or a bound, still makes the result wrap
+fn none<T>() -> T? { None }
+fn id<T>(x: T) -> T { x }
+fn second<T>(_a: T, b: T) -> T { b }
+fn pick<T>(a: T, _b: T) -> T { a }
+fn first<T>(xs: [T]) -> T? { if xs.len() > 0 { Some(xs[0]) } else { None } }
+fn opt<T>(x: T) -> T? { Some(x) }
+fn takes(x: i64??) -> bool { x == None }
+fn ret() -> i64?? { none() }
+struct S { f: i64?? }
+interface Seen {
+    fn seen(self) -> i64
+}
+struct Eye: Seen {
+    v: i64
+    fn seen(self) -> i64 { self.v }
+}
+fn ns<T: Seen>() -> T? { None }
+
+fn main() {
+    let o1: i64? = Some(1)
+    let o2: i64?? = Some(Some(2))
+    let o3: i64??? = Some(Some(Some(3)))
+    let e2: Eye?? = Some(Some(Eye(v: 1)))
+    let c = [1].len() == 2
+    let k = [1].len() == 1
+    print((if c { o2 } else { none() }) == None) // true
+    print((if k { none() } else { o2 }) == None) // true
+    let t: i64?? = if c { o2 } else { none() }
+    print(t == None) // true
+    print(second(o2, none()) == None) // true
+    print(pick(none(), o2) == None) // true
+    let d: i64?? = none()
+    print(d == None) // true
+    let r: i64?? = id(none())
+    print(r == None) // true
+    let rr: i64?? = id(id(none()))
+    print(rr == None) // true
+    print(takes(none())) // true
+    print(ret() == None) // true
+    let s = S(f: none())
+    print(s.f == None) // true
+    let a = [none(), o1, o2]
+    print(a[0] == None) // true
+    let b = [o2, o1, none()]
+    print(b[2] == None) // true
+    print((match c { true => o2; false => none() }) == None) // true
+    let l: i64?? = loop { if c { break o2 }; break none() }
+    print(l == None) // true
+    let mut v: i64?? = o2
+    v = none()
+    print(v == None) // true
+    let d3: i64??? = none()
+    print(d3 == None) // true
+    let j3 = if c { o3 } else { none() }
+    print(j3 == None) // true
+    let s3: i64??? = Some(none())
+    print(s3 == Some(None)) // true
+    let y: i64?? = first([])
+    print(y == None) // true
+    let mix: i64?? = if c { None } else { none() }
+    print(mix == None) // true
+    // A type that the arguments decide does not change: the result wraps.
+    let w = if c { o2 } else { pick(none(), o1) }
+    print(w == None) // false
+    let sn: i64?? = Some(none())
+    print(sn == None) // false
+    let on: i64?? = opt(none())
+    print(on == None) // false
+    // `Eye?` does not conform to `Seen`: `T` is `Eye`, and the result wraps.
+    let bd: Eye?? = ns()
+    print(bd == None) // false
+    let bj = if c { e2 } else { ns() }
+    print(bj == None) // false
+    let bk = if k { ns() } else { e2 }
+    print(bk == None) // false
+}

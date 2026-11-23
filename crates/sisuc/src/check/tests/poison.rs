@@ -83,8 +83,8 @@ fn c_rows(rows: &[ErrorRow<'_>]) {
     error_rows(&programs);
 }
 
-/// A `.` on the optional `p` fails: E0062 is the one error of each reader, and a true error
-/// beside it stays.
+/// A `.` on the optional `p` fails: E0062 is the one error of each reader. A true error beside it
+/// stays, but the rules of an operator wait beside its untyped operand (Task 5d-2).
 #[test]
 #[expect(clippy::too_many_lines, reason = "one row for each row of S12")]
 fn a_failed_chain_should_report_only_its_true_errors() {
@@ -303,7 +303,8 @@ fn a_failed_chain_should_report_only_its_true_errors() {
         (
             "a true error beside a poisoned value",
             "let _a = true + p.name".into(),
-            vec![(Mismatch, (41, 14)), (MayBeNone, (41, 21))],
+            // The rules of `+` wait beside an untyped operand, in each order (Task 5d-2).
+            vec![(MayBeNone, (41, 21))],
         ),
     ]);
 }
@@ -687,7 +688,7 @@ fn a_push_on_an_untyped_local_should_add_no_error() {
 }
 
 /// `-h()`, `-i64(nope)` and the join with a typed poisoned branch are `i64`, so `a + true` is
-/// E0032.
+/// E0032. A block after a failed statement is typed by its last value, so `+` reports that type.
 #[test]
 fn a_typed_poisoned_operand_should_read_as_its_type() {
     c_rows(&[
@@ -700,6 +701,16 @@ fn a_typed_poisoned_operand_should_read_as_its_type() {
             "a typed poisoned branch",
             "let a = if c { 1 } else { h() } and print(a + true)".into(),
             vec![(ArgumentCount, (41, 31)), (Mismatch, (42, 15))],
+        ),
+        (
+            "a block of an optional after a failed statement",
+            "print({ h() and o } + 1)".into(),
+            vec![(Mismatch, (41, 11)), (ArgumentCount, (41, 13))],
+        ),
+        (
+            "a block of a bool after a failed statement",
+            "print({ h() and true } + 1)".into(),
+            vec![(Mismatch, (41, 11)), (ArgumentCount, (41, 13))],
         ),
     ]);
 }
@@ -1595,7 +1606,8 @@ fn the_form_should_decide_the_type() {
         (
             "nothing() * k",
             "let a = nothing() * k and print(a + true)".into(),
-            vec![(FunctionNotFound, (41, 13))],
+            // `k` states its type, so the product is an `i64` ("Poisoned members").
+            vec![(FunctionNotFound, (41, 13)), (Mismatch, (42, 15))],
         ),
         (
             "1 + nothing()",
@@ -1645,7 +1657,7 @@ fn the_form_should_decide_the_type() {
         (
             "both(1, \"x\")",
             "let a = both(1, \"x\") and print(a + true)".into(),
-            vec![(Mismatch, (41, 18))],
+            vec![(Mismatch, (41, 13))],
         ),
         (
             "bd(Rock(), 1)",
@@ -1660,12 +1672,13 @@ fn the_form_should_decide_the_type() {
         (
             "true + nothing()",
             "let a = true + nothing() and print(a + true)".into(),
-            vec![(Mismatch, (41, 13)), (FunctionNotFound, (41, 20))],
+            // The rules of `+` wait beside an untyped operand, as for `nothing() + true`.
+            vec![(FunctionNotFound, (41, 20))],
         ),
         (
             "o + nothing()",
             "let a = o + nothing() and print(a + true)".into(),
-            vec![(Mismatch, (41, 13)), (FunctionNotFound, (41, 17))],
+            vec![(FunctionNotFound, (41, 17))],
         ),
         (
             "o ?? return missing",
@@ -1820,14 +1833,16 @@ fn an_operator_failure_should_stay_one_report() {
 }
 
 /// A generic call that cannot meet its context keeps its message: `found` and `Misfit` give the
-/// E0032 at the `return` and each E0050 at the operator (S18).
+/// E0032 at the `return`. At the operator, `Two<_, bool>` takes no `+` for each `X`, so the
+/// operator gives the E0032 of `mk2() + mk2()` (S18, Task 5d-2).
 #[test]
 fn a_failed_generic_call_should_keep_its_message() {
     error_rows(&[
         (
             "s18",
             "class Two<A, B> {\n    a: A\n    b: B\n}\nfn mk2<X>() -> Two<X, bool> { panic(\"e\") }\nfn id<V>(v: V) -> V { v }\nfn r() -> i64 { return id(mk2()) }\nfn main() {\n    let z = id(mk2()) + id(mk2())\n}\n".into(),
-            vec![(Mismatch, (7, 27)), (CannotInfer, (9, 16)), (CannotInfer, (9, 28))],
+            // `Two<_, bool>` takes no `+` for each `X`: the report of `mk2() + mk2()`.
+            vec![(Mismatch, (7, 27)), (Mismatch, (9, 13))],
         ),
     ]);
 }
@@ -1993,7 +2008,7 @@ fn a_typed_poisoned_part_should_fail_only_a_call() {
         (
             "both",
             "let a = both(h(), true)".into(),
-            vec![(ArgumentCount, (41, 18)), (Mismatch, (41, 23))],
+            vec![(Mismatch, (41, 13)), (ArgumentCount, (41, 18))],
         ),
         (
             "bd",
@@ -2063,7 +2078,9 @@ fn a_conversion_to_i64_of_an_untyped_value_should_be_untyped() {
         (
             "plus a name",
             "let a = i64(nope) + k and print(a + true)".into(),
-            vec![(BindingNotFound, (41, 17))],
+            // `k` states its type, so the sum is an `i64` ("Poisoned members"): `a + true` is a
+            // true error.
+            vec![(BindingNotFound, (41, 17)), (Mismatch, (42, 15))],
         ),
         (
             "plus of a call that failed",

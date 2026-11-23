@@ -2,6 +2,7 @@
 //! no error that follows only from the failed part. A true error stays.
 
 use super::*;
+use crate::check::join::{SETTLED, VALUE_STEPS};
 use Code::{
     ArgumentCount, BindingNotFound, CannotCompare, CannotInfer, FunctionNotFound,
     IntegerDoesNotFit, Mismatch, NegatedU8, NoMember, NoValue, UnknownType, UnwrapNeedsOptional,
@@ -148,33 +149,36 @@ fn a_failed_context_should_keep_a_true_error_holds_before_and_after() {
             "let _x = v1 ?? (if c { None } else { 8 })",
             vec![cut],
         ),
+        // The join has no direction: E0032 at the head of the `if` (ADR 0052).
         (
             "string against u8",
             "let _x = v1 ?? (if c { m } else { \"s\" })",
-            vec![cut, (Mismatch, (5, 39))],
+            vec![cut, (Mismatch, (5, 21))],
         ),
+        // The arrays are nested joins of the `if`, which reports the conflict at its head
+        // (ADR 0052).
         (
             "array of string against array of u8",
             "let _x = v1 ?? (if c { [m] } else { [\"a\"] })",
-            vec![cut, (Mismatch, (5, 41))],
+            vec![cut, (Mismatch, (5, 21))],
         ),
         (
             "arrays with no failed context",
             "let _x = if c { [m] } else { [8] }\n print(_x)",
             vec![],
         ),
-        // `[8]` ranks as a value that is checked first, as with no expected type, so it fixes
-        // `[i64]` and `[m]` does not fit. A later run can change this.
+        // The elements `8` and `m` are nested members of the `if`, so they join as `u8`, as the
+        // branches `8` and `m` do.
         (
             "array literal first",
             "let _x = v1 ?? (if c { [8] } else { [m] })",
-            vec![cut, (Mismatch, (5, 41))],
+            vec![cut],
         ),
-        // `[]` is no literal branch, so it waits for the next run.
+        // No type joins a `u8` and an array, so the conflict at the `match` is a true error.
         (
             "empty array in a match arm beside a typed arm",
             "f(match c {\n true => m\n false => []\n })",
-            vec![call],
+            vec![call, (Mismatch, (5, 7))],
         ),
     ]));
 }
@@ -254,20 +258,20 @@ fn a_break_after_a_failed_break_should_wait_for_the_next_run() {
     error_rows(&rows);
 }
 
-/// A `None` before a typed or poisoned value has no type to take, and a true error after a failed
-/// `break` stays. Each row holds before and after the #618 fix.
+/// A `None` before a poisoned value joins with it, as the branches of an `if` do. Before an
+/// optional it takes the optional's type (ADR 0052). A true error after a failed `break` stays.
 #[test]
 fn a_break_that_is_first_or_a_true_error_should_stay_holds_before_and_after() {
     let rows: Vec<ErrorRow<'_>> = [
         (
             "none first",
             "let a = loop { if c { break None }; break yy }",
-            vec![(CannotInfer, (6, 33)), (BindingNotFound, (6, 47))],
+            vec![(BindingNotFound, (6, 47))],
         ),
         (
             "none first, then an optional",
             "let a = loop { if c { break None }; break o }",
-            vec![(CannotInfer, (6, 33))],
+            vec![],
         ),
         (
             "typed after a failed break",
@@ -296,13 +300,12 @@ fn a_break_that_is_first_or_a_true_error_should_stay_holds_before_and_after() {
 /// AND a branch with a `break` of a value, and a later branch with `break None`, to a `loop`
 ///   that was open before the join
 /// WHEN the program is checked
-/// THEN only the failed part reports
-///   (the join checks its branches out of source order. So the `break None` can come before the
-///   `break` that gives the loop its type. It waits for the next run.)
+/// THEN only the failed part reports: the `break` values join in the loop in source order, so the
+///   `break None` joins with the value before it
 /// AND this holds for `if`, `else if`, `if let` and `match`, and for a `break` by a label
-/// AND a first `break None` in a join in a poisoned context waits too: in a poisoned context a
-///   value waits for the next run, as in #617. Before the fix such a `None` gave E0050 at once.
-/// AND a waiting `break` with a value of a type fails the loop, so it gives the loop no type
+/// AND a loop whose only `break` value is `None` gives E0050 at it
+/// AND a loop whose `break` values do not join gives E0032 at the loop
+/// AND these are true errors of the loop's join, as in a context that did not fail (ADR 0052)
 #[test]
 fn a_break_in_a_failed_join_should_wait_for_a_loop_outside_it() {
     let call: Wanted = (ArgumentCount, (5, 20));
@@ -350,14 +353,13 @@ fn a_break_in_a_failed_join_should_wait_for_a_loop_outside_it() {
         (
             "first break none in a failed join",
             "let a = loop { f(if c { if c { break None }; 8 } else { 9 }) }",
-            vec![call],
+            vec![call, (CannotInfer, (5, 42))],
         ),
-        // `m` is a `u8` and `8` is a literal, so `join` reads `expected`, not `carried`: the
-        // branch of literals gets a hint, and it is still in a join in a poisoned context.
+        // The only `break` value of the loop is `None`.
         (
             "branch of literals",
             "let a = loop { f(if c { m } else { if c { break None } else { 8 } }) }",
-            vec![call],
+            vec![call, (CannotInfer, (5, 53))],
         ),
         // The inner join is a join in a poisoned context in a loop that opens inside the outer
         // join in a poisoned context. Its `break` still waits for the first `break` of that loop:
@@ -380,7 +382,7 @@ fn a_break_in_a_failed_join_should_wait_for_a_loop_outside_it() {
         (
             "later break of another type after the join",
             "let a = loop { f(if c { if c { break Some(m) } else { 8 } } else { if c { break 1 }; 8 }); if c { break \"s\" }; break 2 }",
-            vec![call],
+            vec![(Mismatch, (5, 13)), call],
         ),
         (
             "break of a name in a later branch",
@@ -419,15 +421,11 @@ fn a_break_in_a_failed_join_should_keep_its_output_holds_before_and_after() {
             vec![(ArgumentCount, (5, 5)), (CannotInfer, (5, 35))],
         ),
         // E0043: the outer loop has no `break`, so it gives no value. E0053: the call has one
-        // argument. E0050: the inner loop opens inside the join, and its first `break` is `None`.
+        // argument. The inner loop joins `None` and `1` to an optional (ADR 0052).
         (
             "loop with a typed break inside the join",
             "let a = loop { f(if c { 8 } else { let b = loop { if c { break None }; break 1 }; 9 }) }",
-            vec![
-                (NoValue, (5, 13)),
-                (ArgumentCount, (5, 20)),
-                (CannotInfer, (5, 68)),
-            ],
+            vec![(NoValue, (5, 13)), (ArgumentCount, (5, 20))],
         ),
         (
             "valid coalesce",
@@ -451,23 +449,23 @@ fn a_break_in_a_failed_join_should_keep_its_output_holds_before_and_after() {
             "let a = loop { f(if c { if c { break panic(\"x\") } else { 8 } } else { 8 }) }",
             vec![(NoValue, (5, 13)), (ArgumentCount, (5, 20))],
         ),
-        // Under no expectation the branches are ranked in a different order than the source, and
-        // the `break None` comes first. #676 fixes this false error.
+        // Under no expectation the branches once ranked in another order than the source, and the
+        // `break None` came first, with a false error (#676). The branches now join by one rule.
         (
             "no expectation",
             "let a = loop { let _x = if c { if c { break Some(1) } else { 8 } } else { if c { break None }; 8 } }",
-            vec![(CannotInfer, (5, 92))],
+            vec![],
         ),
     ]));
 }
 
 /// GIVEN `v1 ?? (if c { NEST } else { 8 })`, where `NEST` is the same `if` again, so that the
 ///   right side of `??` is a poisoned context
-/// WHEN the checker ranks the nested branches at three depths
+/// WHEN the checker ranks or joins the nested branches at three depths
 /// THEN the steps above those of depth 0 grow with the depth, and grow linearly
 /// AND the depths are 10, 20 and 30, because 60 levels overflow the stack of a debug test thread
 #[test]
-fn nested_branches_in_a_failed_context_should_rank_in_linear_steps() {
+fn nested_branches_in_a_failed_context_should_join_in_linear_steps() {
     crate::on_compiler_stack(|| {
         with_prelude();
         let steps = |depth: usize| {
@@ -477,9 +475,12 @@ fn nested_branches_in_a_failed_context_should_rank_in_linear_steps() {
                 open.repeat(depth),
                 close.repeat(depth)
             );
+            // The nested branches are members of one join (ADR 0052): its walk counts too.
             generic::RANK_STEPS.set(0);
+            VALUE_STEPS.set(0);
+            SETTLED.set(0);
             diags(&src);
-            generic::RANK_STEPS.get()
+            generic::RANK_STEPS.get() + VALUE_STEPS.get() + SETTLED.get()
         };
         // The prelude's own steps, about 20, are the same at each depth.
         let base = steps(0);
@@ -520,8 +521,9 @@ fn a_typed_poisoned_break_value_should_give_its_loop_the_type() {
         ),
         (
             "with a declared type",
+            // The poisoned value has no span of its own in the join: E0032 at its `break`.
             typed_break_program("let a: bool = loop { break h() }; print(a)"),
-            vec![(ArgumentCount, (4, 32)), (Mismatch, (4, 32))],
+            vec![(Mismatch, (4, 26)), (ArgumentCount, (4, 32))],
         ),
         (
             "with two wrong arguments",
@@ -541,19 +543,20 @@ fn a_typed_poisoned_break_value_should_give_its_loop_the_type() {
 /// GIVEN a `loop` with a `break` of a call with the wrong count of arguments, typed `i64`
 /// AND another `break` of a value of another type, or with no value
 /// WHEN the program is checked
-/// THEN the second `break` is a true error against the type of the first one, in either order
+/// THEN the values do not join: a true error at the `loop` in either order, as at the head of an
+///   `if` (ADR 0052), or at the bare `break`
 #[test]
 fn a_typed_poisoned_break_value_should_join_with_the_other_breaks() {
     let rows: Vec<ErrorRow<'_>> = vec![
         (
             "a bool after it",
             typed_break_program("let a = loop { if c { break h() }; break true }; print(a)"),
-            vec![(ArgumentCount, (4, 33)), (Mismatch, (4, 46))],
+            vec![(Mismatch, (4, 13)), (ArgumentCount, (4, 33))],
         ),
         (
             "a bool before it",
             typed_break_program("let a = loop { if c { break true }; break h() }; print(a)"),
-            vec![(ArgumentCount, (4, 47)), (Mismatch, (4, 47))],
+            vec![(Mismatch, (4, 13)), (ArgumentCount, (4, 47))],
         ),
         (
             "a bare break before it",
@@ -649,6 +652,7 @@ fn a_break_with_a_failed_value_should_be_never_in_its_branch() {
 /// AND other rows: a typed value outside a loop, a block that never ends, a value after a `None`
 /// WHEN the program is checked
 /// THEN the errors are as they were before the fix of #651
+/// AND where the loop has an `if` or block twin, it gives the errors of its twin (ADR 0052)
 #[test]
 fn an_untyped_break_value_should_fail_the_loop_holds_before_and_after() {
     let rows: Vec<ErrorRow<'_>> = vec![
@@ -664,15 +668,17 @@ fn an_untyped_break_value_should_fail_the_loop_holds_before_and_after() {
         ),
         (
             "a block that never ends",
+            // E0043 at the `loop`, as at its block twin `let a = { return; h() }`.
             "fn h(x: i64) -> i64 { x }\nfn main() {\n    let a = loop { break { return; h() } }\n    print(a + true)\n}\n"
                 .into(),
-            vec![(ArgumentCount, (3, 36))],
+            vec![(NoValue, (3, 13)), (ArgumentCount, (3, 36))],
         ),
         (
             "a none first",
+            // The `None` joins with `h()` to `i64?`, as in `if c { None } else { h() }`.
             "fn h(x: i64) -> i64 { x }\nfn f(c: bool) {\n    let a = loop {\n        if c { break None }\n        break h()\n    }\n    print(a + true)\n}\nfn main() {}\n"
                 .into(),
-            vec![(CannotInfer, (4, 22)), (ArgumentCount, (5, 15))],
+            vec![(ArgumentCount, (5, 15)), (Mismatch, (7, 11))],
         ),
     ];
     error_rows(&rows);
@@ -822,5 +828,256 @@ fn a_failure_that_the_join_fix_does_not_reach_should_keep_its_errors_holds_befor
             vec![(Mismatch, (1, 20))],
         ),
     ];
+    error_rows(&rows);
+}
+
+/// The program of a row of `a_failed_head_should_add_no_conflict_of_its_branches`:
+/// `stmt` is line 12.
+fn failed_head_program(stmt: &str) -> String {
+    format!(
+        "fn pick<T>(a: T, _b: T) -> T {{ a }}\nfn take(v: u8) -> u8 {{ v }}\nfn takeo(v: u8?) -> bool {{ v == None }}\nstruct Box {{ v: u8 }}\nstruct BoxO {{ v: u8? }}\nenum E {{ A; B }}\nfn main() {{\n    let a: u8 = 2\n    let o: u8? = Some(2)\n    let c = [1].len() == 2\n    let e = E.B\n    {stmt}\n}}\n"
+    )
+}
+
+/// GIVEN an `if` or a `match` whose condition, `if let` value or guard failed
+/// AND it has a `u8` branch and literal branches
+/// WHEN it is at a `let`, in an argument, in a field or in a generic argument
+/// THEN only the failed head reports: the literal branches take the type of the others
+/// AND no E0032 follows from the failure (ADR 0049)
+#[test]
+#[expect(clippy::too_many_lines, reason = "one row per shape and position")]
+fn a_failed_head_should_add_no_conflict_of_its_branches() {
+    let rows: Vec<(&str, &str, Vec<Wanted>)> = vec![
+        (
+            "a failed condition in a `match` arm, in an argument",
+            "print(take(match e { E.A => a; _ => if nope { 1 } else { 2 } }))",
+            vec![(BindingNotFound, (12, 44))],
+        ),
+        (
+            "a failed condition in a `match` arm, in a field",
+            "let b = Box(v: match e { E.A => a; _ => if nope { 1 } else { 2 } })",
+            vec![(BindingNotFound, (12, 48))],
+        ),
+        (
+            "a failed condition in a `match` arm, at a `let`",
+            "let x = match e { E.A => a; _ => if nope { 1 } else { 2 } }",
+            vec![(BindingNotFound, (12, 41))],
+        ),
+        (
+            "a failed comparison as the `else if` condition, in an argument",
+            "print(take(if c { a } else if c == \"s\" { 1 } else { 2 }))",
+            vec![(CannotCompare, (12, 35))],
+        ),
+        (
+            "a failed comparison as the `else if` condition, in a field",
+            "let b = Box(v: if c { a } else if c == \"s\" { 1 } else { 2 })",
+            vec![(CannotCompare, (12, 39))],
+        ),
+        (
+            "a failed comparison as the `else if` condition, at a `let`",
+            "let x = if c { a } else if c == \"s\" { 1 } else { 2 }",
+            vec![(CannotCompare, (12, 32))],
+        ),
+        (
+            "a failed `else if` condition, in an argument",
+            "print(take(if c { a } else if ready { 1 } else { 2 }))",
+            vec![(BindingNotFound, (12, 35))],
+        ),
+        (
+            "a failed `else if` condition, in a field",
+            "let b = Box(v: if c { a } else if ready { 1 } else { 2 })",
+            vec![(BindingNotFound, (12, 39))],
+        ),
+        (
+            "a failed `else if` condition, at a `let`",
+            "let x = if c { a } else if ready { 1 } else { 2 }",
+            vec![(BindingNotFound, (12, 32))],
+        ),
+        (
+            "a failed guard, in an argument",
+            "print(take(match e { E.A => a; _ if nope => 1; _ => 2 }))",
+            vec![(BindingNotFound, (12, 41))],
+        ),
+        (
+            "a failed guard, in a field",
+            "let b = Box(v: match e { E.A => a; _ if nope => 1; _ => 2 })",
+            vec![(BindingNotFound, (12, 45))],
+        ),
+        (
+            "a failed guard, at a `let`",
+            "let x = match e { E.A => a; _ if nope => 1; _ => 2 }",
+            vec![(BindingNotFound, (12, 38))],
+        ),
+        (
+            "a failed value of an `else if let`, in an argument",
+            "print(take(if c { a } else if let Some(v) = nope { v } else { 2 }))",
+            vec![(BindingNotFound, (12, 49))],
+        ),
+        (
+            "a failed value of an `else if let`, in a field",
+            "let b = Box(v: if c { a } else if let Some(v) = nope { v } else { 2 })",
+            vec![(BindingNotFound, (12, 53))],
+        ),
+        (
+            "a failed value of an `else if let`, at a `let`",
+            "let x = if c { a } else if let Some(v) = nope { v } else { 2 }",
+            vec![(BindingNotFound, (12, 46))],
+        ),
+        (
+            "`None` and `Some(1)` after a failed condition, in an argument",
+            "print(takeo(if c { o } else if nope { None } else { Some(1) }))",
+            vec![(BindingNotFound, (12, 36))],
+        ),
+        (
+            "`None` and `Some(1)` after a failed condition, in a field",
+            "let b = BoxO(v: if c { o } else if nope { None } else { Some(1) })",
+            vec![(BindingNotFound, (12, 40))],
+        ),
+        (
+            "`None` and `Some(1)` after a failed condition, at a `let`",
+            "let x = if c { o } else if nope { None } else { Some(1) }",
+            vec![(BindingNotFound, (12, 32))],
+        ),
+        (
+            "a failed condition in a generic argument, in an argument",
+            "print(take(pick(if nope { 1 } else { 2 }, a)))",
+            vec![(BindingNotFound, (12, 24))],
+        ),
+        (
+            "a failed comparison in a generic argument, in an argument",
+            "print(take(pick(if c == \"s\" { 1 } else { 2 }, a)))",
+            vec![(CannotCompare, (12, 24))],
+        ),
+        (
+            "a failed comparison in a generic argument, in a field",
+            "let b = Box(v: pick(if c == \"s\" { 1 } else { 2 }, a))",
+            vec![(CannotCompare, (12, 28))],
+        ),
+        (
+            "a failed comparison in a generic argument, at a `let`",
+            "let x = pick(if c == \"s\" { 1 } else { 2 }, a)",
+            vec![(CannotCompare, (12, 21))],
+        ),
+        (
+            "a failed condition in a generic argument, in a field",
+            "let b = Box(v: pick(if nope { 1 } else { 2 }, a))",
+            vec![(BindingNotFound, (12, 28))],
+        ),
+        (
+            "a failed condition in a generic argument, at a `let`",
+            "let x = pick(if nope { 1 } else { 2 }, a)",
+            vec![(BindingNotFound, (12, 21))],
+        ),
+    ];
+    let rows: Vec<ErrorRow<'_>> = (rows.into_iter())
+        .map(|(name, stmt, wanted)| (name, failed_head_program(stmt), wanted))
+        .collect();
+    error_rows(&rows);
+}
+
+/// The program of a row of `a_failed_scrutinee_should_report_once_in_each_wrapper`:
+/// `stmt` is line 5.
+fn wrapped_program(stmt: &str) -> String {
+    format!(
+        "fn id<T>(x: T) -> T {{ x }}\nenum S {{ C(r: f64); Q(s: f64) }}\nfn main() {{\n    let c = [1].len() == 2\n    {stmt}\n    dbg(x)\n}}\n"
+    )
+}
+
+/// GIVEN a `match` or an `if let` whose scrutinee or value failed: an unknown name, an unknown
+///   function, a failed addition, or a failed comparison as an `if` condition
+/// WHEN it is in `Some` or in a generic call, at one and at two levels
+/// THEN the failure reports once, as on `main`
+#[test]
+fn a_failed_scrutinee_should_report_once_in_each_wrapper() {
+    let rows: Vec<(&str, &str, Vec<Wanted>)> = vec![
+        (
+            "`Some` of a `match`",
+            "let x = Some(match shp { S.C(r) => r; S.Q(s) => s })",
+            vec![(BindingNotFound, (5, 24))],
+        ),
+        (
+            "two `Some` around a `match`",
+            "let x = Some(Some(match shp { S.C(r) => r; S.Q(s) => s }))",
+            vec![(BindingNotFound, (5, 29))],
+        ),
+        (
+            "two generic calls around a `match`",
+            "let x = id(id(match shp { S.C(r) => r; S.Q(s) => s }))",
+            vec![(BindingNotFound, (5, 25))],
+        ),
+        (
+            "two generic calls around an `if let`",
+            "let x = id(id(if let Some(v) = nope { v } else { 0 }))",
+            vec![(BindingNotFound, (5, 36))],
+        ),
+        (
+            "a generic call and `Some` around an `if let`",
+            "let x = id(Some(if let Some(v) = nope { v } else { 0 }))",
+            vec![(BindingNotFound, (5, 38))],
+        ),
+        (
+            "`Some` of a `match` of an unknown function",
+            "let x = Some(match nofn() { _ => 1 })",
+            vec![(FunctionNotFound, (5, 24))],
+        ),
+        (
+            "two generic calls around a `match` of an unknown function",
+            "let x = id(id(match nofn() { _ => 1 }))",
+            vec![(FunctionNotFound, (5, 25))],
+        ),
+        (
+            "a generic call of an `if let` of an unknown function",
+            "let x = id(if let Some(v) = nofn() { v } else { 0 })",
+            vec![(FunctionNotFound, (5, 33))],
+        ),
+        (
+            "`Some` of a `match` of a failed addition",
+            "let x = Some(match 1 + true { _ => 1 })",
+            vec![(Mismatch, (5, 28))],
+        ),
+        (
+            "two generic calls around a `match` of a failed addition",
+            "let x = id(id(match 1 + true { _ => 1 }))",
+            vec![(Mismatch, (5, 29))],
+        ),
+        (
+            "a generic call of an `if let` of a failed addition",
+            "let x = id(if let Some(v) = 1 + true { v } else { 0 })",
+            vec![(Mismatch, (5, 37))],
+        ),
+        (
+            "two `Some` around an `if` with a failed comparison",
+            "let x = Some(Some(if c == \"s\" { 1 } else { 2 }))",
+            vec![(CannotCompare, (5, 26))],
+        ),
+        (
+            "a generic call of a `match`",
+            "let x = id(match nope { _ => 1 })",
+            vec![(BindingNotFound, (5, 22))],
+        ),
+        (
+            "a generic call of an `if let`",
+            "let x = id(if let Some(v) = nope { v } else { 0 })",
+            vec![(BindingNotFound, (5, 33))],
+        ),
+        (
+            "a generic call of a `match` of an unknown enum value",
+            "let x = id(match shp { S.C(r) => r; S.Q(s) => s })",
+            vec![(BindingNotFound, (5, 22))],
+        ),
+        (
+            "a generic call of an `if let` that also reads an unknown name",
+            "let x = id(if let Some(v) = nope { v } else { v })",
+            vec![(BindingNotFound, (5, 33)), (BindingNotFound, (5, 51))],
+        ),
+        (
+            "two `Some` around an `if let`",
+            "let x = Some(Some(if let Some(v) = nope { v } else { 0 }))",
+            vec![(BindingNotFound, (5, 40))],
+        ),
+    ];
+    let rows: Vec<ErrorRow<'_>> = (rows.into_iter())
+        .map(|(name, stmt, wanted)| (name, wrapped_program(stmt), wanted))
+        .collect();
     error_rows(&rows);
 }

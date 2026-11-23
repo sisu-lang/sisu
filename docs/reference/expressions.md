@@ -113,8 +113,7 @@ fn main() {
 **Rules**
 
 - The condition must be a `bool`. [E0032](../diagnostics/E0032.md)
-- The values of the branches must have one type. [E0032](../diagnostics/E0032.md)
-- When one branch is a `T` and another a `T?`, the `if` is a `T?`.
+- The branches are the members of a [join](#joins). [E0032](../diagnostics/E0032.md)
 - A branch of the type `never` takes the type of the others ([Types](types.md#never)).
 - An `if` without an `else` whose branch gives `unit` gives a `unit` value. When its branch has a value of another type, the `if` has no value. It is a statement. Where `unit?` is expected, an `if` without an `else` has no value either. [E0043](../diagnostics/E0043.md)
 - An `else if` is an `if` in the `else` branch.
@@ -142,6 +141,88 @@ fn main() {
 }
 ```
 
+## Joins
+
+Some expressions combine values into one type. Each combined value is a *member* of a *join*. These are the members:
+
+- the branches of an `if` or an `if let`, and the arms of a `match`
+- the elements of an [array literal](arrays.md#array-literals)
+- the `break` values of one [loop](#loop)
+- the value in the left side of `??`, and its right side
+- the two operands of `+`, `-`, `*`, `/`, `%`, a comparison or an equality, and the two sides of a compound assignment such as `+=`
+- the operands of a [comparison chain](operators.md#comparison-chains)
+- the arguments of one type parameter of a [generic call](generics.md#inference)
+
+**Rules**
+
+- The type of a join is the type of one of its members. Each other member converts to that type ([ADR 0052](../adr/0052-a-join-takes-the-type-of-one-of-its-members.md)). [E0032](../diagnostics/E0032.md)
+- A `T` converts to a `T?`. A value of a type that conforms to an interface `I` converts to an `any I`.
+- When a member is optional, the type of another member with `?` added can be the type of the join. With an `e: any Seen`, `[e, Some(Eye(v: 1))]` is a `[(any Seen)?]`.
+- A join never makes an `any I` that no member has. With a `Lid` and an `Eye` that conform to `Seen`, `[Eye(v: 1), Lid(v: 2)]` is an error. [E0032](../diagnostics/E0032.md)
+- When the members are optional at different depths, the type has each of these `?`. So `[[[1, None], None], None]` is a `[[[i64?]?]?]`.
+- A value that is already made, such as a local, converts at its top only. With an `m: i64?` and an `xs: [i64]`, `if c { [m] } else { [1] }` is a `[i64?]`, but `if c { [m] } else { xs }` is an error. [E0032](../diagnostics/E0032.md)
+- The order of the members changes neither the type nor the error. `??` is the exception. Its left side must be optional, and the checker reads it first. So a `None` or a generic call there takes no type from the right side. [E0048](../diagnostics/E0048.md) [E0050](../diagnostics/E0050.md)
+- The operands of `&&` and `||` are no members. Each must be a `bool`.
+- An expected type is the type of the join for these members: branches and arms, array elements, `break` values and the `??` pair. A member that does not convert to it is an error at the member: expected that type, found the type of the member. [E0032](../diagnostics/E0032.md)
+- A generic call decides `T` from its arguments first ([Generics](generics.md#inference)). A comparison gives a `bool`, so an expected type does not go to its operands.
+- When the members agree and only the expected type differs, one error is at the whole join.
+- An integer literal in a join takes its type as [Literals](literals.md#the-type-of-an-integer-literal) says.
+- With no expected type, and when no type fits each member, the error is at the join. It gives the types of the members. [E0032](../diagnostics/E0032.md)
+
+```sisu
+interface Seen {
+    fn seen(self) -> i64
+}
+
+struct Eye: Seen {
+    v: i64
+    fn seen(self) -> i64 { self.v }
+}
+
+struct Lid: Seen {
+    v: i64
+    fn seen(self) -> i64 { self.v }
+}
+
+fn main() {
+    let c = [1].len() == 1
+    let m: i64? = Some(5)
+    let e: any Seen = Eye(v: 3)
+    let a = if c { [m] } else { [1] }
+    let b = [e, Some(Lid(v: 4))]
+    let d = [[[1, None], None], None]
+    // The `let` with a type shows the type of each join.
+    let a2: [i64?] = a
+    let b2: [(any Seen)?] = b
+    let d2: [[[i64?]?]?] = d
+    print(a2.len() + b2.len() + d2.len())  // 5
+}
+```
+
+```sisu
+interface Seen {
+    fn seen(self) -> i64
+}
+
+struct Eye: Seen {
+    v: i64
+    fn seen(self) -> i64 { self.v }
+}
+
+struct Lid: Seen {
+    v: i64
+    fn seen(self) -> i64 { self.v }
+}
+
+fn main() {
+    let c = [1].len() == 1
+    let m: i64? = Some(5)
+    let xs: [i64] = [1]
+    let f = [Eye(v: 1), Lid(v: 2)]         // error[E0032]
+    let g = if c { [m] } else { xs }       // error[E0032]
+}
+```
+
 ## loop
 
 A `loop` is an expression. `break` with a value ends the loop, and that value is the value of the loop. [Statements](statements.md#loop) tells how a loop runs, and how a loop label names it.
@@ -161,16 +242,45 @@ fn main() {
 
 **Types**
 
-- The values of all the `break`s of a loop must have one type. [E0032](../diagnostics/E0032.md)
-- The expected type gives that type. A value before the loop also gives it, when that value has a type of its own. This value is the left side of an operator, an earlier branch or an earlier `break` value. So `v + loop { break 1 }` is valid when `v` is a `u8`. `1 + loop { break v }` is also valid, because `1`, `1 + 1` and a generic `id(1)` have no type of their own. With none of these, the first `break` value gives the type, so `let x = loop { if c { break 1 }; break v }` and `loop { break 1 } + v` are errors.
+- The values of the `break`s of a loop are the members of a [join](#joins). [E0032](../diagnostics/E0032.md)
+- The expected type is the type of the loop. With none, the join of the `break` values gives it. So with a `v: u8`, `loop { if c { break 1 }; break v }` is a `u8`, as is `loop { if c { break v }; break 1 }`. `v + loop { break 1 }` and `loop { break 1 } + v` are `u8`s too.
 - A `break` value of the type `never` takes the type of the other `break` values, as a branch of an `if` does.
 - The loop has the type `never` only when it has no `break`, or when each `break` has a value of the type `never` ([Types](types.md#never)).
+
+```sisu
+fn main() {
+    let c = [1].len() == 1
+    let v: u8 = 250
+    let n = loop {
+        if c {
+            break 1
+        }
+        break v
+    }
+    print(n + 5)                 // 6
+    print(v + loop { break 1 })  // 251
+}
+```
 
 **Loops with no value**
 
 - A loop whose `break`s have no value gives a `unit` value. This is also true when the other `break`s have values of the type `never`.
 - A `break` with no value gives `unit`. So a loop that has a `break` with no value and a `break` with a value of another type is an error. [E0043](../diagnostics/E0043.md)
-- A `break` with a `unit?` value is the exception. Then a `break` with no value gives `Some` of a `unit`, and the loop gives a `unit?`. So `loop { if c { break Some(g()) }; break }` is never `None`.
+- A `unit?` value is a value of another type here. So `loop { if c { break o }; break }` with an `o: unit?` is an error, as a `return` with no value is in a function that returns a `unit?` ([E0036](../diagnostics/E0036.md)).
+
+```sisu
+fn main() {
+    let c = [1].len() == 1
+    let o: unit? = None
+    let x = loop {
+        if c {
+            break o
+        }
+        break                    // error[E0043]
+    }
+    print(x)
+}
+```
 
 ```sisu
 fn wait(ready: bool) {

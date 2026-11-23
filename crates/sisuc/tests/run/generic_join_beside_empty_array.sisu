@@ -1,0 +1,26 @@
+// GIVEN a generic call whose second argument is `[]`
+// AND the element type of its first argument stays open
+// WHEN its elements are an `if`, a `match` and an `if let` of a `u8` and a literal
+// AND an element is a `u8` beside a literal
+// THEN each array takes the type `[u8]` from its elements, and each value prints as on `main`
+// AND Valgrind and `--rc-checks` find every object freed exactly once
+fn pick<T>(a: T, _b: T) -> T { a }
+
+enum E { A; B }
+
+fn main() {
+    let a: u8 = 3
+    let c = [1].len() == 2
+    let e = if c { E.A } else { E.B }
+    let p: u8? = None
+    let x = pick([if c { a } else { 1 }], [])
+    print(x[0])                             // 1
+    let y = pick([match e { E.A => a; _ => 2 }, if c { 1 } else { a }], [])
+    print(y[0] + y[1])                      // 5
+    let z = pick([if let Some(q) = p { q } else { 4 }], [])
+    print(z[0])                             // 4
+    let w = pick([a, 1], [])
+    print(w[0] + w[1])                      // 4
+    let v = pick([if c { [a] } else { [7] }], [])
+    print(v[0][0])                          // 7
+}

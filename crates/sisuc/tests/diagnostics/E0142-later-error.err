@@ -10,7 +10,7 @@ error[E0142]: loop label `outer` has the same name as the binding `outer`
   |
   = help: rename the loop label
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
  --> E0142-later-error.sisu:4:15
   |
 4 |     print(a + true)
@@ -28,7 +28,7 @@ error[E0142]: loop label `outer` has the same name as the binding `outer`
    |
    = help: rename the loop label
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
   --> E0142-later-error.sisu:11:15
    |
 11 |     print(a + true)
@@ -58,7 +58,7 @@ error[E0142]: loop label `outer` has the same name as the binding `outer`
    |
    = help: rename the loop label
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
   --> E0142-later-error.sisu:25:15
    |
 25 |     print(a + true)

@@ -7,4 +7,5 @@ fn main() {
     let o: bool? = p
     print(o * 2)
     print(1 + p)
+    print(p + 1)
 }

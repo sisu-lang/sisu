@@ -1,0 +1,38 @@
+// GIVEN a generic call with a part that is still open where its place knows the type
+// WHEN the call is wrong
+// THEN the report shows the known part, and no `_`
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+struct Wk {
+    fn mkb<X>(self) -> Two<i64, X> { panic("no") }
+}
+
+fn wk() -> Wk { Wk() }
+
+fn tfst<A>(p: Two<A, u8>, _a: A) -> A { p.a }
+
+fn ep<A, B>() -> Two<[A?], [B?]> { panic("no") }
+
+fn pick3<T>(a: T, _b: T, _c: T) -> T { a }
+
+fn none<X>() -> X? { None }
+
+// `mkb` leaves `X` open, and the place gives it `u8`.
+fn row_late() {
+    let _x: i64? = tfst(wk().mkb(), None)
+}
+
+// `ep()` takes either of the other two types, so it decides nothing and has no label.
+fn row_open_member() {
+    print(pick3(Two<[i64?], [u8?]>(a: [], b: []), ep(), Two<[bool], [i64]>(a: [], b: [])).a.len())
+}
+
+// `none` leaves its parameter open, and the return type gives it `[T]`.
+fn from_none<T>() -> [T] {
+    none()
+}
+
+fn main() {}

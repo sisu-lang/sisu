@@ -56,7 +56,6 @@ crates/sisuc/src/ast.rs::display_float
 crates/sisuc/src/check/string.rs::a_match_is_one_term_only_in_parentheses
 crates/sisuc/src/check/tests/arrays.rs::array_of_t_is_not_array_of_optional_t
 crates/sisuc/src/check/tests/arrays.rs::declared_len_is_called
-crates/sisuc/src/check/tests/arrays.rs::element_does_not_fit
 crates/sisuc/src/check/tests/arrays.rs::element_join
 crates/sisuc/src/check/tests/arrays.rs::empty_array_cannot_be_inferred
 crates/sisuc/src/check/tests/arrays.rs::empty_array_typed_by_sibling_branch
@@ -149,8 +148,6 @@ crates/sisuc/src/check/tests/floats.rs::int_to_float
 crates/sisuc/src/check/tests/floats.rs::literal_typing
 crates/sisuc/src/check/tests/floats.rs::math_is_a_name_like_any_other
 crates/sisuc/src/check/tests/floats.rs::math_prints
-crates/sisuc/src/check/tests/floats.rs::mixing
-crates/sisuc/src/check/tests/floats.rs::nan_comparison
 crates/sisuc/src/check/tests/floats.rs::negation_type
 crates/sisuc/src/check/tests/floats.rs::shadowed_type_path
 crates/sisuc/src/check/tests/floats.rs::type_as_value
@@ -256,7 +253,6 @@ crates/sisuc/src/check/tests/mod.rs::field_on_i64
 crates/sisuc/src/check/tests/mod.rs::for_variable_has_no_fix
 crates/sisuc/src/check/tests/mod.rs::functions_in_any_order
 crates/sisuc/src/check/tests/mod.rs::header_jump_leaves_target_untyped
-crates/sisuc/src/check/tests/mod.rs::if_branches_differ
 crates/sisuc/src/check/tests/mod.rs::if_let_needs_optional
 crates/sisuc/src/check/tests/mod.rs::if_let_scope
 crates/sisuc/src/check/tests/mod.rs::if_let_shadows
@@ -412,14 +408,12 @@ crates/sisuc/src/check/tests/mod.rs::unknown_method
 crates/sisuc/src/check/tests/mod.rs::unknown_name
 crates/sisuc/src/check/tests/mod.rs::unknown_optional_type_underlines_the_name
 crates/sisuc/src/check/tests/mod.rs::unknown_param_type_still_checks_body
-crates/sisuc/src/check/tests/mod.rs::unknown_return_type_checks_no_break
 crates/sisuc/src/check/tests/mod.rs::unknown_target_suppresses_never_reassigned
 crates/sisuc/src/check/tests/mod.rs::unknown_target_suppresses_warnings_in_every_open_scope
 crates/sisuc/src/check/tests/mod.rs::unknown_type
 crates/sisuc/src/check/tests/mod.rs::unknown_type_in_signature
 crates/sisuc/src/check/tests/mod.rs::unreachable_break_still_counts
 crates/sisuc/src/check/tests/mod.rs::unreachable_warned_once_per_block
-crates/sisuc/src/check/tests/mod.rs::value_branches_of_different_types_still_mismatch
 crates/sisuc/src/check/tests/mod.rs::variable_may_shadow_a_param
 crates/sisuc/src/check/tests/mod.rs::variable_reassigned_in_inner_block
 crates/sisuc/src/check/tests/mod.rs::warning_and_error_in_position_order
@@ -452,7 +446,6 @@ crates/sisuc/src/check/tests/patterns.rs::literal_patterns
 crates/sisuc/src/check/tests/patterns.rs::malformed_patterns_of_a_wide_variant_check_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::many_unreachable_rows_check_in_linear_time
 crates/sisuc/src/check/tests/patterns.rs::match_coverage
-crates/sisuc/src/check/tests/patterns.rs::match_join
 crates/sisuc/src/check/tests/patterns.rs::match_lowers
 crates/sisuc/src/check/tests/patterns.rs::match_spills
 crates/sisuc/src/check/tests/patterns.rs::one_named_field_per_arm_checks_in_linear_time
@@ -512,19 +505,16 @@ crates/sisuc/src/check/tests/shadowing.rs::rhs_sees_old_binding
 crates/sisuc/src/check/tests/shadowing.rs::type_can_change
 crates/sisuc/src/check/tests/strings.rs::chain_binds_each_operand
 crates/sisuc/src/check/tests/strings.rs::compare_spills
-crates/sisuc/src/check/tests/strings.rs::concat_mismatch
 crates/sisuc/src/check/tests/strings.rs::concat_mismatch_layout
 crates/sisuc/src/check/tests/strings.rs::concat_spills
 crates/sisuc/src/check/tests/strings.rs::interpolation_spills
 crates/sisuc/src/check/tests/strings.rs::join_literal_in_element_compound
 crates/sisuc/src/check/tests/strings.rs::minus_assign_on_string_field
 crates/sisuc/src/check/tests/strings.rs::nested_joins_check_in_quadratic_time
-crates/sisuc/src/check/tests/strings.rs::plus_wanting_i64_blames_the_nested_float
 crates/sisuc/src/check/tests/strings.rs::safe_words
 crates/sisuc/src/check/tests/strings.rs::string_built_in_names
 crates/sisuc/src/check/tests/strings.rs::string_call
 crates/sisuc/src/check/tests/strings.rs::string_call_arguments
-crates/sisuc/src/check/tests/strings.rs::string_comparison_mismatch
 crates/sisuc/src/check/tests/strings.rs::string_from_chars
 crates/sisuc/src/check/tests/strings.rs::string_is
 crates/sisuc/src/check/tests/strings.rs::string_methods
@@ -545,8 +535,6 @@ crates/sisuc/src/check/tests/u8.rs::literal_argument_is_optional
 crates/sisuc/src/check/tests/u8.rs::literal_does_not_fit
 crates/sisuc/src/check/tests/u8.rs::literal_from_each_source
 crates/sisuc/src/check/tests/u8.rs::literal_typed_by_sibling
-crates/sisuc/src/check/tests/u8.rs::mismatch_fix_converts_the_expression_found
-crates/sisuc/src/check/tests/u8.rs::no_mixing
 crates/sisuc/src/check/tests/u8.rs::optional_literal
 crates/sisuc/src/check/tests/u8.rs::print_takes_u8
 crates/sisuc/src/check/tests/u8.rs::u8_cannot_be_negative

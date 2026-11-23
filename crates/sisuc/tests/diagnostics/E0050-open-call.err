@@ -1,0 +1,66 @@
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-open-call.sisu:15:25
+   |
+15 | fn element() { let w = [id(mk2())] }
+   |                         ^^
+   |
+   = help: annotate the result, or write the type: `id<...>(...)`
+
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-open-call.sisu:16:37
+   |
+16 | fn branch(c: bool) { let w = if c { id(mk2()) } else { id(mk2()) } }
+   |                                     ^^
+   |
+   = help: annotate the result, or write the type: `id<...>(...)`
+
+error[E0050]: cannot infer `V` for `id`
+  --> E0050-open-call.sisu:17:26
+   |
+17 | fn elements() { let w = [id(mk2()), id(mk2())] }
+   |                          ^^
+   |
+   = help: annotate the result, or write the type: `id<...>(...)`
+
+error[E0050]: cannot infer `X` for `mk2`
+  --> E0050-open-call.sisu:18:22
+   |
+18 | fn compare() { print(mk2() < mk2()) }
+   |                      ^^^
+   |
+   = help: annotate the result, or write the type: `mk2<...>(...)`
+
+error[E0050]: cannot infer `T` for `first`
+  --> E0050-open-call.sisu:19:30
+   |
+19 | fn coalesce(u: u8) -> i64? { first([]) ?? u }
+   |                              ^^^^^
+   |
+   = help: annotate the result, or write the type: `first<...>(...)`
+
+error[E0050]: cannot infer `S` for `put`
+  --> E0050-open-call.sisu:20:28
+   |
+20 | fn associated() { let w = [put(true)] }
+   |                            ^^^
+   |
+   = help: annotate the result, or write the type: `put<...>(...)`
+
+error[E0050]: cannot infer the type of `None`
+  --> E0050-open-call.sisu:23:30
+   |
+23 | fn none_element() { let w = [None] }
+   |                              ^^^^
+   |
+   = help: write the type: `let x: ...? = None`
+
+error[E0050]: cannot infer the type of `None`
+  --> E0050-open-call.sisu:24:42
+   |
+24 | fn none_branch(c: bool) { let w = if c { None } else { None } }
+   |                                          ^^^^
+   |
+   = help: write the type: `let x: ...? = None`
+
+sisu: 8 errors
+sisu: for more on a code, run `sisu explain <code>`: E0050

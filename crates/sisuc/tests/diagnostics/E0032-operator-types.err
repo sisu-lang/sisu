@@ -22,11 +22,17 @@ error[E0032]: expected `i64`, `u8` or `f64`, found `bool?`
 8 |     print(o * 2)
   |           ^
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
  --> E0032-operator-types.sisu:9:15
   |
 9 |     print(1 + p)
   |               ^
 
-sisu: 5 errors
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
+  --> E0032-operator-types.sisu:10:11
+   |
+10 |     print(p + 1)
+   |           ^
+
+sisu: 6 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032

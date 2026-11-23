@@ -1,0 +1,24 @@
+// GIVEN a `main` with three joins: a branch, an element and a `break`
+// AND each joins a value of type `any Sh` and a `D`, a class that does not conform to `Sh`
+// WHEN `sisu check` runs on it
+// THEN it reports E0032 at the `if` (21:14), with a label at each branch (ADR 0052)
+// AND it reports E0032 at the array (22:14), with a label at each element (ADR 0052)
+// AND it reports E0032 at the `loop` (23:14), with a label at each `break` value (ADR 0052)
+interface Sh {
+    fn n(self) -> i64
+}
+
+enum En: Sh {
+    A
+    fn n(self) -> i64 { 1 }
+}
+
+class D {}
+
+fn main() {
+    let c = true
+    let s: any Sh = En.A
+    let _a = if c { s } else { D() }
+    let _b = [s, D()]
+    let _c = loop { if c { break s }; break D() }
+}

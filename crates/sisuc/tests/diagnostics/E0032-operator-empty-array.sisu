@@ -1,0 +1,7 @@
+fn main() {
+    let mut m = 1
+    m += []
+    let b = [] + []
+    let c = 1 + []
+    let d = [None] + 1
+}

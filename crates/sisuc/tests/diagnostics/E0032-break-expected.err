@@ -1,10 +1,13 @@
 error[E0032]: expected `i64`, found `string`
- --> E0032-break-expected.sisu:3:15
+ --> E0032-break-expected.sisu:2:18
   |
-2 |     let x: i64 = loop {
-  |            --- declared as `i64` here
-3 |         break "s"
-  |               ^^^
+2 |       let x: i64 = loop {
+  |  ____________---___^
+  | |            |
+  | |            declared as `i64` here
+3 | |         break "s"
+4 | |     }
+  | |_____^
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

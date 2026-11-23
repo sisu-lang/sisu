@@ -158,3 +158,5 @@ The roadmap lists both under "Open decisions". Nothing here rules them out.
 - `where` clauses are not part of this milestone. A bound goes in the angle
   brackets, and an associated type may carry one (`type Item: Display`), so
   adding `where` later breaks no program.
+
+Note (2026-11-16, ADR 0052): type arguments also come from the other members of a join, as `main` already does; a generic body is still checked once, at its definition.

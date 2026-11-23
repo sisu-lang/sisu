@@ -1,0 +1,10 @@
+enum Pr<A, B> { P(a: A, b: B) }
+fn kp<Y>(y: Y) -> Pr<i64?, Y> { Pr.P(a: None, b: y) }
+fn kv<X>(x: X) -> Pr<X?, X> { Pr.P(a: None, b: x) }
+fn snd<A, B>(p: Pr<A, B>) -> B { match p { Pr.P(a, b) => b } }
+fn main() {
+    let k = 5
+    let x: i64?? = snd(kp(5))
+    let y: i64?? = snd(kv(5))
+    let z: i64?? = snd(kp(k))
+}

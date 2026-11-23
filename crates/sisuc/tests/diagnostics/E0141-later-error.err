@@ -8,7 +8,7 @@ error[E0141]: `break` with a value in a `while`
   |
   = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
  --> E0141-later-error.sisu:4:15
   |
 4 |     print(a + true)
@@ -24,7 +24,7 @@ error[E0141]: `break` with a value in a `for`
   |
   = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
  --> E0141-later-error.sisu:9:15
   |
 9 |     print(a + true)
@@ -38,7 +38,7 @@ error[E0141]: `break` with a value in a `while let`
    |
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
   --> E0141-later-error.sisu:14:15
    |
 14 |     print(a + true)
@@ -54,7 +54,7 @@ error[E0141]: `break` with a value in a `while`
    |
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
   --> E0141-later-error.sisu:20:15
    |
 20 |     print(a + true)
@@ -70,7 +70,7 @@ error[E0141]: `break` with a value in a `while`
    |
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
   --> E0141-later-error.sisu:26:15
    |
 26 |     print(a + true)
@@ -86,7 +86,7 @@ error[E0141]: `break` with a value in a `while`
    |
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
   --> E0141-later-error.sisu:32:15
    |
 32 |     print(a + true)
@@ -102,7 +102,7 @@ error[E0141]: `break` with a value in a `while`
    |
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
   --> E0141-later-error.sisu:38:15
    |
 38 |     print(a + true)
@@ -118,7 +118,7 @@ error[E0141]: `break` with a value in a `while`
    |
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
   --> E0141-later-error.sisu:44:15
    |
 44 |     print(a + true)
@@ -134,7 +134,7 @@ error[E0141]: `break` with a value in a `while`
    |
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
   --> E0141-later-error.sisu:50:15
    |
 50 |     print(a + true)
@@ -150,7 +150,7 @@ error[E0141]: `break` with a value in a `while`
    |
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
   --> E0141-later-error.sisu:56:15
    |
 56 |     print(a + true)
@@ -166,7 +166,7 @@ error[E0141]: `break` with a value in a `while`
    |
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
   --> E0141-later-error.sisu:62:15
    |
 62 |     print(a + true)
@@ -182,7 +182,7 @@ error[E0141]: `break` with a value in a `while`
    |
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
   --> E0141-later-error.sisu:68:15
    |
 68 |     print(a + true)
@@ -198,7 +198,7 @@ error[E0141]: `break` with a value in a `while`
    |
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
   --> E0141-later-error.sisu:75:15
    |
 75 |     print(a + true)
@@ -214,7 +214,7 @@ error[E0141]: `break` with a value in a `while`
    |
    = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
   --> E0141-later-error.sisu:81:15
    |
 81 |     print(a + true)
@@ -314,7 +314,7 @@ error[E0141]: `break` with a value in a `while`
     |
     = help: only `loop` gives a value through `break`; assign to a variable declared before the loop instead
 
-error[E0032]: expected `i64`, found `bool`
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `bool`
    --> E0141-later-error.sisu:153:19
     |
 153 |         print(a + true)

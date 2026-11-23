@@ -1,0 +1,9 @@
+fn put<T>(mut xs: [T], x: T) -> T {
+    xs = [x]
+    xs[0]
+}
+fn main() {
+    let mut names = ["a"]
+    let x: i64 = put(mut names, "s")
+    print(x)
+}

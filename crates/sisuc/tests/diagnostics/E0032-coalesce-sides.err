@@ -1,0 +1,10 @@
+error[E0032]: the two sides of `??` have different types
+ --> E0032-coalesce-sides.sisu:4:15
+  |
+4 |     let s = o ?? b
+  |             - ^^ - `i64`
+  |             |
+  |             `u8`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

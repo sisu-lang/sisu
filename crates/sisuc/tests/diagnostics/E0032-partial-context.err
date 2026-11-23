@@ -1,8 +1,10 @@
-error[E0032]: expected `bool`, found `string`
- --> E0032-partial-context.sisu:8:19
+error[E0032]: the arguments for `U` of this call have different types
+ --> E0032-partial-context.sisu:8:5
   |
 8 |     h(true, Two.P("s", 1))
-  |                   ^^^
+  |     ^ ----  ------------- this argument gives `U` the type `string`
+  |       |
+  |       `bool`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

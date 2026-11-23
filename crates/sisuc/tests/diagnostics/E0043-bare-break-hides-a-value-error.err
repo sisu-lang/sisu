@@ -1,0 +1,18 @@
+error[E0043]: `break` has no value, but this `loop` gives one
+ --> E0043-bare-break-hides-a-value-error.sisu:5:35
+  |
+5 |     let x: string = loop { if c { break }; if d { break a }; break a }
+  |                                   ^^^^^           ------- this `break` gives the loop a value
+  |
+  = help: give every `break` of this `loop` a value, or none
+
+error[E0043]: `break` has no value, but this `loop` gives one
+ --> E0043-bare-break-hides-a-value-error.sisu:7:27
+  |
+7 |     let y = loop { if c { break }; break if d { 1 } else { "s" } }
+  |                           ^^^^^    ----------------------------- this `break` gives the loop a value
+  |
+  = help: give every `break` of this `loop` a value, or none
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0043

@@ -88,7 +88,7 @@ codes! {
     MainSignature = "E0029",
     UnknownType = "E0030",
     BodyHasNoValue = "E0031",
-    Mismatch | PatternMismatch | StringGetNeedsRange | ArrayGetTakesIndex = "E0032",
+    Mismatch | PatternMismatch | StringGetNeedsRange | ArrayGetTakesIndex | JoinMismatch = "E0032",
     BindingNotFound = "E0033",
     DefinedTwice | InheritedRequirement = "E0034",
     ForNeedsArray = "E0035",
@@ -771,6 +771,19 @@ pub(crate) enum DiagnosticKind {
         fix: Option<MismatchFix>,
         conversion: bool,
         layers: bool,
+    },
+    /// The members of the join `form`, at `head`, have no one type that each converts to. Each of
+    /// `groups` is a type, as written, with the values that have it. Each of `parts` is an
+    /// argument of a generic call, at a span, and the type, as written, that it gives the type
+    /// parameter. `interfaces` are the interfaces of the program that each member fits, and `fix`
+    /// is the rewrite that would join the members.
+    JoinMismatch {
+        form: JoinFormName,
+        head: Span,
+        groups: Vec<(String, Vec<Span>)>,
+        parts: Vec<(Span, String)>,
+        interfaces: Vec<String>,
+        fix: Option<JoinFix>,
     },
     /// The binding `name`, at `at`, which no scope holds.
     BindingNotFound {
@@ -1966,6 +1979,31 @@ fn listed(names: &[String], last: &str) -> String {
     format!("{} {last} `{end}`", rest.join(", "))
 }
 
+/// The message of a fix that converts a value to the type `to`.
+fn convert_message(to: &str) -> String {
+    format!("if the types are right, convert it with `{to}(...)`")
+}
+
+/// The edits that wrap the operand of `conversion` in its call.
+fn convert_edits(conversion: Conversion) -> Vec<Edit> {
+    let Conversion {
+        to,
+        through,
+        operand,
+    } = conversion;
+    vec![
+        Edit {
+            span: Span::new(operand.start(), operand.start()),
+            replacement: through
+                .map_or_else(|| format!("{to}("), |through| format!("{to}({through}(")),
+        },
+        Edit {
+            span: Span::new(operand.end(), operand.end()),
+            replacement: ")".repeat(1 + usize::from(through.is_some())),
+        },
+    ]
+}
+
 /// The most entries of a cycle that a diagnostic shows. A cycle of one more entry shows all, as
 /// "and 1 more" is no shorter than the entry.
 const CYCLE_SHOWN: usize = 5;
@@ -2293,9 +2331,6 @@ pub(crate) enum MismatchOrigin {
     Concat(Span),
     /// The earlier alternative's binding of `name`, at `at`, which gave it the type wanted.
     Alternative { name: String, at: Span },
-    /// The `break` at `at`, the first of its `loop` with a value, gave the loop the type `ty`.
-    /// `outer` is set when that loop is around the loop that reports.
-    Break { at: Span, ty: String, outer: bool },
     /// `function` declares its parameter `param` as `ty`, written at `at`.
     Parameter {
         at: Span,
@@ -2327,10 +2362,6 @@ pub(crate) enum MismatchOrigin {
     Index,
     /// The rule that an index of a place is an `i64`.
     PlaceIndex,
-    /// The element at `at` gave its inferred array the type `ty`.
-    Element { at: Span, ty: String },
-    /// The branch value at `at` gave its `if` or `match` the type `ty`.
-    Branch { at: Span, ty: String },
     /// The argument at `at` gave the type parameter `param` the type `ty`.
     Inferred { at: Span, param: String, ty: String },
 }
@@ -2341,13 +2372,6 @@ impl MismatchOrigin {
         match self {
             Self::Concat(operand) => (Some(operand), "`+` joins this `string`".to_string()),
             Self::Alternative { name, at } => (Some(at), format!("`{name}` is {want} here")),
-            Self::Break { at, ty, outer } => {
-                let which = if outer { "the outer loop" } else { "the loop" };
-                (
-                    Some(at),
-                    format!("this `break` gave {which} the type `{ty}`"),
-                )
-            }
             Self::Parameter {
                 at,
                 function,
@@ -2367,8 +2391,6 @@ impl MismatchOrigin {
             Self::Condition => (None, "a condition must be `bool`".to_string()),
             Self::Index => (None, "an index must be `i64` or a range".to_string()),
             Self::PlaceIndex => (None, "an index must be `i64`".to_string()),
-            Self::Element { at, ty } => (Some(at), format!("this element gives the type `{ty}`")),
-            Self::Branch { at, ty } => (Some(at), format!("this branch gives the type `{ty}`")),
             Self::Inferred { at, param, ty } => (
                 Some(at),
                 format!("this argument gives `{param}` the type `{ty}`"),
@@ -2409,6 +2431,49 @@ pub(crate) enum PrecisionHelp {
     /// An `f64?` part, which `??` can give a default: the part and the spec, with its `:`, as
     /// written; the part has parentheses when `??` needs them.
     Default { part: String, spec: String },
+}
+
+/// The form of a join, which the headline of its E0032 names.
+pub(crate) enum JoinFormName {
+    If,
+    Match,
+    Array,
+    Loop,
+    Coalesce,
+    /// A binary operator, as written: `+`.
+    Operator(String),
+    Compare,
+    /// A compound assignment, as written: `+=`.
+    Compound(String),
+    /// A call, which gives the type parameter `param` the types of its arguments.
+    Call(String),
+}
+
+impl JoinFormName {
+    fn headline(&self) -> String {
+        match self {
+            Self::If => "the branches of this `if` have different types".to_string(),
+            Self::Match => "the arms of this `match` have different types".to_string(),
+            Self::Array => "the elements of this array have different types".to_string(),
+            Self::Loop => "the `break` values of this loop have different types".to_string(),
+            Self::Coalesce => "the two sides of `??` have different types".to_string(),
+            Self::Operator(op) | Self::Compound(op) => {
+                format!("the two sides of `{op}` have different types")
+            }
+            Self::Compare => "the operands of this comparison have different types".to_string(),
+            Self::Call(param) => {
+                format!("the arguments for `{param}` of this call have different types")
+            }
+        }
+    }
+}
+
+/// A rewrite that would join the members of a join.
+pub(crate) enum JoinFix {
+    /// Convert each of these values to one type of the other values.
+    Convert(Vec<Conversion>),
+    /// Write the type `ty` after the name of a `let` that is at `name`.
+    Declare { name: Span, ty: String },
 }
 
 /// A rewrite that would give a mismatched value the type expected.
@@ -4989,25 +5054,10 @@ impl From<DiagnosticKind> for Diagnostic {
                     );
                 }
                 match fix {
-                    Some(MismatchFix::Convert(Conversion {
-                        to,
-                        through,
-                        operand,
-                    })) => d.with_fix(Fix {
-                        message: format!("if the types are right, convert it with `{to}(...)`"),
+                    Some(MismatchFix::Convert(conversion)) => d.with_fix(Fix {
+                        message: convert_message(conversion.to),
                         safe: false,
-                        edits: vec![
-                            Edit {
-                                span: Span::new(operand.start(), operand.start()),
-                                replacement: through.map_or_else(|| format!("{to}("), |through| {
-                                    format!("{to}({through}(")
-                                }),
-                            },
-                            Edit {
-                                span: Span::new(operand.end(), operand.end()),
-                                replacement: ")".repeat(1 + usize::from(through.is_some())),
-                            },
-                        ],
+                        edits: convert_edits(conversion),
                     }),
                     Some(MismatchFix::Interpolate { lhs, rhs }) => {
                         // The text between the operands goes, with a literal's quote beside it;
@@ -5075,6 +5125,67 @@ impl From<DiagnosticKind> for Diagnostic {
                                 replacement: "}\"".to_string(),
                             },
                         ],
+                    }),
+                    None => d,
+                }
+            }
+            DiagnosticKind::JoinMismatch {
+                form,
+                head,
+                groups,
+                parts,
+                interfaces,
+                fix,
+            } => {
+                let mut d = Diagnostic::coded(code, head, form.headline());
+                // The labels follow the source: a report is the same in each order of members.
+                let mut labels: Vec<(Span, String)> = (groups.into_iter())
+                    .flat_map(|(ty, leaves)| {
+                        leaves.into_iter().map(move |leaf| (leaf, format!("`{ty}`")))
+                    })
+                    .collect();
+                if let JoinFormName::Call(param) = &form {
+                    labels.extend(parts.into_iter().map(|(at, ty)| {
+                        (
+                            at,
+                            format!("this argument gives `{param}` the type `{ty}`"),
+                        )
+                    }));
+                }
+                labels.sort_by_key(|(at, _)| (at.start(), at.end()));
+                for (at, text) in labels {
+                    d = d.with_secondary(at, text);
+                }
+                // At a `let` the fix says it: the help is for any other place.
+                if !interfaces.is_empty() && !matches!(fix, Some(JoinFix::Declare { .. })) {
+                    let each: Vec<String> =
+                        interfaces.iter().map(|name| format!("any {name}")).collect();
+                    d = d.with_help(match each.as_slice() {
+                        [one] => {
+                            format!("the values have no shared type; `{one}` holds each of them")
+                        }
+                        _ => format!(
+                            "the values have no shared type; each of {} holds each of them",
+                            listed(&each, "and")
+                        ),
+                    });
+                }
+                match fix {
+                    Some(JoinFix::Convert(conversions)) => {
+                        let to = conversions.first().map_or("the type", |c| c.to);
+                        d.with_fix(Fix {
+                            message: convert_message(to),
+                            safe: false,
+                            edits: conversions.into_iter().flat_map(convert_edits).collect(),
+                        })
+                    }
+                    Some(JoinFix::Declare { name, ty }) => d.with_fix(Fix {
+                        message: format!("if the values should share the type `{ty}`, write it"),
+                        safe: false,
+                        edits: vec![Edit {
+                            span: Span::new(name.end(), name.end()),
+                            replacement: format!(": {ty}"),
+                        }],
                     }),
                     None => d,
                 }

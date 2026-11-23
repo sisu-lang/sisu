@@ -1,0 +1,17 @@
+error[E0032]: the arms of this `match` have different types
+ --> E0032-match-arms.sisu:5:13
+  |
+5 |     let x = match c {
+  |             ^^^^^
+6 |         true => a
+  |                 - `u8`
+7 |         false => b
+  |                  - `i64`
+  |
+help: if the types are right, convert it with `i64(...)`
+  |
+6 |         true => i64(a)
+  |                 ++++ +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

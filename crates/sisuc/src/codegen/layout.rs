@@ -306,6 +306,9 @@ impl<'ctx> Codegen<'ctx, '_> {
             TypeKind::Param(..) => {
                 panic!("mono should replace every type parameter before codegen")
             }
+            TypeKind::Infer(_) => {
+                unreachable!("the checker's write_back should leave no inference variable")
+            }
             TypeKind::Assoc(..) => {
                 panic!("mono should replace every associated type before codegen")
             }

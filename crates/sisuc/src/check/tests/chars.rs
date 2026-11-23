@@ -164,16 +164,20 @@ fn arithmetic_on_a_char_should_be_reported_once() {
         &with_main("fn f(c: char) {\n    print(c + 1 + 2)\n}"),
         &[(Code::ArithmeticOnChar, (2, 13))],
     );
-    // A float sum or a float block beside the `char` is one diagnostic, at the `char`, which
-    // expects an `f64`: the `char`'s `i64` does not reach the sum's `1.0`.
+    // A float sum or a float block beside the `char` is one diagnostic, at the operator: the
+    // operands are members of one join, so no operand expects the type of another (Task 5d-2).
     codes(
         &with_main(
             "fn f(c: char) {\n    print(c + (1.0 + 2.0))\n    print(c + { let k = 1.5\n k })\n}",
         ),
-        &[(Code::Mismatch, (2, 11)), (Code::Mismatch, (3, 11))],
+        &[
+            (Code::ArithmeticOnChar, (2, 13)),
+            (Code::ArithmeticOnChar, (3, 13)),
+        ],
     );
     // A `None` or `[]` inside a concrete operand beside the `char` reports itself, which has no
-    // type to take, and a mixed `if` joins to `f64`.
+    // type to take. A mixed `if` joins to `f64`, and the `char` beside it is the operator's
+    // mistake.
     codes(
         &with_main(
             "fn f(c: char) {\n    print(c + { let k = None; k })\n    print(c + { let k = []; k })\n    print(c + if true { 1.0 } else { 2 })\n}",
@@ -181,7 +185,7 @@ fn arithmetic_on_a_char_should_be_reported_once() {
         &[
             (Code::CannotInfer, (2, 25)),
             (Code::CannotInfer, (3, 25)),
-            (Code::Mismatch, (4, 11)),
+            (Code::ArithmeticOnChar, (4, 13)),
         ],
     );
     // A block that ends in a `None` or `[]` waits for a type as the bare value does, so the

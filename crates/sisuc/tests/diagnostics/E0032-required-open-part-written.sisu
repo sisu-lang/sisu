@@ -1,0 +1,12 @@
+// GIVEN a generic call under a required `i64` or `u8`
+// AND its first argument is a `None`, or a `Some` of a `None`, or a `Some` of an empty array
+// WHEN `sisu check` runs on it
+// THEN it reports E0032 at the first argument (9:24), (10:23) and (11:23)
+// AND each report writes the part that no type reached as the value that leaves it open
+fn pick<T>(a: T, b: T) -> T { a }
+
+fn main() {
+    let _a: i64 = pick(None, 1)
+    let _b: u8 = pick(Some(None), 2)
+    let _c: u8 = pick(Some([]), 2)
+}

@@ -1,0 +1,22 @@
+error[E0032]: the branches of this `if` have different types
+  --> E0032-any-join.sisu:21:14
+   |
+21 |     let _a = if c { s } else { D() }
+   |              ^^     - `any Sh` --- `D`
+
+error[E0032]: the elements of this array have different types
+  --> E0032-any-join.sisu:22:14
+   |
+22 |     let _b = [s, D()]
+   |              ^-  --- `D`
+   |               |
+   |               `any Sh`
+
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-any-join.sisu:23:14
+   |
+23 |     let _c = loop { if c { break s }; break D() }
+   |              ^^^^                - `any Sh` --- `D`
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

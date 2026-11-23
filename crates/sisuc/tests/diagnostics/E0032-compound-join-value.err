@@ -1,0 +1,32 @@
+error[E0032]: expected `i64`, found `string`
+ --> E0032-compound-join-value.sisu:7:10
+  |
+7 |     n += if c { s } else { "b" }
+  |          ^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0032]: expected `i64`, found `string`
+ --> E0032-compound-join-value.sisu:8:10
+  |
+8 |     n += match c { true => s; false => "b" }
+  |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0032]: expected `i64`, found `string`
+ --> E0032-compound-join-value.sisu:9:10
+  |
+9 |     n += loop { break s }
+  |          ^^^^^^^^^^^^^^^^
+
+error[E0032]: expected `f64`, found `string`
+  --> E0032-compound-join-value.sisu:10:10
+   |
+10 |     f += if c { s } else { "b" }
+   |          ^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0032]: expected `u8`, found `string`
+  --> E0032-compound-join-value.sisu:11:10
+   |
+11 |     b += if c { s } else { "b" }
+   |          ^^^^^^^^^^^^^^^^^^^^^^^
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

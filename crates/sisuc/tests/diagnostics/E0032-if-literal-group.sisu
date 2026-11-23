@@ -1,0 +1,5 @@
+fn main() {
+    let c = [1].len() == 1
+    let x = if c { 1 } else { "s" }
+    print(x)
+}

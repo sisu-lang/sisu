@@ -136,12 +136,13 @@ fn main() {
     print("{c4 ?? 9}") // 1
     let c5: u8? = unbox(Bx(v: Some(37)))
     print("{c5 ?? 9}") // 37
-    // An `i64??` context meets the return type whole, so the `None` is the outer one.
+    // The call is closed first: `T` is `i64?`, and the result takes one wrap, so `nn` holds a
+    // value.
     let nn: i64?? = first([None, Some(1)])
     if let Some(_) = nn {
-        print("some")
+        print("some") // some
     } else {
-        print("none") // none
+        print("none")
     }
     // An integer literal nests in the forms that pass it on.
     let small: u8 = 250

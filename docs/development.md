@@ -718,7 +718,7 @@ input it reads, and a rewritten copy that must print the same
 generator lives in `crates/sisuc/src/generate/`, and the runner that judges
 the program in `crates/sisuc/src/fuzz_program.rs`. Both compile only in tests
 and under the `fuzz` feature, never into the released `sisu`. Each program
-must pass seven properties. Each one has the name of its check:
+must pass eight properties. Each one has the name of its check:
 
 1. The clean check. It checks clean. Warnings are allowed.
 2. The verify check. Its mir builds and certifies, and LLVM verifies its module,
@@ -792,6 +792,27 @@ must pass seven properties. Each one has the name of its check:
    The summary of the run names each pair of the baseline that no input gave,
    as a warning in the section "Known cascades". The warning does not change
    the exit status. The fixed-seed tests do not warn.
+8. The join-order check. The order of the members of a join does not change the
+   check result. The swap reads the syntax tree of the program, which checks
+   clean, and swaps the members of each join in it. The forms are:
+   - the two blocks of an `if` that has an `else` block;
+   - the first and last elements of an array literal;
+   - the first and last arms of a `match` that has no guard;
+   - the first and last `break` values of a loop;
+   - the first and last argument of a generic call, at the places of one type
+     parameter;
+   - the operands of `+`, `*`, `==` and `!=`;
+   - the two sides of `??`, when both are optionals of one type.
+
+   An `if let` keeps its order. So do `-`, `/`, `%`, a comparison, `&&`, `||`
+   and `is`. The checker, alone, with no build, must report no error for the
+   swapped program. A `??` reads its left side first. So it swaps only when a
+   probe checks clean. The probe holds `a ?? b` in a block. The block binds `b`
+   alone, so `b` must have a type of its own. It also assigns the result of
+   `a ?? b`, and then `a`, to one variable, so both sides must be optionals of
+   one type. The probes of one depth of nested `??` go in one program. The join-order check runs after the
+   single-mistake check, before the builds. The generator also writes the joins
+   of `gap_forms` in both orders (`JOIN_ORDERS` in `generate/coverage.rs`).
 
 Name the target with `--target`, before the other arguments:
 
@@ -821,17 +842,13 @@ time. It lists every failure, not only the first:
 $ cargo nextest run -p sisuc --lib single_mistake_check_should_hold_for_the_fuzz_seeds --run-ignored only --no-capture
 ```
 
-To run the join-order check over the 128 seeds of the fuzz run, run the test
-below. The check swaps the two blocks of each `if` that has an `else` block.
-It also swaps the first and last elements of each array literal. An `if let`
-keeps its order. The checker
-must still accept the program. The check is not part of the judge yet: the
-checker still gives some `if` expressions and array literals a type that
-depends on the order of their parts. The test lists each seed that fails, with
-its first error:
+The join-order check over the 128 seeds of the fuzz run is a test that
+`make test` runs. It takes about 7 seconds in a debug build. The fuzz judge runs
+the check on every program too. To see each seed that fails, with its first
+error, run the test alone:
 
 ```console
-$ cargo nextest run -p sisuc --lib join_order_check_should_hold_for_the_fuzz_seeds --run-ignored only --no-capture
+$ cargo nextest run -p sisuc --lib join_order_check_should_hold_for_the_fuzz_seeds --no-capture
 ```
 
 The script first builds the runtime archive in release mode and points

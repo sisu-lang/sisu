@@ -138,7 +138,7 @@ fn layout_of(ty: Type, known: &Known, enums: usize) -> Option<Layout> {
         }
         // The pointer to the data and the pointer to the table.
         TypeKind::Any(..) => Some(Layout::new(2 * WORD, WORD)),
-        TypeKind::Param(..) | TypeKind::Assoc(..) => None,
+        TypeKind::Param(..) | TypeKind::Assoc(..) | TypeKind::Infer(_) => None,
     }
 }
 

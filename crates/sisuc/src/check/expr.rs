@@ -2,7 +2,10 @@
 
 use std::ops::Range;
 
+use rustc_hash::FxHashSet;
+
 use super::generic::{Site, mismatch_poison};
+use super::infer::{Kind, LiteralCheck};
 use super::names::{self, Resolved};
 use super::reports::Reported;
 use super::stmt::optional_unit;
@@ -11,6 +14,7 @@ use super::{
     type_of, wrap, wrap_block,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
+use crate::conformance::ensure_stack;
 use crate::diagnostic::{
     Code, Definition, Diagnostic, DiagnosticKind, Expected, Literal, NoValueCause, RangePlace,
     suggestion,
@@ -19,6 +23,12 @@ use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeKind};
 use crate::types::{HOLE_INDEX, REJECTED_INDEX};
+
+#[cfg(test)]
+thread_local! {
+    /// How many `Int` variables `int_variable` has made, on this thread.
+    pub(super) static INT_VARIABLES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// A jump that failed where its value is read is `Error`, not a `never`: its own diagnostic is
 /// the one report of the mistake, and a `never` would also fail every place that needs a value
@@ -82,7 +92,7 @@ fn missing_else(mut e: &ast::Expr) -> Option<bool> {
 /// The function that the call `value` calls, through the block and the `MutCall` that a call with
 /// `mut` arguments becomes. `Checker::mut_call` (`check/mut_args.rs`) owns these forms: a change
 /// there checks this function.
-fn callee(value: &tir::Expr) -> Option<tir::FuncId> {
+pub(super) fn callee(value: &tir::Expr) -> Option<tir::FuncId> {
     match &value.kind {
         tir::ExprKind::Call { func, .. } => Some(*func),
         tir::ExprKind::MutCall { call, .. } => callee(call),
@@ -146,6 +156,16 @@ impl Checker<'_> {
     /// The integer literal `value` at `at`, whose token is `literal`, typed by `expected`. An
     /// `f64` must hold it exactly.
     fn integer(&mut self, at: Span, value: i64, literal: Span, expected: Expectation) -> Checked {
+        // A member's literal is an `Int` variable: its fit waits for the type that the join gives.
+        if matches!(expected, Expectation::Member) {
+            let ty = self.int_variable(LiteralCheck {
+                span: at,
+                literal,
+                value: value.unsigned_abs(),
+                negated: (value < 0).then_some(at),
+            });
+            return Ok(tir::Expr::new(tir::ExprKind::Int(value), ty, at));
+        }
         let ty = literal_type(expected.ty());
         if ty == Type::F64 {
             // Through `i128`: 2^63, the nearest `f64` to `i64::MAX`, saturates back to it.
@@ -184,6 +204,15 @@ impl Checker<'_> {
             });
         }
         Ok(tir::Expr::new(tir::ExprKind::Int(value), ty, at))
+    }
+
+    /// A new `Int` variable, made at the literal of `check`, whose fit waits for its type.
+    pub(super) fn int_variable(&mut self, check: LiteralCheck) -> Type {
+        #[cfg(test)]
+        INT_VARIABLES.set(INT_VARIABLES.get() + 1);
+        let ty = self.table.fresh(Kind::Int, check.span);
+        self.table.literal(ty, check);
+        ty
     }
 
     /// `expr` for each kind of expression.
@@ -333,6 +362,15 @@ impl Checker<'_> {
                         .map(|operand| match operand.kind {
                             // `-1.5` is one literal, as it reads.
                             tir::ExprKind::Float(x) => tir::ExprKind::Float(-x),
+                            // An integer literal that the context types `f64` is one too, as the
+                            // write-back makes it (see `float_literals`).
+                            #[expect(
+                                clippy::cast_precision_loss,
+                                reason = "E0104 has checked that the literal is exact"
+                            )]
+                            tir::ExprKind::Int(x) if operand.ty == Type::F64 => {
+                                tir::ExprKind::Float(-(x as f64))
+                            }
                             _ => tir::ExprKind::Unary {
                                 op: *op,
                                 operand: Box::new(operand),
@@ -345,7 +383,7 @@ impl Checker<'_> {
                 op_span,
                 lhs,
                 rhs,
-            } => self.binary(e.span, (*op, *op_span), lhs, rhs, expected, false),
+            } => self.binary(e.span, (*op, *op_span), lhs, rhs, expected, (false, None)),
             ExprKind::Compare { operands, ops } => self.compare(e.span, operands, ops),
             ExprKind::If {
                 cond,
@@ -472,6 +510,17 @@ impl Checker<'_> {
         returning: bool,
     ) -> Checked {
         let checked = read_jump(self.expr(e, expected));
+        self.value_of(e, checked, expected, returning)
+    }
+
+    /// `value_in` for `e`, already checked as `checked` against `expected`.
+    pub(super) fn value_of(
+        &mut self,
+        e: &ast::Expr,
+        checked: Checked,
+        expected: Expectation,
+        returning: bool,
+    ) -> Checked {
         if type_of(&checked) == Some(Type::NEVER) {
             let at = self.never_at(e.span);
             return Err(Poisoned::untyped(self.no_value(at, NoValueCause::Never)));
@@ -514,11 +563,15 @@ impl Checker<'_> {
         expected: Expectation,
         returning: bool,
     ) -> Option<(Span, NoValueCause)> {
-        if let Some((at, if_let)) = valueless_value(checked) {
+        if let Some((at, if_let)) = self.valueless_value(checked) {
             return Some((at, NoValueCause::NoElse { if_let, returning }));
         }
+        // An open `Any` variable takes the `unit`, as a type parameter does (`unit` is a value).
         let unwanted = type_of(checked) == Some(Type::UNIT)
-            && expected.ty().is_some_and(|want| !takes_unit(want));
+            && expected.ty().is_some_and(|want| {
+                let want = self.table.default_open(want);
+                !takes_unit(want) && !open_any(want)
+            });
         unwanted.then(|| {
             let value = checked.as_ref().ok();
             let cause = self.no_value_cause(e, value, (Type::UNIT, expected.ty()), returning);
@@ -526,9 +579,19 @@ impl Checker<'_> {
         })
     }
 
+    /// E0043 at the valueless `if` that gives the value of `checked`, a nested join whose type its
+    /// outer join has settled (see `valueless`). Then `checked` is poisoned.
+    pub(super) fn refuse_settled_valueless(&mut self, checked: &mut Checked) -> Option<Reported> {
+        let e = checked.as_ref().ok()?;
+        let (at, if_let) = self.valueless(e)?;
+        let reported = self.no_value(at, no_else(if_let));
+        *checked = Err(Poisoned::untyped(reported));
+        Some(reported)
+    }
+
     /// `checked`, or E0043 at the valueless `if` that gives its value (see `valueless`).
     pub(super) fn refuse_valueless(&mut self, checked: Checked) -> Checked {
-        match valueless_value(&checked) {
+        match self.valueless_value(&checked) {
             Some((at, if_let)) => Err(Poisoned::untyped(self.no_value(at, no_else(if_let)))),
             None => checked,
         }
@@ -565,7 +628,8 @@ impl Checker<'_> {
                     want.is_some_and(|want| matches!(want.kind(), TypeKind::Optional(_)));
                 return match missing_else(e) {
                     Some(if_let)
-                        if !optional && value.is_some_and(|value| valueless(value).is_none()) =>
+                        if !optional
+                            && value.is_some_and(|value| self.valueless(value).is_none()) =>
                     {
                         NoValueCause::UnitIf {
                             if_let,
@@ -603,26 +667,12 @@ impl Checker<'_> {
     }
 
     /// `e`, a `T`, wrapped to `want`, its optional. A `unit` whose value an `if` without an
-    /// `else` gives has no value to wrap: E0043 at that `if` (see `unlifted`).
+    /// `else` gives has no value to wrap: E0043 at that `if` (see `unlifted`), unless no code uses
+    /// the value of the join being settled (see `Body::dropped_join`).
     pub(super) fn lift(&mut self, e: tir::Expr, want: Type) -> Checked {
-        match unlifted(&e) {
+        match self.unlifted(&e).filter(|_| !self.body.dropped_join) {
             Some((at, if_let)) => Err(Poisoned::typed(want, self.no_value(at, no_else(if_let)))),
             None => Ok(wrap(e, want)),
-        }
-    }
-
-    /// `checked`, a value that a later wrap lifts to its optional, as a loop lifts its `break`
-    /// values. E0043 when it has no value to lift (see `lift`); the value keeps its type.
-    pub(super) fn refuse_unlifted(&mut self, checked: Checked) -> Checked {
-        match checked
-            .as_ref()
-            .ok()
-            .and_then(|e| Some((unlifted(e)?, e.ty)))
-        {
-            Some(((at, if_let), ty)) => {
-                Err(Poisoned::typed(ty, self.no_value(at, no_else(if_let))))
-            }
-            None => checked,
         }
     }
 
@@ -631,7 +681,7 @@ impl Checker<'_> {
     pub(super) fn lift_block(&mut self, block: &mut CheckedBlock, want: Type, span: Span) {
         let at = (block.as_ref().ok())
             .and_then(|block| block.value.as_deref())
-            .and_then(unlifted);
+            .and_then(|e| self.unlifted(e));
         match at {
             Some((at, if_let)) => {
                 *block = Err(Poisoned::typed(want, self.no_value(at, no_else(if_let))));
@@ -660,72 +710,160 @@ impl Checker<'_> {
         checked: Checked,
         want: Expectation,
     ) -> (Checked, bool) {
-        // `want` was rejected inside `e`, which `against` cannot tell from an `Error` operand.
+        // `want` was rejected inside `e`, which `close` cannot tell from an `Error` operand.
         if matches!(checked, Err(Poisoned { mismatch: true, .. })) {
             return (checked, true);
         }
-        self.against(e, checked, want)
+        self.close(e, checked, want)
     }
 
-    /// `operand` for `e`, already checked; a mismatch names where `want` came from.
-    pub(super) fn against(
+    /// Meets `checked`, the value of `e`, to `expected`, its context (see `settled`). A member
+    /// keeps its variables open. A required type takes the value through the steps of
+    /// `conversion`. Else the value is wrapped, converted to an `any` type or reported as a
+    /// mismatch that names where `expected` came from. A value with no type to meet shows each
+    /// `Int` as `i64`, and an open `Any` is E0050 at its first source. Each variable of a report
+    /// is poisoned.
+    pub(super) fn close(
         &mut self,
         e: &ast::Expr,
         checked: Checked,
-        want: Expectation,
+        expected: Expectation,
     ) -> (Checked, bool) {
-        let (hint, want, origin) = (want, want.ty(), want.origin());
-        if let (Some(want), Some(got)) = (want, type_of(&checked))
-            && want != got
-        {
-            if let TypeKind::Optional(payload) = want.kind()
-                && payload == got
+        let checked = match (checked, expected) {
+            (checked, Expectation::Member) => return (checked, false),
+            (checked, Expectation::None | Expectation::Poisoned) => {
+                return (self.close_open(checked, expected), false);
+            }
+            (Ok(value), Expectation::Required(want, _)) if value.ty != want => {
+                match self.conversion(value.ty, want) {
+                    Some(steps) => return (self.apply(value, &steps), false),
+                    None => Ok(value),
+                }
+            }
+            (checked, _) => checked,
+        };
+        let found = type_of(&checked);
+        let (want, origin) = (expected.ty(), expected.origin());
+        let (checked, reported) = 'meet: {
+            if let (Some(want), Some(got)) = (want, found)
+                && want != got
             {
-                let wrapped = match checked {
-                    Ok(e) => self.lift(e, want),
-                    Err(failed) => Err(Poisoned::typed(want, failed.reported())),
+                if let TypeKind::Optional(payload) = want.kind()
+                    && payload == got
+                {
+                    let wrapped = match checked {
+                        Ok(e) => self.lift(e, want),
+                        Err(failed) => Err(Poisoned::typed(want, failed.reported())),
+                    };
+                    break 'meet (wrapped, false);
+                }
+                let checked = match self.any_conversion(e.span, checked, want, got, origin) {
+                    Ok(done) => break 'meet done,
+                    Err(checked) => checked,
                 };
-                return (wrapped, false);
+                // A failed value of a known type meets `want` as a value does, through `unify`.
+                if checked.is_err() && want.holds_infer() && self.unify(got, want) {
+                    break 'meet (checked, false);
+                }
+                // The report shows each open part of `got` that `want` knows (`shown_against`).
+                let shown = self.shown_against(got, want);
+                let d = self.mismatch(e.span, Some(e), want, shown, origin);
+                break 'meet (Err(Poisoned::untyped(self.diagnostics.error(d))), true);
             }
-            if let Ok(done) = self.any_conversion(e.span, checked, want, got, origin) {
-                return done;
+            // A generic call that cannot meet `want` is reported with the type it found, as a
+            // concrete call is with its type.
+            if let Some(want) = want
+                && let Some(found) = self.misfit_type(&checked).filter(|&found| found != want)
+            {
+                let found = self.shown_against(found, want);
+                let d = self.mismatch(e.span, Some(e), want, found, origin);
+                let reported = self.diagnostics.error(d);
+                self.settle_misfit(&checked);
+                break 'meet (Err(Poisoned::untyped(reported)), true);
             }
-            let d = self.mismatch(e.span, Some(e), hint.shown(got), got, origin);
-            return (Err(Poisoned::untyped(self.diagnostics.error(d))), true);
+            (checked, false)
+        };
+        if reported && let Some(found) = found {
+            self.table.poison(found);
         }
-        // A generic call that cannot meet `want` is reported with the type it found, as a
-        // concrete call is with its type.
-        if let Some(want) = want
-            && let Some(found) = self.misfit_type(&checked).filter(|&found| found != want)
-        {
-            let d = self.mismatch(e.span, Some(e), hint.shown(found), found, origin);
-            let reported = self.diagnostics.error(d);
-            self.settle_misfit(&checked);
-            return (Err(Poisoned::untyped(reported)), true);
+        (checked, reported)
+    }
+
+    /// `close` with no type to meet: the type of `checked` with each open `Int` as `i64`, or
+    /// E0050 at the first source of each open `Any`. A call in it that waits with a held conflict
+    /// reports that conflict in place of E0050. A failed context reports none: its own
+    /// report covers it. A value that it leaves open fails with no type, as a `None` does there.
+    pub(super) fn close_open(&mut self, checked: Checked, expected: Expectation) -> Checked {
+        let Ok(value) = &checked else {
+            return checked;
+        };
+        let within = value.span;
+        self.close_open_in(checked, within, expected)
+    }
+
+    /// `close_open`, where the calls that wait inside `within` report their open parameters.
+    pub(super) fn close_open_in(
+        &mut self,
+        checked: Checked,
+        within: Span,
+        expected: Expectation,
+    ) -> Checked {
+        let Ok(mut value) = checked else {
+            return checked;
+        };
+        if !value.ty.holds_infer() {
+            return Ok(value);
         }
-        (checked, false)
+        // A call that waits with a held conflict reports it, in place of E0050.
+        if let Some(reported) = self.held_conflict_in(&mut value) {
+            return Err(Poisoned::untyped(reported));
+        }
+        // A call that waits with a parameter left open reports it, in place of the `None` that
+        // stands for the parameter.
+        let waited = (expected != Expectation::Poisoned)
+            .then(|| self.open_waits(value.ty, within))
+            .flatten();
+        let unsettled = self.table.unsettled(value.ty);
+        if expected == Expectation::Poisoned {
+            value.ty = self.table.default_open(value.ty);
+            if !unsettled.is_empty() || value.ty.holds_infer() {
+                return Err(Poisoned::untyped(self.poisoned_context(value.span)));
+            }
+            return Ok(value);
+        }
+        let mut first = waited;
+        for unsettled in unsettled {
+            let reported = self.report_unsettled(unsettled);
+            first.get_or_insert(reported);
+        }
+        if let Some(reported) = first {
+            return Err(Poisoned::untyped(reported));
+        }
+        value.ty = self.table.default_open(value.ty);
+        Ok(value)
     }
 
     /// A `None`, of the optional type `expected`.
     pub(super) fn none(&mut self, span: Span, expected: Expectation) -> Checked {
         let kind = match expected {
-            Expectation::Poisoned => return Err(Poisoned::untyped(self.poisoned_context(span))),
-            Expectation::Required(ty, _) | Expectation::Hint { want: ty, .. }
-                if matches!(ty.kind(), TypeKind::Optional(_)) =>
-            {
+            // A member's `None` is an `Any?`: the join gives its payload.
+            Expectation::Member => {
+                let ty = Type::optional(self.table.fresh(Kind::Any, span));
                 return Ok(tir::Expr::new(tir::ExprKind::None, ty, span));
             }
-            Expectation::Required(ty, _) | Expectation::Hint { want: ty, .. } => {
-                DiagnosticKind::Mismatch {
-                    want: Expected::Types(vec![self.want_name(span, ty)]),
-                    got: "None".to_string(),
-                    at: span,
-                    origin: self.origin_fact(expected.origin()),
-                    fix: None,
-                    conversion: false,
-                    layers: false,
-                }
+            Expectation::Poisoned => return Err(Poisoned::untyped(self.poisoned_context(span))),
+            Expectation::Required(ty, _) if matches!(ty.kind(), TypeKind::Optional(_)) => {
+                return Ok(tir::Expr::new(tir::ExprKind::None, ty, span));
             }
+            Expectation::Required(ty, _) => DiagnosticKind::Mismatch {
+                want: Expected::Types(vec![self.want_name(span, ty)]),
+                got: "None".to_string(),
+                at: span,
+                origin: self.origin_fact(expected.origin()),
+                fix: None,
+                conversion: false,
+                layers: false,
+            },
             Expectation::None => {
                 return Err(Poisoned::untyped(
                     self.report_uninferred(Literal::None, span),
@@ -879,9 +1017,16 @@ impl Checker<'_> {
     /// What the `let` whose whole initializer is the literal at `span` writes before its type,
     /// if any: its name, after `mut` when it has it.
     pub(super) fn let_binding(&self, span: Span) -> Option<String> {
-        let (init, name, mutable) = self.body.let_init?;
+        let (init, name, mutable, _) = self.body.let_init?;
         (init == span && name.as_str() != "_")
             .then(|| format!("{}{name}", if mutable { "mut " } else { "" }))
+    }
+
+    /// The name of the `let` whose whole initializer is at `span`, if any: the fix of a join
+    /// writes its type after it.
+    pub(super) fn let_name(&self, span: Span) -> Option<Span> {
+        let (init, name, _, at) = self.body.let_init?;
+        (init == span && name.as_str() != "_").then_some(at)
     }
 
     /// Whether a comment starts in one of the byte ranges `deleted`. The comment starts are in
@@ -921,35 +1066,6 @@ pub(super) fn literal_type(ty: Option<Type>) -> Type {
         Some(Type::U8) => Type::U8,
         Some(Type::F64) => Type::F64,
         _ => Type::I64,
-    }
-}
-
-/// Whether `e` is a bare `None` or an empty array literal, also under `dbg`, which passes its
-/// expected type to its argument. Nothing in such a value gives its type, so it takes the type
-/// of its siblings, or is reported if none is known.
-pub(super) fn bare_hole(e: &ast::Expr) -> bool {
-    if let Some(argument) = dbg_argument(e) {
-        return bare_hole(argument);
-    }
-    bare_none(e) || matches!(&e.kind, ExprKind::ArrayLit(elements) if elements.is_empty())
-}
-
-/// The argument of `e`, if `e` is a call of `dbg` with one argument, labeled or not, and no
-/// type argument. A label is an error (E0055), and the argument still takes the context, so
-/// the label adds no second error. No user item can have the name `dbg` (see
-/// `generic_callee`), so the name tells.
-pub(super) fn dbg_argument(e: &ast::Expr) -> Option<&ast::Expr> {
-    match &e.kind {
-        ExprKind::Call {
-            callee,
-            types,
-            args,
-            ..
-        } if types.is_empty() && callee.name.as_str() == "dbg" => match &args[..] {
-            [arg] => Some(&arg.value),
-            _ => None,
-        },
-        _ => None,
     }
 }
 
@@ -1018,6 +1134,42 @@ pub(super) fn if_some(
     )
 }
 
+/// Whether `e` holds a join of branches whose leaves the join around it settles. That is an `if`
+/// or an `if let` with an `else`, a `match`, or a loop that a `break` leaves. It is `e`, or the
+/// value of a block, a `dbg` or a `Some`.
+pub(super) fn branch_join(e: &ast::Expr) -> bool {
+    ensure_stack(|| match &e.kind {
+        ExprKind::If { else_block, .. } | ExprKind::IfLet { else_block, .. } => {
+            else_block.is_some()
+        }
+        ExprKind::Match { .. } | ExprKind::Loop { breaks: true, .. } => true,
+        ExprKind::Block(block) => super::tail(block).is_some_and(branch_join),
+        ExprKind::Call { callee, args, .. }
+            if callee.name.as_str() == "dbg" || callee.name == Symbol::SOME =>
+        {
+            matches!(args.as_slice(), [arg] if branch_join(&arg.value))
+        }
+        _ => false,
+    })
+}
+
+/// Whether `e` holds a join whose leaves the join around it settles: a join of branches (see
+/// `branch_join`) or an array with elements, as `e` or as the value of a block, a `dbg` or a
+/// `Some`. Its type can leave open what its leaves decide, as `[None, Some(1)]` does.
+pub(super) fn nested_join(e: &ast::Expr) -> bool {
+    ensure_stack(|| match &e.kind {
+        ExprKind::ArrayLit(elements) => !elements.is_empty(),
+        ExprKind::ArrayFill { .. } => true,
+        ExprKind::Block(block) => super::tail(block).is_some_and(nested_join),
+        ExprKind::Call { callee, args, .. }
+            if callee.name.as_str() == "dbg" || callee.name == Symbol::SOME =>
+        {
+            matches!(args.as_slice(), [arg] if nested_join(&arg.value))
+        }
+        _ => branch_join(e),
+    })
+}
+
 /// Whether a context that wants `want` takes a `unit`: it wants `unit` or an optional `unit`, or
 /// a hole of a call, which the `unit` binds. A type parameter of the body that is checked is no
 /// hole: a `unit` is no value of it.
@@ -1025,6 +1177,15 @@ pub(super) fn takes_unit(want: Type) -> bool {
     match want.kind() {
         TypeKind::Unit | TypeKind::Param(_, HOLE_INDEX | REJECTED_INDEX) => true,
         TypeKind::Optional(payload) => takes_unit(payload),
+        _ => false,
+    }
+}
+
+/// Whether `want`, after `default_open`, is an open `Any` variable or an optional of one.
+pub(super) fn open_any(want: Type) -> bool {
+    match want.kind() {
+        TypeKind::Infer(_) => true,
+        TypeKind::Optional(payload) => open_any(payload),
         _ => false,
     }
 }
@@ -1038,41 +1199,66 @@ pub(super) fn no_else(if_let: bool) -> NoValueCause {
     }
 }
 
-/// `valueless` of `checked`, or the failed valueless `if` it is (see `Poisoned::valueless`).
-fn valueless_value(checked: &Checked) -> Option<(Span, bool)> {
-    checked
-        .as_ref()
-        .map_or_else(|failed| failed.valueless, valueless)
-}
+impl Checker<'_> {
+    /// `valueless` of `checked`, or the failed valueless `if` it is (see `Poisoned::valueless`).
+    fn valueless_value(&self, checked: &Checked) -> Option<(Span, bool)> {
+        checked
+            .as_ref()
+            .map_or_else(|failed| failed.valueless, |e| self.valueless(e))
+    }
 
-/// The span of the `if` without an `else` whose branch has a value, when `e` is one or gives the
-/// value of one: through a block's value, a branch, an arm or a wrap. Such an `if` has no value.
-/// Only a `unit` or a `unit?` can give one, so the walk stops at any other type. The second part
-/// says that the `if` is an `if let`.
-pub(super) fn valueless(e: &tir::Expr) -> Option<(Span, bool)> {
-    without_value(e, false)
-}
+    /// The span of the `if` without an `else` whose branch has a value, when `e` is one or gives
+    /// the value of one: through a block's value, a branch, an arm, a wrap or an element of an
+    /// array. Such an `if` has no value. Only a `unit`, a `unit?` or an array can give one, so the
+    /// walk stops at any other type. The
+    /// second part says that the `if` is an `if let`. A nested join leaves an inference variable
+    /// in its nodes, so each type is read through the table.
+    pub(super) fn valueless(&self, e: &tir::Expr) -> Option<(Span, bool)> {
+        without_value(e, false, self)
+    }
 
-/// `valueless` of `e`, a `unit` that lifts to `unit?`. There each `if` without an `else` has no
-/// value, whatever its branch has, as for an `i64?`.
-fn unlifted(e: &tir::Expr) -> Option<(Span, bool)> {
-    without_value(e, true)
+    /// `valueless` of `e`, a `unit` that lifts to `unit?`. There each `if` without an `else` has
+    /// no value, whatever its branch has, as for an `i64?`.
+    pub(super) fn unlifted(&self, e: &tir::Expr) -> Option<(Span, bool)> {
+        without_value(e, true, self)
+    }
 }
 
 /// The walk of `valueless`; with `lifted`, an `if` without an `else` has no value by itself.
-fn without_value(e: &tir::Expr, lifted: bool) -> Option<(Span, bool)> {
-    let unit = e.ty == Type::UNIT;
-    if !unit && !optional_unit(e.ty) {
+/// The table of `checker` gives the type of an inference variable, and its body the arrays
+/// whose elements no `if` gives (see `branch_free`).
+fn without_value(e: &tir::Expr, lifted: bool, checker: &Checker<'_>) -> Option<(Span, bool)> {
+    let table = &checker.table;
+    #[cfg(test)]
+    super::VALUE_WALK_STEPS.set(super::VALUE_WALK_STEPS.get() + 1);
+    // An element is a value of its own: the join of a nested array settles it late. So the walk
+    // looks into the elements of an array of any type, unless no `if` is there to find.
+    match &e.kind {
+        tir::ExprKind::ArrayLit(_) | tir::ExprKind::ArrayFill { .. }
+            if checker.body.branch_free.contains(&e.span) =>
+        {
+            return None;
+        }
+        tir::ExprKind::ArrayLit(elements) => {
+            return (elements.iter()).find_map(|element| without_value(element, lifted, checker));
+        }
+        tir::ExprKind::ArrayFill { value, .. } => return without_value(value, lifted, checker),
+        _ => {}
+    }
+    let ty = table.resolve(e.ty);
+    let unit = ty == Type::UNIT;
+    if !unit && !optional_unit(ty) && !matches!(ty.kind(), TypeKind::Array(_)) {
         return None;
     }
     // The tail of a `never` block is unreachable, so no code reads its value.
     let tail = |block: &tir::Block| {
         (block.value.as_deref())
             .filter(|_| block.ty != Type::NEVER)
-            .and_then(|value| without_value(value, lifted))
+            .and_then(|value| without_value(value, lifted, checker))
     };
     // A branch with a value beside no `else`: an `if let` on an enum is a `match` of two arms.
-    let has_value = |block: &tir::Block| !matches!(block.ty, Type::UNIT | Type::NEVER);
+    let has_value =
+        |block: &tir::Block| !matches!(table.resolve(block.ty), Type::UNIT | Type::NEVER);
     match &e.kind {
         tir::ExprKind::If {
             then_block,
@@ -1099,9 +1285,12 @@ fn without_value(e: &tir::Expr, lifted: bool) -> Option<(Span, bool)> {
             arms.iter().find_map(|arm| tail(&arm.body))
         }
         tir::ExprKind::Block(block) => tail(block),
-        tir::ExprKind::Wrap(inner) => without_value(inner, lifted),
-        // Each of these gives its own value, which no `if` gives.
-        tir::ExprKind::Int(_)
+        tir::ExprKind::Wrap(inner) => without_value(inner, lifted, checker),
+        tir::ExprKind::Loop { .. } if lifted => checker.body.loop_unlifted.get(&e.span).copied(),
+        // Each of these gives its own value, which no `if` gives. A loop that no optional lifts
+        // keeps its `break` values, which its own join checked.
+        tir::ExprKind::Loop { .. }
+        | tir::ExprKind::Int(_)
         | tir::ExprKind::Float(_)
         | tir::ExprKind::Bool(_)
         | tir::ExprKind::Char(_)
@@ -1140,11 +1329,74 @@ fn without_value(e: &tir::Expr, lifted: bool) -> Option<(Span, bool)> {
         | tir::ExprKind::Compare { .. }
         | tir::ExprKind::Equal { .. }
         | tir::ExprKind::Is { .. }
-        | tir::ExprKind::Loop(_)
         | tir::ExprKind::Break { .. }
         | tir::ExprKind::Continue { .. }
         | tir::ExprKind::Return(_)
         | tir::ExprKind::MutCall { .. } => None,
+    }
+}
+
+/// Whether no `if` and no `match` can give the value of `e` through the nodes that
+/// `without_value` walks, whatever their types are. An array literal or array fill in `known`
+/// holds none, so the walk of a nested array reads each layer once.
+pub(super) fn branch_free(e: &tir::Expr, known: &FxHashSet<Span>) -> bool {
+    match &e.kind {
+        tir::ExprKind::ArrayLit(elements) => {
+            known.contains(&e.span) || elements.iter().all(|element| branch_free(element, known))
+        }
+        tir::ExprKind::ArrayFill { value, .. } => {
+            known.contains(&e.span) || branch_free(value, known)
+        }
+        tir::ExprKind::Wrap(value) => branch_free(value, known),
+        tir::ExprKind::Block(block) => {
+            (block.value.as_deref()).is_none_or(|value| branch_free(value, known))
+        }
+        tir::ExprKind::If { .. } | tir::ExprKind::IfSome { .. } | tir::ExprKind::Match { .. } => {
+            false
+        }
+        // The nodes that `without_value` does not enter: each gives its own value.
+        tir::ExprKind::Int(_)
+        | tir::ExprKind::Float(_)
+        | tir::ExprKind::Bool(_)
+        | tir::ExprKind::Char(_)
+        | tir::ExprKind::Str(_)
+        | tir::ExprKind::None
+        | tir::ExprKind::Unit
+        | tir::ExprKind::Local(_)
+        | tir::ExprKind::Call { .. }
+        | tir::ExprKind::InterfaceCall { .. }
+        | tir::ExprKind::New { .. }
+        | tir::ExprKind::Variant { .. }
+        | tir::ExprKind::Field { .. }
+        | tir::ExprKind::Struct { .. }
+        | tir::ExprKind::StructField { .. }
+        | tir::ExprKind::ToAny(_)
+        | tir::ExprKind::DynCall { .. }
+        | tir::ExprKind::Convert(_)
+        | tir::ExprKind::Print { .. }
+        | tir::ExprKind::Dbg { .. }
+        | tir::ExprKind::Panic(_)
+        | tir::ExprKind::ReadLine
+        | tir::ExprKind::Index { .. }
+        | tir::ExprKind::Slice { .. }
+        | tir::ExprKind::Len(_)
+        | tir::ExprKind::Chars(_)
+        | tir::ExprKind::Bytes(_)
+        | tir::ExprKind::Words(_)
+        | tir::ExprKind::FromChars(_)
+        | tir::ExprKind::Math { .. }
+        | tir::ExprKind::Unary { .. }
+        | tir::ExprKind::Binary { .. }
+        | tir::ExprKind::Interpolate { .. }
+        | tir::ExprKind::Concat { .. }
+        | tir::ExprKind::Compare { .. }
+        | tir::ExprKind::Equal { .. }
+        | tir::ExprKind::Is { .. }
+        | tir::ExprKind::Loop { .. }
+        | tir::ExprKind::Break { .. }
+        | tir::ExprKind::Continue { .. }
+        | tir::ExprKind::Return(_)
+        | tir::ExprKind::MutCall { .. } => true,
     }
 }
 

@@ -1,0 +1,20 @@
+error[E0032]: expected `i64`, found `None`
+ --> E0032-required-open-part-written.sisu:9:24
+  |
+9 |     let _a: i64 = pick(None, 1)
+  |                        ^^^^
+
+error[E0032]: expected `u8`, found `None?`
+  --> E0032-required-open-part-written.sisu:10:23
+   |
+10 |     let _b: u8 = pick(Some(None), 2)
+   |                       ^^^^^^^^^^
+
+error[E0032]: expected `u8`, found `[]?`
+  --> E0032-required-open-part-written.sisu:11:23
+   |
+11 |     let _c: u8 = pick(Some([]), 2)
+   |                       ^^^^^^^^
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

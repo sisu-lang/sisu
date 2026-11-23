@@ -1,0 +1,17 @@
+// GIVEN a generic call under a required `f64`
+// AND its first argument is a struct whose first type argument is an `i64`
+// AND its other arguments give the second type argument
+// WHEN `sisu check` runs on it
+// THEN it reports E0032 at the struct (16:22)
+// AND the report names the required `f64` and the `i64` of the part, not the whole struct
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+fn ff<T, U>(x: Two<T, U>, y: T, _z: U) -> T { x.a }
+
+fn main() {
+    let n: i64 = 1
+    let _a: f64 = ff(Two(a: n, b: 2), 1, 2)
+}

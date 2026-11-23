@@ -1,0 +1,13 @@
+// GIVEN `bump(mut b)`, where `b` is an `i64` and `bump` is generic, under the type `i64??`
+// WHEN `sisu check` runs on it
+// THEN it reports E0170 on the argument: the parameter has type `i64??`, as the result unifies
+// with the context before it wraps
+fn bump<T>(mut x: T) -> T {
+    x
+}
+
+fn main() {
+    let mut b = 1
+    let r: i64?? = bump(mut b)
+    print(r == None)
+}

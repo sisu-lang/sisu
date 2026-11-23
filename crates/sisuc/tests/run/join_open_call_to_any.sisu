@@ -1,0 +1,25 @@
+// GIVEN an `if` whose branches are a local of `any Seen` and `pick(Lid(v: 2), Eye(v: 3))`
+// WHEN the call takes `any Seen` from the join, and each of its arguments converts to it
+// THEN the method of the value of the call runs
+interface Seen {
+    fn seen(self) -> i64
+}
+
+struct Eye: Seen {
+    v: i64
+    fn seen(self) -> i64 { self.v }
+}
+
+struct Lid: Seen {
+    v: i64
+    fn seen(self) -> i64 { self.v }
+}
+
+fn pick<T>(a: T, _b: T) -> T { a }
+
+fn main() {
+    let c = [1].len() == 2
+    let e: any Seen = Eye(v: 1)
+    let x = if c { e } else { pick(Lid(v: 2), Eye(v: 3)) }
+    print(x.seen()) // 2
+}

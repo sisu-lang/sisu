@@ -1,0 +1,17 @@
+// GIVEN `unb(BL.B(v: []))` under `[i64?]?`, with `type BL<X> = Bx<[X?]>`
+// WHEN the program prints the value
+// THEN the call gives an empty `[i64?]`, wrapped once: it is no `None`, and its length is 0
+enum Bx<T> {
+    B(v: T)
+}
+type BL<X> = Bx<[X?]>
+fn unb<T>(b: Bx<T>) -> T {
+    match b {
+        Bx.B(v) => v
+    }
+}
+fn main() {
+    let x: [i64?]? = unb(BL.B(v: []))
+    print(x == None) // false
+    print(x?.len() ?? 9) // 0
+}

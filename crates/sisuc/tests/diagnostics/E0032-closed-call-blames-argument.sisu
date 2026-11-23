@@ -1,0 +1,13 @@
+struct Two<A, B> {
+    a: A
+    b: B
+}
+fn py<X, Y>(_y: Y, _x: X) -> Two<X, Y> { panic("no") }
+fn g0<T>(_a: Two<T, i64>) {}
+fn gn<T>(_a: Two<T?, i64>, _b: T) {}
+fn main() {
+    let k = 2
+    g0(py(true, 2))
+    gn(py(true, k), 1)
+    gn(py(true, 2), k)
+}

@@ -1,0 +1,19 @@
+interface Seen {
+    fn seen(self) -> i64
+}
+
+struct Eye: Seen {
+    v: i64
+    fn seen(self) -> i64 { self.v }
+}
+
+struct Lid: Seen {
+    v: i64
+    fn seen(self) -> i64 { self.v }
+}
+
+fn main() {
+    let c = [1].len() == 1
+    let x = if c { Eye(v: 1) } else { Lid(v: 2) }
+    print(x.seen())
+}

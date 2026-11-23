@@ -1,0 +1,23 @@
+error[E0032]: the two sides of `+=` have different types
+ --> E0032-compound-sides.sisu:4:7
+  |
+4 |     s += b
+  |     - ^^ - `i64`
+  |     |
+  |     `u8`
+
+error[E0032]: the two sides of `+=` have different types
+ --> E0032-compound-sides.sisu:8:7
+  |
+8 |     t += a
+  |     - ^^ - `u8`
+  |     |
+  |     `i64`
+  |
+help: if the types are right, convert it with `i64(...)`
+  |
+8 |     t += i64(a)
+  |          ++++ +
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

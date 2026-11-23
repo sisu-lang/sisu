@@ -1,0 +1,38 @@
+// GIVEN an `if` of an `i64??` and a nested `if` of `None` and an `i64?`, in each order
+// AND an `else if` chain and a `match` of an `i64?`, `None` and an `i64??`, with the `None` bare
+//     or in a nested `if`
+// WHEN the nested `if`, the branch or the arm gives its `None`
+// THEN the `None` is the outer `None` in each order
+enum E {
+    A
+    B
+    C
+}
+
+fn main() {
+    let o: i64? = None
+    let o2: i64?? = Some(Some(2))
+    let d = [1].len() == 1
+    let c = [1].len() == 2
+    let x = if c { o2 } else { if d { None } else { o } }
+    print(x == None) // true
+    let k = [1].len() == 1
+    let y = if k { if d { None } else { o } } else { o2 }
+    print(y == None) // true
+    let es = [E.A, E.B, E.C]
+    let e = es[1]
+    let x4 = match e {
+        E.A => o
+        E.B => None
+        E.C => o2
+    }
+    print(x4 == None) // true
+    let x9 = if c { o } else if d { None } else { o2 }
+    print(x9 == None) // true
+    let y1 = match e {
+        E.A => o
+        E.B => if d { None } else { o }
+        E.C => o2
+    }
+    print(y1 == None) // true
+}

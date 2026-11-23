@@ -103,3 +103,6 @@ fn equal_to_loop_with_optional() {
 }
 
 fn main() {}
+
+// The sides of `==` join (Task 5d-2): line 74 reports at the `==`, with the fix `i64(id(v))`.
+// valid: the spec gives `id(loop { break 1 })` under `u8` no error (lines 15 and 60).

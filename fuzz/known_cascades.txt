@@ -25,6 +25,17 @@
 #       print(hinted.len())
 #   }
 duplicate E0032
+# Found by the program fuzzer on the body-inference branch. The failed `u8(c45)` leaves the array
+# element with no type, so `T` of `id` stays open. The issue is to be filed after the merge.
+#   fn id<T>(x: T) -> T { x }
+#   const c45 = 1
+#   const c45 = 1
+#   fn main() {
+#       let k: u8 = 2
+#       let g = id([[k], [u8(c45) ?? 3]])
+#       print(g)
+#   }
+duplicate E0050
 # The fixed seed 95 gives this pair. An interface that is defined twice loses its associated type
 # for the interfaces that inherit it.
 #   interface S { type Item }
@@ -48,3 +59,15 @@ duplicate E0154
 #   type G<S> = [S.Named]
 #   fn main() {}
 duplicate E0156
+
+# The kind `local` replaces a local name with a name that does not exist.
+#
+# Found by the program fuzzer on the body-inference branch. The failed `u8(missing)` leaves the
+# array element with no type, so `T` of `id` stays open. The issue is to be filed after the merge.
+#   fn id<T>(x: T) -> T { x }
+#   fn main() {
+#       let k: u8 = 2
+#       let g = id([[k], [u8(missing) ?? 3]])
+#       print(g)
+#   }
+local E0050

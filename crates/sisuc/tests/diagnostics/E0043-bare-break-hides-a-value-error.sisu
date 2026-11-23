@@ -1,0 +1,9 @@
+fn main() {
+    let c = [1].len() == 1
+    let d = [1].len() == 2
+    let a: u8 = 3
+    let x: string = loop { if c { break }; if d { break a }; break a }
+    print(x)
+    let y = loop { if c { break }; break if d { 1 } else { "s" } }
+    print(y)
+}

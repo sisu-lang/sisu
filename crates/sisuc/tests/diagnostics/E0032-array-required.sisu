@@ -1,0 +1,8 @@
+fn main() {
+    let a: u8 = 3
+    let b: u8 = 4
+    let x: [string] = [a, b]
+    print(x.len())
+}
+
+// Under the written type, one E0032 reports at the array (Q33).

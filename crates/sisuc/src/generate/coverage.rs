@@ -122,6 +122,10 @@ const EXCLUDED: &[(&str, &str)] = &[
         "types::Head::Assoc",
         "the key by which `types::write_type` asks for a name, which is no type",
     ),
+    (
+        "types::TypeKind::Infer",
+        "an inference variable never leaves the checker: `write_back` replaces it",
+    ),
 ];
 
 /// The receivers of the built-in methods `check/number.rs` does not list, by their typed
@@ -325,9 +329,9 @@ const REACH: &[&str] = &[
 /// The keys that the forms of `Gen::gap_forms` mark. `Generated::plain` leaves the forms out, so
 /// the universe has no `GAP_RULES` key. The nightly reads the seeds `0..FUZZ_SEEDS` and no others,
 /// so `generated_programs_should_reach_each_gap_rule` reads the `program` of those.
-const WIDENS: &str = "reach: a `break` value converts to the type that its loop grew to, and no nested `break` targets that loop";
-const CROSSES: &str = "reach: the widening of a `break` crosses a nested loop";
-const OBJECT_IN_SOME: &str = "reach: the checker runs `object_in_some`";
+const WIDENS: &str = "reach: a `break` value converts to the type of its loop's join, and no nested `break` targets that loop";
+const CROSSES: &str =
+    "reach: the walk that puts back the `break` values of a loop crosses a nested loop";
 const OWN_PUSH: &str = "reach: a `.push` reads a place of a type that is no array";
 const PUSHED_VALUE: &str = "reach: the checker runs `pushed_value`";
 
@@ -336,7 +340,6 @@ const GAP_RULES: &[&str] = &[
     PUSHED_VALUE,
     WIDENS,
     CROSSES,
-    OBJECT_IN_SOME,
     "reach: two `mut` arguments have one root local",
     "reach: a `string` field appends to itself",
     "reach: a program gets W0006",
@@ -357,24 +360,63 @@ const GAP_POINTS: &[&str] = &[
     "type_meets",
     "assoc_conforms",
     "listed_inheritance",
-    "names_unbound",
-    "wider_than",
     "make_check keeps a conformance",
     "make_check keeps an any",
     "make_check keeps an applied type",
     "make_any on the right",
     "make_any on the left",
-    "seeded_join for a branch",
-    "seeded_join for a loop",
-    "hinted_elements",
-    "value_beside",
-    "unwrap_some_object of a Some",
-    "unwrap_some_object of a None",
-    "a hinted Some keeps its type",
     "a dbg in a generic function",
     "a dbg of an enum in a generic function",
     "an any conversion in a generic function",
     "never_at for a part of a string",
+];
+
+/// The joins that `Gen::gap_forms` writes in both orders of their members, each with how to find
+/// it in the text of a program. The join-order check swaps the members of the joins of a program.
+/// The generator writes these in both orders itself, so a swap that misses them still checks each
+/// order. A struct or an enum makes the values, never a class.
+const JOIN_ORDERS: &[(&str, Holds)] = &[
+    (
+        "join: a literal beside a typed value, in each order",
+        |text| {
+            text.contains("if gap_on { gap_byte } else { 1 }")
+                && text.contains("if gap_on { 1 } else { gap_byte }")
+        },
+    ),
+    (
+        "join: a literal beside a generic call, in each order",
+        |text| {
+            text.contains("if gap_on { 1 } else { gap_id(gap_byte) }")
+                && text.contains("if gap_on { gap_id(gap_byte) } else { 1 }")
+        },
+    ),
+    (
+        "join: an `any` beside the optional of a type that conforms, in each order",
+        |text| {
+            text.contains("[gap_eye, Some(GapOwl(v: 2))]")
+                && text.contains("[Some(GapOwl(v: 3)), gap_eye]")
+        },
+    ),
+    (
+        "join: the arms of a `match` of an optional and an `any`, in each order",
+        |text| text.contains("let gap_none = match") && text.contains("let gap_none_back = match"),
+    ),
+    (
+        "join: nested `if` of optionals and an `any`, in each order",
+        |text| text.contains("let gap_kept = if") && text.contains("let gap_kept_back = if"),
+    ),
+    (
+        "join: a loop of two objects beside an `any`, in each order",
+        |text| text.contains("let gap_looped = if") && text.contains("let gap_looped_back = if"),
+    ),
+    (
+        "join: a branch of an array of two objects beside an array of `any`, in each order",
+        |text| text.contains("let gap_hinted = if") && text.contains("let gap_hinted_back = if"),
+    ),
+    (
+        "join: array elements beside an `any`, in each order",
+        |text| text.contains("let gap_beside = [") && text.contains("let gap_beside_back = ["),
+    ),
 ];
 
 /// The key that marks `point` of `GAP_POINTS`.
@@ -882,7 +924,6 @@ impl Walk {
         let counters = [
             (WIDENS, &check::WIDENED_BREAKS),
             (CROSSES, &check::WRAP_LOOPS),
-            (OBJECT_IN_SOME, &check::OBJECT_IN_SOME_CALLS),
             (OWN_PUSH, &check::OWN_PUSH_READS),
             (PUSHED_VALUE, &check::PUSHED_VALUES),
         ];
@@ -932,7 +973,7 @@ impl Walk {
                 self.mark(key);
             }
         }
-        for (feature, holds) in TEXT {
+        for (feature, holds) in TEXT.iter().chain(JOIN_ORDERS) {
             if holds(source) {
                 self.mark(feature);
             }
@@ -2751,6 +2792,9 @@ impl Walk {
             TypeKind::Optional(inner) => ("types::TypeKind::Optional", Some(inner)),
             TypeKind::Assoc(base, ..) => ("types::TypeKind::Assoc", Some(base)),
             TypeKind::Any(..) => ("types::TypeKind::Any", None),
+            TypeKind::Infer(_) => {
+                unreachable!("the checker's write_back should leave no inference variable")
+            }
         };
         self.mark(key);
         if let Some(inner) = inner {
@@ -2931,6 +2975,9 @@ impl Walk {
             | TypeKind::String
             | TypeKind::Unit
             | TypeKind::Never => false,
+            TypeKind::Infer(_) => {
+                unreachable!("the checker's write_back should leave no inference variable")
+            }
         }
     }
 
@@ -2970,6 +3017,9 @@ impl Walk {
             | TypeKind::String
             | TypeKind::Unit
             | TypeKind::Never => false,
+            TypeKind::Infer(_) => {
+                unreachable!("the checker's write_back should leave no inference variable")
+            }
         }
     }
 
@@ -3032,6 +3082,9 @@ impl Walk {
                 | TypeKind::Param(..)
                 | TypeKind::Assoc(..)
                 | TypeKind::Any(..) => {}
+                TypeKind::Infer(_) => {
+                    unreachable!("the checker's write_back should leave no inference variable")
+                }
             }
         }
         if written && left && matches!(e.ty.kind(), TypeKind::I64 | TypeKind::U8) {
@@ -3444,7 +3497,7 @@ impl Walk {
                     self.tir_block(&arm.body);
                 }
             }
-            tir::ExprKind::Loop(body) => {
+            tir::ExprKind::Loop { body, .. } => {
                 self.mark("tir::ExprKind::Loop");
                 self.tir_block(body);
             }
@@ -3649,6 +3702,9 @@ fn kind_name(ty: Type) -> &'static str {
         TypeKind::Optional(_) => "Optional",
         TypeKind::Assoc(..) => "Assoc",
         TypeKind::Any(..) => "Any",
+        TypeKind::Infer(_) => {
+            unreachable!("the checker's write_back should leave no inference variable")
+        }
     }
 }
 
@@ -3937,6 +3993,42 @@ fn walk_until(least: u64, done: impl Fn(&Walk) -> bool) -> Walk {
         done(&walk)
     });
     walk
+}
+
+/// Seeds whose programs `main` accepts and that once failed to check on the branch. In 33, the
+/// context decided a call's type before its own arguments. Two hold a block argument with a
+/// nested block. In 23, a type parameter of the caller has the name of the callee's. In 14, a loop
+/// beside a hint breaks a `None`. In 3, a loop beside a hint breaks an optional that its form does
+/// not show, such as `break ([o][0])`.
+const ACCEPTED_SEEDS: &[u64] = &[
+    75, 85, 87, 97, 118, 128, 226, 288, 313, 314, 356, 365, 379, 388, 404, 408, 423, 466, 494, 527,
+    578, 580, 596, 667, 735, 745, 784, 788, 794, 903, 916, 995, 1012, 12023, 51950, 7138, 8193,
+    8980, 9928, 15045, 18070, 23316, 24710, 26474, 30475, 34915, 37612, 42874, 48275, 53226, 53329,
+    54407, 55756, 56810, 58720, 59300, 60727, 63829, 8907, 12203, 17382, 25403, 31220, 31305,
+    43168, 46088, 54491, 57020, 57280, 59201, 59907, 60088, 34531, 43555, 50142,
+];
+
+/// GIVEN the program of each seed of `ACCEPTED_SEEDS`
+/// WHEN the checker checks it
+/// THEN it reports no error, as `main` does
+#[test]
+fn the_seeds_that_main_accepts_should_check_clean() {
+    let red: Vec<String> = (ACCEPTED_SEEDS.iter())
+        .filter_map(|&n| {
+            let (_, diagnostics) = crate::front_end::checked(&generate(&seed(n)).plain);
+            let errors: Vec<_> = (diagnostics.iter())
+                .filter(|d| d.severity() == Severity::Error)
+                .map(|d| (d.code(), d.span()))
+                .collect();
+            (!errors.is_empty()).then(|| format!("seed {n}: {errors:?}"))
+        })
+        .collect();
+    assert!(
+        red.is_empty(),
+        "{} red seeds:\n{}",
+        red.len(),
+        red.join("\n")
+    );
 }
 
 /// What the programs of the first `2 * SEEDS` seeds hold. Twice the `SEEDS`: a bare `Ok(..)` is
@@ -6492,9 +6584,10 @@ fn a_push_should_reach_a_local_an_element_and_a_guarded_field() {
 
 /// GIVEN a program with a `loop` in the value of a `let` and breaks of the kinds in the table
 /// WHEN the walk reads it
-/// THEN the key of a widening, of a crossing and of `object_in_some` are marked as the table
-/// says, each one when the checker did that work: a written `Some(..)` or a `None` first gives the
-/// typed tree of the checker's wrap, but `wrap_breaks` does nothing for it
+/// THEN the key of a conversion and of a crossing are marked as the table says, each one when the
+/// checker did that work
+/// AND the loop's join converts each value that it lifts, in any order
+/// AND a written `Some(..)` gives the typed tree of a wrap that the join did not make
 #[test]
 #[expect(clippy::too_many_lines, reason = "one table of whole programs")]
 fn a_loop_key_should_mark_what_the_checker_did() {
@@ -6526,13 +6619,12 @@ fn a_loop_key_should_mark_what_the_checker_did() {
         "{joined_to_any}fn main() {{\n let a: any I = A()\n let y = ({{\n let mut c = 1\n{}\n }})\n print(1)\n}}",
         flat(&["A()", "a"])
     );
-    let rows: Vec<(&str, String, bool, bool, bool)> = vec![
-        ("no loop", "fn main() {}".to_string(), false, false, false),
-        ("1, None", typed(&flat(&["1", "None"])), true, false, false),
+    let rows: Vec<(&str, String, bool, bool)> = vec![
+        ("no loop", "fn main() {}".to_string(), false, false),
+        ("1, None", typed(&flat(&["1", "None"])), true, false),
         (
             "Some(1), None",
             typed(&flat(&["Some(1)", "None"])),
-            false,
             false,
             false,
         ),
@@ -6541,105 +6633,68 @@ fn a_loop_key_should_mark_what_the_checker_did() {
             typed(&flat(&["Some (1)", "None"])),
             false,
             false,
-            false,
         ),
         (
             "Option.Some(1), None",
             typed(&flat(&["Option.Some(1)", "None"])),
             false,
             false,
-            false,
         ),
-        ("None, 1", typed(&flat(&["None", "1"])), false, false, false),
+        ("None, 1", typed(&flat(&["None", "1"])), true, false),
         (
             "None, 1, None",
             typed(&flat(&["None", "1", "None"])),
-            false,
-            false,
-            false,
-        ),
-        (
-            "o, 1, None",
-            typed(&flat(&["o", "1", "None"])),
-            false,
-            false,
-            false,
-        ),
-        ("1, o", typed(&flat(&["1", "o"])), true, false, false),
-        (
-            "1, Some(2)",
-            typed(&flat(&["1", "Some(2)"])),
             true,
             false,
-            false,
         ),
+        ("o, 1, None", typed(&flat(&["o", "1", "None"])), true, false),
+        ("1, o", typed(&flat(&["1", "o"])), true, false),
+        ("1, Some(2)", typed(&flat(&["1", "Some(2)"])), true, false),
         (
             "an inner loop that no break leaves",
             typed(inner_loop),
             true,
             false,
-            false,
         ),
-        ("crossed", typed(crossed), false, true, false),
+        ("crossed", typed(crossed), false, true),
         (
             "crossed, the value inside",
             typed(value_inside),
             false,
-            false,
-            false,
+            true,
         ),
         (
             "crossed, None first in the text",
             typed(none_first),
             false,
-            false,
-            false,
+            true,
         ),
         (
             "a written u8?",
             program(" let o: u8? = 200\n", Some("u8?"), &flat(&["o", "6"])),
-            false,
-            false,
-            false,
-        ),
-        (
-            "untyped, o, 6",
-            untyped(&flat(&["o", "6"])),
-            false,
-            false,
             true,
+            false,
         ),
+        ("untyped, o, 6", untyped(&flat(&["o", "6"])), true, false),
         (
             "untyped, o, Some(6)",
             untyped(&flat(&["o", "Some(6)"])),
             false,
             false,
-            false,
         ),
-        (
-            "untyped, o, v",
-            untyped(&flat(&["o", "v"])),
-            false,
-            false,
-            true,
-        ),
+        ("untyped, o, v", untyped(&flat(&["o", "v"])), true, false),
         (
             "untyped, Some(1), 2",
             untyped(&flat(&["Some(1)", "2"])),
-            false,
-            false,
             true,
+            false,
         ),
-        ("a join to any", any_program, true, false, false),
+        ("a join to any", any_program, true, false),
     ];
-    for (row, source, widens, crosses, object_in_some) in rows {
+    for (row, source, widens, crosses) in rows {
         let mut walk = Walk::default();
         walk.program(&source);
-        for (key, want) in [
-            (WIDENS, widens),
-            (CROSSES, crosses),
-            (OBJECT_IN_SOME, object_in_some),
-        ] {
+        for (key, want) in [(WIDENS, widens), (CROSSES, crosses)] {
             assert_eq!(walk.seen.contains(key), want, "row `{row}`, key `{key}`");
         }
     }
@@ -6901,7 +6956,7 @@ fn res<E>() -> Result<i64, E> { Ok(7) }
 fn empty<X>() -> Two<X, bool> { Two(a: [], b: true) }
 fn wait<T>(_c: Two<T, bool>, _d: Result<T, string>) -> i64 { 1 }
 fn main() { print(wait(empty(), res())) }",
-            &["names_unbound"],
+            &[],
         ),
         (
             "the same with a callee that is not generic",
@@ -6916,7 +6971,7 @@ fn main() { print(wait(empty(), res())) }",
             "the bound parameter is itself optional under a hint",
             r"fn wide<T>(a: T, _b: T?) -> T { a }
 fn main() { let w: u8? = wide(1, Some(Some(2))); print(w ?? 0) }",
-            &["wider_than"],
+            &[],
         ),
         (
             "the same value, a plain payload",
@@ -7001,7 +7056,7 @@ fn main() { let a: any Heard = Ear(); print(a is a) }",
 class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { Some(Eye(v: 2)) } else { a }; print((j ?? a).seen()) }",
-            &["unwrap_some_object of a Some"],
+            &[],
         ),
         (
             "a `Some` of an object after an `any` branch",
@@ -7025,10 +7080,7 @@ fn main() {
     }
     print((j ?? a).seen())
 }",
-            &[
-                "unwrap_some_object of a None",
-                "unwrap_some_object of a Some",
-            ],
+            &[],
         ),
         (
             "a `None` after an `any` branch",
@@ -7052,10 +7104,7 @@ fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { 
 class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { Some(Eye(v: 2)) } else { if c { Some(Lid(v: 3)) } else { a } }; print((j ?? a).seen()) }",
-            &[
-                "a hinted Some keeps its type",
-                "unwrap_some_object of a Some",
-            ],
+            &[],
         ),
         (
             "branches of two objects beside an `any` branch",
@@ -7063,7 +7112,7 @@ fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { 
 class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { a } else { if c { Eye(v: 2) } else { Lid(v: 3) } }; print(j.seen()) }",
-            &["seeded_join for a branch"],
+            &[],
         ),
         (
             "branches of one object beside an `any` branch",
@@ -7090,7 +7139,7 @@ let j = if c { a } else {
 }
 print(j.seen())
 }",
-            &["seeded_join for a loop"],
+            &[],
         ),
         (
             "an array of objects beside an array of `any`",
@@ -7098,7 +7147,7 @@ print(j.seen())
 class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { [a] } else { [Eye(v: 2), Lid(v: 3)] }; print(j[0].seen()) }",
-            &["hinted_elements", "seeded_join for a branch"],
+            &[],
         ),
         (
             "an array of integers beside an array of integers",
@@ -7111,7 +7160,7 @@ fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = if c { 
 class Eye: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 class Lid: Seen { v: i64; fn seen(self) -> i64 { self.v } }
 fn main() { let a: any Seen = Eye(v: 1); let c = [1].len() == 2; let j = [a, Eye(v: 2)]; print(j[0].seen()) }",
-            &["value_beside"],
+            &[],
         ),
         (
             "an object before an `any` element",
@@ -7553,6 +7602,7 @@ fn generated_programs_should_reach_each_gap_rule() {
     let mut walk = Walk::default();
     let missing = |walk: &Walk| -> Vec<String> {
         (GAP_RULES.iter().map(|&key| key.to_string()))
+            .chain(JOIN_ORDERS.iter().map(|&(key, _)| key.to_string()))
             .chain(GAP_POINTS.iter().map(|&point| gap_key(point)))
             .filter(|key| !walk.seen.contains(key))
             .collect()
@@ -9361,7 +9411,7 @@ impl<'f> Lets<'f> {
                     }
                 });
             }
-            tir::ExprKind::Loop(block) => self.conditionally(|walk| walk.block(block)),
+            tir::ExprKind::Loop { body: block, .. } => self.conditionally(|walk| walk.block(block)),
             tir::ExprKind::Break {
                 value: Some(value), ..
             } => self.expr(value),
@@ -9413,7 +9463,7 @@ impl<'f> Lets<'f> {
             | tir::ExprKind::ReadLine
             | tir::ExprKind::Index { .. }
             | tir::ExprKind::Slice { .. }
-            | tir::ExprKind::Loop(_)
+            | tir::ExprKind::Loop { .. }
             | tir::ExprKind::Break { .. }
             | tir::ExprKind::Continue { .. }
             | tir::ExprKind::Return(_)

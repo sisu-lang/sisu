@@ -1,3 +1,3 @@
-unit_value_forms.sisu:28:9: o?.log() = None
-unit_value_forms.sisu:28:9: o?.log() = ()
-unit_value_forms.sisu:51:9: loop { if c { break g() }; break } = ()
+unit_value_forms.sisu:27:9: o?.log() = None
+unit_value_forms.sisu:27:9: o?.log() = ()
+unit_value_forms.sisu:48:9: loop { if c { break g() }; break } = ()

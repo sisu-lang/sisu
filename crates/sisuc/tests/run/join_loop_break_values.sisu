@@ -1,0 +1,37 @@
+// GIVEN a `loop` whose `break` values have no written type, in a `let`, an argument or an element
+// WHEN the program runs
+// THEN the `break` values join by the rule of an `if`, with no error (ADR 0052)
+// AND a literal takes the type of a sibling
+// AND a `None` makes the loop an optional
+// AND an empty array takes the element type of a sibling
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn pick<T>(a: T, _b: T) -> T {
+    a
+}
+
+fn main() {
+    let small: u8 = 255
+    let v: u8 = 7
+    let o: f64? = None
+    let p: f64? = None
+    for c in [true, false] {
+        let a = loop { if c { break 1 }; break small }
+        let b = loop { if c { break 1 }; break None }
+        let d = loop { if c { break None }; break 5 }
+        let e = loop { if c { break [] }; break [5] }
+        let f = id(loop { if c { break 1 }; break v })
+        let g = pick(loop { if c { break 1 }; break v }, v)
+        let h = [loop { if c { break 1 }; break v }, v]
+        let x: f64? = o ?? id(loop { break p })
+        let y = o ?? id(loop { break (if c { 1.5 } else { None }) })
+        print(a + 0)
+        print(b == None)
+        print(d == None)
+        print(e.len())
+        print(f + g + h[0] + h[1])
+        print(x ?? y ?? 0.0)
+    }
+}

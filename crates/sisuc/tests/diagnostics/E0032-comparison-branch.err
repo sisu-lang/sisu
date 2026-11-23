@@ -1,20 +1,31 @@
-error[E0032]: expected `i64`, found `Two<i64, bool>`
-  --> E0032-comparison-branch.sisu:15:34
+error[E0032]: the operands of this comparison have different types
+  --> E0032-comparison-branch.sisu:15:13
    |
 15 |     print(x == if b { 1 } else { made() })
-   |                                  ^^^^^^
+   |           - ^^                   ------ `Two<i64, bool>`
+   |           |
+   |           `i64`
 
-error[E0032]: expected `u8`, found `i64`
-  --> E0032-comparison-branch.sisu:16:23
+error[E0032]: the operands of this comparison have different types
+  --> E0032-comparison-branch.sisu:16:13
    |
 16 |     print(u == if b { x } else { 1 })
-   |                       ^
+   |           - ^^        - `i64`
+   |           |
+   |           `u8`
+   |
+help: if the types are right, convert it with `i64(...)`
+   |
+16 |     print(i64(u) == if b { x } else { 1 })
+   |           ++++ +
 
-error[E0032]: expected `string`, found `i64`
-  --> E0032-comparison-branch.sisu:17:36
+error[E0032]: the operands of this comparison have different types
+  --> E0032-comparison-branch.sisu:17:13
    |
 17 |     print(s == if b { "a" } else { 1 })
-   |                                    ^
+   |           - ^^        --- `string` - `i64`
+   |           |
+   |           `string`
 
 sisu: 3 errors
 sisu: for more on a code, run `sisu explain <code>`: E0032

@@ -683,6 +683,9 @@ impl Mono {
             TypeKind::Param(..) => {
                 panic!("`subst` should replace every type parameter before `mono` maps a type")
             }
+            TypeKind::Infer(_) => {
+                unreachable!("the checker's write_back should leave no inference variable")
+            }
             TypeKind::I64
             | TypeKind::U8
             | TypeKind::F64
@@ -1390,7 +1393,7 @@ impl Mono {
                     self.arm(arm, args);
                 }
             }
-            K::Loop(block) | K::Block(block) => self.block(block, args),
+            K::Loop { body: block, .. } | K::Block(block) => self.block(block, args),
             K::MutCall { call, muts, back } => {
                 for m in muts.iter_mut() {
                     for (_, object) in &mut m.keep {
@@ -1644,7 +1647,7 @@ fn assert_concrete(program: &Program) {
                         .flatten(),
                 ),
                 ExprKind::Match { arms, .. } => blocks.extend(arms.iter().map(|arm| &arm.body)),
-                ExprKind::Loop(block) | ExprKind::Block(block) => blocks.push(block),
+                ExprKind::Loop { body: block, .. } | ExprKind::Block(block) => blocks.push(block),
                 ExprKind::MutCall { back, .. } => blocks.push(back),
                 _ => {}
             }
@@ -1682,6 +1685,9 @@ fn assert_concrete(program: &Program) {
 /// Whether `ty` names no type parameter and holds no type arguments, at any depth.
 fn concrete(ty: Type) -> bool {
     match ty.kind() {
+        TypeKind::Infer(_) => {
+            unreachable!("the checker's write_back should leave no inference variable")
+        }
         TypeKind::Param(..) | TypeKind::Assoc(..) => false,
         TypeKind::Class(_, args) | TypeKind::Enum(_, args) | TypeKind::Struct(_, args) => {
             args == TypeArgs::NONE
@@ -2394,7 +2400,13 @@ mod tests {
                     arms: vec![arm],
                 },
             ),
-            ("loop", ExprKind::Loop(block(param))),
+            (
+                "loop",
+                ExprKind::Loop {
+                    body: block(param),
+                    crossed: false,
+                },
+            ),
             ("block", ExprKind::Block(block(param))),
         ] {
             let mut program = instantiated("fn main() {}");

@@ -1,0 +1,10 @@
+// GIVEN `pick(a, None)` with `a: u8`, whose own join puts a wrap inside its first argument
+// WHEN the program prints the value of the call
+// THEN it prints the value of `a`
+fn pick<T>(a: T, _b: T) -> T { a }
+
+fn main() {
+    let a: u8 = 3
+    let y = pick(a, None)
+    print(y ?? 0) // 3
+}

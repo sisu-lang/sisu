@@ -1,0 +1,11 @@
+struct Two<A, B> {
+    a: A
+    b: B
+}
+fn mk() -> Two<i64, bool> { panic("no") }
+fn gn<T>(_a: Two<T?, i64>, _b: T) {}
+fn main() {
+    let t = Two(a: 1, b: true)
+    gn(t, 1)
+    gn(mk(), 1)
+}

@@ -1,0 +1,6 @@
+fn main() {
+    let a: u8 = 3
+    let b: i64 = 4
+    let x = a + b
+    print(x)
+}

@@ -27,7 +27,9 @@ use crate::diagnostic::Diagnostic;
 use crate::{ast, lexer, parser};
 
 pub(crate) use mistake::{Kind, Mistake};
+#[cfg(test)]
 pub(crate) use swap::swap_joins;
+pub(crate) use swap::swap_with;
 
 /// The warnings W0013 among `diagnostics` that name a field of a struct of `source`. A generated
 /// program reads each field of each struct, so the checks reject these. A class and a variant may

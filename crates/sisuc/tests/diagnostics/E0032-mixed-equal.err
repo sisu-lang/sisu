@@ -1,13 +1,10 @@
-error[E0032]: expected `f64`, found `i64`
- --> E0032-mixed-equal.sisu:4:11
+error[E0032]: the operands of this comparison have different types
+ --> E0032-mixed-equal.sisu:4:13
   |
 4 |     print(n == x)
-  |           ^
-  |
-help: if the types are right, convert it with `f64(...)`
-  |
-4 |     print(f64(n) == x)
-  |           ++++ +
+  |           - ^^ - `f64`
+  |           |
+  |           `i64`
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0032

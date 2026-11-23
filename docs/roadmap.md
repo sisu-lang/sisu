@@ -40,6 +40,13 @@ before milestone 9.
   (`outer: for ...`) lets `break outer` and `continue outer` reach that loop;
   `while true` warns (`W0009`) and points at `loop`
   ([ADR 0034](adr/0034-loop-and-loop-labels.md))
+- a join gives the values that one expression combines the type of one of
+  them, in any order. The values are the branches of an `if` or a `match`, the
+  elements of an array and the `break` values of a loop. They are also the
+  two sides of `??` or of an operator, and the arguments of one type
+  parameter of a call. So `[4, None, 6]` is an `[i64?]`, and `[1, x]` with an
+  `x: u8` is a `[u8]`
+  ([ADR 0052](adr/0052-a-join-takes-the-type-of-one-of-its-members.md))
 - `let pattern = value else { ... }`, whose `else` block must not finish,
   and `return`, `break` and `continue` as expressions of type `never`, so
   that `let v = o ?? return 0` unwraps and leaves in one line

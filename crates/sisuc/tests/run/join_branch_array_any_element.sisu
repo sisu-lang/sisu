@@ -1,0 +1,23 @@
+// GIVEN an `if` whose branches are arrays, one of an `any` value and one of an optional or `None`
+// WHEN the program runs
+// THEN the elements are members of the `if`'s join, as a nested join has no type of its own (S1)
+// AND the optional converts to the `any` type, as in the scalar `if c { d } else { Some(2) }`
+interface Shape {
+    fn area(self) -> f64
+}
+struct Circle: Shape {
+    r: f64
+    fn area(self) -> f64 { self.r }
+}
+fn main() {
+    let d: any Display = 1
+    let s: any Shape = Circle(r: 1.0)
+    for c in [true, false] {
+        let a = if c { [d] } else { [Some(2)] }
+        let b = if c { [d] } else { [None] }
+        let k = if c { [s] } else { [Some(Circle(r: 2.0))] }
+        print(a[0].to_string())
+        print(b[0].to_string())
+        print(k.len())
+    }
+}

@@ -160,12 +160,17 @@ fn a_literal_in_a_failed_context_should_still_join_its_elements() {
         // The elements that no sibling hints still join: a `string` and a `bool` do not.
         (
             "fn main() {\n    let xs: Bad = [\"a\", true]\n}",
-            vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (2, 25))],
+            vec![(Code::UnknownType, (2, 13)), (Code::Mismatch, (2, 19))],
         ),
-        // A loop in a statement before the element's value keeps its own rules.
+        // A loop in a statement before the element's value reports its own join, as an `if`
+        // there does (ADR 0052).
         (
             "fn main() {\n    let xs: Bad = [{\n        let y: Bad = loop {\n            if true { break 1 }\n            break true\n        }\n        1\n    }]\n}",
-            vec![(Code::UnknownType, (2, 13)), (Code::UnknownType, (3, 16))],
+            vec![
+                (Code::UnknownType, (2, 13)),
+                (Code::UnknownType, (3, 16)),
+                (Code::Mismatch, (3, 22)),
+            ],
         ),
     ] {
         codes(src, &expected);
@@ -174,22 +179,46 @@ fn a_literal_in_a_failed_context_should_still_join_its_elements() {
 
 #[test]
 fn a_part_that_fails_on_its_own_in_a_quiet_element_should_add_no_report() {
-    // GIVEN a loop whose values do not join, in a part of the element that failed first
+    // GIVEN a loop whose values do not join, in a part of the element that failed first, or as
+    // an operand or argument beside it
     let looped = "loop {\n        if true { break 1 }\n        break true\n    }";
-    for (element, at, code) in [
-        (format!("nope + {looped}"), (2, 20), Code::BindingNotFound),
-        (format!("nope ?? {looped}"), (2, 20), Code::BindingNotFound),
-        (format!("nope({looped})"), (2, 20), Code::FunctionNotFound),
+    // The join of the loop reports at (2, n): the head of the outer join, the `+`, or else the
+    // `loop` (ADR 0052).
+    let join = |n| Some((Code::Mismatch, (2, n)));
+    for (element, at, code, own) in [
+        (
+            format!("nope + {looped}"),
+            (2, 20),
+            Code::BindingNotFound,
+            join(25),
+        ),
+        (
+            format!("nope ?? {looped}"),
+            (2, 20),
+            Code::BindingNotFound,
+            join(28),
+        ),
+        (
+            format!("nope({looped})"),
+            (2, 20),
+            Code::FunctionNotFound,
+            join(25),
+        ),
         (
             format!("if true {{ nope }} else {{ {looped} }}"),
             (2, 30),
             Code::BindingNotFound,
+            None,
         ),
     ] {
         // WHEN the element is checked in a literal whose context failed
         let src = format!("fn main() {{\n    let xs: Bad = [{element}]\n}}");
-        // THEN only the failed context and the first failure are reported
-        codes(&src, &[(Code::UnknownType, (2, 13)), (code, at)]);
+        // THEN the failed context, the first failure and the loop's own join are reported
+        let wanted: Vec<_> = [(Code::UnknownType, (2, 13)), (code, at)]
+            .into_iter()
+            .chain(own)
+            .collect();
+        codes(&src, &wanted);
     }
     codes(
         "fn f(b: u8) {\n    let xs: Bad = [nope + loop {\n        if true { break 1 }\n        break b\n    }]\n}\nfn main() {}",
@@ -198,27 +227,30 @@ fn a_part_that_fails_on_its_own_in_a_quiet_element_should_add_no_report() {
             (Code::BindingNotFound, (2, 20)),
         ],
     );
-    // A loop that is the receiver of a field keeps its own report, as with no failed context.
+    // A loop that is the receiver of a field keeps its own report at its head, as an `if` does,
+    // as with no failed context.
     codes(
         &format!("fn main() {{\n    let xs: Bad = [{looped}.x]\n}}"),
-        &[(Code::UnknownType, (2, 13)), (Code::Mismatch, (4, 15))],
+        &[(Code::UnknownType, (2, 13)), (Code::Mismatch, (2, 20))],
     );
 }
 
+/// The branches are a nested join of the array: the array reports their conflict at its head
+/// (ADR 0052).
 #[test]
 fn branches_that_do_not_join_in_a_quiet_element_should_still_be_reported() {
     for (src, at) in [
         (
             "fn main() {\n    let xs: Bad = [if true { [] } else { 1 }]\n}",
-            (2, 30),
+            (2, 19),
         ),
         (
             "fn main() {\n    let xs: Bad = [if true { 1 } else { [] }]\n}",
-            (2, 41),
+            (2, 19),
         ),
         (
             "fn main() {\n    let xs: Bad = [match true {\n        true => []\n        false => 1\n    }]\n}",
-            (3, 17),
+            (2, 19),
         ),
     ] {
         codes(src, &[(Code::UnknownType, (2, 13)), (Code::Mismatch, at)]);
@@ -251,15 +283,17 @@ fn empty_array_where_no_array_is_expected() {
     );
 }
 
+/// The elements of an array that do not join give one report at its head (ADR 0052).
 #[test]
-fn element_does_not_fit() {
+fn elements_that_do_not_join_should_report_once_at_the_array() {
     codes(
         "fn main() { let a = [1, true] }",
-        &[(Code::Mismatch, (1, 25))],
+        &[(Code::Mismatch, (1, 21))],
     );
+    // The sides of `==` join: two other types are E0047 at the comparison (Task 5d-2).
     codes(
         "fn main() { print([1] == [true]) }",
-        &[(Code::Mismatch, (1, 27))],
+        &[(Code::CannotCompare, (1, 19))],
     );
 }
 
@@ -574,7 +608,7 @@ fn a_failed_value_of_an_unannotated_let_should_give_no_second_error() {
         (
             "fn main() {\n    let x = [1, []]\n    print(x + true)\n}".to_owned(),
             Code::Mismatch,
-            (2, 17),
+            (2, 13),
         ),
         (
             format!("{NODE}fn main() {{\n    let x = [Node(v: 1); 3]\n    print(x + true)\n}}"),
@@ -1025,12 +1059,18 @@ fn siblings_should_take_the_type_of_the_others_in_an_array_literal() {
 #[test]
 fn a_waiting_sibling_that_is_no_optional_should_be_reported_for_its_type() {
     with_prelude();
-    for statement in ["let _a = [[], 1]", "f([[], 1])", "let _a = [1, []]"] {
+    // The report of the join is at its head, and an array in a call is a nested join of the
+    // call (ADR 0052).
+    for (statement, head) in [
+        ("let _a = [[], 1]", "["),
+        ("f([[], 1])", "f"),
+        ("let _a = [1, []]", "["),
+    ] {
         let src = join_main(statement);
         codes_row(
             statement,
             &src,
-            &[(Code::Mismatch, in_statement(&src, statement, "[]"))],
+            &[(Code::Mismatch, in_statement(&src, statement, head))],
         );
     }
 }
@@ -1076,27 +1116,19 @@ fn a_dbg_with_two_arguments_in_an_array_should_report_the_count_once() {
     );
 }
 
-/// A literal that holds an array is not typed beside a sibling: it keeps its default type, as it
-/// did before, because `literal_type` knows scalars only. The `[[1], x2]` row guards this limit
-/// (see `Ranked::sibling`): it passes at the base and fails when the limit is lifted by mistake,
-/// and a change that types an array beside a sibling must change the row.
+/// A literal that holds an array takes its type from a sibling, as a scalar literal does: the
+/// elements of an array are members of one join (ADR 0052), so `[[1], x2]` is `[[u8]]`.
 #[test]
-fn a_literal_array_should_keep_its_default_type_beside_a_sibling() {
+fn a_literal_array_should_take_its_type_beside_a_sibling() {
     for statement in [
         "let _a = [[1], [2]]",
         "let _a: [i64?] = [Option<i64>.None, 1]",
         "let _a = if c { [1] } else { [] }",
+        "let _a = [[1], x2]",
+        "let _a = [x2, [1]]",
     ] {
         clean_row(statement, &join_main(statement));
     }
-    let src = join_main("let _a = [[1], x2]");
-    codes(
-        &src,
-        &[(
-            Code::Mismatch,
-            in_statement(&src, "let _a = [[1], x2]", "x2]"),
-        )],
-    );
 }
 
 /// A block, a call or an `if` that ranks a sibling is checked once. The statements of a block
@@ -1149,4 +1181,287 @@ fn a_requirement_call_that_waits_should_take_the_type_of_its_sibling() {
     let src = "interface G {\n    fn ropt<U>(self) -> U?\n}\n\
         fn f<X: G>(x: X) {\n    let a = [x.ropt(), 1]\n}\nfn main() {}";
     clean(src);
+}
+
+/// GIVEN an array whose elements join an `any` value with an optional, `None` or a `Some` of an
+///   optional
+/// AND the `if` that joins the same values as its branches
+/// WHEN the program is checked
+/// THEN the array is valid, as its twin is: its elements are members of one join (spec, S1)
+/// AND an array in a branch is a nested join, whose elements are members of the `if`'s join
+#[test]
+fn an_array_should_accept_what_its_if_twin_accepts() {
+    let rows = [
+        (
+            "let b = [Some(2), d]",
+            "let b = if c { Some(2) } else { d }",
+        ),
+        ("let f = [d, opt(2)]", "let f = if c { d } else { opt(2) }"),
+        (
+            "let e = [o, Some(Some(2))]",
+            "let e = if c { o } else { Some(Some(2)) }",
+        ),
+        (
+            "let g = if c { [d] } else { [None] }",
+            "let g = if c { d } else { None }",
+        ),
+        (
+            "let g = if c { [d] } else { [1, None] }",
+            "let g = if c { d } else if c { 1 } else { None }",
+        ),
+        (
+            "let b = if c { [o] } else { [Some(Some(2))] }",
+            "let b = if c { o } else { Some(Some(2)) }",
+        ),
+    ];
+    for (array, twin) in rows {
+        for row in [array, twin] {
+            let src = format!(
+                "fn opt<T>(x: T) -> T? {{ Some(x) }}\nfn main() {{\n    let c = [1].len() == 2\n    \
+                 let d: any Display = 1\n    let o: (any Display)? = Some(7)\n    {row}\n}}"
+            );
+            clean_row(row, &src);
+        }
+    }
+}
+
+/// GIVEN a call whose array argument gives the parameter `U` one type and `V` two types
+/// AND the elements are at each depth, and beside `None`
+/// WHEN the program is checked
+/// THEN the call reports the conflict of `V` once, at its head (ADR 0052)
+#[test]
+fn a_conflict_in_array_elements_should_report_once_at_the_call() {
+    let decls = "enum Two<A, B> { P(A, B) }\nfn hh<U, V>(a: U, b: [[Two<U, V>?]]) {}\n\
+                 fn h1<U, V>(a: U, b: [Two<U, V>?]) {}\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n";
+    for row in [
+        "hh(true, [[Some(Two.P(true, 1)), None], [Some(Two.P(false, \"x\"))]])",
+        "h1(true, [Some(Two.P(true, 1)), None, Some(Two.P(false, \"x\"))])",
+        "hh(true, [[Some(Two.P(true, 1))], [Some(Two.P(false, \"x\"))]])",
+        "hh(true, [[None, Some(Two.P(true, 1))], [Some(Two.P(false, \"x\"))]])",
+        "h(true, [Two.P(true, 1), Two.P(true, \"s\")])",
+        "h(true, [Two.P(true, \"s\"), Two.P(false, 1)])",
+    ] {
+        let src = format!("{decls}fn main() {{\n    {row}\n}}");
+        codes(&src, &[(Code::Mismatch, (6, 5))]);
+    }
+}
+
+/// The source of `main`, whose `let` takes `n` layers of `open`, `1` and `close` around `1`.
+fn nested_layers(n: usize, (open, close): (&str, &str)) -> String {
+    format!(
+        "fn main() {{\n    let a = {}1{}\n    print(\"{{a.len()}}\")\n}}\n",
+        open.repeat(n),
+        close.repeat(n)
+    )
+}
+
+/// The expressions that `without_value` visits when `main` is checked, whose `let` takes `n`
+/// nested layers of `layer` around `1`.
+fn nested_array_walk_steps(n: usize, layer: (&str, &str)) -> usize {
+    let src = nested_layers(n, layer);
+    VALUE_WALK_STEPS.set(0);
+    let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+    assert!(errors(&src, &ds).is_empty(), "{n} layers of {layer:?}");
+    VALUE_WALK_STEPS.get()
+}
+
+#[test]
+fn nested_array_literal_should_cost_linear_value_walk_steps() {
+    // GIVEN `let a = [[...[1]...]]` and `let a = [[...[1; 2]...; 2]; 2]` of 48, 96 and 144 layers
+    for (row, layer) in [("literal", ("[", "]")), ("fill", ("[", "; 2]"))] {
+        // WHEN each is checked
+        let steps = [48, 96, 144].map(|n| nested_array_walk_steps(n, layer));
+        // THEN no layer walks the layers inside it again, so the steps grow linearly
+        assert_near_linear_for(&format!("row `{row}`: "), steps[0], steps[1], steps[2]);
+    }
+}
+
+/// The value positions that `converts_at` visits when `main` is checked, whose `let` takes `n`
+/// nested layers around `[1]`, each beside a `[]`.
+fn beside_empty_converts_steps(n: usize) -> usize {
+    let mut value = "[1]".to_string();
+    for _ in 0..n {
+        value = format!("[{value}, []]");
+    }
+    let src = format!("fn main() {{\n    let a = {value}\n    print(\"{{a.len()}}\")\n}}\n");
+    join::CONVERTS_STEPS.set(0);
+    let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+    assert!(errors(&src, &ds).is_empty(), "{n} layers");
+    join::CONVERTS_STEPS.get()
+}
+
+#[test]
+fn nested_array_beside_an_empty_array_should_cost_linear_converts_steps() {
+    // GIVEN `let a = [[[[1], []], []], ...]` of 40, 80 and 120 layers
+    // WHEN each is checked
+    let steps = [40, 80, 120].map(beside_empty_converts_steps);
+    // THEN the join tests one candidate, not one for each `[]`, so the steps grow linearly
+    assert_near_linear(steps[0], steps[1], steps[2]);
+}
+
+/// GIVEN a generic call whose argument holds a nested leaf that fits no type of the parameter
+/// AND the leaf is `0` in `if c { row } else { 0 }` at `[T]`, or `1` in `[[None], 1]` at `[[T?]]`
+/// WHEN the program is checked
+/// THEN the call gives one E0032 at its head, with a label at the leaves, and no E0050
+#[test]
+fn a_nested_leaf_that_fits_no_type_of_the_parameter_should_give_e0032_at_the_call() {
+    let decls = "struct P<A> {\n    a: A\n}\n\
+                 fn flat<T>(xs: [[T]]) -> i64 { xs.len() }\n\
+                 fn one<T>(xs: [T]) -> i64 { xs.len() }\n\
+                 fn oner<T>(xs: [T]) -> [T] { xs }\n\
+                 fn two<T>(xs: [T], y: T) -> i64 { xs.len() }\n\
+                 fn opt<T>(xs: [T?]) -> i64 { xs.len() }\n\
+                 fn bx<T>(xs: [P<T>]) -> i64 { xs.len() }\n\
+                 fn g4<T>(xs: [[T?]]) -> i64 { xs.len() }\n\
+                 fn main() {\n    let row = [1, 2]\n    let o: i64? = None\n\
+                 \x20   let c = [1].len() == 2\n    let d = [1].len() == 3\n";
+    // Each row, with the columns of the labels on its line.
+    let rows: [(&str, &[usize]); 25] = [
+        ("one(if c { row } else { 0 })", &[22]),
+        ("flat([row, 3])", &[17, 22]),
+        ("one(if c { [1] } else { None })", &[23, 35]),
+        ("flat([[1, 2], [3], 4])", &[18, 21, 26, 30]),
+        ("flat([[1], \"s\"])", &[18, 22]),
+        ("one(if c { [1] } else { 2 })", &[23, 35]),
+        ("one(if c { row } else if c { [1] } else { 2 })", &[22]),
+        ("flat([row, row, None])", &[17, 22, 27]),
+        ("flat([row, Some(row)])", &[17, 27]),
+        ("one(if c { row } else { None })", &[22, 35]),
+        ("one({ if c { row } else { 0 } })", &[24]),
+        ("flat([if c { row } else { 0 }, row])", &[24, 37, 42]),
+        ("flat([row, Some(3)])", &[17, 27]),
+        ("oner(if c { row } else { 0 }).len()", &[23]),
+        ("one(dbg(if c { row } else { 0 }))", &[26]),
+        ("flat([dbg(row), 0])", &[21, 27]),
+        ("two(if c { row } else { 0 }, 1)", &[22]),
+        ("opt(if c { [o] } else { o })", &[23, 35]),
+        ("bx([P(a: 1), 2])", &[15, 24]),
+        ("bx(if c { [P(a: 1)] } else { P(a: 2) })", &[22, 40]),
+        ("g4([[None], 1])", &[16, 23]),
+        ("g4([1, [None]])", &[15, 19]),
+        ("g4([[None], [1], 1])", &[16, 24, 28]),
+        (
+            "g4([if c { [None] } else if d { [1] } else { 1 }])",
+            &[23, 44, 56],
+        ),
+        (
+            "opt(if c { [None] } else if d { [1] } else { 1 })",
+            &[23, 44, 56],
+        ),
+    ];
+    let mut red = Vec::new();
+    for (row, labels) in rows {
+        let src = format!("{decls}    print({row})\n}}\n");
+        let wanted = vec![(
+            Code::Mismatch,
+            (16, 11),
+            labels.iter().map(|&col| (16, col)).collect::<Vec<_>>(),
+        )];
+        let found = found(&src);
+        if found != wanted {
+            red.push(format!("row `{row}`: found {found:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+/// GIVEN an array literal and an `if` whose values differ, each in parentheses with a comment
+/// before its head
+/// WHEN the program is checked
+/// THEN the E0032 of each is at its `[` or its `if`, not at the comment
+#[test]
+fn the_head_of_a_join_in_parentheses_should_be_its_bracket_or_keyword() {
+    let src = "fn main() {\n    let c = [1].len() == 2\n    let x = (\n        // the rows\n        \
+               [1, \"s\"])\n    let y = (\n        // the branches\n        \
+               (if c { 1 } else { \"s\" }))\n    print(x.len())\n}\n";
+    let heads: Vec<_> = found(src)
+        .iter()
+        .map(|(code, at, _)| (*code, *at))
+        .collect();
+    assert_eq!(heads, [(Code::Mismatch, (5, 9)), (Code::Mismatch, (8, 10))]);
+}
+
+/// Each order of an array of `depth` layers with a `None` beside the array in each layer. The
+/// innermost layer holds `1` and `None`: for two layers, `[[1, None], None]`, `[None, [None, 1]]`
+/// and the two others.
+fn none_beside_each_layer(depth: usize) -> Vec<String> {
+    let mut rows = vec!["1".to_string()];
+    for _ in 0..depth {
+        rows = (rows.iter())
+            .flat_map(|row| [format!("[{row}, None]"), format!("[None, {row}]")])
+            .collect();
+    }
+    rows
+}
+
+/// GIVEN an array of three layers or of four, with a `None` beside the array in each layer
+/// AND each order of the members of each layer, as `[[[1, None], None], None]` and
+///   `[[[None, 1], None], None]`
+/// WHEN each is the value of a `let` with no type
+/// THEN each has the type that `main` gives it, `[[[i64?]?]?]` or `[[[[i64?]?]?]?]`, in each order
+#[test]
+fn a_none_beside_each_layer_of_a_nested_array_should_give_one_type_in_each_order() {
+    let mut red = Vec::new();
+    for (depth, ty) in [(3, "[[[i64?]?]?]"), (4, "[[[[i64?]?]?]?]")] {
+        for row in none_beside_each_layer(depth) {
+            let src = format!(
+                "fn main() {{\n    let a = {row}\n    let t: {ty} = a\n    print(t.len())\n}}\n"
+            );
+            let found = found(&src);
+            if !found.is_empty() {
+                red.push(format!("row `{row}`: found {found:?}"));
+            }
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+/// GIVEN a nested array of a generic struct or enum leaf, a `Some` of the leaf beside it, and a
+///   `None` one layer up.
+/// AND each order of the first layer. An example is `[[[P(a: 1), Some(P(a: 1))]], [[P(a: 1)],
+///   None]]`, and its other order is `[[[Some(P(a: 1)), P(a: 1)]], [[P(a: 1)], None]]`
+/// WHEN each is the value of a `let` with no type
+/// THEN each has one type in each order, `[[[P<i64>?]?]]` or `[[[E<i64>?]?]]`
+#[test]
+fn a_generic_leaf_beside_each_layer_of_a_nested_array_should_give_one_type_in_each_order() {
+    let rows = [
+        (
+            "[[[P(a: 1), Some(P(a: 1))]], [[P(a: 1)], None]]",
+            "[[[P<i64>?]?]]",
+        ),
+        (
+            "[[[Some(P(a: 1)), P(a: 1)]], [[P(a: 1)], None]]",
+            "[[[P<i64>?]?]]",
+        ),
+        ("[[[E.X(1), None]], [[E.X(1)], None]]", "[[[E<i64>?]?]]"),
+        ("[[[None, E.X(1)]], [[E.X(1)], None]]", "[[[E<i64>?]?]]"),
+        ("[[[E.Y, None]], [[E.X(1)], None]]", "[[[E<i64>?]?]]"),
+        ("[[[None, E.Y]], [[E.X(1)], None]]", "[[[E<i64>?]?]]"),
+    ];
+    let mut red = Vec::new();
+    for (row, ty) in rows {
+        let src = format!(
+            "struct P<A> {{\n    a: A\n}}\nenum E<A> {{\n    X(A)\n    Y\n}}\nfn main() {{\n    let a = {row}\n    let t: {ty} = a\n    print(t.len())\n}}\n"
+        );
+        let found = found(&src);
+        if !found.is_empty() {
+            red.push(format!("row `{row}`: found {found:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
 }

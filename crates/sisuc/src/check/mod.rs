@@ -17,7 +17,9 @@ mod expectation;
 mod expr;
 mod extend;
 mod generic;
+mod infer;
 mod interface;
+mod join;
 mod member;
 mod mut_args;
 mod names;
@@ -36,6 +38,8 @@ mod structs;
 mod unused_names;
 
 use std::borrow::Cow;
+use std::cmp::Reverse;
+use std::collections::BTreeMap;
 use std::iter::Peekable;
 use std::ops::Range;
 use std::rc::Rc;
@@ -61,7 +65,8 @@ use constant::{ConstInfo, ConstantSite};
 use enums::{EnumInfo, HoldsTable, reserved_name};
 use expectation::{Expectation, Origin};
 use extend::Extension;
-use interface::{Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
+use infer::WriteBack;
+use interface::{Bound, Bounds, InterfaceInfo, PendingBound, Required, Scope, Slot, Waiting};
 use names::{ConstantId, ItemId, NameMaps, Position, Resolved};
 use prelude::PRELUDE;
 use reports::{Diagnostics, Reported};
@@ -98,6 +103,10 @@ use unused_names::{Owner, Pending, Use, Used};
 /// A poisoned value is typed only when the source states its type apart from the failed part
 /// (the form table of ADR 0049). Each reader reads a typed poisoned value as any value of that
 /// type.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each mark is its own fact about a failed value, and a reader reads one"
+)]
 struct Poisoned {
     ty: Option<Type>,
     /// Whether the expected type passed down was rejected. It is rejected by a `None` that is not
@@ -114,7 +123,7 @@ struct Poisoned {
     /// A generic call in the value kept its E0050, which is its only report. The value is
     /// untyped, and an operator with such an operand adds no report for its default type. Three
     /// readers in `integers` and `binary` need the mark. An operand that waits after a kept one
-    /// takes the default `i64` as a hint and keeps its own E0050 (S18). A leader that the
+    /// takes the default `i64` and keeps its own E0050 (S18). A leader that the
     /// operator does not take is held to the operator's type after a kept operand, so
     /// `id(mk2()) - b` with `b: bool` gives its E0032. And unary `-` and `binary` pass the mark
     /// on, so a `char` beside `-(id(mk2()) + 1)` is still rejected.
@@ -128,6 +137,14 @@ struct Poisoned {
     /// and whether it is an `if let`. Such an `if` has no value, so a use of it is E0043 (see
     /// `missing_value`).
     valueless: Option<(Span, bool)>,
+    /// The value is an untyped `Some` that failed, so it is optional whatever its payload. A join
+    /// with no required type that leaves such a member out is optional too. It is poison of `ty?`,
+    /// where `ty` is the type of the members that state one. So a later `??` does not report that
+    /// the join is not optional. A block tail, a branch and an untyped join that leaves such a
+    /// member out pass the mark on. An array does not, as `[Some(..)]` is not optional.
+    /// `Body::failed_some_spans` is the record that W0015 reads. It cannot reach a member of a
+    /// join.
+    failed_some: bool,
     /// The proof of the report, or of the promise, that made the value poisoned.
     reported: Reported,
 }
@@ -163,6 +180,7 @@ impl Poisoned {
             kept: false,
             jumped: false,
             valueless: None,
+            failed_some: false,
             reported,
         }
     }
@@ -184,6 +202,18 @@ impl Poisoned {
 /// Whether a generic call in `checked` kept its E0050 (see `Poisoned::kept`).
 fn is_kept<T>(checked: &Result<T, Poisoned>) -> bool {
     matches!(checked, Err(Poisoned { kept: true, .. }))
+}
+
+/// Whether `checked` is an untyped `Some` that failed (see `Poisoned::failed_some`).
+fn is_failed_some<T>(checked: &Result<T, Poisoned>) -> bool {
+    matches!(
+        checked,
+        Err(Poisoned {
+            ty: None,
+            failed_some: true,
+            ..
+        })
+    )
 }
 
 /// Whether a failed `break` or `continue` makes `checked` `never` (see `Poisoned::jumped`).
@@ -468,10 +498,6 @@ impl LoopKind {
 }
 
 /// A loop whose body is being checked, and what the `break`s that target it have given.
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each flag is a separate fact, set by a different jump or value"
-)]
 struct LoopFrame {
     kind: LoopKind,
     keyword: Span,
@@ -480,26 +506,17 @@ struct LoopFrame {
     label_used: bool,
     /// Whether a `break` has targeted it.
     broken: bool,
-    /// The type the position around a `loop` expects, each value's hint; `Poisoned` when that
-    /// position failed. A `Hint` when the loop is hinted, which no value converts to.
+    /// The type the position around a `loop` expects; `Poisoned` when that position failed.
     expected: Expectation,
-    /// The type of the first value whose type is neither `never` nor `Error`, and its `break`'s
-    /// span; under an expected `T?`, a `T?` value after `T` ones replaces it.
-    first: Option<(Type, Span)>,
-    /// The span of the value that first set `first`.
-    first_value: Span,
-    /// Whether `first` went from a `T` to a `T?`, so the `T` values before need wrapping.
-    widened: bool,
-    /// The values of objects that did not join the first one yet, by span, with their types. A
-    /// later `any` value can join them, so the loop reports them when its body is checked.
-    deferred: Vec<(Span, Type)>,
+    /// The value of each `break` with a value, in the order that the `break`s were reached, with
+    /// the `break`'s span: the members of the loop's join. A slot is kept before its value is
+    /// checked, so a `break` inside that value comes after it. A `never` value is no member: its
+    /// slot is `None`, and the value stays in its `break`.
+    values: Vec<Option<(Span, Checked)>>,
     /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
     crossed: bool,
     /// The first bare `break`.
     bare: Option<Span>,
-    /// The first `break` whose value's type is not `never`, and that type. It holds the type
-    /// also when `first` stays unset, as it does under a `Poisoned` expectation.
-    valued: Option<(Span, Type)>,
     /// The token of the error that failed the loop: a failed jump, loop label or `break` value
     /// in it. It then has no type.
     failed: Option<Reported>,
@@ -519,32 +536,11 @@ impl LoopFrame {
             label_used: false,
             broken: false,
             expected,
-            first: None,
-            first_value: keyword,
-            bare: None,
-            valued: None,
-            failed: None,
-            widened: false,
-            deferred: Vec::new(),
+            values: Vec::new(),
             crossed: false,
+            bare: None,
+            failed: None,
         }
-    }
-
-    /// The type of a `loop` whose body has been checked: `never` with no `break`, or with only
-    /// `never` values; `unit` with bare ones; else its values'. `None` is `Error`.
-    fn loop_type(&self) -> Option<Type> {
-        if self.failed.is_some() {
-            return None;
-        }
-        if self.valued.is_none() {
-            return Some(if self.bare.is_some() {
-                Type::UNIT
-            } else {
-                Type::NEVER
-            });
-        }
-        // Under a `Poisoned` expectation no value sets `first`.
-        self.first.map(|(ty, _)| ty)
     }
 }
 
@@ -578,9 +574,19 @@ struct Source<'src> {
     breaks: &'src [usize],
     /// Where each line break that ends a statement is, in order.
     newlines: &'src [usize],
+    /// Where the expression in parentheses starts, by where its `(` starts.
+    parens: &'src FxHashMap<usize, usize>,
 }
 
 impl<'src> Source<'src> {
+    /// The span of `len` bytes at the head of the expression `span`, past the parentheses that
+    /// its span holds (see the parser): the `[` of an array literal, the `if` of an `if`.
+    fn head(&self, span: Span, len: usize) -> Span {
+        let start = span.start();
+        let start = self.parens.get(&start).copied().unwrap_or(start);
+        Span::new(start, start + len)
+    }
+
     /// The text that `span` covers.
     fn text(&self, span: Span) -> &'src str {
         self.holding(span.start()).text(span)
@@ -652,18 +658,16 @@ thread_local! {
     pub(super) static SKIP_TOKEN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many expressions `Checker::expr` has checked on this thread.
     pub(super) static EXPR_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many expressions `without_value` has visited on this thread.
+    pub(super) static VALUE_WALK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many unary `-` and operator expressions `int_literal` has walked on this thread, those
     /// it answers from `body.int_literals` not counted.
     pub(super) static INT_LITERAL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many nested loops the walk that wraps a widened loop's values has entered.
+    /// How many nested loops the walk that puts back a loop's `break` values has entered.
     pub(crate) static WRAP_LOOPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many values `wrap_breaks` has wrapped in a walk that enters no nested loop, on this
-    /// thread.
+    /// How many `break` values their loop's join has converted, in loops that no nested `break`
+    /// crosses, on this thread.
     pub(crate) static WIDENED_BREAKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many expressions `fill_bare_breaks` has visited on this thread.
-    pub(super) static FILL_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many times `object_in_some` has been called on this thread.
-    pub(crate) static OBJECT_IN_SOME_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many calls written `.push` have read a place of a type that is no array, on this
     /// thread.
     pub(crate) static OWN_PUSH_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -723,8 +727,6 @@ thread_local! {
     /// How many closure entries have been indexed, and how many entries of an interface have been
     /// read for the name of an associated type, on this thread.
     pub(super) static LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many dropped locals the rollback of a string join has visited on this thread.
-    pub(super) static ROLLBACK_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The points of the checker that this thread has reached since `Walk::program` cleared them.
     pub(crate) static POINTS: std::cell::RefCell<FxHashSet<&'static str>> = std::cell::RefCell::default();
 }
@@ -899,6 +901,11 @@ struct Checker<'src> {
     parse_errors: Vec<Span>,
     /// The body being checked.
     body: Body,
+    /// The inference variables of the top-level function being checked (see `with_table`).
+    table: infer::Table,
+    /// The bounds of the decided type parameters of the calls of `table`'s function, by
+    /// `ObligationId`, each waiting for the types that it names (see `Table::obligation`).
+    obligations: Vec<generic::BoundObligation>,
     /// While `signature` resolves the parameter and return types: the interface of each `any`
     /// type they write, with the span as written. `record` keeps a use here when the body has
     /// no owner, because a signature is resolved outside a body. No other body is resolved while
@@ -1000,7 +1007,20 @@ impl SelfType {
     }
 }
 
+/// The return type of a generic call, and a list by type parameter. At each parameter that one
+/// argument alone decides, the list has that argument's span and type (see `Body::lone_args`).
+type LoneArgs = (Type, Vec<Option<(Span, Type)>>);
+
 /// What checking one body needs: a function's, a method's, or a constant's initialiser.
+/// The key of a call in `Body::waits`: its start, then its end from the last. A call inside
+/// another call sorts after it.
+type WaitKey = (usize, Reverse<usize>);
+
+/// The `WaitKey` of the call at `span`.
+fn wait_key(span: Span) -> WaitKey {
+    (span.start(), Reverse(span.end()))
+}
+
 #[derive(Default)]
 #[expect(
     clippy::zero_sized_map_values,
@@ -1074,17 +1094,43 @@ struct Body {
     self_type: SelfType,
     /// Loops open around the code being checked, innermost last: what a `break` would act on.
     loops: Vec<LoopContext>,
-    /// The waiting generic call that the outer call is checking as an argument.
-    context_hint: Option<generic::ContextHint>,
     /// The E0050 of each generic call whose result cannot meet its context (see `Misfit`). A
     /// report that uses the result takes its entry. Each entry left is pushed when the body ends.
     misfits: Vec<Option<Diagnostic>>,
+    /// The E0050 of each generic call that a join took as a member with a parameter left open,
+    /// by the call's span: each such parameter's variable and what its report reads (see
+    /// `OpenParam`). The call around it makes and gives the report when it settles no type for
+    /// the parameter (see `report_waiting_calls`). The key is `wait_key` of the span: the calls
+    /// inside a span are a range of it, the outer call first, then in source order.
+    waits: BTreeMap<WaitKey, Vec<(Type, generic::OpenParam)>>,
+    /// The spans of the calls in `waits` with a labeled argument: each reports its wait at any
+    /// place of the call around it, as on `main`.
+    labeled_waits: FxHashSet<Span>,
+    /// The spans of the `??` whose own join settled each side to the type of the whole. A join
+    /// around one does not walk into it when that type takes the target as it is (see
+    /// `Checker::settled_join`).
+    settled_joins: FxHashSet<Span>,
     /// The safe method call being checked: `receiver?.method(...)` at this span.
     safe_call: Option<Span>,
+    /// Whether the argument being checked late is at a place that names two or more decided
+    /// parameters of its call (Q28): a method call with arguments in it waits (see
+    /// `takes_member`).
+    closed_place: bool,
+    /// The argument that its call checks late at a place that is not a bare type parameter. A part
+    /// of that place is still open. A result there that clashes with a known part is E0032, as on
+    /// `main` (see `Checker::known_context`).
+    late_argument: Option<Span>,
+    /// The bounds of the open forms that the join being tested took, whose subject still held
+    /// an open variable: the subject, the bound and the call's type arguments. The join tests
+    /// each one at the end of its candidate (see `Checker::candidate_bounds_hold`).
+    candidate_bounds: Vec<(Type, Bound, Vec<Type>)>,
     /// The span of the expression or block being checked whose value no code uses: a statement,
     /// the body of a loop or of a `unit` function, or a branch or arm of such a value. A join
     /// there wraps a branch with no value to lift, as nothing reads it (see `Checker::join`).
     dropped: Option<Span>,
+    /// Set while a join whose value no code uses settles its members: a member with no value to
+    /// lift is wrapped, not E0043 (see `Checker::lift`).
+    dropped_join: bool,
     /// Set by a `break` or `continue` outside a loop; `scoped_block` reads it per statement.
     invalid_jump: bool,
     /// The last string literal that is `never` because a part is: its span, and the span of the
@@ -1096,11 +1142,6 @@ struct Body {
     /// The bare name right after an unlabeled `break`, which may be a misspelled loop label, and
     /// the byte where that `break` starts: only there does E0033 offer the open loop labels.
     label_typo: Option<(Span, usize)>,
-    /// The count of open loops (`loops.len()`) when the innermost join or branch ranking in a
-    /// poisoned context started. A `break` to one of them, with no type yet, waits for the next
-    /// run: the branches are ranked and checked out of source order, so it may come before the
-    /// `break` that gives the loop its type.
-    waiting_loops: Option<usize>,
     /// Where the value of the unlabeled `break` being checked starts: the parser reads an open
     /// loop label there as the `break`'s label, so a fix must not write one there.
     break_start: Option<usize>,
@@ -1116,17 +1157,14 @@ struct Body {
     write_chain: Option<(Span, place::Change)>,
     /// The initializer of the `let` being checked, and what that `let` writes before its type
     /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
-    /// `None` or `[]`.
-    let_init: Option<(Span, Symbol, bool)>,
+    /// `None` or `[]`. Last, the span of the name, after which the fix of a join writes a type.
+    let_init: Option<(Span, Symbol, bool, Span)>,
     /// The E0050 of each local whose initializer is such a literal, until a later use gives the
     /// local a type (see `Checker::inferred_by_use`).
     uninferred: FxHashMap<tir::LocalId, Uninferred>,
     /// The constant whose value is being checked, where interpolation is not known and a
     /// conversion that can fail is an error.
     in_constant: Option<ConstantSite>,
-    /// Each `+` found to join a `string` under an expected `u8`, which a later check of it
-    /// checks with no expected type.
-    joins: FxHashSet<Span>,
     /// How many writes the body has checked; a binding's `written` is this count at its last.
     writes: u32,
     /// `writes` at the last write rooted at `self`; 0 for none.
@@ -1167,16 +1205,31 @@ struct Body {
     ahead: Vec<((Span, bool), Option<generic::Ahead>, bool)>,
     /// Where in `ahead` the last work kept for each span and kind is.
     ahead_at: FxHashMap<(Span, bool), usize>,
-    /// What `takes_context` answered for each array literal and `Some(...)`, with the context,
-    /// by the span of the expression.
-    taken: FxHashMap<(Span, Type), bool>,
     /// What `rank_value` answered for each expression, by its span, and whether ranking it
     /// cleared `fit`. A span is checked in one scope only (there are no closures yet), so the
     /// answer holds for every call that ranks it.
     ranked: FxHashMap<Span, (generic::Ranked, bool)>,
+    /// What `takes_member` answered for each expression, by its span and whether its place is
+    /// closed. A nested generic call walks its arguments again when it is checked. The kept answer
+    /// makes the walks of a nest of calls linear in its depth.
+    members: FxHashMap<(Span, bool), Option<Expectation>>,
     /// What `int_literal` answered for each unary `-` and operator, by its span. The answer
     /// depends only on the node, and no two operator nodes have one span.
     int_literals: FxHashMap<Span, bool>,
+    /// For a loop, by its span: the first `if` without an `else` that one of its `break` values
+    /// gives. It is read when the loop's `unit` lifts to `unit?` (see `unlifted`). The values are
+    /// in the loop's body, where `without_value` does not walk.
+    loop_unlifted: FxHashMap<Span, (Span, bool)>,
+    /// The span of each array literal and array fill whose value no `if` and no `match` gives
+    /// through its elements (see `branch_free`). The walk of `without_value` does not enter it.
+    branch_free: FxHashSet<Span>,
+    /// The return type of a generic call, by the call's span. With it, at the index of each bare
+    /// type parameter that one argument alone decides, that argument's span and type. A list by
+    /// index keeps the note and the look-up of a parameter in constant time. The directed report of
+    /// a call whose result misfits goes to such an argument, as on `main`. In `id(id(mk2()))`, it
+    /// is at `mk2()`. In `g(py(true, none()))` at `Two<i64?, i64>`, with `py<X, Y>(y: Y, x: X) ->
+    /// Two<X, Y>`, it is at `true` (see `Checker::blamed_part`).
+    lone_args: FxHashMap<Span, LoneArgs>,
 }
 
 impl Body {
@@ -1486,6 +1539,7 @@ impl<'src> Checker<'src> {
                 quotes: &program.quotes,
                 breaks: &program.breaks,
                 newlines: &program.newlines,
+                parens: &program.parens,
             },
             names: NameMaps::default(),
             prelude_functions: FxHashSet::default(),
@@ -1546,6 +1600,8 @@ impl<'src> Checker<'src> {
             diagnostics: Diagnostics::default(),
             parse_errors: Vec::new(),
             body: Body::default(),
+            table: infer::Table::default(),
+            obligations: Vec::new(),
             signature_anys: None,
             extend_head: None,
             uses: Vec::new(),
@@ -1571,6 +1627,43 @@ impl<'src> Checker<'src> {
             self.diagnostics.error(d);
         }
         (result, body)
+    }
+
+    /// Checks with a fresh inference table, then puts the type of each variable in `result`
+    /// (`infer::WriteBack`). It reports each `Any` variable that no type reached (E0050), and
+    /// restores the table before it. A top-level function, a method and the value of a constant
+    /// call it. No other code takes the table, and each of them has its own variables.
+    fn with_table<R: WriteBack>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let outer = std::mem::take(&mut self.table);
+        let outer_obligations = std::mem::take(&mut self.obligations);
+        let errors = self.diagnostics.errors();
+        let mut result = f(self);
+        // A held argument that no join put back goes back in place now.
+        self.settle_held(None, &mut |at, value| {
+            result.each_root_mut(&mut |e| {
+                join::put_back(e, at, value, true);
+            });
+        });
+        let left = self.table.take_held(None);
+        debug_assert!(
+            left.is_empty() || self.diagnostics.errors() > errors,
+            "each held argument with a type should be put back in its call"
+        );
+        self.report_held_conflicts();
+        self.report_left_waiting();
+        let mut table = std::mem::replace(&mut self.table, outer);
+        self.obligations = outer_obligations;
+        if !table.is_empty() {
+            let written = result.write_back_all(&mut table);
+            for unsettled in written.unsettled {
+                let _reported = self.report_unsettled(unsettled);
+            }
+            debug_assert!(
+                !written.open || self.diagnostics.errors() > errors,
+                "no inference variable should be left in a function that reported no error"
+            );
+        }
+        result
     }
 
     /// The type that `checked`, a failed generic call, found for its result and could not meet
@@ -2544,11 +2637,21 @@ impl Checker<'_> {
     /// is `Error` or its body failed; an `Error` parameter still yields one, and `check` drops
     /// it for the error behind it.
     /// A method, of the class or enum `owner`, gets `self` as its first local.
+    fn function(
+        &mut self,
+        f: &ast::Function,
+        id: tir::FuncId,
+        owner: Option<Type>,
+    ) -> Option<tir::Function> {
+        self.with_table(|c| c.function_in_table(f, id, owner))
+    }
+
+    /// `function`, with the inference table of the function in place.
     #[expect(
         clippy::too_many_lines,
         reason = "one pass over a function: its signature, locals, body and result"
     )]
-    fn function(
+    fn function_in_table(
         &mut self,
         f: &ast::Function,
         id: tir::FuncId,
@@ -2641,7 +2744,7 @@ impl Checker<'_> {
                 // value is E0043 (see `lift_block`).
                 let valueless = (body.as_ref().ok())
                     .and_then(|block| block.value.as_deref())
-                    .and_then(expr::valueless);
+                    .and_then(|e| c.valueless(e));
                 if let Some((at, if_let)) = valueless {
                     body = Err(Poisoned::untyped(c.no_value(at, expr::no_else(if_let))));
                 } else if payload != Type::UNIT || tail(&f.body).is_some_and(|e| !without_else(e)) {
@@ -2687,6 +2790,7 @@ impl Checker<'_> {
                     let origin = Origin::Returns {
                         function: Origin::id(id.0),
                     };
+                    let got = self.shown_against(got, want);
                     self.mismatch(value_span(&f.body), tail(&f.body), want, got, origin)
                 };
                 self.diagnostics.error(d);
@@ -2893,18 +2997,6 @@ impl Checker<'_> {
         got: Type,
         origin: Origin,
     ) -> Diagnostic {
-        let optional = matches!(want.kind(), TypeKind::Optional(_));
-        // `u8` and `char` convert into each other through `i64`, and into `f64` through it.
-        let (to, through) = match (payload(want), got) {
-            (Type::I64, Type::U8 | Type::CHAR) => (Some("i64"), None),
-            (Type::F64, Type::I64) => (Some("f64"), None),
-            (Type::F64, Type::U8 | Type::CHAR) => (Some("f64"), Some("i64")),
-            (Type::U8, Type::I64) if optional => (Some("u8"), None),
-            (Type::CHAR, Type::I64) if optional => (Some("char"), None),
-            (Type::U8, Type::CHAR) if optional => (Some("u8"), Some("i64")),
-            (Type::CHAR, Type::U8) if optional => (Some("char"), Some("i64")),
-            _ => (None, None),
-        };
         let conversion = matches!(got.kind(), TypeKind::Optional(p) if p == want)
             && source.is_some_and(|e| self.can_fail(e));
         DiagnosticKind::Mismatch {
@@ -2912,7 +3004,7 @@ impl Checker<'_> {
             got: self.type_name(got),
             at: span,
             origin: self.origin_fact(origin),
-            fix: to
+            fix: number_conversion(want, got)
                 .zip(source.filter(|e| {
                     !matches!(
                         e.kind,
@@ -2921,7 +3013,7 @@ impl Checker<'_> {
                             | ast::ExprKind::Match { .. }
                     )
                 }))
-                .map(|(to, e)| {
+                .map(|((to, through), e)| {
                     MismatchFix::Convert(Conversion {
                         to,
                         through,
@@ -2971,12 +3063,40 @@ fn redeclares(first: &FxHashMap<Symbol, (Span, Definition)>, name: &ast::Ident) 
     first.contains_key(&name.name) && !name.span.in_prelude()
 }
 
+/// The conversion that turns a `got` into `want`: the type to convert to, and the type to go
+/// through. `u8` and `char` convert into each other through `i64`, and into `f64` through it.
+/// A conversion to `u8` or `char` gives an optional, so it is offered only where one is expected.
+fn number_conversion(want: Type, got: Type) -> Option<(&'static str, Option<&'static str>)> {
+    let optional = matches!(want.kind(), TypeKind::Optional(_));
+    match (payload(want), got) {
+        (Type::I64, Type::U8 | Type::CHAR) => Some(("i64", None)),
+        (Type::F64, Type::I64) => Some(("f64", None)),
+        (Type::F64, Type::U8 | Type::CHAR) => Some(("f64", Some("i64"))),
+        (Type::U8, Type::I64) if optional => Some(("u8", None)),
+        (Type::CHAR, Type::I64) if optional => Some(("char", None)),
+        (Type::U8, Type::CHAR) if optional => Some(("u8", Some("i64"))),
+        (Type::CHAR, Type::U8) if optional => Some(("char", Some("i64"))),
+        _ => None,
+    }
+}
+
 /// `T` for a `T?`, else `ty`.
 fn payload(ty: Type) -> Type {
     match ty.kind() {
         TypeKind::Optional(payload) => payload,
         _ => ty,
     }
+}
+
+/// The value that `e` gives: the tail of each block that ends in a value, through each such
+/// block, and `e` itself for any other expression.
+fn block_value(mut e: &ast::Expr) -> &ast::Expr {
+    while let ast::ExprKind::Block(block) = &e.kind
+        && let Some(value) = tail(block)
+    {
+        e = value;
+    }
+    e
 }
 
 /// The expression a block ends in, if it ends in one: its value. A jump is no value.

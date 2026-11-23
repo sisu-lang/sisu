@@ -114,6 +114,10 @@ KNOWN: list[tuple[str, str, int | str]] = [
     # calls of the helpers that make an array or a box unique.
     ("struct writes -O2", "optimize", 687),
     ("struct writes -O2", "object", 687),
+    # LLVM's `PromotePass` on the nested chain; `main` gives the same counts.
+    ("else-if chain with a result type", "optimize", 765),
+    # The ratio is near the limit on `main` too (2.21 at 8n), with 4 times more work.
+    ("alias chain", "mono", 766),
 ]
 ANNOTATE = ["callgrind_annotate", "--inclusive=yes", "--threshold=100", "--show=Ir", "--auto=no"]
 DIAGNOSTIC = re.compile(r"^(error|warning)\[([EW]\d{4})\]")
@@ -216,6 +220,58 @@ def array_literal_depth(k: int) -> str:
     )
 
 
+def array_literal_depth_beside_empty(k: int) -> str:
+    """Return a program with an array literal of `k + 1` nested layers, each beside a `[]`."""
+    return (
+        f"fn main() {{\n    let a = {nest(k, lambda s: f'[{s}, []]', '[1]')}\n"
+        '    print("{a.len()}")\n}\n'
+    )
+
+
+def coalesce_depth(k: int) -> str:
+    """Return a program with `k` nested `??`, each with the open left side `Some(1)`."""
+    chain = nest(k, lambda s: f"Some(1) ?? ({s})", "1")
+    return f'fn main() {{\n    let r = {chain}\n    print("{{r}}")\n}}\n'
+
+
+def coalesce_depth_to_optional(k: int) -> str:
+    """Return a program with `k` nested `??` as in `coalesce_depth`, the last default an `i64?`."""
+    chain = nest(k, lambda s: f"Some(1) ?? ({s})", "o")
+    return (
+        f'fn main() {{\n    let o: i64? = None\n    let r = {chain}\n    print("{{r ?? 0}}")\n}}\n'
+    )
+
+
+def array_fill_depth(k: int) -> str:
+    """Return a program with an array fill of `k + 1` nested layers."""
+    return (
+        f"fn main() {{\n    let a = {nest(k, lambda s: f'[{s}; 1]', '[1; 1]')}\n"
+        '    print("{a.len()}")\n}\n'
+    )
+
+
+def open_call_chain(k: int) -> str:
+    """Return a program with `k + 1` nested open generic calls in an `if` beside a `[u8]?`.
+
+    The innermost `[1]` takes its `u8` from the other branch, through each call.
+    """
+    call = nest(k + 1, lambda s: f"id({s})", "[1]")
+    return (
+        "fn id<T>(x: T) -> T {\n    x\n}\n\n"
+        "fn main() {\n    let c = [1].len() > 0\n    let m: [u8]? = None\n"
+        f"    let x = if c {{ m }} else {{ {call} }}\n"
+        '    print("{x?.len() ?? 0}")\n}\n'
+    )
+
+
+def unannotated_array_with_none(k: int) -> str:
+    """Return a program with an array literal of `k + 1` `u8` locals and a `None`, with no type."""
+    elements = ", ".join(["x"] * (k + 1) + ["None"])
+    return (
+        f'fn main() {{\n    let x: u8 = 1\n    let a = [{elements}]\n    print("{{a.len()}}")\n}}\n'
+    )
+
+
 def array_literal_width(k: int) -> str:
     """Return a program with an array literal of `k` elements."""
     return (
@@ -241,6 +297,15 @@ def match_arms(k: int) -> str:
         f"fn main() {{\n    let mut total = 0\n    for k in [{built}] {{\n"
         "        total += pick(k)\n"
         '    }\n    print("{total}")\n}\n'
+    )
+
+
+def else_if_chain(k: int) -> str:
+    """Return a program with a `u8` function whose body is an `else if` chain of `k + 2` arms."""
+    chain = " else if c { a }" * k
+    return (
+        f"fn pick(c: bool, a: u8) -> u8 {{\n    if c {{ a }}{chain} else {{ a }}\n}}\n\n"
+        'fn main() {\n    let a: u8 = 7\n    print("{pick(true, a)}")\n}\n'
     )
 
 
@@ -648,6 +713,27 @@ def never_built(k: int) -> str:
     )
 
 
+def constructor_type_parameters(k: int) -> str:
+    """Return a program that builds a struct of `k + 1` type parameters under its written type.
+
+    The row guards the join of a constructor under its written type: a join that walks the
+    result one time for each type parameter is quadratic in the parameters. The counter test
+    `a_constructor_of_many_type_parameters_should_note_each_lone_argument_once` guards the
+    notes of the lone arguments.
+    """
+    params = ", ".join(["A", *(f"A{tag(i)}" for i in range(k))])
+    fields = "    f: A\n" + "".join(f"    f{tag(i)}: A{tag(i)}\n" for i in range(k))
+    written = ", ".join(["i64"] * (k + 1))
+    given = "f: 1" + "".join(f", f{tag(i)}: 1" for i in range(k))
+    # `main` adds each field to `total`, so that no size has a W0013.
+    read = "".join(f"    total += t.f{tag(i)}\n" for i in range(k))
+    return (
+        f"struct Tup<{params}> {{\n{fields}}}\n\n"
+        f"fn main() {{\n    let t: Tup<{written}> = Tup({given})\n    let mut total = 0\n"
+        f'    total += t.f\n{read}    print("{{total}}")\n}}\n'
+    )
+
+
 def failed_bounds(k: int) -> str:
     """Return a program with `k` failed bounds in one alias, and `k` users of that alias."""
     params = ", ".join(["P", *(f"P{tag(i)}" for i in range(k))])
@@ -672,6 +758,8 @@ SHAPES = {
     # the bound 2.3, so the verdict does not rest on the fall rule.
     "string literal width": (100, string_literal_width),
     "match arms": (50, match_arms),
+    # n = 30: each `else if` is one level deeper, and 8n levels stay under the limit of 256 (E0071).
+    "else-if chain with a result type": (30, else_if_chain),
     "fields": (50, fields),
     "conformers": (50, conformers),
     "type depth": (24, type_depth),
@@ -701,11 +789,19 @@ SHAPES = {
     "mutable locals": (250, mutable_locals),
     "nested array ==": (5, nested_array_eq),
     "failed bounds": (64, failed_bounds),
+    "constructor type parameters": (100, constructor_type_parameters),
     "struct fields": (50, struct_fields),
     "struct paths": (24, struct_paths),
     "struct writes": (100, struct_writes),
     "struct ==": (50, struct_equality),
     "never built": (16, never_built),
+    "array literal depth beside []": (24, array_literal_depth_beside_empty),
+    "array fill depth": (24, array_fill_depth),
+    # n = 15: 8n levels stay under the nesting limit of 256 (E0071).
+    "coalesce depth": (15, coalesce_depth),
+    "coalesce depth to an optional": (15, coalesce_depth_to_optional),
+    "open call chain": (24, open_call_chain),
+    "unannotated array with None": (1000, unannotated_array_with_none),
 }
 
 

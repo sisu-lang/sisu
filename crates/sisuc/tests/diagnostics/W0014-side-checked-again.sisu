@@ -1,0 +1,34 @@
+interface Source {
+    type Item
+    fn first(self) -> Item
+}
+
+struct Pair: Source, Eq {
+    type Item = string
+    v: string
+    fn first(self) -> string { self.v }
+}
+
+fn put<S: Source>(_v: S.Item) -> S? { None }
+
+fn main() {
+    let ob: Pair? = Some(Pair(v: "a"))
+    let d = put({
+        let t = "x"
+        let unused = 1
+        t + "{t.len()}"
+    }) == ob
+    print(d)
+    let e = ob ?? put({
+        let t = "x"
+        let unused2 = 1
+        t
+    })
+    print(e == None)
+    let f = {
+        let t = "x"
+        let unused3 = 1
+        put(t)
+    } == ob
+    print(f)
+}

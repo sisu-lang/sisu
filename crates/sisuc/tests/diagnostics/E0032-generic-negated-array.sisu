@@ -2,3 +2,5 @@ fn main() {
     let r: Result<[u8], i64> = Ok(-[5; 2])
     print(r)
 }
+
+// The operand of `-` is a member, which no required type reaches: it is `[i64]` (Task 5d-2).

@@ -721,6 +721,9 @@ impl Checker<'_> {
             (self.mut_arg_types(pattern, &place, arg.value.span)).map_err(Poisoned::untyped)?;
         let shape = place.shape(have);
         if shape.chain.is_some() {
+            // The place's write type binds, so that the report names the type written back, and
+            // no parameter is left open (E0050).
+            let _ = self.bind_param(call, pattern, shape.write, arg.value.span);
             call.mut_shapes.push((at, shape));
             // `mut_final` reports the place against the parameter's type once inference is done.
             let at = arg.value.span;

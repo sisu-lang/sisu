@@ -119,15 +119,3 @@ fn an_absorbed_promise_should_return_with_restore() {
     list.restore(held);
     assert!(!list.promises_kept(false), "the promise is back");
 }
-
-#[test]
-fn a_cleared_promise_should_not_return_with_restore() {
-    // `clear` drops the promises held with the reports, so `restore` puts neither back.
-    let mut list = Diagnostics::default();
-    let mark = list.mark();
-    list.proof(Span::new(2, 3));
-    let mut held = list.take_since(mark);
-    held.clear();
-    list.restore(held);
-    assert!(list.promises_kept(false));
-}

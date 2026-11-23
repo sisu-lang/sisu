@@ -1,58 +1,86 @@
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-outer-loop.sisu:10:28
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-outer-loop.sisu:8:14
    |
+ 8 |     let _a = loop {
+   |              ^^^^
  9 |         if c { break 1 }
-   |                ------- this `break` gave the outer loop the type `i64`
+   |                      - `i64`
 10 |         break loop { break "x" }
-   |                            ^^^
+   |                            --- `string`
 
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-outer-loop.sisu:16:41
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-outer-loop.sisu:14:14
    |
+14 |     let _a = loop {
+   |              ^^^^
 15 |         if c { break 1 }
-   |                ------- this `break` gave the outer loop the type `i64`
+   |                      - `i64`
 16 |         break loop { break loop { break "x" } }
-   |                                         ^^^
+   |                                         --- `string`
 
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-outer-loop.sisu:22:35
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-outer-loop.sisu:20:14
    |
+20 |     let _a = loop {
+   |              ^^^^
 21 |         if c { break 1 }
-   |                ------- this `break` gave the outer loop the type `i64`
+   |                      - `i64`
 22 |         break if c { loop { break "x" } } else { 2 }
-   |                                   ^^^
+   |                                   --- `string`   - `i64`
 
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-outer-loop.sisu:28:30
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-outer-loop.sisu:26:14
    |
+26 |     let _a = loop {
+   |              ^^^^
 27 |         if c { break 1 }
-   |                ------- this `break` gave the outer loop the type `i64`
+   |                      - `i64`
 28 |         break { loop { break "x" } }
-   |                              ^^^
+   |                              --- `string`
 
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-outer-loop.sisu:34:43
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-outer-loop.sisu:32:14
    |
+32 |     let _a = loop {
+   |              ^^^^
 33 |         if c { break 1 }
-   |                ------- this `break` gave the outer loop the type `i64`
+   |                      - `i64`
 34 |         break match k { 0 => loop { break "x" }; _ => 2 }
-   |                                           ^^^
+   |                                           ---         - `i64`
+   |                                           |
+   |                                           `string`
 
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-outer-loop.sisu:40:32
+error[E0032]: expected `string`, found `i64`
+  --> E0032-origin-outer-loop.sisu:40:15
    |
-39 |         if c { break 1 }
-   |                ------- this `break` gave the outer loop the type `i64`
 40 |         break 1 + loop { break "x" }
-   |                                ^^^
-
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-outer-loop.sisu:46:46
+   |               ^   ------------------ `+` joins this `string`
    |
+help: use interpolation
+   |
+40 -         break 1 + loop { break "x" }
+40 +         break "{1}{loop { break "x" }}"
+   |
+
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-outer-loop.sisu:44:14
+   |
+44 |     let _a = loop {
+   |              ^^^^
 45 |         if c { break 1 }
-   |                ------- this `break` gave the outer loop the type `i64`
+   |                      - `i64`
 46 |         break loop { if c { break 2 }; break "x" }
-   |                                              ^^^
+   |                                   - `i64`    --- `string`
+
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-outer-loop.sisu:50:14
+   |
+50 |     let _a = loop {
+   |              ^^^^
+51 |         if c { break 1 }
+   |                      - `i64`
+52 |         break { while c {}; loop { break "x" } }
+   |                                          --- `string`
 
 warning[W0011]: the condition of this `while` never changes
   --> E0032-origin-outer-loop.sisu:52:23
@@ -62,22 +90,26 @@ warning[W0011]: the condition of this `while` never changes
    |
    = help: `c` can't change, so leave the loop with `break`; write `if` to run the body once, or `loop` to run it forever
 
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-outer-loop.sisu:52:42
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-outer-loop.sisu:56:14
    |
-51 |         if c { break 1 }
-   |                ------- this `break` gave the outer loop the type `i64`
-52 |         break { while c {}; loop { break "x" } }
-   |                                          ^^^
-
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-outer-loop.sisu:59:15
-   |
+56 |     let _a = loop {
+   |              ^^^^
 57 |         if c { break 1 }
-   |                ------- this `break` gave the loop the type `i64`
+   |                      - `i64`
 58 |         let _y = loop { break "x" }
 59 |         break "y"
-   |               ^^^
+   |               --- `string`
+
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-outer-loop.sisu:63:21
+   |
+63 |     let _a = outer: loop {
+   |                     ^^^^
+64 |         loop { if c { break outer 1 } }
+   |                                   - `i64`
+65 |         break "x"
+   |               --- `string`
 
 warning[W0001]: unreachable code
   --> E0032-origin-outer-loop.sisu:65:9
@@ -85,27 +117,25 @@ warning[W0001]: unreachable code
 65 |         break "x"
    |         ^^^^^^^^^
 
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-outer-loop.sisu:65:15
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-outer-loop.sisu:69:21
    |
-64 |         loop { if c { break outer 1 } }
-   |                       ------------- this `break` gave the loop the type `i64`
-65 |         break "x"
-   |               ^^^
-
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-outer-loop.sisu:71:28
-   |
+69 |     let _a = outer: loop {
+   |                     ^^^^
 70 |         if c { break 1 }
-   |                ------- this `break` gave the loop the type `i64`
+   |                      - `i64`
 71 |         loop { break outer "x" }
-   |                            ^^^
+   |                            --- `string`
 
-error[E0032]: expected `i64`, found `string`
-  --> E0032-origin-outer-loop.sisu:77:33
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-origin-outer-loop.sisu:75:14
    |
+75 |     let _a = loop {
+   |              ^^^^
+76 |         if c { break Some(1) }
+   |                           - `i64?`
 77 |         break Some(loop { break "x" })
-   |                                 ^^^
+   |                                 --- `string?`
 
 sisu: 12 errors, 2 warnings
 sisu: for more on a code, run `sisu explain <code>`: E0032, W0001, W0011

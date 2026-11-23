@@ -1,4 +1,5 @@
 use super::*;
+use crate::check::join::VALUE_STEPS;
 use crate::diagnostic::explanations::apply;
 use crate::diagnostic::{Code, Fix};
 use crate::front_end::{PRELUDE_SOURCE, checked_with, prelude_program};
@@ -24,6 +25,7 @@ mod floats;
 mod for_loops;
 mod generics;
 pub(crate) mod interfaces;
+pub(super) mod joins;
 mod let_else;
 mod loop_condition;
 mod mut_args;
@@ -791,7 +793,7 @@ fn failed_rule_should_make_its_expression_error() {
             "fn main() {\n    let x = if true { 1 } else { false }\n    print(x == false)\n}"
                 .into(),
             MISMATCH,
-            (2, 34),
+            (2, 13),
         ),
     ];
     for (name, src, code, pos) in rows {
@@ -1117,12 +1119,16 @@ fn failed_value_of_an_annotated_let_should_keep_the_declared_type() {
             "fn f() -> i64 {\n    let x: i64 = return 1\n    let s: string = x\n    0\n}\n\nfn main() {\n    print(f())\n}",
             &[(Code::NoValue, (2, 18)), (Code::Mismatch, (3, 21))],
         ),
-        // The failed branch gives the `if` no type (the spec row `if`, `match`: a branch), so the
-        // `"s"` gets no mismatch against the declared `i64`.
+        // The declared `i64` decides the join without the failed branch (Q33), so the `"s"` gets a
+        // mismatch against it.
         (
             "branch_other",
             "fn main() {\n    let w: i64 = if true { nope } else { \"s\" }\n    let q: string = w\n    print(q)\n}",
-            &[(Code::BindingNotFound, (2, 28)), (Code::Mismatch, (3, 21))],
+            &[
+                (Code::BindingNotFound, (2, 28)),
+                (Code::Mismatch, (2, 42)),
+                (Code::Mismatch, (3, 21)),
+            ],
         ),
         (
             "if_branch",
@@ -1278,14 +1284,15 @@ fn an_invalid_jump_in_a_ranked_block_should_give_e0038_and_no_e0043() {
         ("let xs = [1, { break outer; 1 }]", None, &[J]),
         ("let xs = [1, { continue outer; 1 }]", None, &[J]),
         // The kinds of work that ranking keeps besides a block: a guard, an `if let` value and a
-        // `match` value. Each gives what its twin that ranking does not reach gives. The `return`
-        // of each arm makes the value `never`, not the failed jump, so E0043 reports the value.
+        // `match` value. Each gives what its twin that ranking does not reach gives. An element is
+        // a member of the array's join, as an argument of a generic call is (ADR 0052): a failed
+        // jump in a guard poisons the `match`, so no E0043 reports it, as in `pick(1, match ...)`.
+        // The `return` of each branch makes the `if let` and the `match` with the failed
+        // scrutinee `never`, not the failed jump, so E0043 reports them.
         (
             "let x = [1, match c {\n        true if { break; true } => { return \"a\"; 1 }\n        _ => { return \"b\"; 2 }\n    }]",
-            Some(
-                "match c {\n        true if { break; true } => { return \"a\"; 1 }\n        _ => { return \"b\"; 2 }\n    }",
-            ),
-            &[V, J, M, U, M, U],
+            None,
+            &[J, M, U, M, U],
         ),
         (
             "let o: i64? = None\n    let x = [1, if let Some(v) = { break; o } { return \"a\"; 1 } else { return \"b\"; 2 }]",
@@ -1759,7 +1766,7 @@ fn loop_type(src: &str) -> Type {
         .value
         .as_ref()
         .expect("the `loop` should be the body's value");
-    assert!(matches!(lp.kind, tir::ExprKind::Loop(_)), "{program}");
+    assert!(matches!(lp.kind, tir::ExprKind::Loop { .. }), "{program}");
     lp.ty
 }
 
@@ -1782,7 +1789,8 @@ fn optional_value_after_payload_widens_the_loop() {
     assert_eq!(loop_type(src), Type::optional(Type::I64));
 }
 
-/// A widened loop wraps its `T` values but not a `never` one, which has no value to wrap.
+/// A loop whose join gives an optional wraps its `T` values but not a `never` one, which has no
+/// value to wrap.
 #[test]
 fn widening_leaves_a_never_value_unwrapped() {
     let src = "fn f(c: bool) -> i64? {\n    loop {\n        if c { break panic(\"x\") }\n        if c { break 5 }\n        break None\n    }\n}\nfn main() {}";
@@ -1791,8 +1799,8 @@ fn widening_leaves_a_never_value_unwrapped() {
     assert!(!printed.contains("(wrap (panic"), "{printed}");
 }
 
-/// The walk that wraps a widened loop's values enters a nested loop only when a `break` in
-/// one targets the widened loop: `break loop { ... }` at every level stays linear.
+/// The walk that puts back the values of a loop's join enters a nested loop only when a `break`
+/// in one targets the outer loop: `break loop { ... }` at every level stays linear.
 #[test]
 fn widening_walk_enters_only_crossed_loops() {
     let entered = |label: &str, inner: &str| {
@@ -1817,13 +1825,46 @@ fn bare_break_walk_should_stay_linear_in_nested_loops() {
         for _ in 0..depth {
             e = format!("loop {{ if c {{ break g() }}; {e}; break }}");
         }
-        FILL_STEPS.set(0);
+        VALUE_STEPS.set(0);
         lowered(&format!(
             "fn g() {{}}\nfn f(c: bool) {{ {e} }}\nfn main() {{}}"
         ));
-        FILL_STEPS.get()
+        VALUE_STEPS.get()
     };
     assert_near_linear(steps(20), steps(40), steps(60));
+}
+
+/// The walk that puts back a loop's `break` values enters a nested loop only when a `break` in
+/// one targets the outer loop: a loop in an array in each loop stays linear. So does the same
+/// nest where each inner loop also breaks to the outermost loop, whose walk enters each once.
+#[test]
+fn value_walk_should_stay_linear_in_nested_loops() {
+    let steps = |depth: usize, crossing: bool| {
+        let mut e = "1".to_string();
+        for level in (0..depth).rev() {
+            let label = if crossing && level == 0 {
+                "outer: "
+            } else {
+                ""
+            };
+            let cross = if crossing && level > 0 {
+                "if c { break outer 2 }; "
+            } else {
+                ""
+            };
+            e = format!("{label}loop {{ let _x = [{e}]; {cross}break 1 }}");
+        }
+        VALUE_STEPS.set(0);
+        lowered(&format!("fn f(c: bool) -> i64 {{ {e} }}\nfn main() {{}}"));
+        VALUE_STEPS.get()
+    };
+    for crossing in [false, true] {
+        assert_near_linear(
+            steps(16, crossing),
+            steps(40, crossing),
+            steps(64, crossing),
+        );
+    }
 }
 
 /// `??` expects a `T` or a `T?` of its right side, so the loop keeps its values' `i64`.
@@ -1887,11 +1928,17 @@ fn failed_value_reports_once() {
     );
 }
 
-/// An unknown return type reports once: no `break` value is checked against it.
+/// An unknown return type reports once: no `break` value is checked against it. The `break`
+/// values still join: `1` and `"x"` do not, and the loop reports at its head, as an `if` of the
+/// two does (ADR 0052). `1` and `2` join, so that loop reports nothing.
 #[test]
-fn unknown_return_type_checks_no_break() {
+fn unknown_return_type_should_check_no_break_value_against_it() {
     codes(
         "fn f(c: bool) -> Missing {\n    loop {\n        if c { break 1 }\n        break \"x\"\n    }\n}\nfn main() {}",
+        &[(Code::UnknownType, (1, 18)), (Code::Mismatch, (2, 5))],
+    );
+    codes(
+        "fn f(c: bool) -> Missing {\n    loop {\n        if c { break 1 }\n        break 2\n    }\n}\nfn main() {}",
         &[(Code::UnknownType, (1, 18))],
     );
 }
@@ -2803,10 +2850,10 @@ fn if_without_else_has_no_value() {
 }
 
 #[test]
-fn if_branches_differ() {
+fn if_branches_of_two_types_should_report_at_the_if() {
     codes(
         "fn main() {\n    let x = if true { 1 } else { false }\n}",
-        &[(Code::Mismatch, (2, 34))],
+        &[(Code::Mismatch, (2, 13))],
     );
 }
 
@@ -2968,13 +3015,14 @@ fn less_should_report_no_operator_for_an_unordered_operand() {
 }
 
 /// An operand that fails first leaves the later ones unchecked: one error per operator. The
-/// leader `a` of `[] < a` has no `<`, so it is the operand reported, and the `[]` before it is
-/// held to its type, which it fits.
+/// leader `a` of `[] < a` has no `<`, so it is the operand reported. The `[]` before it is held
+/// to its type, which it fits. The `[]` of `[] - p` waits for a type, so the `bool` that the
+/// operator does not take is reported (call (b) of Task 5d-2).
 #[test]
 fn operator_should_report_once_after_a_failed_operand() {
     for (operator, code, column) in [
         ("None + p", Code::Mismatch, 46),
-        ("[] - p", Code::Mismatch, 46),
+        ("[] - p", Code::Mismatch, 51),
         ("[] < a", Code::NoOperator, 51),
     ] {
         let src = format!("fn main() {{ let p = true; let a = [1]; print({operator}) }}");
@@ -5555,10 +5603,10 @@ fn a_unit_branch_beside_a_value_should_report_no_value() {
 
 /// Branches of two other types still report a mismatch.
 #[test]
-fn value_branches_of_different_types_still_mismatch() {
+fn value_branches_of_two_types_should_report_a_mismatch() {
     codes(
         "fn main() { let x = if true { 1 } else { false } }",
-        &[(Code::Mismatch, (1, 42))],
+        &[(Code::Mismatch, (1, 21))],
     );
 }
 

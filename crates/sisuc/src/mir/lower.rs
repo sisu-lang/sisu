@@ -1233,7 +1233,7 @@ impl<'a> Lowering<'a> {
                 temp,
                 arms,
             } => return self.match_expr(scrutinee, *temp, arms, e.ty, dest),
-            ExprKind::Loop(body) => return self.loop_expr(body, e.ty, dest),
+            ExprKind::Loop { body, .. } => return self.loop_expr(body, e.ty, dest),
             ExprKind::Break { depth, value } => {
                 let at = self.jump_target(*depth);
                 // A value that never completes leaves no edge to the exit.
@@ -1804,7 +1804,7 @@ fn leaves_locals(expr: &Expr) -> bool {
         | ExprKind::If { .. }
         | ExprKind::IfSome { .. }
         | ExprKind::Match { .. }
-        | ExprKind::Loop(_)
+        | ExprKind::Loop { .. }
         | ExprKind::Break { .. }
         | ExprKind::Continue { .. }
         | ExprKind::Return(_)
@@ -2057,7 +2057,7 @@ fn expr_mentions(e: &Expr, found: &mut Mentions) {
                 mentions(bound, found);
             }
         }
-        ExprKind::Loop(block) | ExprKind::Block(block) => block_mentions(block, found),
+        ExprKind::Loop { body: block, .. } | ExprKind::Block(block) => block_mentions(block, found),
         ExprKind::MutCall { call, muts, back } => {
             for m in muts {
                 for (local, object) in &m.keep {

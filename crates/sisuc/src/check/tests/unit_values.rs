@@ -641,8 +641,8 @@ fn a_comparison_of_a_unit_should_hold_the_other_operands_to_unit() {
 }
 
 /// A bare `break` beside a `break` whose value is a `unit` gives the loop a `unit`, so the loop is
-/// a `unit`. Beside a `unit?` value, the loop is a `unit?`. A bare `break` beside a value of
-/// another type stays E0043.
+/// a `unit`. A bare `break` beside a value of another type, a `unit?` too, gives E0043 at the bare
+/// `break`.
 #[test]
 fn a_bare_break_beside_a_unit_break_should_give_the_loop_a_unit() {
     with_prelude();
@@ -663,12 +663,6 @@ fn a_bare_break_beside_a_unit_break_should_give_the_loop_a_unit() {
         )),
         Type::UNIT
     );
-    assert_eq!(
-        loop_type(&in_f(
-            "fn f(c: bool, o: U?) -> unit? { loop { if c { break o?.log() }; break } }"
-        )),
-        Type::optional(Type::UNIT)
-    );
     for (row, used) in [
         (
             "unit value first",
@@ -678,12 +672,7 @@ fn a_bare_break_beside_a_unit_break_should_give_the_loop_a_unit() {
             "bare break first",
             "let x = loop { if c { break }; break g() }",
         ),
-        (
-            "unit? value",
-            "let x = loop { if c { break o?.log() }; break }",
-        ),
         ("statement", "loop { if c { break g() }; break }"),
-        ("unit? statement", "loop { if c { break o?.log() }; break }"),
         (
             "labelled outer loop",
             "outer: loop { loop { if c { break outer g() }; break outer } }",
@@ -711,6 +700,16 @@ fn a_bare_break_beside_a_unit_break_should_give_the_loop_a_unit() {
             "let x = loop { if c { break Some(1) }; break }".into(),
             vec![(Code::NoValue, "break }", false)],
         ),
+        (
+            "unit? value",
+            "let x = loop { if c { break o?.log() }; break }".into(),
+            vec![(Code::NoValue, "break }", false)],
+        ),
+        (
+            "unit? statement",
+            "loop { if c { break o?.log() }; break }".into(),
+            vec![(Code::NoValue, "break }", false)],
+        ),
     ];
     rows_in(&rows, with_safe_call, 12);
 }
@@ -723,8 +722,8 @@ fn with_two_conditions(used: &str) -> String {
 }
 
 /// A bare `break` beside a `break` whose value is a `unit` adds no report to an error. The error
-/// can be in the body, in the value or in the context of the loop. A bare `break` beside an `i64`
-/// value stays E0043, also when the body has an error.
+/// can be in the body, in the value or in the context of the loop. A bare `break` beside a value
+/// that is not a `unit` gives E0043 at the bare `break`, also when the body has an error.
 #[test]
 fn a_bare_break_beside_a_unit_break_should_add_no_report_to_an_error() {
     let rows: Vec<UseRow<'_>> = vec![
@@ -764,12 +763,12 @@ fn a_bare_break_beside_a_unit_break_should_add_no_report_to_an_error() {
         (
             "unit? value after a unit value",
             "loop { if c { break g() }; if d { break o?.log() }; break }".into(),
-            vec![(Code::Mismatch, "o?.log()", false)],
+            vec![(Code::NoValue, "break }", false)],
         ),
         (
             "i64 value after a unit value",
             "loop { if c { break g() }; if d { break 1 }; break }".into(),
-            vec![(Code::Mismatch, "1 }", false)],
+            vec![(Code::NoValue, "break }", false)],
         ),
         (
             "failed coalesce",
@@ -798,17 +797,6 @@ fn a_bare_break_beside_a_unit_break_should_add_no_report_to_an_error() {
     rows_in(&rows, with_two_conditions, 11);
 }
 
-/// A bare `break` beside a `break` whose value is a `unit?` gives the loop a wrapped `unit`, a
-/// `Some`. This test passes before and after the fix of its commit: it pins the value.
-#[test]
-fn a_bare_break_beside_an_optional_unit_break_should_hold_a_wrapped_unit() {
-    with_prelude();
-    contains(
-        &with_safe_call("let x = loop { if c { break o?.log() }; break }"),
-        &["(break (wrap ()))"],
-    );
-}
-
 /// A `main` that has `used` on line 20, after generic declarations that take a `unit` for `T`
 /// beside a `T?` or a `[T]`: functions, a struct, an enum and a method.
 fn with_generics(used: &str) -> String {
@@ -825,11 +813,8 @@ fn a_unit_argument_should_bind_its_parameter_before_the_arguments_that_wait() {
         ("None first", "print(opt(None, g()))".into(), vec![]),
         ("unit first", "print(later(g(), None))".into(), vec![]),
         ("empty array", "listed([], g())".into(), vec![]),
-        (
-            "array of None",
-            "listed([None], g())".into(),
-            vec![(Code::Mismatch, "None", false)],
-        ),
+        // `[None]` is a member of the call: `T` is `unit?`, as in `two(None, None, g())`.
+        ("array of None", "listed([None], g())".into(), vec![]),
         ("two None", "two(None, None, g())".into(), vec![]),
         (
             "unit local",
@@ -1750,4 +1735,21 @@ fn mut_self_rows(rows: &[MutSelfRow<'_>]) {
         red.len(),
         red.join("\n")
     );
+}
+
+/// GIVEN `fn g1<T>(xs: [T?])` and an array literal of `unit` values as its argument
+/// WHEN no element of another type is in the array
+/// THEN `T` is `unit`, as on `main`; a `unit` beside a number is E0043, in each order
+#[test]
+fn unit_elements_should_bind_an_open_optional_element_type() {
+    let decls = "fn g1<T>(xs: [T?]) {}\nfn main() {\n    ";
+    let rows: [(&str, &[Wanted]); 4] = [
+        ("g1([print(1), print(2)])", &[]),
+        ("g1([print(1), None])", &[]),
+        ("g1([print(1), 2])", &[(Code::NoValue, (3, 9))]),
+        ("g1([2, print(1)])", &[(Code::NoValue, (3, 12))]),
+    ];
+    for (call, expected) in rows {
+        codes_row(call, &format!("{decls}{call}\n}}"), expected);
+    }
 }

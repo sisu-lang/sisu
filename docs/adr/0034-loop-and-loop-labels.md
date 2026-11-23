@@ -95,3 +95,5 @@ label-or-value rule.
   a second way to leave early.
 - **`while` or `for` that give a value.** Out of scope: only `loop` has a value
   on every path that leaves it.
+
+Note (2026-11-17): a bare `break` gives `unit`, and that `unit` never becomes `unit?`, as the `unit` of a bare `return` does not. Beside `break` values of type `unit` or `never`, the loop is valid and its type is `unit`. Beside any other value, `unit?` included, it is an error. This takes back the exception that #724 added.

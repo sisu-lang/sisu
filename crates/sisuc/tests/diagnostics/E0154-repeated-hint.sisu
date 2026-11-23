@@ -136,3 +136,8 @@ fn row_t5() {
 }
 
 fn main() {}
+
+// `main` also gave E0050 "cannot infer `T` for `none`" in the rows of lines 61, 70, 97, 106, 117
+// and 135. Each is a cascade of the row's E0154: a failed bound fails the candidate of the join
+// (rule C8 of the body-inference spec), so `none`'s `T` has no source. The E0032 at 135:17 is
+// the row's own error and stays.

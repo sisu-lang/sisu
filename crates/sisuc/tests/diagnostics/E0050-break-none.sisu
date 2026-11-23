@@ -1,8 +1,0 @@
-fn main() {
-    let c = true
-    let x = loop {
-        if c { break None }
-        break 5
-    }
-    print(x)
-}

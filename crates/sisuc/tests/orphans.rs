@@ -3,7 +3,7 @@
 //! directory once, and fails with every entry that no case reads: a file that is neither a
 //! `.sisu` case nor an expectation file of one, as the directory's mode reads them, and any
 //! hidden entry. The tests at the end check the helpers that read the top comment of a
-//! diagnostic fixture.
+//! diagnostic fixture, and the guard of a parked case.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};

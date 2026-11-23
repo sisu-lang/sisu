@@ -1,0 +1,18 @@
+error[E0032]: the arguments for `T` of this call have different types
+ --> E0032-call-own-join.sisu:6:20
+  |
+6 |     let x = if c { pick(a, "s") } else { 1 }
+  |                    ^^^^ -  --- `string`
+  |                         |
+  |                         this argument gives `T` the type `u8`
+
+error[E0032]: the arguments for `T` of this call have different types
+ --> E0032-call-own-join.sisu:8:31
+  |
+8 |     let y = if c { 1 } else { pick(a, "s") }
+  |                               ^^^^ -  --- `string`
+  |                                    |
+  |                                    this argument gives `T` the type `u8`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

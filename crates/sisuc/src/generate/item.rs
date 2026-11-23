@@ -661,6 +661,8 @@ interface GapHeard: AnyObject { fn loud(self) -> i64 }
 class GapEye: GapSeen { v: i64; fn seen(self) -> i64 { self.v } }
 class GapLid: GapSeen { v: i64; fn seen(self) -> i64 { self.v + 1 } }
 class GapEar: GapHeard { fn loud(self) -> i64 { 2 } }
+struct GapOwl: GapSeen { v: i64; fn seen(self) -> i64 { self.v } }
+fn gap_id<T>(x: T) -> T { x }
 enum GapLeaf<T> { Leaf(T) }
 fn gap_shown<T: Display>(x: T) -> T {
     let _ = dbg(GapLeaf.Leaf(x))
@@ -1997,12 +1999,16 @@ impl Gen<'_> {
     /// - the forms of `ANY_GAP_ITEMS`, each for the points of the checker in `GAP_POINTS`. Each
     ///   value is on the branch that runs:
     ///   - `is` with an `any` on each side;
-    ///   - `gap_none`: a `Some` and a `None` before an `any` branch. The `any` branch must come
-    ///     last, or the hint converts them and nothing unwraps;
+    ///   - `gap_none`: a `Some` and a `None` before an `any` branch;
     ///   - `gap_kept`: a `Some` of an object under a hint of a `Some` of another object;
     ///   - `gap_looped`: a loop of two objects beside an `any`;
     ///   - `gap_hinted`: a branch that joins an array of two objects with an array of `any`;
     ///   - `gap_beside`: array elements beside an `any`;
+    ///   - `gap_none_back`, `gap_kept_back`, `gap_looped_back`, `gap_hinted_back` and
+    ///     `gap_beside_back`: the same five joins with their members in the other order, so
+    ///     that the join-order check also swaps them back (`JOIN_ORDERS` in `coverage.rs`);
+    ///   - a literal beside a `u8` and beside a generic call of it, in each order, and
+    ///     `gap_kind`: an `any` beside the optional of a struct that conforms, in each order;
     ///   - `gap_shown` and `gap_boxed`: `dbg`, of an enum too, and an `any` conversion in a
     ///     generic function;
     /// - the forms of `LOWERING_GAP_ITEMS`, each for the points of lowering and of the runtime in
@@ -2022,6 +2028,10 @@ impl Gen<'_> {
     ///
     /// Each loop counts down from one and a `break` ends it, in at most two passes.
     /// An index is a literal.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "each form is one line of the list, so the forms read in one place"
+    )]
     fn gap_forms(&mut self, calls: &mut Calls) {
         self.known_text(|g| {
             g.w.text(
@@ -2100,6 +2110,25 @@ impl Gen<'_> {
             "print(gap_saw(gap_hinted[1]))",
             "let gap_beside = [gap_eye, GapEye(v: 17), Some(GapLid(v: 18))]",
             "print(gap_saw(gap_beside[2] ?? gap_eye))",
+            "let gap_none_back = match [1].len() {\n        1 => None\n        0 => Some(GapEye(v: 3))\n        _ => gap_eye\n    }",
+            "print(gap_saw(gap_none_back ?? GapLid(v: 3)))",
+            "let gap_kept_back = if gap_on { if gap_on { Some(GapLid(v: 6)) } else { gap_eye } } else { Some(GapEye(v: 5)) }",
+            "print(gap_saw(gap_kept_back ?? gap_eye))",
+            "let gap_looped_back = if gap_on {\n        let mut left = 1\n        loop {\n            if left == 0 { break GapLid(v: 12) }\n            left -= 1\n            break GapEye(v: 11)\n        }\n    } else {\n        gap_eye\n    }",
+            "print(gap_saw(gap_looped_back))",
+            "let gap_hinted_back = if gap_on { [GapEye(v: 14), GapLid(v: 15)] } else { [gap_eye] }",
+            "print(gap_saw(gap_hinted_back[1]))",
+            "let gap_beside_back = [Some(GapLid(v: 18)), GapEye(v: 17), gap_eye]",
+            "print(gap_saw(gap_beside_back[2] ?? gap_eye))",
+            "let gap_byte: u8 = 7",
+            "print(if gap_on { gap_byte } else { 1 })",
+            "print(if gap_on { 1 } else { gap_byte })",
+            "print(if gap_on { 1 } else { gap_id(gap_byte) })",
+            "print(if gap_on { gap_id(gap_byte) } else { 1 })",
+            "let gap_kind = [gap_eye, Some(GapOwl(v: 2))]",
+            "print(gap_kind.len())",
+            "let gap_kind_back = [Some(GapOwl(v: 3)), gap_eye]",
+            "print(gap_kind_back.len())",
             "print(gap_shown(21))",
             "print(gap_boxed(GapEye(v: 22)).seen())",
             "if gap_off { \"a{panic(\"gap\")}\" }",

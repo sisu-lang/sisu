@@ -1,0 +1,52 @@
+error[E0043]: `break` has no value, but this `loop` gives one
+  --> E0043-bare-break-beside-optional-unit.sisu:11:37
+   |
+11 |     loop { if c { break o?.log() }; break }
+   |                   --------------    ^^^^^
+   |                   |
+   |                   this `break` gives the loop a value
+   |
+   = help: give every `break` of this `loop` a value, or none
+
+error[E0043]: `break` has no value, but this `loop` gives one
+  --> E0043-bare-break-beside-optional-unit.sisu:12:57
+   |
+12 |     outer: loop { loop { if c { break outer o?.log() }; break outer } }
+   |                                 --------------------    ^^^^^^^^^^^
+   |                                 |
+   |                                 this `break` gives the loop a value
+   |
+   = help: give every `break` of this `loop` a value, or none
+
+error[E0043]: `break` has no value, but this `loop` gives one
+  --> E0043-bare-break-beside-optional-unit.sisu:13:66
+   |
+13 |     outer: loop { loop { if c { break outer o?.log() }; break }; break outer }
+   |                                 --------------------             ^^^^^^^^^^^
+   |                                 |
+   |                                 this `break` gives the loop a value
+   |
+   = help: give every `break` of this `loop` a value, or none
+
+error[E0043]: `break` has no value, but this `loop` gives one
+  --> E0043-bare-break-beside-optional-unit.sisu:14:45
+   |
+14 |     let x = loop { if c { break o?.log() }; break }
+   |                           --------------    ^^^^^
+   |                           |
+   |                           this `break` gives the loop a value
+   |
+   = help: give every `break` of this `loop` a value, or none
+
+error[E0043]: `break` has no value, but this `loop` gives one
+  --> E0043-bare-break-beside-optional-unit.sisu:17:78
+   |
+17 |     let v = a: loop { b: loop { loop { if c { break b }; if c { break a n }; break a } } }
+   |                                                                 ---------    ^^^^^^^
+   |                                                                 |
+   |                                                                 this `break` gives the loop a value
+   |
+   = help: give every `break` of this `loop` a value, or none
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0043

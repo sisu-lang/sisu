@@ -168,19 +168,17 @@ a path call share one. The module also poisons a rejected or broken item, so a u
 no error of its own
 ([ADR 0049](adr/0049-one-name-resolver-and-one-poison-rule.md)).
 `check/expectation.rs` holds `Expectation`, what the context expects of a value: nothing, a
-required type, a poisoned context (`Poisoned`), or a hint. The siblings of a value give it a
-hint, and an operator can hint its operands. A required type and a hint hold an
+required type, a poisoned context (`Poisoned`), or a member of a join. A required type holds an
 `Origin`: the declaration, the earlier value or the language rule that made the context
 ask for the type. An E0032 shows it. An origin is a declaration, an assignment to a local
-name, or an earlier `break`, element or branch. It can also be the argument that bound a type
+name, or the first bare `break` of a loop. It can also be the argument that bound a type
 parameter.
 Other forms wait and hold no origin: operators, patterns, field, index and compound assignments,
 `while` conditions and match guards. The fallback of `??`, a `Some` value, and a generic field,
 payload or prelude parameter hold no origin either. `check/expectation.rs` maps an origin to its
 fact, and the registry gives the words. A fact with a span in your code is a secondary label.
 A fact with a span in the prelude is a note. An `if` condition or an index gets a primary label
-that names its rule. A hint holds at one value and
-the parts that give the value. An operand does not see the hint of the value that holds it. A
+that names its rule. A
 mistake that follows from a poisoned context waits for the next run.
 `check/reports.rs` holds `Diagnostics`, the checker's list of diagnostics, and `Reported`, a
 zero-size token. Only an error and `proof` make one, and each poisoned value and each poisoned
@@ -211,8 +209,13 @@ It gives W0012 for an item or an `extend` block that no live code uses. It gives
 code does not read or a variant that it does not build. It gives W0014 for a local
 or parameter of live code that nothing reads. It gives W0016 for a `let mut` that only writes to a copy of a place.
 `check/operator.rs` checks operators (arithmetic, comparison,
-equality, `is` and `??`). `check/branch.rs` checks `if` and `if let` and the join of
-their branch types. `check/call.rs` checks calls, method calls and constructors. `check/member.rs`
+equality, `is` and `??`). `check/branch.rs` checks `if` and `if let`. `check/join.rs` finds the one type of a
+join: the type of one member that each other member converts to. The members are the branches of an
+`if`, the arms of a `match`, the elements of an array and the `break` values of a loop. They are also the
+two sides of `??` or of an operator, and the arguments of one type parameter of a call.
+`check/infer.rs` holds the inference table of a function. Each `None`, `[]`, integer literal and type
+parameter of a call is a variable there until a join or a use settles it. No variable reaches `tir`
+([ADR 0052](adr/0052-a-join-takes-the-type-of-one-of-its-members.md)). `check/call.rs` checks calls, method calls and constructors. `check/member.rs`
 checks fields and methods found through `.` and `?.`,
 including the methods of `extend` blocks.
 `check/alias.rs` resolves each type alias before any signature, each after the

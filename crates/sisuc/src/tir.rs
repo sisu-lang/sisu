@@ -578,6 +578,18 @@ impl Expr {
         }
     }
 
+    /// A `None` of `ty` at `span` that keeps the place of a value checked out of the tree, with
+    /// the exit flag of that value. Its parents then see a jump in the value before it goes back
+    /// (see `check::join::put_back`).
+    pub(crate) fn placeholder(ty: Type, span: Span, exits: bool) -> Self {
+        Self {
+            kind: ExprKind::None,
+            ty,
+            span,
+            exits,
+        }
+    }
+
     /// Whether a `Return`, `Break` or `Continue` sits anywhere inside, a nested loop included.
     pub(crate) fn exits(&self) -> bool {
         #[cfg(test)]
@@ -883,7 +895,12 @@ pub(crate) enum ExprKind {
         temp: LocalId,
         arms: Vec<Arm>,
     },
-    Loop(Block),
+    /// `loop { body }`. `crossed` says that a `break` inside a nested loop ends this one: only
+    /// then does a walk for its `break` values enter the nested loops. Only the checker reads it.
+    Loop {
+        body: Block,
+        crossed: bool,
+    },
     /// Leaves the loop `depth` loops out from the innermost one around it, giving it `value`.
     Break {
         depth: usize,
@@ -969,8 +986,13 @@ impl Type {
     /// parts, which codegen counts. `enums` and `structs` are the program's.
     pub(crate) fn is_counted(self, enums: &[Enum], structs: &[Struct]) -> bool {
         match self.kind() {
-            // An `any` is counted through its data pointer, an object or a box.
-            TypeKind::String | TypeKind::Class(..) | TypeKind::Array(_) | TypeKind::Any(..) => true,
+            // An `any` is counted through its data pointer, an object or a box. A variable may be
+            // counted: the checker asks before `write_back` puts its type in its place.
+            TypeKind::String
+            | TypeKind::Class(..)
+            | TypeKind::Array(_)
+            | TypeKind::Any(..)
+            | TypeKind::Infer(_) => true,
             TypeKind::Enum(id, _) => enums[id.0].counted,
             TypeKind::Struct(id, _) => structs[id.0].counted,
             TypeKind::Optional(payload) => {
@@ -1277,7 +1299,7 @@ impl ExprKind {
             ExprKind::Slice {
                 base, start, end, ..
             } => base.exits() || start.iter().chain(end).any(|bound| bound.exits()),
-            ExprKind::Loop(block) | ExprKind::Block(block) => block.exits(),
+            ExprKind::Loop { body: block, .. } | ExprKind::Block(block) => block.exits(),
             ExprKind::MutCall { call, muts, back } => {
                 call.exits()
                     || back.exits()
@@ -1389,7 +1411,7 @@ impl Expr {
                     f(bound);
                 }
             }
-            ExprKind::Loop(block) | ExprKind::Block(block) => block.each_expr_mut(f),
+            ExprKind::Loop { body: block, .. } | ExprKind::Block(block) => block.each_expr_mut(f),
             ExprKind::MutCall { call, muts, back } => {
                 for m in muts {
                     for (_, object) in &mut m.keep {
@@ -1443,6 +1465,130 @@ impl Place {
             }
             Place::Some(base) | Place::StructField { base, .. } => base.each_expr_mut(f),
         }
+    }
+}
+
+/// `args` with `f` applied to each type in it. The list is interned again only when `f` changed
+/// one.
+fn each_args_type_mut(args: &mut TypeArgs, f: &mut impl FnMut(&mut Type)) {
+    if *args == TypeArgs::NONE {
+        return;
+    }
+    let mut list = args.get().to_vec();
+    for ty in &mut list {
+        f(ty);
+    }
+    if list != args.get() {
+        *args = TypeArgs::intern(&list);
+    }
+}
+
+impl Expr {
+    /// Calls `f` on each type in this expression and in everything inside it: the type of each
+    /// node, the type of each block it holds, and the type arguments of each call.
+    /// The write-back of `check::infer` uses this walk to put the type of each inference
+    /// variable in its place. The match is exhaustive, so a new kind of node cannot miss the walk.
+    pub(crate) fn each_type_mut(&mut self, f: &mut impl FnMut(&mut Type)) {
+        f(&mut self.ty);
+        match &mut self.kind {
+            ExprKind::Call { types, .. } => each_args_type_mut(types, f),
+            ExprKind::InterfaceCall { iargs, types, .. } => {
+                each_args_type_mut(iargs, f);
+                each_args_type_mut(types, f);
+            }
+            ExprKind::DynCall { iargs, .. } => each_args_type_mut(iargs, f),
+            ExprKind::If {
+                then_block,
+                else_block,
+                ..
+            }
+            | ExprKind::IfSome {
+                then_block,
+                else_block,
+                ..
+            } => {
+                then_block.each_block_type_mut(f);
+                if let Some(block) = else_block {
+                    block.each_block_type_mut(f);
+                }
+            }
+            ExprKind::Match { arms, .. } => {
+                for arm in arms {
+                    arm.body.each_block_type_mut(f);
+                }
+            }
+            ExprKind::Loop { body: block, .. } | ExprKind::Block(block) => {
+                block.each_block_type_mut(f);
+            }
+            ExprKind::MutCall { back, .. } => back.each_block_type_mut(f),
+            ExprKind::Int(_)
+            | ExprKind::Float(_)
+            | ExprKind::Bool(_)
+            | ExprKind::Char(_)
+            | ExprKind::Str(_)
+            | ExprKind::None
+            | ExprKind::Unit
+            | ExprKind::Local(_)
+            | ExprKind::New { .. }
+            | ExprKind::Variant { .. }
+            | ExprKind::Field { .. }
+            | ExprKind::Struct { .. }
+            | ExprKind::StructField { .. }
+            | ExprKind::Wrap(_)
+            | ExprKind::ToAny(_)
+            | ExprKind::Convert(_)
+            | ExprKind::Print { .. }
+            | ExprKind::Dbg { .. }
+            | ExprKind::Panic(_)
+            | ExprKind::ReadLine
+            | ExprKind::ArrayLit(_)
+            | ExprKind::ArrayFill { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::Slice { .. }
+            | ExprKind::Len(_)
+            | ExprKind::Chars(_)
+            | ExprKind::Bytes(_)
+            | ExprKind::Words(_)
+            | ExprKind::FromChars(_)
+            | ExprKind::Math { .. }
+            | ExprKind::Unary { .. }
+            | ExprKind::Binary { .. }
+            | ExprKind::Interpolate { .. }
+            | ExprKind::Concat { .. }
+            | ExprKind::Compare { .. }
+            | ExprKind::Equal { .. }
+            | ExprKind::Is { .. }
+            | ExprKind::Break { .. }
+            | ExprKind::Continue { .. }
+            | ExprKind::Return(_) => {}
+        }
+        self.each_child_mut(&mut |child| child.each_type_mut(f));
+    }
+}
+
+impl Block {
+    /// Calls `f` on the type of this block, and on that of each `else` block of a `let ... else`
+    /// directly in it. The expressions in the block are the walk of `Expr::each_type_mut`.
+    fn each_block_type_mut(&mut self, f: &mut impl FnMut(&mut Type)) {
+        f(&mut self.ty);
+        for stmt in &mut self.stmts {
+            if let Stmt::LetElse { else_block, .. } = stmt {
+                else_block.each_block_type_mut(f);
+            }
+        }
+    }
+}
+
+impl Function {
+    /// Calls `f` on each local's type, on the type of the body block, and on each type inside the
+    /// body (`Expr::each_type_mut`). The declared return type is not walked: no inference variable
+    /// stands in a signature.
+    pub(crate) fn each_type_mut(&mut self, f: &mut impl FnMut(&mut Type)) {
+        for local in &mut self.locals {
+            f(&mut local.ty);
+        }
+        self.body.each_block_type_mut(f);
+        self.body.each_expr_mut(&mut |expr| expr.each_type_mut(f));
     }
 }
 
@@ -1589,7 +1735,7 @@ impl Expr {
                     bound.exprs(out);
                 }
             }
-            K::Loop(block) | K::Block(block) => block.exprs(out),
+            K::Loop { body: block, .. } | K::Block(block) => block.exprs(out),
             K::MutCall { call, muts, back } => {
                 for m in muts {
                     m.keep.iter().for_each(|(_, object)| object.exprs(out));
@@ -1655,6 +1801,7 @@ impl fmt::Display for Type {
             TypeKind::Never => "never",
             // A class's name lives in the program: `Program::type_name` prints it.
             TypeKind::Param(name, _) => return write!(f, "{name}"),
+            TypeKind::Infer(id) => return write!(f, "infer#{}", id.0),
             TypeKind::Assoc(base, _, _, k) => return write!(f, "{base}.assoc#{k}"),
             TypeKind::Class(id, _) => return write!(f, "class#{}", id.0),
             TypeKind::Struct(id, _) => return write!(f, "struct#{}", id.0),
@@ -1925,7 +2072,7 @@ impl Printer<'_> {
                 }
                 f.write_str(")")
             }
-            ExprKind::Loop(body) => {
+            ExprKind::Loop { body, .. } => {
                 f.write_str("(loop ")?;
                 self.block(f, body)?;
                 f.write_str(")")
@@ -2388,7 +2535,13 @@ mod tests {
             jump(ExprKind::Continue { depth: 1 }),
         ]);
         let outer = block(vec![
-            Stmt::Expr(expr(ExprKind::Loop(inner), Type::NEVER)),
+            Stmt::Expr(expr(
+                ExprKind::Loop {
+                    body: inner,
+                    crossed: false,
+                },
+                Type::NEVER,
+            )),
             jump(ExprKind::Break {
                 depth: 0,
                 value: Some(Box::new(int(2))),
@@ -2411,7 +2564,13 @@ mod tests {
                 locals: vec![],
                 body: Block {
                     stmts: vec![],
-                    value: Some(Box::new(expr(ExprKind::Loop(outer), Type::I64))),
+                    value: Some(Box::new(expr(
+                        ExprKind::Loop {
+                            body: outer,
+                            crossed: true,
+                        },
+                        Type::I64,
+                    ))),
                     ty: Type::I64,
                 },
             }],
@@ -2466,7 +2625,10 @@ mod tests {
             Type::UNIT,
         );
         let looped = expr(
-            ExprKind::Loop(block(vec![Stmt::Expr(inner_if)])),
+            ExprKind::Loop {
+                body: block(vec![Stmt::Expr(inner_if)]),
+                crossed: false,
+            },
             Type::UNIT,
         );
         (if_stmt, looped)
@@ -3940,7 +4102,13 @@ mod tests {
                 },
                 4,
             ),
-            (ExprKind::Loop(body), 9),
+            (
+                ExprKind::Loop {
+                    body,
+                    crossed: false,
+                },
+                9,
+            ),
             (ExprKind::Block(valued(1)), 1),
             (
                 ExprKind::MutCall {

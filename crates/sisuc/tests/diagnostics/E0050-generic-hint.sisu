@@ -325,3 +325,7 @@ fn char_plus_negated_sum(c: char) { let z = c + -(id(mk2()) + 1) }
 fn parenthesised_sum_plus_char(c: char) { let z = (id(mk2()) + 1) + c }
 fn call_plus_char(c: char) { let z = id(mk2()) + c }
 fn negated_sum_less_char(c: char) { let z = -(id(mk2()) + 1) < c }
+
+// The operands of an operator and the sides of `??` are members of its join (Task 5d-2): a call
+// that cannot infer `V` beside them gets its type from the join, and the join reports, as an
+// array does (E0032 or E0047). Two calls of one open type join, and E0050 is at the first.

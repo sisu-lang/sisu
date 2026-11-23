@@ -20,13 +20,13 @@ error[E0032]: expected `[_]`, found `Result<_, string>`
 34 |     print(take(Err("x")))
    |                ^^^^^^^^
 
-error[E0032]: expected `[[_]]`, found `[bool]`
+error[E0032]: expected `[[i64]]`, found `[bool]`
   --> E0032-callee-parameter-hole.sisu:35:15
    |
 35 |     nested(5, id([true]))
    |               ^^^^^^^^^^
 
-error[E0032]: expected `[_]?`, found `bool`
+error[E0032]: expected `[i64]?`, found `bool`
   --> E0032-callee-parameter-hole.sisu:36:17
    |
 36 |     optional(5, id(true))

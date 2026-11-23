@@ -1,0 +1,80 @@
+// An array of three layers and one of four, each with a `None` beside the array in each
+// layer, in both orders of each layer. The type of each is the same in every order:
+// `[[[i64?]?]?]` and `[[[[i64?]?]?]?]`, as on `main`.
+// GIVEN the 8 orders of `[[[1, None], None], None]` and the 16 orders of the four-layer form
+// WHEN each is the value of a `let` with no type, then of a `let` with the type, and is printed
+// THEN each prints its layers, with `None` where it stands
+fn main() {
+    let a0 = [[[1, None], None], None]
+    let ta0: [[[i64?]?]?] = a0
+    print("{ta0}")
+    let a1 = [None, [[1, None], None]]
+    let ta1: [[[i64?]?]?] = a1
+    print("{ta1}")
+    let a2 = [[None, [1, None]], None]
+    let ta2: [[[i64?]?]?] = a2
+    print("{ta2}")
+    let a3 = [None, [None, [1, None]]]
+    let ta3: [[[i64?]?]?] = a3
+    print("{ta3}")
+    let a4 = [[[None, 1], None], None]
+    let ta4: [[[i64?]?]?] = a4
+    print("{ta4}")
+    let a5 = [None, [[None, 1], None]]
+    let ta5: [[[i64?]?]?] = a5
+    print("{ta5}")
+    let a6 = [[None, [None, 1]], None]
+    let ta6: [[[i64?]?]?] = a6
+    print("{ta6}")
+    let a7 = [None, [None, [None, 1]]]
+    let ta7: [[[i64?]?]?] = a7
+    print("{ta7}")
+    let b0 = [[[[1, None], None], None], None]
+    let tb0: [[[[i64?]?]?]?] = b0
+    print("{tb0}")
+    let b1 = [None, [[[1, None], None], None]]
+    let tb1: [[[[i64?]?]?]?] = b1
+    print("{tb1}")
+    let b2 = [[None, [[1, None], None]], None]
+    let tb2: [[[[i64?]?]?]?] = b2
+    print("{tb2}")
+    let b3 = [None, [None, [[1, None], None]]]
+    let tb3: [[[[i64?]?]?]?] = b3
+    print("{tb3}")
+    let b4 = [[[None, [1, None]], None], None]
+    let tb4: [[[[i64?]?]?]?] = b4
+    print("{tb4}")
+    let b5 = [None, [[None, [1, None]], None]]
+    let tb5: [[[[i64?]?]?]?] = b5
+    print("{tb5}")
+    let b6 = [[None, [None, [1, None]]], None]
+    let tb6: [[[[i64?]?]?]?] = b6
+    print("{tb6}")
+    let b7 = [None, [None, [None, [1, None]]]]
+    let tb7: [[[[i64?]?]?]?] = b7
+    print("{tb7}")
+    let b8 = [[[[None, 1], None], None], None]
+    let tb8: [[[[i64?]?]?]?] = b8
+    print("{tb8}")
+    let b9 = [None, [[[None, 1], None], None]]
+    let tb9: [[[[i64?]?]?]?] = b9
+    print("{tb9}")
+    let b10 = [[None, [[None, 1], None]], None]
+    let tb10: [[[[i64?]?]?]?] = b10
+    print("{tb10}")
+    let b11 = [None, [None, [[None, 1], None]]]
+    let tb11: [[[[i64?]?]?]?] = b11
+    print("{tb11}")
+    let b12 = [[[None, [None, 1]], None], None]
+    let tb12: [[[[i64?]?]?]?] = b12
+    print("{tb12}")
+    let b13 = [None, [[None, [None, 1]], None]]
+    let tb13: [[[[i64?]?]?]?] = b13
+    print("{tb13}")
+    let b14 = [[None, [None, [None, 1]]], None]
+    let tb14: [[[[i64?]?]?]?] = b14
+    print("{tb14}")
+    let b15 = [None, [None, [None, [None, 1]]]]
+    let tb15: [[[[i64?]?]?]?] = b15
+    print("{tb15}")
+}

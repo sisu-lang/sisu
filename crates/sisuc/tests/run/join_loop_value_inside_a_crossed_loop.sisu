@@ -1,0 +1,21 @@
+// GIVEN an `if` whose branches are an optional and a labeled loop
+// AND an inner loop with a `break` to the labeled loop and a `break` of its own
+// WHEN the `if` takes the branch with the loops, and the inner loop ends with its own `break`
+// THEN the value of the inner loop is an `i64` that the inner loop gives, and the labeled loop
+//      gives its last value
+fn main() {
+    let c = [1].len() == 2
+    let d = [1].len() == 2
+    let o: i64? = None
+    let x = if c { o } else {
+        o1: loop {
+            let y = loop {
+                if d { break o1 1 }
+                break 300
+            }
+            print(y) // 300
+            break 3
+        }
+    }
+    print(x ?? 0) // 3
+}

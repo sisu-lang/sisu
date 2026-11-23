@@ -1,0 +1,15 @@
+error[E0032]: the operands of this comparison have different types
+ --> E0032-compare-operands.sisu:4:13
+  |
+4 |     print(a == b)
+  |           - ^^ - `i64`
+  |           |
+  |           `u8`
+  |
+help: if the types are right, convert it with `i64(...)`
+  |
+4 |     print(i64(a) == b)
+  |           ++++ +
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

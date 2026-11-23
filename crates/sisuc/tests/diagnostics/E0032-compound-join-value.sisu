@@ -1,0 +1,15 @@
+fn main() {
+    let c = [1].len() == 1
+    let s = "x"
+    let mut n = 1
+    let mut f = 1.5
+    let mut b: u8 = 1
+    n += if c { s } else { "b" }
+    n += match c { true => s; false => "b" }
+    n += loop { break s }
+    f += if c { s } else { "b" }
+    b += if c { s } else { "b" }
+    print(n)
+    print(f)
+    print(b)
+}

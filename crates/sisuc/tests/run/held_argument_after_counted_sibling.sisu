@@ -1,0 +1,163 @@
+// GIVEN a call argument at an associated type that only the join around the call decides
+// AND a live counted member comes before the call, and the argument holds a `return`, a `break`, a
+// `continue` or a `?? return`
+// AND in `default`, the left side of `??` is `None`, so that the default runs
+// WHEN the program runs with the jump taken and not taken
+// THEN the jump leaves as written, and the value is as when no jump is taken
+// AND the counted member before the jump is freed one time (Valgrind and `--rc-checks`)
+interface Source {
+    type Item
+    fn first(self) -> Item
+}
+
+struct Named: Source, Eq {
+    type Item = string
+    v: string
+    fn first(self) -> string { self.v }
+}
+
+struct Box {
+    a: Named?
+    b: Named?
+}
+
+fn puts<S: Source>(_s: string, _v: S.Item) -> S? {
+    None
+}
+
+fn mk(name: string) -> Named? {
+    if name.len() != 99 { Named(v: name) } else { None }
+}
+
+fn gone(name: string) -> Named? {
+    if name.len() == 99 { Named(v: name) } else { None }
+}
+
+fn some(c: bool, name: string) -> string? {
+    if c { None } else { name + "z" }
+}
+
+fn element(c: bool, name: string) -> i64 {
+    let a = [mk(name + "a"), puts(name + "x", if c { return 1 } else { name + "y" })]
+    a.len()
+}
+
+fn equal(c: bool, name: string) -> i64 {
+    let b = mk(name + "a") == puts(name + "x", if c { return 3 } else { name + "y" })
+    if b { 4 } else { 5 }
+}
+
+fn default(c: bool, name: string) -> i64 {
+    let d = gone(name + "a") ?? puts(name + "x", if c { return 6 } else { name + "y" })
+    if d == None { 7 } else { 8 }
+}
+
+fn for_continue(c: bool, name: string) -> i64 {
+    let mut n = 0
+    for i in [1, 2] {
+        let a = [mk(name + "a"), puts(name + "x", if c { continue } else { name + "y" })]
+        n = n + a.len() + i
+    }
+    n
+}
+
+fn while_break(c: bool, name: string) -> i64 {
+    let mut n = 0
+    while n < 5 {
+        n = n + 1
+        let a = [mk(name + "a"), puts(name + "x", if c { break } else { name + "y" })]
+        n = n + a.len()
+    }
+    n
+}
+
+fn match_arm(c: bool, name: string) -> i64 {
+    let r = match c {
+        true => puts(name + "x", if c { return 9 } else { name + "y" })
+        false => mk(name + "q")
+    }
+    if r == None { 10 } else { 11 }
+}
+
+fn wrapped(c: bool, name: string) -> i64 {
+    let r: Named?? = Some(puts(name + "x", if c { return 12 } else { name + "y" }))
+    if r == None { 13 } else { 14 }
+}
+
+fn coalesce_return(c: bool, name: string) -> i64 {
+    let a = [mk(name + "a"), puts(name + "x", some(c, name) ?? return 15)]
+    a.len()
+}
+
+fn match_in_argument(c: bool, name: string) -> i64 {
+    let a = [mk(name + "a"), puts(name + "x", match c { true => return 16; false => name + "y" })]
+    a.len()
+}
+
+fn field_under_if(c: bool, name: string) -> i64 {
+    let held = if c { puts(name + "x", if c { return 17 } else { name + "y" }) } else { mk(name) }
+    let bx = Box(a: mk(name + "a"), b: held)
+    if bx.a == None && bx.b == None { 18 } else { 19 }
+}
+
+fn assignment(c: bool, name: string) -> i64 {
+    let mut a = [mk(name)]
+    a = [mk(name + "a"), puts(name + "x", { if c { return 20 }; name + "y" })]
+    a.len()
+}
+
+fn coalesce_continue(c: bool, name: string) -> i64 {
+    let mut n = 0
+    for _i in [1, 2, 3] {
+        let a = [mk(name + "a"), puts(name + "x", some(c, name) ?? continue), mk(name + "b")]
+        n = n + a.len()
+    }
+    n
+}
+
+fn two_held(c: bool, name: string) -> i64 {
+    let a = [
+        puts(name + "x", if c { return 21 } else { name + "y" }),
+        puts(name + "w", if c { return 22 } else { name + "v" }),
+        mk(name),
+    ]
+    a.len()
+}
+
+fn string_return(c: bool, name: string) -> string {
+    let a = [mk(name + "a"), puts(name + "x", if c { return name + "ret" } else { name + "y" })]
+    "{a.len()}"
+}
+
+fn second_let(c: bool, name: string) -> i64 {
+    let a = [mk(name + "k"), puts(name + "x", if c { return 23 } else { name + "y" })]
+    let b = [mk(name + "j"), puts(name + "x", if !c { return 24 } else { name + "y" })]
+    a.len() + b.len()
+}
+
+fn nested_array(c: bool, name: string) -> i64 {
+    let r = [[mk(name + "k")], [puts(name + "x", if c { return 25 } else { name + "y" })]]
+    r.len()
+}
+
+fn main() {
+    let name = "n{[1].len()}"
+    for c in [true, false] {
+        print(element(c, name))           // 1, then 2
+        print(equal(c, name))             // 3, then 5
+        print(default(c, name))           // 6, then 7
+        print(for_continue(c, name))      // 0, then 7
+        print(while_break(c, name))       // 1, then 6
+        print(match_arm(c, name))         // 9, then 11
+        print(wrapped(c, name))           // 12, then 14
+        print(coalesce_return(c, name))   // 15, then 2
+        print(match_in_argument(c, name)) // 16, then 2
+        print(field_under_if(c, name))    // 17, then 19
+        print(assignment(c, name))        // 20, then 2
+        print(coalesce_continue(c, name)) // 0, then 9
+        print(two_held(c, name))          // 21, then 3
+        print(string_return(c, name))     // n1ret, then 2
+        print(second_let(c, name))        // 23, then 24
+        print(nested_array(c, name))      // 25, then 2
+    }
+}

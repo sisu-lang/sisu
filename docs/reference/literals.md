@@ -140,6 +140,9 @@ In a group of operands, the operands that are not integer literals decide the ty
 - The operands of a [comparison chain](operators.md#comparison-chains).
 - The elements of an [array literal](arrays.md#array-literals).
 - The branches of an `if` or an `if let`, or the arms of a `match`.
+- The payload of the left side of `??`, and its right side. So with an `x: u8`, `Some(1) ?? x` is a `u8`.
+- The `break` values of one [loop](expressions.md#loop).
+- The arguments of one type parameter of a [generic call](generics.md#inference).
 
 **What counts as an integer literal in a group**
 
@@ -147,7 +150,29 @@ In a group of operands, the operands that are not integer literals decide the ty
 - A generic call that gives back an integer literal argument counts too. Each integer literal argument that gives the call its type must have the type that the call returns. An example is `id(2)` for `fn id<T>(x: T) -> T`. With an `x: u8`, `id(2) + x` is a `u8`.
 - Only an argument at a place of the returned type parameter gives the call its type. So for `fn k2<T, U>(a: T, b: U) -> U` and an `x: u8`, `k2(1, 2) + x` is a `u8`, and its `1` stays an `i64`.
 - These forms can nest, as in `id({ 2 })`.
-- Other values keep their own types. So with an `x: u8`, `[Some(1), x]` is an error. [E0032](../diagnostics/E0032.md)
+- A `Some` of an integer literal counts too. So with an `x: u8`, `[Some(1), x]` is a `[u8?]`.
+- Other values keep their own types. So with an `x: u8` and an `m: i64?`, `[m, x]` is an error. [E0032](../diagnostics/E0032.md)
+
+```sisu
+fn id<T>(x: T) -> T {
+    x
+}
+
+fn main() {
+    let x: u8 = 200
+    let n = loop {
+        if x > 100 {
+            break x
+        }
+        break 1
+    }
+    print(n)                      // 200
+    print(id(1) + x)              // 201
+    print([Some(1), x][0] ?? 0)   // 1
+    print(Some(1) ?? x)           // 1
+    print(id(300))                // 300
+}
+```
 
 **Step 3: nothing else applies**
 
@@ -183,7 +208,7 @@ fn main() {
 }
 ```
 
-When a loop has no expected type, its `break` values give the loop its type. Their types must agree ([E0032](../diagnostics/E0032.md)).
+When a loop has no expected type, its `break` values give the loop its type. They are the members of a [join](expressions.md#joins) ([E0032](../diagnostics/E0032.md)).
 
 An operand that has only integer literals, `+`, `-`, `*`, `/`, `%`, unary `-` and parentheses counts as a literal in a group. So `(2 + 3) * b` is a `u8` product when `b` is a `u8`.
 

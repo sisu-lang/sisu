@@ -3,6 +3,7 @@
 
 use super::parity::parity_found;
 use super::*;
+use crate::check::join::VALUE_STEPS;
 
 /// The classes the rows name, and an empty `main`, after the line a row tests.
 const DECLS: &str = "class Cell<T> {\n    value: T\n    next: Cell<T>?\n}\nclass Stack<T> {\n    mut top: Cell<T>?\n}\nclass Point {\n    x: i64\n}\nfn main() {}";
@@ -1292,8 +1293,9 @@ fn a_call_that_binds_its_parameters_should_not_wait_for_context() {
     ));
 }
 
-/// Finding the type parameters that a call's parameter types name visits each type once, so it
-/// grows with the declaration, not with the square of its type parameters.
+/// The search for the type parameters that a call's parameter types name visits each type once.
+/// So it grows with the declaration, not with the square of its type parameters. `call_work`
+/// counts the work of the join of the call, which looks at each parameter and its arguments once.
 #[test]
 fn named_parameters_should_be_found_in_one_walk() {
     let marked = |n: usize| {
@@ -1305,9 +1307,7 @@ fn named_parameters_should_be_found_in_one_walk() {
             params.join(", "),
             vec!["1"; n].join(", "),
         );
-        generic::MARKED.set(0);
-        clean(&src);
-        generic::MARKED.get()
+        call_work(&src)
     };
     assert_near_linear(marked(100), marked(200), marked(300));
     // A type without a parameter is not walked again at each call: the declaration and the
@@ -1315,15 +1315,13 @@ fn named_parameters_should_be_found_in_one_walk() {
     let repeated = |n: usize| {
         let types: Vec<_> = (0..n).map(|i| format!("P{i}")).collect();
         let src = format!(
-            "fn id<T>(x: T) -> T {{ x }}\nclass C<{}> {{}}\nfn f<T>(x: T, c: C<{}>) -> T {{ x }}\nfn g(c: C<{}>) {{\n{}}}\nfn main() {{}}",
+            "fn id<T>(x: T) -> T {{ x }}\nstruct C<{}> {{}}\nfn f<T>(x: T, c: C<{}>) -> T {{ x }}\nfn g(c: C<{}>) {{\n{}}}\nfn main() {{}}",
             types.join(", "),
             vec!["i64"; n].join(", "),
             vec!["i64"; n].join(", "),
             "    let _ = id(f(1, c))\n".repeat(n),
         );
-        generic::MARKED.set(0);
-        clean(&src);
-        generic::MARKED.get()
+        call_work(&src)
     };
     assert_near_linear(repeated(100), repeated(200), repeated(300));
     // A call that does not fit its declaration is not walked at all: a function, a method, a
@@ -1581,15 +1579,18 @@ fn a_waiting_branch_of_a_failed_call_should_report_its_own_mistakes() {
     for (body, expected) in [
         (
             "fn g() {\n    let xs = id(match 1.0 { _ => [] })\n}",
-            vec![(Code::CannotInfer, (2, 14)), (Code::CannotMatch, (2, 23))],
+            vec![(Code::CannotMatch, (2, 23))],
         ),
+        // A missing arm is no failed type (ADR 0049), so the call cannot infer the element.
         (
             "fn g() {\n    let ys = id(match true { true => [] })\n}",
             vec![(Code::CannotInfer, (2, 14)), (Code::NonExhaustive, (2, 17))],
         ),
+        // A failed condition poisons the `if`, so neither its join nor the call reports a second
+        // mistake (ADR 0049).
         (
             "fn g() {\n    let xs = id(if 1.0 { [] } else { [] })\n}",
-            vec![(Code::CannotInfer, (2, 14)), (Code::Mismatch, (2, 20))],
+            vec![(Code::Mismatch, (2, 20))],
         ),
         // What fails inside the branch for the call's failure is not reported again.
         (
@@ -1609,8 +1610,9 @@ fn a_waiting_branch_of_a_failed_call_should_report_its_own_mistakes() {
     }
 }
 
-/// Each binding is checked once, and a failed one undoes only what it bound, so inference's
-/// work grows with a call's type parameters, not with their square.
+/// Each binding is checked once, and a failed one undoes only what it bound. So the work of
+/// inference grows with a call's type parameters, not with their square. The join of each
+/// parameter tests its one argument as its one candidate.
 #[test]
 fn inference_should_check_each_binding_once() {
     let visits = |n: usize| {
@@ -1622,9 +1624,9 @@ fn inference_should_check_each_binding_once() {
             params.join(", "),
             vec!["true"; n].join(", ")
         );
-        generic::VISITS.set(0);
+        join::CANDIDATES.set(0);
         clean(&src);
-        generic::VISITS.get()
+        join::CANDIDATES.get()
     };
     assert_eq!(visits(64), 64);
     assert_eq!(visits(128), 128);
@@ -1633,77 +1635,451 @@ fn inference_should_check_each_binding_once() {
 /// A call whose `n` parameters each have a bound, and whose arguments bind them one by one. Each
 /// binding checks its own bound, so the substitution list that the check reads is built once for
 /// the call and changes one entry for each binding. A list built again for each binding makes the
-/// work grow with the square of `n`.
+/// work grow with the square of `n`. `call_work` counts the work of the call.
 #[test]
 fn early_bound_checks_should_build_the_substitution_list_once() {
     let listed = |n: usize| {
         let types: Vec<_> = (0..n).map(|i| format!("T{i}: I")).collect();
         let params: Vec<_> = (0..n).map(|i| format!("_a{i}: T{i}")).collect();
         let src = format!(
-            "interface I {{\n}}\nclass W: I {{\n}}\n\
+            "interface I {{\n}}\nstruct W: I {{\n}}\n\
              fn h<{}>({}) {{}}\nfn main() {{\n    let w = W()\n    h({})\n}}",
             types.join(", "),
             params.join(", "),
             vec!["w"; n].join(", ")
         );
-        generic::LISTED.set(0);
-        clean(&src);
-        generic::LISTED.get()
+        call_work(&src)
     };
-    assert!(listed(1) > 0, "the counter should count the list");
+    assert!(listed(1) > 0, "the counters should count the work");
     assert_near_linear(listed(100), listed(200), listed(300));
 }
 
 /// A call whose `n` parameters each have a bound `K<Z>`, which waits until the last argument binds
 /// `Z`. Each waiting bound moves once to the list of `Z` and is checked once. Taking the whole list
-/// of waiting bounds for each binding makes the work grow with the square of `n`.
+/// of waiting bounds for each binding makes the work grow with the square of `n`. `call_work`
+/// counts the work of the call.
 #[test]
 fn waiting_bounds_should_be_looked_at_once_for_each_parameter_they_name() {
     let examined = |n: usize| {
         let types: Vec<_> = (0..n).map(|i| format!("T{i}: K<Z>")).collect();
         let params: Vec<_> = (0..n).map(|i| format!("_a{i}: T{i}")).collect();
         let src = format!(
-            "interface K<X> {{\n}}\nclass V: K<i64> {{\n}}\n\
+            "interface K<X> {{\n}}\nstruct V: K<i64> {{\n}}\n\
              fn h<Z, {}>({}, _z: Z) {{}}\nfn main() {{\n    let v = V()\n    h({}, 1)\n}}",
             types.join(", "),
             params.join(", "),
             vec!["v"; n].join(", ")
         );
-        generic::EXAMINED.set(0);
-        clean(&src);
-        generic::EXAMINED.get()
+        call_work(&src)
     };
-    assert!(examined(1) > 0, "the counter should count the bounds");
+    assert!(examined(1) > 0, "the counters should count the work");
     assert_near_linear(examined(100), examined(200), examined(300));
 }
 
-/// An element pattern 20 arrays deep, so a walk of it for each element would show. Once the
-/// first element binds `T`, a later one adds no walk. A `P<i64, bool>` before it binds `T`,
-/// then fails at `bool` and undoes the binding: it adds no walk either.
+/// A call of `shape<A, B>(p: P<A, B>)` on a chain of `k + 1` aliases, each of which names the one
+/// before it twice: `k + 1` distinct types, but `2^k` paths. After the join of `A`, the place of
+/// `B` holds the chain at `A`. So a search for the part at `B` that walks into that closed part
+/// visits each path, and the work grows with `2^k`.
+#[test]
+fn the_part_at_a_parameter_should_be_found_in_linear_work_on_an_alias_chain() {
+    let steps = |k: usize| {
+        let aliases: Vec<String> = (1..=k)
+            .map(|i| format!("type A{i} = P<A{}, A{}>", i - 1, i - 1))
+            .collect();
+        let lets: Vec<String> = (1..=k)
+            .map(|i| format!("    let a{i}: A{i} = P.X(a{})", i - 1))
+            .collect();
+        let src = format!(
+            "enum P<A, B> {{\n    X(A)\n    Y(B)\n}}\ntype A0 = P<i64, i64>\n{}\n\
+             fn shape<A, B>(p: P<A, B>) -> i64 {{\n    match p {{\n        P.X(_) => 1\n        \
+             P.Y(_) => 2\n    }}\n}}\n\
+             fn main() {{\n    let a0: A0 = P.Y(2)\n{}\n    print(shape(a{k}))\n}}",
+            aliases.join("\n"),
+            lets.join("\n"),
+        );
+        join::PART_STEPS.set(0);
+        clean(&src);
+        join::PART_STEPS.get()
+    };
+    let (eight, sixteen) = (steps(8), steps(16));
+    assert_at_most_doubles(eight, sixteen);
+    assert_at_most_doubles(sixteen, steps(32));
+}
+
+/// GIVEN `q ?? S(f0: [0], ...)` with `q: S<i64, ...>?` and a struct `S` of 8 and of 16 type
+/// parameters, and the same `S(...)` under the written type `S<i64, ...>?`
+/// WHEN each is checked
+/// THEN the closed form of each parameter takes its part of the hint or of the written type
+/// AND no join walks the whole result of the call
+#[test]
+fn a_call_under_a_hint_or_a_written_optional_should_walk_no_result_for_a_closed_form() {
+    for n in [8, 16] {
+        let params: Vec<String> = (0..n).map(|i| format!("A{i}")).collect();
+        let fields: Vec<String> = (0..n).map(|i| format!("f{i}: [A{i}]")).collect();
+        let args: Vec<String> = (0..n).map(|i| format!("f{i}: [{i}]")).collect();
+        let ty = format!("S<{}>", vec!["i64"; n].join(", "));
+        let src = format!(
+            "struct S<{}> {{ {} }}\nfn main() {{\n    let q: {ty}? = None\n    \
+             let r = q ?? S({})\n    let w: {ty}? = S({})\n    print(r.f0.len())\n    \
+             print(w ?? r)\n}}\n",
+            params.join(", "),
+            fields.join("; "),
+            args.join(", "),
+            args.join(", "),
+        );
+        join::REQUIRED_JOINS.set(0);
+        clean(&src);
+        assert_eq!(join::REQUIRED_JOINS.get(), 0, "{n} type parameters");
+    }
+}
+
+/// GIVEN a generic call whose argument is an `if` or a `match` of a struct and `None`
+/// AND the call is under a written optional of an `any` type
+/// WHEN the program is checked
+/// THEN it is valid, as the `if` alone is: the branches convert to the written type (spec, the
+///   unify rule)
+#[test]
+fn a_branch_join_argument_under_a_written_optional_any_should_convert_as_its_branches() {
+    let decls = "interface Seen { fn seen(self) -> i64 }\nstruct Eye: Seen {\n    v: i64\n    \
+                 fn seen(self) -> i64 { self.v }\n}\nenum E { A; B }\nfn id<T>(x: T) -> T { x }\n\
+                 fn tso(x: (any Seen)?) -> i64 { if let Some(s) = x { s.seen() } else { 0 - 1 } }\n";
+    for row in [
+        "dbg(tso(id(if c { Eye(v: 2) } else { None })))",
+        "dbg(tso(id(if c { None } else { Eye(v: 2) })))",
+        "let x: (any Seen)? = id(if c { Eye(v: 2) } else { None })",
+        "let x: (any Seen)? = id(if c { Some(Eye(v: 2)) } else { None })",
+        "dbg(tso(id(match e { E.A => Eye(v: 2); _ => None })))",
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let c = [1].len() == 2\n    let e = E.B\n    {row}\n}}"
+        );
+        clean_row(row, &src);
+    }
+}
+
+/// GIVEN a constructor with `n` type parameters under a written type, called with literals and
+///   with arrays of literals
+/// WHEN the program is checked
+/// THEN the work grows linearly in `n`: the part of the written type at each parameter is found
+///   in one walk, not in a walk of the whole result for each parameter
+#[test]
+fn a_constructor_under_a_written_type_should_cost_linear_work_in_its_parameters() {
+    let work = |n: usize, value: &str, written: &str| {
+        let params: Vec<_> = (0..n).map(|i| format!("A{i}")).collect();
+        let fields: Vec<_> = (0..n).map(|i| format!("    a{i}: A{i}")).collect();
+        let args: Vec<_> = (0..n).map(|i| format!("a{i}: {value}")).collect();
+        let src = format!(
+            "struct Tup<{}> {{\n{}\n}}\nfn main() {{\n    let _t: Tup<{}> = Tup({})\n}}",
+            params.join(", "),
+            fields.join("\n"),
+            vec![written; n].join(", "),
+            args.join(", "),
+        );
+        // Each read of a type counts: a walk of the result reads each of its parameters.
+        crate::types::READS.set(0);
+        call_work(&src) + crate::types::READS.get()
+    };
+    for (value, written) in [("1", "i64"), ("[Some(1), None]", "[i64?]")] {
+        assert_near_linear(
+            work(100, value, written),
+            work(200, value, written),
+            work(300, value, written),
+        );
+    }
+}
+
+/// The work of checking `src`: the steps of the type walks, the snapshots, the types rebuilt, the
+/// variables made and the `...` written in the examples of E0050. A guard of a generic call's cost
+/// reads it.
+fn call_work(src: &str) -> usize {
+    generic::TYPE_STEPS.set(0);
+    generic::EXAMPLE_DOTS.set(0);
+    infer::SNAPSHOTS.set(0);
+    infer::REBUILDS.set(0);
+    infer::MADE.set(0);
+    clean(src);
+    generic::TYPE_STEPS.get()
+        + generic::EXAMPLE_DOTS.get()
+        + infer::SNAPSHOTS.get()
+        + infer::REBUILDS.get()
+        + infer::MADE.get()
+}
+
+/// `call_work` for a program that may have diagnostics: the work, and the count of diagnostics.
+fn checked_work(src: &str) -> (usize, usize) {
+    generic::TYPE_STEPS.set(0);
+    infer::SNAPSHOTS.set(0);
+    infer::REBUILDS.set(0);
+    infer::MADE.set(0);
+    let (_, ds) = checked(src);
+    let work = generic::TYPE_STEPS.get()
+        + infer::SNAPSHOTS.get()
+        + infer::REBUILDS.get()
+        + infer::MADE.get();
+    (work, ds.len())
+}
+
+/// Asserts that `two` is at most two times `one`, plus a small constant. `one` is the work for an
+/// input of size `n`, and `two` the work for size `2n`. So the work grows linearly with `n`.
+fn assert_at_most_doubles(one: usize, two: usize) {
+    assert_at_most_doubles_for("", one, two);
+}
+
+/// `assert_at_most_doubles` for a table row: a failure message starts with `row`.
+fn assert_at_most_doubles_for(row: &str, one: usize, two: usize) {
+    assert!(one > 0, "{row}the counters should count the work");
+    assert!(
+        two <= 2 * one + 64,
+        "{row}{one} steps for n, {two} for 2n: more than two times"
+    );
+}
+
+/// A generic value nested `depth` levels deep, whose type holds an open variable at each level:
+/// the literal `1` is an open `Int`, and `None` an open `Any`. Each level binds a variable. A table
+/// that rebuilds the whole type again after each bind makes the work grow with the square of the
+/// depth. So does an occurs check that walks the whole type at each bind. The work counts the
+/// types rebuilt and walked.
+#[test]
+fn a_deep_generic_value_should_cost_linear_work_in_its_depth() {
+    crate::on_compiler_stack(|| {
+        let nest = |depth: usize, wrap: &dyn Fn(String) -> String, core: &str| {
+            (0..depth).fold(core.to_string(), |inner, _| wrap(inner))
+        };
+        let pair = "struct Pair<A, B> {\n    a: A\n    b: B\n}\n";
+        let reads = "\n    let _a = v.a\n    print(v.b)\n}";
+        let rows: [(&str, &dyn Fn(usize) -> String); 4] = [
+            ("leaf 1: ", &|d| {
+                let v = nest(d, &|s| format!("Pair(a: {s}, b: 1)"), "1");
+                format!("{pair}fn main() {{\n    let v = {v}{reads}")
+            }),
+            ("leaf None: ", &|d| {
+                let v = nest(d, &|s| format!("Pair(a: {s}, b: 1)"), "None");
+                format!("{pair}fn main() {{\n    let v = {v}{reads}")
+            }),
+            ("W(a: ...): ", &|d| {
+                let v = nest(d, &|s| format!("W(a: {s})"), "1");
+                format!(
+                    "struct W<A> {{\n    a: A\n}}\nfn main() {{\n    let v = {v}\n    print(v.a)\n}}"
+                )
+            }),
+            ("two(..., 1): ", &|d| {
+                let v = nest(d, &|s| format!("two({s}, 1)"), "1");
+                format!(
+                    "{pair}fn two<A, B>(a: A, b: B) -> Pair<A, B> {{\n    Pair(a: a, b: b)\n}}\n\
+                     fn main() {{\n    let v = {v}{reads}"
+                )
+            }),
+        ];
+        for (row, src) in rows {
+            let work = |depth: usize| {
+                infer::WALKED.set(0);
+                let (work, reports) = checked_work(&src(depth));
+                (work + infer::WALKED.get(), reports)
+            };
+            let ((sixty, one), (hundred_twenty, two), (two_hundred_forty, three)) =
+                (work(60), work(120), work(240));
+            assert_eq!(
+                (one, two),
+                (three, three),
+                "{row}the same reports at each depth"
+            );
+            assert_at_most_doubles_for(row, sixty, hundred_twenty);
+            assert_at_most_doubles_for(row, hundred_twenty, two_hundred_forty);
+        }
+    });
+}
+
+/// The constructor of a struct with `k` type parameters, one small argument for each. Its result
+/// type names each parameter. A join that walks the whole result type, or builds it again, for
+/// each parameter makes the work grow with the square of `k`. The second row writes the type of
+/// the result, so each join also reads its part of the written type.
+#[test]
+fn a_wide_constructor_should_cost_linear_work_in_its_parameters() {
+    let program = |k: usize, written: bool| {
+        let params: Vec<String> = (0..k).map(|i| format!("A{i}")).collect();
+        let fields: Vec<String> = (0..k).map(|i| format!("    _f{i}: A{i}\n")).collect();
+        let args: Vec<String> = (0..k).map(|i| format!("_f{i}: 1")).collect();
+        let ty = if written {
+            format!(": Tup<{}>", vec!["i64"; k].join(", "))
+        } else {
+            String::new()
+        };
+        format!(
+            "struct Tup<{}> {{\n{}}}\nfn main() {{\n    let _v{ty} = Tup({})\n}}",
+            params.join(", "),
+            fields.concat(),
+            args.join(", "),
+        )
+    };
+    for (row, written) in [("inferred: ", false), ("written: ", true)] {
+        let work = |k: usize| call_work(&program(k, written));
+        assert_near_linear_for(row, work(100), work(200), work(300));
+    }
+}
+
+/// One argument at a parameter type that names each of the `k` parameters of the callee. Each
+/// join reads the argument's part at its parameter. A join that converts the whole argument again
+/// makes the work grow with the square of `k`. In the first row the argument is closed. In the
+/// second row a second argument is open at each part, and the closed one decides each part.
+#[test]
+fn a_wide_member_should_cost_linear_work_in_its_parameters() {
+    let program = |k: usize, open: bool| {
+        let list = |name: &str| (0..k).map(|i| format!("{name}{i}")).collect::<Vec<_>>();
+        let fields: Vec<String> = (0..k).map(|i| format!("    _f{i}: A{i}\n")).collect();
+        let tup = |name: &str| format!("Tup<{}>", list(name).join(", "));
+        let (made, params, args) = if open {
+            (
+                format!(
+                    "fn mkall<{}>() -> {} {{ panic(\"e\") }}\n",
+                    list("X").join(", "),
+                    tup("X")
+                ),
+                format!("_c: {}, _d: {}", tup("T"), tup("T")),
+                "mkall(), mkt()",
+            )
+        } else {
+            (String::new(), format!("_c: {}", tup("T")), "mkt()")
+        };
+        format!(
+            "struct {} {{\n{}}}\n\
+             fn mkt() -> Tup<{}> {{ panic(\"e\") }}\n\
+             {made}\
+             fn gk<{}>({params}) -> i64 {{ 0 }}\n\
+             fn main() {{\n    print(gk({args}))\n}}",
+            tup("A"),
+            fields.concat(),
+            vec!["i64"; k].join(", "),
+            list("T").join(", "),
+        )
+    };
+    for (row, open) in [("closed: ", false), ("open: ", true)] {
+        let work = |k: usize| call_work(&program(k, open));
+        assert_near_linear_for(row, work(100), work(200), work(300));
+    }
+}
+
+/// A call with `k` type parameters as the argument of an outer call: `id(mk(1, ...))` and
+/// `g(mk(1, ...), 1, ...)`. Each parameter of `mk` stays open until the outer call decides it, and
+/// the program has no error. A call can make the text of an E0050 for each open parameter before
+/// a report needs it. Each text writes one `...` for each parameter, so the work then grows with
+/// the square of `k`. So does a join that resolves the type of `mk(...)` for each parameter.
+#[test]
+fn an_inner_call_with_open_parameters_should_cost_linear_work_in_its_parameters() {
+    let program = |k: usize, outer: &str| {
+        let list = |name: &str| (0..k).map(|i| format!("{name}{i}")).collect::<Vec<_>>();
+        let fields: Vec<String> = (0..k).map(|i| format!("    _f{i}: A{i}\n")).collect();
+        let tup = |name: &str| format!("Tup<{}>", list(name).join(", "));
+        let params: Vec<String> = (0..k).map(|i| format!("_x{i}: T{i}")).collect();
+        let ones = vec!["1"; k].join(", ");
+        let (callee, call) = if outer == "id" {
+            (
+                "fn id<T>(x: T) -> T { x }\n".to_string(),
+                format!("id(mk({ones}))"),
+            )
+        } else {
+            let more: Vec<String> = (0..k).map(|i| format!("_y{i}: T{i}")).collect();
+            (
+                format!(
+                    "fn g<{}>(_t: {}, {}) -> i64 {{ 0 }}\n",
+                    list("T").join(", "),
+                    tup("T"),
+                    more.join(", ")
+                ),
+                format!("g(mk({ones}), {ones})"),
+            )
+        };
+        format!(
+            "struct {} {{\n{}}}\n\
+             fn mk<{}>({}) -> {} {{ panic(\"e\") }}\n\
+             {callee}\
+             fn main() {{\n    let _t = {call}\n}}",
+            tup("A"),
+            fields.concat(),
+            list("T").join(", "),
+            params.join(", "),
+            tup("T"),
+        )
+    };
+    for row in ["id", "g"] {
+        // The visits that the memo of `resolve` answers count too: a resolve of the whole result
+        // for each parameter visits each of its `k` parts.
+        let work = |k: usize| {
+            infer::VISITS.set(0);
+            call_work(&program(k, row)) + infer::VISITS.get()
+        };
+        assert_near_linear_for(&format!("{row}: "), work(100), work(200), work(300));
+    }
+}
+
+/// One call with `n` literal arguments at one parameter `T: Ord`. Each literal part of the join is
+/// examined a fixed number of times, so the work grows with `n`, not with its square. A check of
+/// each literal part against all the other parts makes the work grow with the square of `n`.
+#[test]
+fn a_call_with_many_literal_arguments_under_a_bound_should_cost_linear_work() {
+    let work = |n: usize| {
+        let params: Vec<_> = (0..n).map(|i| format!("_x{i}: T")).collect();
+        let args: Vec<_> = (1..=n).map(|i| i.to_string()).collect();
+        call_work(&format!(
+            "fn f<T: Ord>({}) -> T {{ _x0 }}\nfn main() {{\n    print(f({}))\n}}",
+            params.join(", "),
+            args.join(", ")
+        ))
+    };
+    assert_at_most_doubles(work(800), work(1600));
+}
+
+/// One call with `n` type parameters and one literal argument for each. The join of each
+/// parameter looks only at its own arguments. Its substitution list is not built again. So the
+/// work grows with `n`, not with its square.
+#[test]
+fn a_call_with_many_type_parameters_should_cost_linear_work() {
+    let work = |n: usize| {
+        let types: Vec<_> = (0..n).map(|i| format!("T{i}")).collect();
+        let params: Vec<_> = (0..n).map(|i| format!("_x{i}: T{i}")).collect();
+        let args: Vec<_> = (1..=n).map(|i| i.to_string()).collect();
+        call_work(&format!(
+            "fn f<{}>({}) -> T0 {{ _x0 }}\nfn main() {{\n    print(f({}))\n}}",
+            types.join(", "),
+            params.join(", "),
+            args.join(", ")
+        ))
+    };
+    assert_at_most_doubles(work(400), work(800));
+}
+
+/// An element pattern `depth` arrays deep, so a walk of it for each element would show. Once the
+/// first element binds `T`, a later one adds one step, at each depth. Each `P<i64, bool>` before
+/// it is a member of the call's join that does not fit: the call gives one mismatch at its head
+/// (ADR 0052), and the work grows linearly with the count of such elements.
 #[test]
 fn array_elements_should_meet_a_bound_element_type_with_no_new_walk() {
-    let walked = |elements: &str| {
-        let (open, close) = ("[".repeat(20), "]".repeat(20));
-        let src = format!(
-            "class P<A, B> {{\n    a: A\n    b: B\n}}\n\
+    let work = |depth: usize, elements: &str| {
+        let (open, close) = ("[".repeat(depth), "]".repeat(depth));
+        checked_work(&format!(
+            "struct P<A, B> {{\n    a: A\n    b: B\n}}\n\
              fn take<T>(xs: [{open}P<T, T>?{close}]) -> i64 {{ xs.len() }}\n\
              fn main() {{\n    let b: {open}P<i64, bool>?{close} = {open}P(a: 1, b: true){close}\n    \
              let x: {open}P<i64, i64>?{close} = {open}P(a: 1, b: 2){close}\n    \
              print(take([{elements}]))\n}}"
-        );
-        generic::WALKED.set(0);
-        let mismatches = diags(&src).len();
-        (generic::WALKED.get(), mismatches)
+        ))
     };
-    let (one, _) = walked("x");
-    assert!(one > 0, "the counter should count the walk of `known`");
-    assert_eq!(walked(&vec!["x"; 100].join(", ")), (one, 0));
-    let (bad, _) = walked("b, x");
-    assert_eq!(walked(&format!("{}x", "b, ".repeat(100))), (bad, 100));
+    let added = |depth: usize| {
+        let (one, clean_one) = work(depth, "x");
+        let (more, clean_more) = work(depth, &vec!["x"; 101].join(", "));
+        assert_eq!((clean_one, clean_more), (0, 0));
+        more - one
+    };
+    assert_eq!(added(20), added(40));
+    let bad = |n: usize| {
+        let (steps, mismatches) = work(20, &format!("{}x", "b, ".repeat(n)));
+        assert_eq!(mismatches, 1);
+        steps
+    };
+    assert_near_linear(bad(100), bad(200), bad(300));
 }
 
 /// Each waiting argument is a generic call for a parameter of its own, which its context binds.
-/// The sweeps look at each parameter type a fixed number of times. So the work grows with the
+/// The join looks at each parameter type a fixed number of times. So the work grows with the
 /// arguments, not with their square.
 #[test]
 fn waiting_arguments_should_cost_the_same_walk_each() {
@@ -1719,13 +2095,9 @@ fn waiting_arguments_should_cost_the_same_walk_each() {
             params.join(", "),
             vec!["Ok(1)"; n].join(", ")
         );
-        generic::WALKED.set(0);
-        clean(&src);
-        generic::WALKED.get()
+        call_work(&src)
     };
-    let fifty = walked(50);
-    assert!(fifty > 0, "the counter should count the walks");
-    assert_eq!(walked(100), 2 * fifty);
+    assert_near_linear(walked(50), walked(100), walked(150));
 }
 
 /// A call that leaves type parameters unbound looks at each declared name once to find the
@@ -1771,13 +2143,11 @@ fn type_parameters_should_be_found_in_one_step() {
     assert_eq!(steps(1000), 3002 + LANG_PARAM_STEPS);
 }
 
-/// Work kept ahead of a call is found by its span in one step, so finding it grows with the
-/// call's arguments, not with their square: one step per receiver and per block.
+/// Work kept ahead of a call is found by its span in a fixed number of steps. So finding it grows
+/// with the call's arguments, not with their square: two steps for each receiver, one for each
+/// block.
 #[test]
-fn work_kept_ahead_should_be_found_in_one_step() {
-    // The declarations hold one `xs.len() == 0`: the operator ranks its sides, which finds the
-    // receiver of `len` once.
-    const DECLARED: usize = 1;
+fn work_kept_ahead_should_be_found_in_steps_that_grow_with_the_arguments() {
     let inspected = |n: usize, arg: &str, ty: &str| {
         let params: Vec<_> = (0..n).map(|i| format!("x{i}: T")).collect();
         let src = with_generics(&format!(
@@ -1789,9 +2159,9 @@ fn work_kept_ahead_should_be_found_in_one_step() {
         clean(&src);
         generic::INSPECTED.get()
     };
-    for (arg, ty) in [("b.make()", "[i64]"), ("{ let n = true; n }", "bool")] {
-        assert_eq!(inspected(64, arg, ty), 64 + DECLARED, "{arg}");
-        assert_eq!(inspected(128, arg, ty), 128 + DECLARED, "{arg}");
+    for (arg, ty, each) in [("b.make()", "[i64]", 2), ("{ let n = true; n }", "bool", 1)] {
+        assert_eq!(inspected(64, arg, ty), 64 * each, "{arg}");
+        assert_eq!(inspected(128, arg, ty), 128 * each, "{arg}");
     }
 }
 
@@ -1842,11 +2212,6 @@ fn literal_like_arguments_should_follow_the_others() {
             &["f64", "unit"],
         ),
         (
-            "fn g(x: f64) {\n    let xs = pair([1], [1, x])\n}",
-            "pair",
-            &["[f64]", "[[f64]]"],
-        ),
-        (
             "fn g(x: f64) {\n    let xs = pair(1, -x)\n}",
             "pair",
             &["f64", "[f64]"],
@@ -1855,6 +2220,11 @@ fn literal_like_arguments_should_follow_the_others() {
             "fn g() {\n    let xs = pair(1 + 2, 2.5)\n}",
             "pair",
             &["f64", "[f64]"],
+        ),
+        (
+            "fn g(x: f64) {\n    let xs = pair([1], [1, x])\n}",
+            "pair",
+            &["[f64]", "[[f64]]"],
         ),
     ]);
 }
@@ -1941,10 +2311,10 @@ fn a_concrete_argument_should_bind_before_a_literal_under_a_transparent_form() {
     }
     let src = format!("{TRANSPARENT_DECLS}fn main() {{\n    let r = pick(1, \"s\")\n}}");
     let line = TRANSPARENT_DECLS.lines().count() + 2;
-    codes(&src, &[(Code::Mismatch, (line, 18))]);
-    // The concrete `"s"` binds first, so the literal under `dbg` is the one reported.
+    codes(&src, &[(Code::Mismatch, (line, 13))]);
+    // The literal under `dbg` is a member of the join too, so the call reports the conflict.
     let src = format!("{TRANSPARENT_DECLS}fn main() {{\n    let r = pick(dbg(1), \"s\")\n}}");
-    codes(&src, &[(Code::Mismatch, (line, 18))]);
+    codes(&src, &[(Code::Mismatch, (line, 13))]);
 }
 
 /// A call whose declared return type names none of its own type parameters has a type that its
@@ -1977,12 +2347,12 @@ fn a_call_whose_type_its_arguments_do_not_give_should_rank_concrete() {
         );
         clean_row(row, &src);
     }
-    // The call is `i64` whatever its argument is, so it binds before `x`, which is then the one
-    // reported.
+    // The call is `i64` whatever its argument is. So its type and the `u8` of `x` are the
+    // conflict of `pick`'s join, at its head (ADR 0052). A local `ys` for `[1]` gives the same.
     let src =
         format!("{decls}fn main() {{\n    let x: u8 = 3\n    let r = pick(len_of([1]), x)\n}}");
     let line = decls.lines().count() + 3;
-    codes(&src, &[(Code::Mismatch, (line, 31))]);
+    codes(&src, &[(Code::Mismatch, (line, 13))]);
 }
 
 /// A call of a method, or of a requirement of a bound, that returns `U?` makes an optional by
@@ -2054,13 +2424,10 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
     for row in [
         "let v = pick(1, Some(2))",
         "let v = pick(1, opt(2))",
-        "let v = pick(1, if c { 2 } else { None })",
-        "let v = pick(1, match c {\n true => Some(2)\n false => None\n })",
         "let v = pick(1, dbg(Some(2)))",
         "let v = pick(1, { Some(2) })",
         "let v = pick(Some(2), 1)",
         "let v = pick(opt(2), 1)",
-        "let v = pick(if c { 2 } else { None }, 1)",
         "let v = pick3(1, 2, Some(3))",
         "let v = pick3(1, Some(2), 3)",
         "let v = pick3(Some(1), 2, 3)",
@@ -2071,11 +2438,6 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
         "let v: u8? = pick3(1, 2, Some(3))",
         "let v: u8? = holder.pick(1, opt(2))",
         // The optional is inside an array literal, or in a value that passes one on.
-        "let v = pick([1], [Some(2)])",
-        "let v = pick([1], [None, Some(2)])",
-        "let v = pick([[1]], [[Some(2)]])",
-        "let v = pick([1], id([Some(2)]))",
-        "let v = k(1, [Some(2)])",
         "let v = pick([Some(2)], [1])",
         "let v = pick([[Some(2)]], [[1]])",
         "let v: [i64?] = pick([1], [Some(2)])",
@@ -2083,9 +2445,6 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
         // A call that wraps the optional in an array, a class or an enum.
         "let v = pick([1], wrap(Some(2)))",
         "let v = pick([1], wrap(opt(2)))",
-        "let v = pick([1], wrap(if c { 2 } else { None }))",
-        "let v = pick([[1]], wrap([Some(2)]))",
-        "let v = pick([1], g([Some(2)]))",
         "let v = pick([1], two(Some(2), 1))",
         "let v = pick(Bx(v: 1), mk(Some(2)))",
         "let v = pick(1, unbox(Bx(v: Some(2))))",
@@ -2100,7 +2459,6 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
         "let v = pick(1, get(Holds.Full(Some(2))))",
         "let v = pick([1], holder.wrap(Some(2)))",
         "let v = via(Wc())",
-        "let v = pick([1], dbg([Some(2)]))",
         // The reversed orders passed before this change: they are controls.
         "let v = pick(wrap(Some(2)), [1])",
         "let v = pick(g([Some(2)]), [1])",
@@ -2108,12 +2466,37 @@ fn an_optional_argument_should_bind_before_a_plain_literal() {
         "let v = pick(mk(Some(2)), Bx(v: 1))",
         // The `Some` is not returned, so the call holds no optional: the array binds first.
         "let v = pick([1], k2(Some(1), [2]))",
-        "let v = pick(k2(Some(1), [2]), [Some(3)])",
     ] {
         let src = format!(
             "{decls}fn main() {{\n    let c = true\n    let holder = Holder()\n    {row}\n}}"
         );
         clean_row(row, &src);
+    }
+    for (row, wanted) in [
+        ("let v = pick(1, if c { 2 } else { None })", vec![]),
+        (
+            "let v = pick(1, match c {\n true => Some(2)\n false => None\n })",
+            vec![],
+        ),
+        ("let v = pick(if c { 2 } else { None }, 1)", vec![]),
+        ("let v = pick([1], [Some(2)])", vec![]),
+        ("let v = pick([1], [None, Some(2)])", vec![]),
+        ("let v = pick([[1]], [[Some(2)]])", vec![]),
+        ("let v = pick([1], id([Some(2)]))", vec![]),
+        ("let v = k(1, [Some(2)])", vec![]),
+        ("let v = pick([1], wrap(if c { 2 } else { None }))", vec![]),
+        ("let v = pick([[1]], wrap([Some(2)]))", vec![]),
+        ("let v = pick([1], g([Some(2)]))", vec![]),
+        ("let v = pick([1], dbg([Some(2)]))", vec![]),
+        ("let v = pick(k2(Some(1), [2]), [Some(3)])", vec![]),
+    ] {
+        let src = format!(
+            "{decls}fn main() {{\n    let c = true\n    let holder = Holder()\n    {row}\n}}"
+        );
+        let wanted: Vec<_> = (wanted.into_iter())
+            .map(|(code, text)| (code, in_row(&src, row, text)))
+            .collect();
+        codes(&src, &wanted);
     }
 }
 
@@ -2163,10 +2546,10 @@ fn a_call_should_rank_from_the_places_of_its_returned_parameter() {
         ("print([k2(x, 2), x])", None),
         ("print([x, k2([1], 2)])", None),
         ("print([x, k2(1, None)])", None),
-        // A call that returns `T?` does not pass the type of its literal on: `Some(1)` is an
-        // optional `i64`, which a `u8` beside it does not give its type.
-        ("print([Some(1), x])", Some((Code::Mismatch, "x]"))),
-        ("print([opt(1), x])", Some((Code::Mismatch, "x]"))),
+        // The elements are a join (Task 5c): the literal in `Some(1)` or `opt(1)` takes the `u8`
+        // of `x` (the unify rule), as in `if c { Some(1) } else { x }`, and `x` converts.
+        ("print([Some(1), x])", None),
+        ("print([opt(1), x])", None),
         // The literal at the returned place still has to fit the type that the others give.
         (
             "print([x, k2(1, 300)])",
@@ -2230,7 +2613,6 @@ fn a_nested_optional_at_a_lifted_place_should_make_the_call_an_optional() {
     for row in [
         "let v: i64? = h(1, Some(Some(2)))\n    print(v ?? 0)",
         "let v: i64? = h(1, opt(Some(2)))\n    print(v ?? 0)",
-        "let v: i64? = h(1, Some(if x > 0 { Some(2) } else { None }))\n    print(v ?? 0)",
         "let v: i64? = h(1, Some(h(Some(2), None)))\n    print(v ?? 0)",
         "let v: i64? = h(1, id(Some(Some(2))))\n    print(v ?? 0)",
         "let v: i64? = h(1, dbg(Some(Some(2))))\n    print(v ?? 0)",
@@ -2246,20 +2628,34 @@ fn a_nested_optional_at_a_lifted_place_should_make_the_call_an_optional() {
         // A safe call flattens only the optional that it adds, so `m?.o(Some(2))` is an `i64??`.
         "let m: Mk? = Some(Mk(n: 1))\n    let v: i64? = h(1, m?.o(Some(2)))\n    print(v ?? 0)",
         // Both are optionals, and `Some(2)` fills the `?`.
-        "let v: i64?? = h(1, Some(2))\n    print((v ?? None) ?? 0)",
         "let v: i64?? = h(Some(1), Some(Some(2)))\n    print((v ?? None) ?? 0)",
         // The call is an optional beside `pick`, so a plain argument is an optional beside it.
         "print(pick(h(1, Some(Some(2))), 3) ?? 0)",
         "print(pick(h(1, Some(Some(2))), Some(3)) ?? 0)",
         "print(pick(1, h(1, Some(Some(2)))) ?? 0)",
+        // The element of the array is a member of the call's join (Task 5c), as the `Some` of `h`
+        // is: `T = i64?`, and the `1` converts.
+        "let v: i64? = g(1, [Some(Some(2))])\n    print(v ?? 0)",
     ] {
         clean_row(row, &places_main(row));
     }
-    // Under an array, `[T?]` does not pass a nested optional on (see `Makes::Through`): the
-    // context meets the payload, as it did before.
-    let row = "let v: i64? = g(1, [Some(Some(2))])\n    print(v ?? 0)";
-    let src = places_main(row);
-    codes(&src, &[(Code::Mismatch, in_row(&src, row, "Some(2)"))]);
+    for (row, wanted) in [
+        (
+            "let v: i64? = h(1, Some(if x > 0 { Some(2) } else { None }))\n    print(v ?? 0)",
+            vec![],
+        ),
+        // S25 in the spec: one E0032, as the closed result needs two wraps
+        (
+            "let v: i64?? = h(1, Some(2))\n    print((v ?? None) ?? 0)",
+            vec![(Code::Mismatch, "h(1")],
+        ),
+    ] {
+        let src = places_main(row);
+        let wanted: Vec<_> = (wanted.into_iter())
+            .map(|(code, text)| (code, in_row(&src, row, text)))
+            .collect();
+        codes(&src, &wanted);
+    }
 }
 
 /// A call that returns `T?` is an optional of an optional when its argument at a place `T` is an
@@ -2280,18 +2676,34 @@ fn a_call_that_returns_an_optional_parameter_should_meet_a_nested_optional_conte
         // An optional at a place `T` proves only that `T` is an optional, so the call makes two
         // optionals at least. A context with more optionals meets its payload.
         "let v: i64??? = q(Some(1), Some(2))\n    print(v != None)",
-        "let v: i64???? = q(Some(1), Some(Some(2)))\n    print(v != None)",
         "let v: i64???? = q(Some(1), Some(Some(Some(2))))\n    print(v != None)",
-        "let v: i64???? = q(Some(1), opt(Some(2)))\n    print(v != None)",
         "let v: i64??? = q(opt(1), Some(2))\n    print(v != None)",
         "let m: Mk? = Some(Mk(n: 1))\n    let v: i64??? = q(m?.o(1), Some(2))\n    print(v != None)",
-        // A call that returns `T` and has an optional at a place `T` meets its context whole.
-        // The `opt` calls in these rows return `T?` at a context of three optionals: main accepted
-        // both rows.
-        "let v: i64??? = h(opt(1), opt(Some(2)))\n    print(v != None)",
-        "let m: Mk? = Some(Mk(n: 1))\n    let v: i64??? = h(m?.o(1), opt(Some(2)))\n    print(v != None)",
     ] {
         clean_row(row, &places_main(row));
+    }
+    // AND each row of the S25 list in the spec is one E0032 at the call: the closed result needs
+    // two wraps, and the open form fails
+    for (row, call) in [
+        (
+            "let v: i64???? = q(Some(1), Some(Some(2)))\n    print(v != None)",
+            "q(",
+        ),
+        (
+            "let v: i64???? = q(Some(1), opt(Some(2)))\n    print(v != None)",
+            "q(",
+        ),
+        (
+            "let v: i64??? = h(opt(1), opt(Some(2)))\n    print(v != None)",
+            "h(",
+        ),
+        (
+            "let m: Mk? = Some(Mk(n: 1))\n    let v: i64??? = h(m?.o(1), opt(Some(2)))\n    print(v != None)",
+            "h(",
+        ),
+    ] {
+        let src = places_main(row);
+        codes(&src, &[(Code::Mismatch, in_row(&src, row, call))]);
     }
 }
 
@@ -2308,7 +2720,6 @@ fn a_context_should_meet_a_call_whose_argument_holds_an_optional() {
         fn unbox<T>(b: Bx<T>) -> T { b.v }\n\
         class Bx<T> {\n    v: T\n}\n";
     for row in [
-        "let v: i64? = k(1, [Some(2)])",
         "let v: i64? = first([Some(1)])",
         "let v: u8? = first([Some(1)])",
         "let v: i64? = unbox(Bx(v: Some(1)))",
@@ -2320,6 +2731,9 @@ fn a_context_should_meet_a_call_whose_argument_holds_an_optional() {
         let src = format!("{decls}fn main() {{\n    {row}\n}}");
         clean_row(row, &src);
     }
+    let row = "let v: i64? = k(1, [Some(2)])";
+    let src = format!("{decls}fn main() {{\n    {row}\n}}");
+    codes(&src, &[]);
 }
 
 /// A safe call (`receiver?.method(...)`) has an optional result, whatever the method returns, so
@@ -2554,9 +2968,10 @@ fn a_generic_call_that_does_not_check_should_report_once() {
             "fn g() {\n    let x = first(5)\n}",
             vec![(Code::Mismatch, (2, 19))],
         ),
+        // Arguments that conflict for one parameter are the call's error.
         (
             "fn g() {\n    let x = pair(1, \"a\")\n}",
-            vec![(Code::Mismatch, (2, 18))],
+            vec![(Code::Mismatch, (2, 13))],
         ),
         (
             "fn g() {\n    let x = id(Leaf)\n}",
@@ -2712,13 +3127,14 @@ fn a_blamed_argument_should_be_the_only_error_of_its_call() {
         let src = with_generics(&format!("{pick}{body}"));
         diagnostic(&src, Code::Mismatch, at, secondary);
     }
-    // The context leaves `B` open, so `s` keeps it, and the literal `1` is checked against it.
+    // `B` has no part in the context, so the join of `s` and `1` has no direction: one E0032 at
+    // the call (ADR 0052). `n` gets the directed report from the context.
     let src = with_generics(
         "fn two_b<A, B>(a: A, b: B, c: B) -> [A] {\n    [a]\n}\nfn g(n: i64, s: string) {\n    let x: [string] = two_b(n, s, 1)\n}",
     );
     codes(
         &src,
-        &[(Code::Mismatch, (5, 29)), (Code::Mismatch, (5, 35))],
+        &[(Code::Mismatch, (5, 23)), (Code::Mismatch, (5, 29))],
     );
     // `panic` never finishes, so it has no value, and no type to blame.
     let src = with_generics(&format!(
@@ -2805,9 +3221,11 @@ fn a_context_that_fits_or_does_not_fit_alone_should_keep_its_report() {
     diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[(2, 12)]);
     let src = with_generics("fn g(ns: [string]) {\n    let x: string = first(ns)\n}");
     diagnostic(&src, Code::Mismatch, (2, 21, "first(ns)"), &[(2, 12)]);
-    // `n` converts to the `i64?` that the context makes of `T`, so no argument is to blame.
-    let src = with_generics("fn g(n: i64) {\n    let xs: [i64?] = wrap(n)\n}");
-    diagnostic(&src, Code::Mismatch, (2, 22, "wrap(n)"), &[(2, 13)]);
+    // `n` is a whole argument at a place of `T`: when the closed form fails, the call opens at
+    // `T = i64?`, and `n` wraps once (Q19, "Open when closed fails"). Valid; `main` gave E0032.
+    clean(&with_generics(
+        "fn g(n: i64) {\n    let xs: [i64?] = wrap(n)\n}",
+    ));
 }
 
 /// A type parameter and a built-in type take no type arguments.
@@ -3311,14 +3729,14 @@ fn generic_array_literals_should_take_optional_elements() {
         ("g1([1, None])", "g1", "i64"),
         ("g1([None, 1])", "g1", "i64"),
         // A literal takes the type of the concrete element, whichever comes first.
-        ("g1([b, 1])", "g1", "u8"),
-        ("g1([1, b])", "g1", "u8"),
         ("g3([[], [1]])", "g3", "i64"),
         ("g4([[1]])", "g4", "i64"),
         ("g4([[None, 1]])", "g4", "i64"),
         ("g4([[], [1]])", "g4", "i64"),
         // A parameter that is no array of optionals keeps the join.
         ("g5([1, None])", "g5", "i64?"),
+        ("g1([b, 1])", "g1", "u8"),
+        ("g1([1, b])", "g1", "u8"),
     ] {
         let found = call_types(&with_optional_elements(call), callee);
         assert_eq!(found, [expected, "i64"], "{call}");
@@ -3335,7 +3753,8 @@ fn generic_array_literals_should_report_each_mistake_once() {
             "g1([nope, None, []])",
             vec![(Code::BindingNotFound, (2, 9))],
         ),
-        ("g1([b, x])", vec![(Code::Mismatch, (2, 12))]),
+        // The elements are members of the call's join: one E0032 at its head (ADR 0052).
+        ("g1([b, x])", vec![(Code::Mismatch, (2, 5))]),
         // An array is invariant: a variable of `[i64]` is not a `[i64?]`.
         (
             "let zs = [1, 2]\n    g1(zs)",
@@ -3400,14 +3819,15 @@ fn hole_below_the_top_of_a_parameter_should_bind_nothing() {
     assert_eq!(call_types(src, "f"), ["i64", "[i64]"]);
 }
 
-/// A waiting `if` keeps the rule it had: it waits, and `f` cannot infer `T`.
+/// An `if` whose branches wait is a member of the call's join (ADR 0052): its branches bind `T`
+/// as `f(Ok(1))` does.
 #[test]
-fn waiting_branch_should_keep_waiting_when_a_parameter_is_partly_bound() {
+fn waiting_branch_should_bind_a_partly_bound_parameter_as_its_branches_do() {
     with_prelude();
     let src = format!(
         "{PARTLY_BOUND}fn main() {{\n    let c = true\n    let x = f(if c {{ Ok(1) }} else {{ Ok(2) }})\n    print(x)\n}}"
     );
-    codes(&src, &[(Code::CannotInfer, (4, 13))]);
+    assert_eq!(call_types(&src, "f"), ["i64", "i64"]);
 }
 
 /// The context for an inner call has a hole where the outer call binds nothing yet. A part of
@@ -3653,18 +4073,18 @@ fn an_associated_type_argument_should_wait_for_the_argument_that_binds_its_base(
     }
 }
 
-/// A variant built from integer literals ranks as a literal does, so it takes its type from a
-/// concrete argument beside it: the mismatch is at the `5`, as for a bare `5`, and not a failed
-/// bound of the `i64` that the pair would bind alone.
+/// A variant built from integer literals ranks as a literal does, so it joins with a concrete
+/// argument beside it. The conflict is one report at the call, as for a bare `5`. It is not a
+/// failed bound of the `i64` that the pair would bind alone.
 #[test]
 fn a_variant_of_literals_should_take_its_type_from_a_concrete_argument() {
     for (decls, call, col) in [
         (
             "fn h<T: I>(_p: Two<T, T.Item>, _a: T) {}\n",
             "h(Two.P(5, 7), W())",
-            13,
+            5,
         ),
-        ("fn h<T: I>(_a: T, _b: T) {}\n", "h(5, W())", 7),
+        ("fn h<T: I>(_a: T, _b: T) {}\n", "h(5, W())", 5),
     ] {
         let (src, line) = assoc_program(decls, call);
         codes_row(
@@ -3767,13 +4187,16 @@ fn an_associated_type_argument_should_report_its_own_mistake() {
         // exist, in an array of optionals or in a second parameter.
         (
             "fn h<T: I>(_p: [Two<T, T.Item>?]) {}\n",
+            // E0154 of an array argument is at the call (ADR 0052).
             "h([None, Two.P(5, 7)])",
-            &[(Code::NotConform, 14)],
+            &[(Code::NotConform, 5)],
         ),
         (
             "fn h<T: I>(_p: [Two<T, T.Item>?]) {}\n",
+            // The elements are members of the join of `T`, so their conflict is the report, at
+            // the call (ADR 0052).
             "h([Two.P(5, 7), Two.P(W(), 8)])",
-            &[(Code::NotConform, 8)],
+            &[(Code::Mismatch, 5)],
         ),
         (
             "fn h<T: I>(_p: Two<T, T.Item>, _q: Two<T, T.Item>) {}\n",
@@ -3788,22 +4211,22 @@ fn an_associated_type_argument_should_report_its_own_mistake() {
             &[(Code::NotConform, 7)],
         ),
         // A parameter that is not bound yet when the bound fails is still bound by the next
-        // argument, so a later mismatch is reported at it.
+        // arguments. The conflict of its arguments is reported at the call.
         (
             "fn h<T: I, U>(_p: Two<T, T.Item>, _a: U, _b: U) {}\n",
             "h(Two.P(five(), 7), 1, \"s\")",
-            &[(Code::NotConform, 7), (Code::Mismatch, 25)],
+            &[(Code::Mismatch, 5), (Code::NotConform, 7)],
         ),
         // A pattern that names no parameter with a failed bound still reports its mismatch.
         (
             "fn h<T: I, S: I, U, V>(_p: Two<T, T.Item>, _s: S, _a: U, _b: Two<Two<U, V>, i64>) {}\n",
             "h(Two.P(five(), 7), W(), true, Two.P(Two.P(\"s\", 1), 2))",
-            &[(Code::NotConform, 7), (Code::Mismatch, 48)],
+            &[(Code::Mismatch, 5), (Code::NotConform, 7)],
         ),
         (
             "fn h<T: I, U>(_p: Two<T, T.Item>, _a: Wrap<U>, _b: Wrap<U>) {}\n",
             "h(Two.P(five(), 7), Wrap.X(five()), Wrap.X(\"s\"))",
-            &[(Code::NotConform, 7), (Code::Mismatch, 48)],
+            &[(Code::Mismatch, 5), (Code::NotConform, 7)],
         ),
     ];
     for &(decls, call, expected) in rows {
@@ -3867,7 +4290,6 @@ fn check_partial_rows(rows: &[PartialRow<'_>]) {
 const PART_ROWS: &[PartialRow<'static>] = {
     use Code::Mismatch;
     const S: &str = "\"s\"";
-    const X: &str = "\"x\"";
     &[
         (
             "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: Two<U, V>?) {}\n",
@@ -3897,62 +4319,62 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, Two.P(\"s\", 1))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Box<U, V>) {}\n",
             "h(true, Box(a: \"s\", b: 1))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, mk(\"s\", 1))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, Two.P(\"s\", 1))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "h(true, [Two.P(\"s\", 1)])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "h(true, [Two.P(true, 1), Two.P(\"s\", 2)])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, Some(Two.P(\"s\", 1)))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
             "h(true, Two.P(Two.P(\"s\", 1), 2))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
             "h(true, mk(mk(\"s\", 1), 2))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>?]) {}\n",
             "h(true, [Some(Two.P(\"s\", 1))])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Result<U, V>) {}\n",
             "h(true, okr(\"s\"))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, pr(\"s\"))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
@@ -3962,32 +4384,32 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, Option.Some(Two.P(\"s\", 1)))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h2<U, V>(a: U, b: Two<U, V>, c: Two<U, V>) {}\n",
             "h2(true, Two.P(true, 1), Two.P(true, \"x\"))",
-            &[(Mismatch, X)],
+            &[(Mismatch, "h2(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, id(Two.P(\"s\", 1)))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, id(Some(Two.P(\"s\", 1))))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, Some(id(Two.P(\"s\", 1))))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [[Two<U, V>]]) {}\n",
             "h(true, [[Two.P(\"s\", 1)]])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
@@ -3997,97 +4419,97 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>??) {}\n",
             "h(true, Some(Some(Two.P(\"s\", 1))))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>??) {}\n",
             "h(true, id(Some(Some(Two.P(\"s\", 1)))))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [[Two<U, V>?]]) {}\n",
             "h(true, [[None, Some(Two.P(\"s\", 1))]])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [[Two<U, V>?]]) {}\n",
             "h(true, [[Some(Two.P(true, 1)), None], [Some(Two.P(false, \"x\"))]])",
-            &[(Mismatch, X)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn fix<A>(x: A) -> Two<i64, A> { Two.P(1, x) }\nfn h<U, V>(c: V, b: Two<U, V>) {}\n",
             "h(true, fix(\"s\"))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn fix<A>(x: A) -> [Two<i64, A>] { [] }\nfn h<U, V>(c: V, b: [Two<U, V>]) {}\n",
             "h(true, fix(\"s\"))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn fix<A>(x: A) -> Two<i64, A>? { None }\nfn h<U, V>(c: V, b: Two<U, V>?) {}\n",
             "h(true, fix(\"s\"))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn fix<A>(x: A) -> Box<i64, A> { Box(a: 1, b: x) }\nfn h<U, V>(c: V, b: Box<U, V>) {}\n",
             "h(true, fix(\"s\"))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "struct Sb<A, B> {\n    a: A\n    b: B\n}\nfn fix<A>(x: A) -> Sb<i64, A> { Sb(a: 1, b: x) }\nfn h<U, V>(c: V, b: Sb<U, V>) {}\n",
             "h(true, fix(\"s\"))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn mk_array<A, B>(a: A, b: B) -> [Two<A, B>] { [] }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "h(true, mk_array(\"s\", 1))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn mk_some<A, B>(a: A, b: B) -> Two<A, B>? { None }\nfn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, mk_some(\"s\", 1))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
             "h(true, Two.P(\"s\", Two.P(1, \"x\")))",
-            &[(Mismatch, S), (Mismatch, X)],
+            &[(Mismatch, S)],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, Two<V, i64>>) {}\n",
             "h(true, Two.P(true, Two.P(1, \"x\")))",
-            &[(Mismatch, X)],
+            &[(Mismatch, "Two.P(true")],
         ),
         (
             "fn h<U, V>(a: U, b: Box<U, Box<V, i64>>) {}\n",
             "h(true, Box(a: \"s\", b: Box(a: 1, b: \"x\")))",
-            &[(Mismatch, S), (Mismatch, X)],
+            &[(Mismatch, S)],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, Two<V, i64>?>) {}\n",
             "h(true, Two.P(\"s\", Some(Two.P(1, \"x\"))))",
-            &[(Mismatch, S), (Mismatch, X)],
+            &[(Mismatch, S)],
         ),
         (
             "fn h<T: I, U>(_a: U, _b: [Two<U, T.Item>], _c: T) {}\n",
             "h(true, [Two.P(\"s\", 7)], W())",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<T: I, U>(_a: U, _b: Two<U, T.Item>?, _c: T) {}\n",
             "h(true, Some(Two.P(\"s\", 7)), W())",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<T: I, U, V>(_a: U, _b: Two<U, Two<V, T.Item>>, _c: T) {}\n",
             "h(true, Two.P(\"s\", Two.P(1, 7)), W())",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<T: I, U, V>(_a: Two<T, T.Item>, _b: U, _c: [Two<U, V>]) {}\n",
             "h(Two.P(W(), 7), true, [Two.P(\"s\", 1)])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn hn<U, V>(a: U, b: Two<Two<U, V>?, i64>) {}\n",
@@ -4117,72 +4539,72 @@ const PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, dbg(Two.P(\"s\", 1)))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, dbg(dbg(Two.P(\"s\", 1))))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, Some(dbg(Two.P(\"s\", 1))))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, dbg(Some(Two.P(\"s\", 1))))",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "h(true, [dbg(Two.P(\"s\", 1))])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let t = Two.P(true, 1)\nh(true, [Two.P(\"s\", 1), t])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let t = Two.P(true, 1)\nh(true, [t, Two.P(\"s\", 1)])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let t = Two.P(true, 1)\nh(true, [t, t, Two.P(\"s\", 1), t])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let t = Two.P(true, 1)\nlet ts = [t]\nh(true, [Two.P(\"s\", 1), ts[0]])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\nfn mk0() -> Two<bool, i64> { Two.P(true, 1) }\n",
             "h(true, [mk0(), Two.P(\"s\", 1)])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn hn<U, V>(a: U, b: [[Two<U, V>]]) {}\n",
             "let t = Two.P(true, 1)\nhn(true, [[t], [Two.P(\"s\", 1), t]])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "hn(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>?]) {}\n",
             "let t = Two.P(true, 1)\nh(true, [t, None, Two.P(\"s\", 1)])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let t = Two.P(true, 1)\nlet u = Two.P(\"x\", 1)\nh(true, [t, u])",
-            &[(Mismatch, "u]")],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let t = Two.P(true, 1)\nh(true, [Two.P(true, 1), t, Two.P(\"s\", 2)])",
-            &[(Mismatch, S)],
+            &[(Mismatch, "h(")],
         ),
     ]
 };
@@ -4191,8 +4613,9 @@ const PART_ROWS: &[PartialRow<'static>] = {
 /// is checked against what the call binds, with a hole for the rest. So a mistake is reported at
 /// the part that is wrong, not at the whole argument against a type that names the callee's `V`.
 /// The argument is a call, a construction or a method call. A safe call is one only for an
-/// optional parameter. The same holds under `Some`, in an array and in a call that returns its
-/// argument. An array element that takes no context, such as a local variable, does not stop
+/// optional parameter. The same holds under `Some` and in a call that returns its argument. In an
+/// array, the elements are members of the call's join, which reports at the head of the call
+/// (ADR 0052). An array element that takes no context, such as a local variable, does not stop
 /// the others from taking it.
 #[test]
 fn a_partly_bound_parameter_should_report_the_part_that_is_wrong() {
@@ -4286,7 +4709,7 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
         (
             "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "let d: D? = D()\nh(true, d?.m2(\"s\"))",
-            &[(Mismatch, "d?.m2(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
@@ -4298,12 +4721,12 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
             "h(true, Two.P(\"s\", 1))",
             &[(Mismatch, "Two.P(")],
         ),
-        // The `else` branch fails, so the `if` is untyped (the spec row `if`, `match`: a branch),
-        // and the mismatch of the whole argument waits.
+        // At a place that names two decided parameters, the `if` waits (Q28). Its branches do
+        // not join, so E0032 is at its head (ADR 0052).
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, if true { Two.P(\"s\", 1) } else { Two.P(true, 2) })",
-            &[(Mismatch, "true, 2)")],
+            &[(Mismatch, "if true")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
@@ -4313,12 +4736,12 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]?) {}\n",
             "h(true, Some([Two.P(\"s\", 1)]))",
-            &[(Mismatch, "Some(")],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]?) {}\n",
             "h(true, [Two.P(\"s\", 1)])",
-            &[(Mismatch, "[Two.P")],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn h<U, V>(a: U, b: Pair<U, Pair<V, i64>>) {}\n",
@@ -4343,7 +4766,7 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "let c: C? = C()\nh(true, c?.m(\"s\", 1))",
-            &[(Mismatch, "c?.m(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
@@ -4353,27 +4776,27 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
         (
             "fn hn<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
             "let c: C? = C()\nhn(true, Two.P(c?.m(\"s\", 1), 2))",
-            &[(Mismatch, "Two.P(c")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "let c: C? = C()\nh(true, Some(c?.m(\"s\", 1)))",
-            &[(Mismatch, "Some(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let c: C? = C()\nh(true, [c?.m(\"s\", 1)])",
-            &[(Mismatch, "c?.m(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "let c: C? = C()\nh(true, id(c?.m(\"s\", 1)))",
-            &[(Mismatch, "id(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "h(true, dbg([Two.P(\"s\", 1)]))",
-            &[(Mismatch, "dbg(")],
+            &[(Mismatch, "h(")],
         ),
     ]
 };
@@ -4381,8 +4804,10 @@ const WHOLE_ROWS: &[PartialRow<'static>] = {
 /// An argument that gets no context is reported as a whole, as it was before. Its shape may be
 /// wrong, as in an optional for a plain parameter. Its kind may get no context: an `if`, an
 /// array literal for an optional parameter. The call may return another
-/// class or enum than the context. A receiver may fix a part of the type. A safe call, waiting
-/// or not, may be for a plain parameter. The reported mistake is then the shape, not a part.
+/// class or enum than the context. A receiver may fix a part of the type. The reported mistake
+/// is then the shape, not a part. A safe call for a plain parameter is the exception: it reports
+/// the part that is wrong (`"s"`) in each position, as the rows of
+/// `a_safe_call_that_waits_for_a_plain_context_should_get_no_context` do.
 #[test]
 fn a_partly_bound_parameter_should_report_the_whole_argument_without_context() {
     check_partial_rows(WHOLE_ROWS);
@@ -4391,7 +4816,7 @@ fn a_partly_bound_parameter_should_report_the_whole_argument_without_context() {
 /// The rows of the test with the name
 /// `a_partly_bound_parameter_should_report_cannot_infer_when_the_context_fixes_nothing`.
 const INFER_ROWS: &[PartialRow<'static>] = {
-    use Code::CannotInfer;
+    use Code::{CannotInfer, Mismatch};
     &[
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
@@ -4406,7 +4831,7 @@ const INFER_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>?) {}\n",
             "h(true, Some(None))",
-            &[(CannotInfer, "h(")],
+            &[(Mismatch, "Some(")],
         ),
         (
             "fn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
@@ -4416,12 +4841,12 @@ const INFER_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<U, V>(a: U, b: Two<U, V>??) {}\n",
             "h(true, Some(Some(None)))",
-            &[(CannotInfer, "h(")],
+            &[(Mismatch, "Some(")],
         ),
         (
             "fn h3<U, V>(a: U, b: V, c: Two<U, V>?) {}\n",
             "let c: C? = C()\nh3(true, 1, c?.m(true, None))",
-            &[(CannotInfer, "m(")],
+            &[(Mismatch, "None")],
         ),
     ]
 };
@@ -4435,34 +4860,34 @@ fn a_partly_bound_parameter_should_report_cannot_infer_when_the_context_fixes_no
 
 /// The rows of `a_safe_call_that_waits_for_a_plain_context_should_get_no_context`.
 const SAFE_ROWS: &[PartialRow<'static>] = {
-    use Code::CannotInfer;
+    use Code::Mismatch;
     &[
         (
             "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "let d: D? = D()\nh(true, id(d?.m2(\"s\")))",
-            &[(CannotInfer, "id(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn h<U, V>(a: U, b: [Two<U, V>]) {}\n",
             "let d: D? = D()\nh(true, [d?.m2(\"s\")])",
-            &[(CannotInfer, "h(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "class D { fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") } }\nfn hn<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
             "let d: D? = D()\nhn(true, Two.P(d?.m2(\"s\"), 2))",
-            &[(CannotInfer, "Two.P(")],
+            &[(Mismatch, "\"s\"")],
         ),
         (
             "fn h3<U, V>(a: U, b: V, c: Two<U, V>) {}\n",
             "let c: C? = C()\nh3(true, 1, c?.m(\"s\", None))",
-            &[(CannotInfer, "m(")],
+            &[(Mismatch, "\"s\"")],
         ),
     ]
 };
 
-/// A safe call has an optional value, so a plain context cannot meet it. A safe call has a hint
-/// only as the direct waiting argument of a parameter that is not a bare type parameter. It
-/// must also report no mistake of its own. Without the hint, it reports its unbound parameter.
+/// A safe call has an optional value, so a plain context cannot meet it. The call stays open
+/// until the outer context settles it. It then reports the part that is wrong (`"s"` where `U`
+/// is `bool`) in each position, as under a `let`.
 #[test]
 fn a_safe_call_that_waits_for_a_plain_context_should_get_no_context() {
     check_partial_rows(SAFE_ROWS);
@@ -4470,27 +4895,27 @@ fn a_safe_call_that_waits_for_a_plain_context_should_get_no_context() {
 
 /// The rows of `a_waiting_call_for_a_bare_type_parameter_should_report_its_own_parameter`.
 const BARE_ROWS: &[PartialRow<'static>] = {
-    use Code::CannotInfer;
+    use Code::{CannotInfer, Mismatch};
     &[
         (
             "fn k2<A>() -> Two<string, A> { panic(\"e\") }\nfn ho<U, V>(a: U, b: Two<U, V>?) {}\n",
             "ho(true, Some(k2()))",
-            &[(CannotInfer, "k2(")],
+            &[(Mismatch, "ho(")],
         ),
         (
             "fn k2<A>() -> Two<string, A> { panic(\"e\") }\nfn hn<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n",
             "hn(true, Two.P(k2(), 2))",
-            &[(CannotInfer, "k2(")],
+            &[(Mismatch, "hn(")],
         ),
         (
             "fn k2<A>() -> Two<string, A> { panic(\"e\") }\nfn h<U, V>(a: U, b: Two<U, V>) {}\n",
             "h(true, id(k2()))",
-            &[(CannotInfer, "k2(")],
+            &[(Mismatch, "h(")],
         ),
         (
             "fn k3<A>() -> Two<string, A>? { panic(\"e\") }\nfn ho<U, V>(a: U, b: Two<U, V>?) {}\n",
             "ho(true, id(k3()))",
-            &[(CannotInfer, "k3(")],
+            &[(Mismatch, "ho(")],
         ),
         (
             "class K { fn k4<A>(self) -> Two<string, A> { panic(\"e\") } }\nfn ho<U, V>(a: U, b: Two<U, V>?) {}\n",
@@ -4549,16 +4974,15 @@ fn an_argument_with_labels_out_of_order_should_report_only_the_order() {
 /// The rows of `a_failed_bound_should_not_hide_the_part_that_is_wrong`.
 const BOUND_ROWS: &[PartialRow<'static>] = {
     use Code::{Mismatch, NotConform};
-    const S: &str = "\"s\"";
     &[(
         "fn h<T: I, U, V>(_a: Two<T, T.Item>, _b: U, _c: Two<U, V>) {}\n",
         "h(Two.P(5, 7), true, Two.P(\"s\", 1))",
-        &[(NotConform, "Two.P(5"), (Mismatch, S)],
+        &[(Mismatch, "h("), (NotConform, "Two.P(5")],
     )]
 };
 
-/// A failed bound is reported, and a later argument for a parameter bound in part still reports the
-/// part that is wrong.
+/// A failed bound is reported, and the conflict of the arguments for a later parameter is still
+/// reported, at the call.
 #[test]
 fn a_failed_bound_should_not_hide_the_part_that_is_wrong() {
     check_partial_rows(BOUND_ROWS);
@@ -4578,10 +5002,9 @@ fn a_waiting_call_inside_a_waiting_call_should_bind_the_parameter() {
     }
 }
 
-/// `takes_context` looks at each element of an array literal once. `inferred_array` then gives
-/// each element its context with no new walk. So the work for an array literal of generic calls
-/// grows with the elements, not with their square. Each element is a call that the context
-/// reaches.
+/// The join of the call looks at each element of an array literal once, and gives each element
+/// its context with no new walk. So the work for an array literal of generic calls grows with the
+/// elements, not with their square. Each element is a call that the context reaches.
 #[test]
 fn array_literal_context_should_cost_one_step_for_each_element() {
     let steps = |n: usize| {
@@ -4591,17 +5014,14 @@ fn array_literal_context_should_cost_one_step_for_each_element() {
              fn main() {{\n    h(true, [{}])\n}}",
             vec!["Two.P(true, 1)"; n].join(", ")
         );
-        generic::CONTEXT_STEPS.set(0);
-        clean(&src);
-        generic::CONTEXT_STEPS.get()
+        call_work(&src)
     };
-    assert!(steps(1) > 0, "the counter should count the walk");
     assert_near_linear(steps(100), steps(200), steps(300));
 }
 
-/// An array literal nested `d` deep, for a parameter that is `d` arrays deep. `takes_context`
-/// accepts the whole literal once, and `inferred_array` gives each level its element context
-/// with no new walk. So the work grows with the depth, not with its square.
+/// An array literal nested `d` deep, for a parameter that is `d` arrays deep. The join of the
+/// call gives each level its element context with no new walk. So the work grows with the depth,
+/// not with its square. `call_work` counts the work of the call.
 #[test]
 fn nested_array_literal_context_should_cost_one_step_for_each_level() {
     let steps = |depth: usize| {
@@ -4614,18 +5034,16 @@ fn nested_array_literal_context_should_cost_one_step_for_each_level() {
             "[".repeat(depth),
             "]".repeat(depth),
         );
-        generic::CONTEXT_STEPS.set(0);
-        clean(&src);
-        generic::CONTEXT_STEPS.get()
+        call_work(&src)
     };
-    assert!(steps(1) > 0, "the counter should count the walk");
+    assert!(steps(1) > 0, "the counters should count the work");
     assert_near_linear(steps(10), steps(20), steps(30));
 }
 
-/// As the test above, but each level also holds a local variable, which takes no context. So
-/// `takes_context` refuses each literal after a walk of the literal inside it, and
-/// `inferred_array` asks for the context of each element again. `taken` keeps the answer for
-/// each literal, so the work grows with the depth, not with its square.
+/// As the test above, but each level also holds a local variable, which takes no context. Each
+/// level is a join of its elements, and the join of a level does not make the types of the levels
+/// below it again. So the work grows with the depth, not with its square. `call_work` counts the
+/// work of the call.
 #[test]
 fn nested_array_literal_with_local_variables_should_cost_one_step_for_each_level() {
     let steps = |depth: usize| {
@@ -4645,17 +5063,15 @@ fn nested_array_literal_with_local_variables_should_cost_one_step_for_each_level
             "[".repeat(depth),
             "]".repeat(depth),
         );
-        generic::CONTEXT_STEPS.set(0);
-        clean(&src);
-        generic::CONTEXT_STEPS.get()
+        call_work(&src)
     };
-    assert!(steps(1) > 0, "the counter should count the walk");
+    assert!(steps(1) > 0, "the counters should count the work");
     assert_near_linear(steps(10), steps(20), steps(30));
 }
 
-/// A chain of `Some(...)` `d` deep, for an optional parameter that is `d` deep. `takes_context`
-/// walks the chain once, and the call of each `Some` asks again with the same context, which
-/// `taken` answers. So the work grows with the depth, not with its square.
+/// A chain of `Some(...)` `d` deep, for an optional parameter that is `d` deep. Each `Some` is a
+/// call, and the call of a level does not make the types of the levels below it again. So the
+/// work grows with the depth, not with its square. `call_work` counts the work of the call.
 #[test]
 fn nested_some_context_should_cost_one_step_for_each_level() {
     with_prelude();
@@ -4668,19 +5084,78 @@ fn nested_some_context_should_cost_one_step_for_each_level() {
             "Some(".repeat(depth),
             ")".repeat(depth),
         );
-        generic::CONTEXT_STEPS.set(0);
-        clean(&src);
-        generic::CONTEXT_STEPS.get()
+        call_work(&src)
     };
-    assert!(steps(1) > 0, "the counter should count the walk");
+    assert!(steps(1) > 0, "the counters should count the work");
     assert_near_linear(steps(10), steps(20), steps(30));
 }
 
-/// A generic call nested `d` deep, as an argument of a generic call: the outer call ranks its
-/// arguments, and each inner call ranks its own again when it is checked. A join or an operator
-/// nested so ranks its siblings, and each inner one ranks its own again. `body.ranked` answers
-/// the second time, so `rank_value` walks each expression once and the work grows with the
-/// depth, not with its square. The depths are far below the nesting limit of the parser (256).
+/// GIVEN a generic call nested 20, 40 and 60 deep as the argument of a generic call: `id(...)`,
+///   `id([...])`, `k(1, ...)` and `id(-(...))`
+/// WHEN each is checked
+/// THEN the expressions that `takes_member` walks grow in step with the depth: a call checked
+///   inside its join takes the answer kept for its argument, and walks it no second time
+#[test]
+fn nested_generic_calls_should_walk_each_argument_for_its_join_once() {
+    crate::on_compiler_stack(|| {
+        with_prelude();
+        let walks = |(open, close): (&str, &str), depth: usize| {
+            let src = format!(
+                "fn k<T>(a: T, b: T) -> T {{ b }}\nfn id<T>(x: T) -> T {{ x }}\n\
+                 fn main() {{\n    let v = {}1{}\n    print(v)\n}}",
+                open.repeat(depth),
+                close.repeat(depth),
+            );
+            generic::MEMBER_WALKS.set(0);
+            clean(&src);
+            generic::MEMBER_WALKS.get()
+        };
+        for row in [
+            ("id(", ")"),
+            ("id([", "])"),
+            ("k(1, ", ")"),
+            ("id(-(", "))"),
+        ] {
+            assert_near_linear_for(
+                &format!("{row:?}: "),
+                walks(row, 20),
+                walks(row, 40),
+                walks(row, 60),
+            );
+        }
+    });
+}
+
+/// GIVEN a struct of 20, 40 and 60 type parameters, built under its written type
+/// WHEN each is checked
+/// THEN the entries that `note_lone_arg` reads, writes and adds grow in step with the parameters:
+///   it notes each argument at the index of its parameter, and reads no other entry
+#[test]
+fn a_constructor_of_many_type_parameters_should_note_each_lone_argument_once() {
+    let steps = |k: usize| {
+        let params: Vec<String> = (0..k).map(|i| format!("A{i}")).collect();
+        let fields = (0..k).fold(String::new(), |text, i| text + &format!("    f{i}: A{i}\n"));
+        let written = vec!["i64"; k].join(", ");
+        let given: Vec<String> = (0..k).map(|i| format!("f{i}: 1")).collect();
+        let src = format!(
+            "struct Tup<{}> {{\n{fields}}}\nfn main() {{\n    let t: Tup<{written}> = Tup({})\n    \
+             print(t.f0)\n}}",
+            params.join(", "),
+            given.join(", "),
+        );
+        generic::LONE_STEPS.set(0);
+        clean(&src);
+        generic::LONE_STEPS.get()
+    };
+    assert!(steps(2) > 0, "the counter should count the notes");
+    assert_near_linear(steps(20), steps(40), steps(60));
+}
+
+/// A generic call nested `d` deep, as an argument of a generic call, and a join or an operator
+/// nested so. Each argument, element, branch and operand of these rows is a member of its join
+/// (Tasks 5c and 5d-2), so no level ranks its siblings: the count of rank steps is the same at
+/// each depth. `body.ranked` would answer a second rank of a span. The depths are far below the
+/// nesting limit of the parser (256).
 #[test]
 fn nested_generic_calls_should_rank_each_expression_once() {
     crate::on_compiler_stack(|| {
@@ -4707,52 +5182,48 @@ fn nested_generic_calls_should_rank_each_expression_once() {
             ("let r: u8 = ", "k2(x, ", "1", ")"),
             ("let r: u8 = ", "k2(", "1", ", 1)"),
         ] {
-            assert!(steps(row, 1) > 0, "the counter should count the walk");
-            assert_near_linear(steps(row, 20), steps(row, 40), steps(row, 60));
+            assert_eq!(steps(row, 60), steps(row, 1), "{row:?}");
         }
-        // Joins and operators rank their siblings too: an array in an array, an `if` in an `if`, an
-        // operator in an operator. Each level recurses deeper than a call does, and 60 levels
-        // overflow the stack of a debug test thread, so the depths are smaller.
+        // An array in an array, an `if` in an `if`, an operator in an operator. Each level recurses
+        // deeper than a call does, and 60 levels overflow the stack of a debug test thread, so the
+        // depths are smaller.
         for row in [
             ("let r = ", "[1, ", "1", "].len()"),
             ("let r = ", "if c { x } else { ", "1", " }"),
             ("let r = ", "x + (", "1", ")"),
             ("let r = ", "{ 1 } + (", "x", ")"),
         ] {
-            assert!(steps(row, 1) > 0, "the counter should count the walk");
-            assert_near_linear(steps(row, 10), steps(row, 20), steps(row, 30));
+            assert_eq!(steps(row, 30), steps(row, 1), "{row:?}");
         }
     });
 }
 
-/// An operator nested `d` deep, over integer literals: `int_literal` answers for the whole
-/// subtree at each level (the ranking of a sibling, and the first operand of an operator), so a
-/// walk that is not kept reads each operand again at each level, and the work grows with the
-/// square of the depth (#367). The leaf at the end can end the chain of literals, as a name, a
-/// float or a string, and the context can be a type. The depths are far below the nesting limit
-/// of the parser (256), and small enough for the stack of a debug test thread. One level has no
-/// operator inside an operand, so the counter is checked at two.
+/// An operator nested `d` deep, over integer literals, in an argument of `id`, with a loop as
+/// its leaf. Before Task 5e the argument was ranked, and a walk that was not kept read each
+/// operand again at each level: the work grew with the square of the depth (#367). Now the loop
+/// is a member of the call's join, as each other form is (ADR 0052). So the join's walk of value
+/// positions (`VALUE_STEPS`) counts the work. The context can be a type. The depths are far below
+/// the nesting limit of the parser (256), and small enough for the stack of a debug test thread.
 #[test]
 fn nested_int_literals_should_be_walked_once() {
     crate::on_compiler_stack(|| {
-        // The statement is `before`, then `open` repeated `depth` times, `inner`, `close` likewise.
+        // The statement is `before`, then `open` repeated `depth` times, `inner`, `close` likewise,
+        // in an argument of `id`.
         let steps = |(before, open, inner, close): (&str, &str, &str, &str), depth: usize| {
             let src = format!(
-                "fn main() {{\n    let y = 1\n    {before}{}{inner}{}\n}}",
+                "fn id<T>(x: T) -> T {{ x }}\nfn main() {{\n    let y = 1\n    {before}id({}{inner}{})\n    print(y)\n}}",
                 open.repeat(depth),
                 close.repeat(depth),
             );
-            INT_LITERAL_STEPS.set(0);
+            VALUE_STEPS.set(0);
             clean(&src);
-            INT_LITERAL_STEPS.get()
+            VALUE_STEPS.get()
         };
         for row in [
-            ("let r = ", "1 + (", "1", ")"),
-            ("let r = ", "(", "1", ") + 1"),
-            ("let r = ", "1 + (", "y", ")"),
-            ("let r = ", "(", "1.1", ") + 1.1"),
-            ("let r = ", "(", "\"a\"", ") + \"a\""),
-            ("let r: f64 = ", "1 + (", "1", ")"),
+            ("let r = ", "1 + (", "loop { break 1 }", ")"),
+            ("let r = ", "(", "loop { break 1 }", ") + 1"),
+            ("let r = ", "1 + (", "loop { break y }", ")"),
+            ("let r: i64 = ", "1 + (", "loop { break 1 }", ")"),
         ] {
             assert!(
                 steps(row, 2) > 0,
@@ -4765,6 +5236,27 @@ fn nested_int_literals_should_be_walked_once() {
                 steps(row, 30),
             );
         }
+    });
+}
+
+/// An argument of `id` is a chain of `+` over integer literals. A name is at its start, and a
+/// mismatched operand is at its end (E0032). The checker ranks the argument, and `int_literal`
+/// answers for the subtree of each level of the chain. A walk that is not kept reads the operands
+/// of each level again: the work grows with the square of the length (#367). The lengths stay
+/// below the nesting limit of the parser (256).
+#[test]
+fn int_literals_of_a_mismatched_argument_should_be_walked_once() {
+    crate::on_compiler_stack(|| {
+        let steps = |length: usize| {
+            let src = format!(
+                "fn id<T>(x: T) -> T {{ x }}\nfn main() {{\n    let y = 1\n    let a: [i64]? = None\n    let r = id(y{} + a?.len())\n}}",
+                " + 1".repeat(length),
+            );
+            INT_LITERAL_STEPS.set(0);
+            drop(diags(&src));
+            INT_LITERAL_STEPS.get()
+        };
+        assert_near_linear(steps(60), steps(120), steps(180));
     });
 }
 
@@ -4787,7 +5279,8 @@ fn nested_array_program(depth: usize, end: &str, bottom: &str, setup: &str) -> S
 /// with its square (#301). The depths are far below the nesting limit of the parser, and small
 /// enough for the stack of a debug test thread. The literal is refused when an element at the
 /// bottom takes no context, a local variable or a `None`. Each level then still takes its
-/// context from the level above, and does not walk the type below it.
+/// context from the level above, and does not walk the type below it. `call_work` counts the work
+/// of the call.
 #[test]
 fn a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times() {
     crate::on_compiler_stack(|| {
@@ -4797,14 +5290,10 @@ fn a_nested_array_literal_should_resolve_its_type_a_linear_number_of_times() {
             ("Two<T, i64>", "y", "let y = mk(true)"),
             ("Two<T, i64>?", "mk(true), None", ""),
         ] {
-            let walked = |depth: usize| {
-                generic::WALKED.set(0);
-                clean(&nested_array_program(depth, end, bottom, setup));
-                generic::WALKED.get()
-            };
+            let walked = |depth: usize| call_work(&nested_array_program(depth, end, bottom, setup));
             assert!(
                 walked(1) > 0,
-                "{bottom}: the counter should count the walks"
+                "{bottom}: the counters should count the work"
             );
             assert_near_linear_for(&format!("{bottom}: "), walked(20), walked(40), walked(60));
         }
@@ -4863,18 +5352,19 @@ const NESTED_ARRAY_ROWS: &[(&str, &[(Code, &str)])] = {
         ("print(f3([[[mk(true)], []], [[mk(false)]]]))", &[]),
         ("print(f([[]]))", &[(CannotInfer, "f(")]),
         ("print(f([[], []]))", &[(CannotInfer, "f(")]),
-        // The second element disagrees, at the bottom or one level up: one mismatch.
-        ("print(f([[mk(true)], [mk(1)]]))", &[(Mismatch, "1)")]),
+        // The second element disagrees, at the bottom or one level up: one E0032, at the head of
+        // the call, as a nested join reports at the outer head (ADR 0052).
+        ("print(f([[mk(true)], [mk(1)]]))", &[(Mismatch, "f(")]),
         (
             "print(f([[mk(true), mk(1)], [mk(false)]]))",
-            &[(Mismatch, "1)")],
+            &[(Mismatch, "f(")],
         ),
-        ("print(f3([[[mk(true)], [mk(2)]]]))", &[(Mismatch, "2)")]),
-        ("print(fto([[1], [\"s\"]]))", &[(Mismatch, "\"s\"")]),
+        ("print(f3([[[mk(true)], [mk(2)]]]))", &[(Mismatch, "f3(")]),
+        ("print(fto([[1], [\"s\"]]))", &[(Mismatch, "fto(")]),
         // An element type that names `T` at two places.
         ("print(f2([[mk2(true)]]))", &[]),
-        ("print(f2([[mk(true)]]))", &[(Mismatch, "mk(true)")]),
-        ("print(f2([[mk2(true)], [mk2(1)]]))", &[(Mismatch, "1)")]),
+        ("print(f2([[mk(true)]]))", &[(Mismatch, "f2(")]),
+        ("print(f2([[mk2(true)], [mk2(1)]]))", &[(Mismatch, "f2(")]),
         // The same depth under `Some(...)` and under a generic call.
         ("print(fs(Some([[mk(true)]])))", &[]),
         ("print(f(id([[mk(true)]])))", &[]),
@@ -4882,7 +5372,7 @@ const NESTED_ARRAY_ROWS: &[(&str, &[(Code, &str)])] = {
         ("print(fa([[mkw()]]))", &[]),
         ("print(fa([[mkw(), mkw()], [mkw()]]))", &[]),
         ("print(fb([[mkw(), None]]))", &[]),
-        ("print(fa([[mkw()], [mkv()]]))", &[(Mismatch, "mkv()")]),
+        ("print(fa([[mkw()], [mkv()]]))", &[(Mismatch, "fa(")]),
         // The context of the call holds a hole, which hints `T`. So the outer literal goes to
         // `inferred_array`, and its element type is `T`, not an array.
         ("print(gl(idl([[mk(true)]]), true))", &[]),
@@ -4892,7 +5382,7 @@ const NESTED_ARRAY_ROWS: &[(&str, &[(Code, &str)])] = {
         ("let x = [mk(true)]\nprint(f([[mk(false)], x]))", &[]),
         (
             "let x = [mk(1)]\nprint(f([[mk(false)], x]))",
-            &[(Mismatch, "x]")],
+            &[(Mismatch, "f(")],
         ),
         // A local variable at the bottom refuses the literals above it. Each level
         // still takes its context from the level above.
@@ -4903,7 +5393,7 @@ const NESTED_ARRAY_ROWS: &[(&str, &[(Code, &str)])] = {
         ),
         (
             "let y = mk(true)\nprint(f3([[[mk(false)], [y]], [[mk(1)]]]))",
-            &[(Mismatch, "1)")],
+            &[(Mismatch, "f3(")],
         ),
     ]
 };
@@ -5099,28 +5589,30 @@ fn a_failed_bound_should_not_check_a_later_argument_against_the_rejected_type() 
 const REJECT_PART_ROWS: &[PartialRow<'static>] = {
     use Code::{Mismatch, NotConform};
     const P: &str = "Two.P(n";
-    const S: &str = "\"s\"";
     &[
-        // `U` is not rejected: the first argument that binds it fixes it.
+        // `U` is not rejected: the arguments that bind it join, and their conflict is reported
+        // at the call.
         (
             "fn h<T: I, U>(_p: Two<T, T.Item>, _a: U, _b: Two<U, T.Item>) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), true, Two.P(\"s\", 3))",
-            &[(NotConform, P), (Mismatch, S)],
+            &[(Mismatch, "h("), (NotConform, P)],
         ),
         (
             "fn h<T: I, S: I, U>(_p: Two<T, T.Item>, _s: S, _a: U, _b: Two<U, S.Item>) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), W(), true, Two.P(\"s\", 2))",
-            &[(NotConform, P), (Mismatch, S)],
+            &[(Mismatch, "h("), (NotConform, P)],
         ),
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: Two<T, U>, _b: U) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), Two.P(W(), 1), \"s\")",
-            &[(NotConform, P), (Mismatch, S)],
+            &[(Mismatch, "h("), (NotConform, P)],
         ),
+        // The elements of the array are members of the join of `U` (Task 5c): one report at the
+        // call that names `1`, `2` and `"s"`, as the nested join rule gives.
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: [Two<T, U>], _b: U) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), [Two.P(W(), 1), Two.P(W(), 2)], \"s\")",
-            &[(NotConform, P), (Mismatch, S)],
+            &[(Mismatch, "h("), (NotConform, P)],
         ),
         // The part that is not the rejected parameter must still meet the parameter's type.
         (
@@ -5131,7 +5623,7 @@ const REJECT_PART_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: Two<T, bool>) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), mk(W(), 1))",
-            &[(NotConform, P), (Mismatch, "1))")],
+            &[(NotConform, P), (Mismatch, "1)")],
         ),
     ]
 };
@@ -5184,19 +5676,21 @@ const OTHER_WAIT_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: U?) {}\n",
             "let n: i64 = 5\nh(Two.P(n, 7), none())",
-            &[(NotConform, "Two.P(n"), (CannotInfer, "none()")],
+            &[(CannotInfer, "h("), (NotConform, "Two.P(n")],
         ),
         (
             "fn h<T: I, U>(_p: Two<T, i64>, _a: [U?]) {}\n",
+            // The element is a member of the join of `U` (Task 5c): the call reports, as above.
             "let n: i64 = 5\nh(Two.P(n, 7), [none()])",
-            &[(NotConform, "Two.P(n"), (CannotInfer, "none()")],
+            &[(CannotInfer, "h("), (NotConform, "Two.P(n")],
         ),
     ]
 };
 
 /// The context of a call that waits for `U` holds `HOLE` for `U`, which no bound rejected. The
 /// call cannot bind it, and nothing else reports that, so the call keeps its E0050 after a failed
-/// bound of `T`.
+/// bound of `T`. A call in an array argument is a member of the outer call's join. So the outer
+/// call gives that E0050 at its head (ADR 0052).
 #[test]
 fn a_call_that_waits_for_another_parameter_should_still_report_its_own_inference_error() {
     check_rows_after(REJECT_DECLS, OTHER_WAIT_ROWS);
@@ -5346,12 +5840,12 @@ const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
              fn two_p<B>() -> Two<P, B> { panic(\"e\") }\n\
              fn h<T: I, U>(_a: T, _b: Two<T, U>) {}\n",
             "h(P(), two_p())",
-            &[(NotConform, "P()"), (CannotInfer, "two_p()")],
+            &[(CannotInfer, "h("), (NotConform, "P()")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: Two<T, U>?) {}\n",
             "h(5, dbg(none()))",
-            &[(NotConform, "5"), (CannotInfer, "none()")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         (
             "fn g<A, B>(_x: B?) -> A? { None }\n\
@@ -5362,34 +5856,35 @@ const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I, U>(_p: T, _a: U?) {}\n",
             "h(5, id(none()))",
-            &[(NotConform, "5"), (CannotInfer, "none()")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: U?) {}\n",
             "h(5, none())",
-            &[(NotConform, "5"), (CannotInfer, "none()")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         // One call has a rejected parameter and an unbound one, in both orders: `A` is rejected
         // and `B` is not, or the reverse.
         (
             "fn h<T: I, U>(_p: T, _a: Two<T, U>) {}\n",
             "h(5, two())",
-            &[(NotConform, "5"), (CannotInfer, "two()")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: Two<U, T>) {}\n",
             "h(5, two())",
-            &[(NotConform, "5"), (CannotInfer, "two()")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: [Two<T, U>]) {}\n",
+            // The element is a member of the join of `U` (Task 5c): the call reports, as above.
             "h(5, [two()])",
-            &[(NotConform, "5"), (CannotInfer, "two()")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: Two<T, U>) {}\n",
             "h(5, id(two()))",
-            &[(NotConform, "5"), (CannotInfer, "two()")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         // `A` of `two` sits in `[T]`, a part that holds `REJECTED` and no `HOLE`; `B` sits at `U`.
         // The call keeps the E0050 of the parameter that is not rejected-only, whichever comes
@@ -5397,30 +5892,31 @@ const UNBOUND_NEXT_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I, U>(_p: T, _a: Two<[T], U>) {}\n",
             "h(5, two())",
-            &[(NotConform, "5"), (CannotInfer, "two()")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         (
             "fn h<T: I, U>(_p: T, _a: Two<U, [T]>) {}\n",
             "h(5, two())",
-            &[(NotConform, "5"), (CannotInfer, "two()")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         // A part that holds both holes is not rejected-only.
         (
             "fn h<T: I, U>(_p: T, _a: Two<[T], U>?) {}\n",
             "h(5, none())",
-            &[(NotConform, "5"), (CannotInfer, "none()")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
         (
             "fn any<X>() -> X { panic(\"e\") }\nfn h<T: I, U>(_p: T, _a: [T], _b: U?) {}\n",
             "h(5, any(), none())",
-            &[(NotConform, "5"), (CannotInfer, "none()")],
+            &[(CannotInfer, "h("), (NotConform, "5")],
         ),
     ]
 };
 
 /// A part of a context that no bound rejected is `HOLE`, not `REJECTED`. A nested call that it
-/// leaves with a parameter unbound still reports E0050, next to the failed bound. So does a call
-/// that has a rejected parameter and an unbound one.
+/// leaves with a parameter unbound still reports E0050, next to the failed bound; in an array
+/// argument, the outer call gives it at its head (ADR 0052). So does a call that has a rejected
+/// parameter and an unbound one.
 #[test]
 fn an_unbound_part_next_to_a_rejected_one_should_keep_its_inference_error() {
     check_rows_after(REJECT_DECLS, UNBOUND_NEXT_ROWS);
@@ -5467,22 +5963,23 @@ const CONTEXT_BOUND_DECLS: &str = "class Vi: I {\n    type Item = bool\n}\n\
 const CONTEXT_BOUND_ROWS: &[PartialRow<'static>] = {
     use Code::Mismatch;
     &[
-        // The context makes `T` an `i64`, which `I` has no conformance for. The call keeps the
-        // `T = W` of its first argument, as a call with no context does. The parameter rejects
-        // `5`, so the call has a failed part and is untyped (the call row of S14).
-        ("", "let _x: i64 = h(W(), Two.P(5, 7))", &[(Mismatch, "5")]),
+        // The required type is the only candidate for `T`, so the call opens at `i64`. Each
+        // member that does not convert to it gets the directed report: `W()`, not `5`.
+        ("", "let _x: i64 = h(W(), Two.P(5, 7))", &[(Mismatch, "W(")]),
+        // `i64` breaks the bound of `T`, and the one member is closed: the call reports as a
+        // whole, as on `main`.
         ("", "let _x: i64 = g(W())", &[(Mismatch, "g(W())")]),
         ("", "let _x: i64? = g2(W(), W())", &[(Mismatch, "g2(")]),
-        // The bound of `T` names `U`, which the context binds: `i64` does not conform to
-        // `K<bool>`, and the first argument is the error.
+        // The call decides `T = V` and `U` from the bound before the context, so the context
+        // meets the result at its top.
         (
             "",
             "let _x: Two<i64, bool> = hk1(V())",
-            &[(Code::NotConform, "V()")],
+            &[(Mismatch, "V()")],
         ),
         // The context leaves `U` open, so the bound waits, and the context fits as before.
         ("", "let _x: i64 = hk2(V())", &[(Mismatch, "V()")]),
-        // A method with a bound of its own parameter.
+        // A method with a bound of its own parameter, by the same rule.
         (
             "",
             "let _x: i64 = Bx().m(W())",
@@ -5502,12 +5999,14 @@ const CONTEXT_BOUND_ROWS: &[PartialRow<'static>] = {
             "let _x: i64 = hb(W(), Two.P(5, 7))",
             &[(Mismatch, "W()")],
         ),
+        // The call decides `T` from its arguments first, so the context meets the result once.
+        ("", "let _x: Vi = g2(W(), W())", &[(Mismatch, "g2(")]),
+        // The join of `W` and `Vi` fails, and each argument is a member of it.
         (
             "",
-            "let _x: Vi = g2(W(), W())",
-            &[(Mismatch, "W()"), (Mismatch, "W())")],
+            "let _x: i64 = g2(W(), Vi())",
+            &[(Mismatch, "W()"), (Mismatch, "Vi()")],
         ),
-        ("", "let _x: i64 = g2(W(), Vi())", &[(Mismatch, "Vi()")]),
         // The bound of the receiver's class is not the context's: it binds only the method's own
         // parameters.
         (
@@ -5663,7 +6162,7 @@ const HELD_BOUND_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I>(_a: T, _p: Two<T, i64>) {}\n",
             "h(W(), Two.P(5, 7))",
-            &[(Mismatch, "5")],
+            &[(Mismatch, "h(")],
         ),
         // The receiver binds `T`, and no bound of the method is there to fail. The associated
         // type is still replaced.
@@ -5675,7 +6174,7 @@ const HELD_BOUND_ROWS: &[PartialRow<'static>] = {
         (
             "fn h<T: I>(_p: Two<T, i64>, _a: T) {}\n",
             "h(Two.P(W(), 7), W())\nh(Two.P(W(), 7), 5)",
-            &[(Mismatch, "5)")],
+            &[(Mismatch, "h(")],
         ),
     ]
 };
@@ -5707,17 +6206,14 @@ fn an_array_literal_should_not_make_the_call_that_holds_it_optional() {
 
 /// An element that is a call of `dbg` with a type argument does not fit its declaration. So it
 /// keeps the order of a call, also when the array is the argument of a generic call. It is checked
-/// first, with no expected type. It reports its own `[]` (E0050), not a mismatch with the other
-/// element.
+/// first, with no expected type, and gives E0137 only: it is a poisoned member of the call's join,
+/// which reports nothing more, neither a mismatch with the other element nor its own `[]` (S7).
 #[test]
 fn a_call_that_does_not_fit_should_be_checked_first_in_an_array_argument() {
     with_prelude();
     let src =
         with_generics("fn g() {\n    take_all([dbg<i64>([]), [1]])\n}\nfn take_all<T>(xs: [T]) {}");
-    codes(
-        &src,
-        &[(Code::TypeArguments, (2, 18)), (Code::CannotInfer, (2, 24))],
-    );
+    codes(&src, &[(Code::TypeArguments, (2, 18))]);
 }
 
 /// The declarations that the rows of
@@ -5854,15 +6350,16 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
         ("print(gaa(mkxx(), mkw()))", &[(Mismatch, "mkxx()")]),
         // `mkdv()` waits for `T` and `U`, its `X` at two places. Only `mk()` binds `T`, and no
         // argument binds `U`, so nothing wakes it: it is checked when the sweep ends, in order.
-        // In `fc`, `mk2()` needs the `V` that `mkdv()` binds and comes first: E0050. In `fc2`,
-        // `mkdv()` comes first, so it checks.
-        ("print(fc(mk2(), mkdv(), mk()))", &[(CannotInfer, "mk2()")]),
+        // In `fc` and `fc2`, `mk2()` takes the `V` that `mkdv()` binds, in each order: another
+        // member gives the type argument (ADR 0052).
+        ("print(fc(mk2(), mkdv(), mk()))", &[]),
         ("print(fc2(mkdv(), mk2(), mk()))", &[]),
         // A call that nothing wakes is checked when the sweep ends, with what the later
         // arguments bound. `mkv()` has `X` under `T`, and `mks()` binds `U`: the call checks.
-        // `mkt()` has `i64` under `U`, which `mks()` binds to `string`: the mismatch is true.
+        // `mkt()` has `i64` under `U`, which `mks()` binds to `string`: the conflict of `U` is
+        // true, and the call reports it.
         ("print(gtu(mkv(), mks()))", &[]),
-        ("print(gtu(mkt(), mks()))", &[(Mismatch, "mkt()")]),
+        ("print(gtu(mkt(), mks()))", &[(Mismatch, "gtu(")]),
         // A part of the call's type is a parameter that its own argument binds (`Y`), not an open
         // one. It waits for `T` only. At an associated type of the outer call, the same
         // part names no open parameter.
@@ -5877,10 +6374,11 @@ const WAIT_CALL_ROWS: &[(&str, &[(Code, &str)])] = {
             "print(gb(BX(a: 1, c: 2), mk()))",
             &[(Code::TooManyArguments, "c: 2")],
         ),
-        // A woken call that disagrees with the argument that woke it is blamed.
-        ("print(gn(mkr(), mks()))", &[(Mismatch, "mkr()")]),
-        // The limit: a call under another call does not wait.
-        ("print(g(id(mk2()), mk()))", &[(CannotInfer, "mk2()")]),
+        // A woken call that disagrees with the argument that woke it is a conflict of the join,
+        // and the call reports it.
+        ("print(gn(mkr(), mks()))", &[(Mismatch, "gn(")]),
+        // A call under another call takes the type argument that another member gives too.
+        ("print(g(id(mk2()), mk()))", &[]),
         // A call that is wrong for its parameter reports the mismatch, as it did.
         (
             "print(g(mk(), mk2()))",
@@ -5934,7 +6432,7 @@ fn a_waiting_call_should_wait_for_a_later_argument_that_binds_its_context() {
 ///
 /// The third is one waiting call that waits for all `k` parameters of `Tup<T0, ..., T{k-1}>`,
 /// which its context names in a shuffled order. The call is parked and woken in a linear number of
-/// steps.
+/// steps. `call_work` counts the work of each chain.
 #[test]
 fn waiting_calls_should_be_tested_a_linear_number_of_times() {
     with_prelude();
@@ -5954,11 +6452,9 @@ fn waiting_calls_should_be_tested_a_linear_number_of_times() {
             names.join(", "),
             params.join(", "),
         );
-        generic::WAIT_STEPS.set(0);
-        clean(&src);
-        generic::WAIT_STEPS.get()
+        call_work(&src)
     };
-    assert!(steps(1) > 0, "the counter should count the tests");
+    assert!(steps(1) > 0, "the counters should count the work");
     assert_near_linear(steps(20), steps(40), steps(60));
     let wide = |k: usize| {
         let list = |name: &str| (0..k).map(|i| format!("{name}{i}")).collect::<Vec<_>>();
@@ -5983,10 +6479,7 @@ fn waiting_calls_should_be_tested_a_linear_number_of_times() {
             params.join(", "),
             vec!["mk()"; k].join(", "),
         );
-        generic::WAIT_STEPS.set(0);
-        generic::WALKED.set(0);
-        clean(&src);
-        generic::WAIT_STEPS.get() + generic::WALKED.get()
+        call_work(&src)
     };
     assert_near_linear(wide(100), wide(200), wide(300));
     // `mkw()` waits for all `k` parameters, which its context names in the order `i * 7 mod k`. `k`
@@ -6009,10 +6502,7 @@ fn waiting_calls_should_be_tested_a_linear_number_of_times() {
             order.join(", "),
             list("T").join(", "),
         );
-        generic::WAIT_STEPS.set(0);
-        generic::WALKED.set(0);
-        clean(&src);
-        generic::WAIT_STEPS.get() + generic::WALKED.get()
+        call_work(&src)
     };
     assert_near_linear(shuffled(100), shuffled(200), shuffled(300));
 }
@@ -6053,7 +6543,7 @@ const FAILED_ARGUMENT_ROWS: &[PartialRow<'static>] = {
         (
             DECLS,
             "print(h3(nope, 1, \"s\"))",
-            &[(BindingNotFound, "nope"), (Mismatch, "1,")],
+            &[(Mismatch, "h3("), (BindingNotFound, "nope")],
         ),
         (
             DECLS,
@@ -6130,13 +6620,13 @@ const KNOWN_CONTEXT_ROWS: &[PartialRow<'static>] = {
         class O {\n    fn m<X>(self) -> Box<X, bool> { panic(\"no\") }\n}\n\
         fn mko() -> O? { None }\n";
     &[
-        (DECLS, "print(g(mkp(), mkr()))", &[(Mismatch, "mkp()")]),
+        (DECLS, "print(g(mkp(), mkr()))", &[(Mismatch, "g(")]),
         (DECLS, "let x: i64? = mkp()", &[(Mismatch, "mkp()")]),
         (DECLS, "let x: i64 = mkp()", &[(Mismatch, "mkp()")]),
         (DECLS, "print(fi(mkp()))", &[(Mismatch, "mkp()")]),
-        (DECLS, "print(g2(mkp(), 1))", &[(Mismatch, "mkp()")]),
+        (DECLS, "print(g2(mkp(), 1))", &[(Mismatch, "g2(")]),
         (DECLS, "let x: i64 = mk2()", &[(Mismatch, "mk2()")]),
-        (DECLS, "print(g2(1, mk2()))", &[(Mismatch, "mk2()")]),
+        (DECLS, "print(g2(1, mk2()))", &[(Mismatch, "g2(")]),
         (DECLS, "let x: [i64] = mk2()", &[(Mismatch, "mk2()")]),
         // No context: the call has nothing to meet, and E0050 is the fault.
         (DECLS, "let x = mkp()", &[(CannotInfer, "mkp()")]),
@@ -6207,17 +6697,17 @@ fn rejecting_the_parameters_of_failed_arguments_should_visit_each_type_once() {
             .collect();
         let levels = levels.join("");
         let src = format!(
-            "class Two<A, B> {{\n    a: A\n    b: B\n}}\ntype A0<T> = T\n{levels}\
+            "struct Two<A, B> {{\n    a: A\n    b: B\n}}\ntype A0<T> = T\n{levels}\
              fn h<T>(_a: A{n}<T>, _b: T?) -> i64 {{ 1 }}\nfn none<X>() -> X? {{ None }}\n\
              fn main() {{\n    print(h(nope, none()))\n}}"
         );
-        generic::MARKED.set(0);
+        generic::TYPE_STEPS.set(0);
         let (_, ds) = checked(&src);
         assert_eq!(
             ds.iter().map(Diagnostic::code).collect::<Vec<_>>(),
             [Code::BindingNotFound]
         );
-        generic::MARKED.get()
+        generic::TYPE_STEPS.get()
     };
     // The first line catches a walk of each path before a deep chain can take long: the paths
     // double at each level. The walk keeps answers only after `MEMO_AFTER` visits, so for depths
@@ -6230,11 +6720,13 @@ fn rejecting_the_parameters_of_failed_arguments_should_visit_each_type_once() {
     assert_near_linear(visits(100), visits(150), visits(200));
 }
 
-/// The call is hinted, so each trailing argument reads the origins of its parameter to find out
-/// whether the context bound it. The lead arguments bound them all. Each trailing argument misfits
-/// and names one of n parameters. Reading every origin for each would cost n².
+/// The call is hinted. The lead arguments bind each of its n parameters, and each trailing
+/// argument misfits one of them. Before Task 5e each trailing argument read the origins of its
+/// parameter, and reading every origin for each would cost n². Now each trailing argument is a
+/// member of the call's join (ADR 0052). So the join's walk of value positions (`VALUE_STEPS`)
+/// counts the work, and it grows linearly with n.
 #[test]
-fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
+fn misfitting_arguments_should_be_joined_a_linear_number_of_times() {
     let reads = |n: usize| {
         let params: Vec<_> = (0..n)
             .map(|k| format!("T{k}"))
@@ -6244,10 +6736,10 @@ fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
         let trail: Vec<_> = (0..n).map(|k| format!("_b{k}: T{k}")).collect();
         let args: Vec<_> = (0..n)
             .map(|_| "one()")
-            .chain((0..n).map(|_| "{ mk() }"))
+            .chain((0..n).map(|_| "mk()"))
             .collect();
         // The call returns the type parameter `R`, so it waits for its context, and the other
-        // side of `==` hints it: only a hinted call reads the origins (see `Inference::hinted`).
+        // side of `==` hints it.
         let src = format!(
             "class Two<A, B> {{\n    a: A\n    b: B\n}}\nfn one() -> i64 {{ 1 }}\n\
              fn mk<X>() -> Two<X, bool> {{ panic(\"no\") }}\n\
@@ -6257,20 +6749,51 @@ fn misfitting_arguments_should_read_the_origins_of_their_own_parameters_only() {
             trail.join(", "),
             args.join(", ")
         );
-        generic::ORIGINS.set(0);
+        VALUE_STEPS.set(0);
         let (_, ds) = checked(&src);
         assert_eq!(ds.len(), n, "{ds:?}");
         assert!(ds.iter().all(|d| d.code() == Code::Mismatch), "{ds:?}");
-        generic::ORIGINS.get()
+        VALUE_STEPS.get()
+    };
+    assert_near_linear(reads(20), reads(40), reads(60));
+}
+
+/// GIVEN a call of `n` type parameters that type arguments bind
+/// AND an argument at each parameter, and `n` more arguments at an alias `n` arrays deep
+/// WHEN it is checked, at n = 20, 40 and 60
+/// THEN the reads of the call's origins and the layers peeled for them grow in step with n: each
+///   argument reads the origin of its own parameter only, and a concrete pattern is not peeled
+#[test]
+fn origins_should_be_read_a_linear_number_of_times() {
+    let reads = |n: usize| {
+        let params: Vec<_> = (0..n).map(|k| format!("T{k}")).collect();
+        let typed: Vec<_> = (0..n)
+            .map(|k| format!("_a{k}: T{k}"))
+            .chain((0..n).map(|k| format!("_p{k}: A")))
+            .collect();
+        let args: Vec<_> = (0..n).map(|_| "1").chain((0..n).map(|_| "v")).collect();
+        let src = format!(
+            "type A = {}i64{}\nfn f<{}>({}) {{}}\nfn g(v: A) {{\n    f<{}>({})\n}}\n\
+             fn main() {{}}",
+            "[".repeat(n),
+            "]".repeat(n),
+            params.join(", "),
+            typed.join(", "),
+            vec!["i64"; n].join(", "),
+            args.join(", ")
+        );
+        generic::ORIGIN_READS.set(0);
+        generic::PEELED.set(0);
+        let (_, ds) = checked(&src);
+        assert!(ds.is_empty(), "{ds:?}");
+        generic::ORIGIN_READS.get() + generic::PEELED.get()
     };
     assert_near_linear(reads(20), reads(40), reads(60));
 }
 
 /// A clean call of `n` arguments, whose last argument binds `T`, finds that argument once for
-/// each other argument. A walk of the arguments before it for each would cost n². Two counters
-/// guard this. `PEELED` counts the layers that each search for the argument peels from a pattern.
-/// `ORIGINS` counts each read of the private list of origins, so a search that scans the list
-/// ticks it.
+/// each other argument. A walk of the arguments before it for each would cost n². `call_work`
+/// counts the work of the join of the call, so a search that walks the arguments adds to it.
 #[test]
 fn the_argument_that_bound_a_parameter_should_be_found_without_a_walk() {
     let reads = |n: usize| {
@@ -6281,16 +6804,9 @@ fn the_argument_that_bound_a_parameter_should_be_found_without_a_walk() {
             params.join(", "),
             args.join(", ")
         );
-        generic::PEELED.set(0);
-        generic::ORIGINS.set(0);
-        let (_, ds) = checked(&src);
-        assert!(ds.is_empty(), "{ds:?}");
-        (generic::PEELED.get(), generic::ORIGINS.get())
+        call_work(&src)
     };
-    let ((peeled20, origins20), (peeled40, origins40), (peeled60, origins60)) =
-        (reads(20), reads(40), reads(60));
-    assert_near_linear(peeled20, peeled40, peeled60);
-    assert_near_linear(origins20, origins40, origins60);
+    assert_near_linear(reads(20), reads(40), reads(60));
 }
 
 /// A pattern that names no type parameter gives no origin of one. So the search for the
@@ -6364,6 +6880,11 @@ fn parity_program((decls, body): ParityRow<'_>, concrete: bool) -> String {
 /// The rows of `a_generic_call_that_cannot_meet_its_context_should_report_as_a_concrete_call_does`.
 const PARITY_ROWS: &[ParityRow<'static>] = &[
     // Comparisons.
+    // The operands of an ordering join (Task 5d-2): the conflict is at the operator.
+    ("", "print(mk2() < fi(1))"),
+    ("", "print(mk2() < 'a')"),
+    ("", "print(1 < mk2())"),
+    ("", "print(0 <= mk2() < 3)"),
     ("", "print(1 == mk2())"),
     ("", "print(mk2() != 1)"),
     ("", "print(Some(1) == mk2())"),
@@ -6373,6 +6894,16 @@ const PARITY_ROWS: &[ParityRow<'static>] = &[
     ("", "let x: i64? = None\nprint(x == { mk2() })"),
     ("", "print(1 == if true { mk2() } else { mk2() })"),
     ("", "print(1 == if true { 1 } else { mk2() })"),
+    // A misfit joins by the type that it found, as its twin joins by its own type, in each order.
+    ("", "print(1 == if true { mk2() } else { 1 })"),
+    // The elements of an array are a join (Task 5c): it reports at its head, as its twin does.
+    ("", "print([mk2(), 1])"),
+    // Under a written type, each member that does not convert is reported (Q33).
+    ("", "let y: i64 = if true { mk2() } else { None }\nprint(y)"),
+    (
+        "",
+        "let y: i64 = if true { mk2() } else if false { mk2() } else { 3 }\nprint(y)",
+    ),
     // The `never` branch gives the join no type, so the join acts as the other branch.
     ("", "print(1 == if true { mk2() } else { panic(\"x\") })"),
     ("", "print(1 == match 1 { _ => mk2() })"),
@@ -6410,6 +6941,11 @@ const PARITY_ROWS: &[ParityRow<'static>] = &[
     ("", "print(1 + mk2())"),
     ("", "let a: [i64] = [1, mk2()]\nprint(a)"),
     ("", "let y: i64 = loop {\n    break mk2()\n}\nprint(y)"),
+    // The `break` values join: a misfit joins by the type that it found, as its twin does.
+    (
+        "",
+        "let b = true\nprint(loop { if b { break mk2() }; break 1 })",
+    ),
     (
         "",
         "let c = true\nlet y = loop {\n    if c {\n        break 1\n    }\n    break mk2()\n}\nprint(y)",
@@ -6475,23 +7011,28 @@ fn a_generic_call_that_cannot_meet_its_context_should_report_as_a_concrete_call_
 
 /// An outer generic call binds its parameter to what an argument gives. It does not pass on a
 /// type that the argument found and could not meet its context with. A sibling, such as the other
-/// side of `==`, gives a hint. Under a hint, the misfit keeps one E0050 at the inner call. When
-/// the user wrote the context (a `let` type), the argument gets one E0032 at the inner call.
+/// side of `==`, is a member of the same join: the comparison gives one E0047, as `1 == t` does
+/// for a closed `t` (Task 5d-2). When the user wrote the context (a `let` type), the argument
+/// gets one E0032 at the inner call.
 #[test]
 fn a_misfit_under_an_outer_generic_call_should_give_a_true_diagnostic() {
     with_prelude();
-    // (the statement, the code that the one diagnostic has)
-    let rows: &[(&str, Code)] = &[
-        ("print(1 == id(mk2()))", Code::CannotInfer),
-        ("print(id(mk2()) == 1)", Code::CannotInfer),
-        ("print(1 == id(id(mk2())))", Code::CannotInfer),
-        ("let y: i64? = id(mk2())", Code::Mismatch),
-        ("let y: i64 = id(mk2())", Code::Mismatch),
+    // (the statement, the code that the one diagnostic has, the text at its place)
+    let rows: &[(&str, Code, &str)] = &[
+        ("print(1 == id(mk2()))", Code::CannotCompare, "1 == id("),
+        ("print(id(mk2()) == 1)", Code::CannotCompare, "id(mk2()) =="),
+        (
+            "print(1 == id(id(mk2())))",
+            Code::CannotCompare,
+            "1 == id(id(",
+        ),
+        ("let y: i64? = id(mk2())", Code::Mismatch, "mk2()"),
+        ("let y: i64 = id(mk2())", Code::Mismatch, "mk2()"),
     ];
-    for &(body, want) in rows {
+    for &(body, want, text) in rows {
         let src = parity_program(("", body), false);
         let (failed, generic) = parity_found(&src);
-        let call = src.rfind("mk2()").expect("the row should call `mk2`");
+        let call = src.rfind(text).expect("the row should hold the text");
         let line = src[..call].lines().count();
         let col = call - src[..call].rfind('\n').expect("`main` should come first");
         let places: Vec<_> = generic.iter().map(|(code, at, _)| (*code, *at)).collect();
@@ -6555,8 +7096,21 @@ fn a_clash_with_an_unbound_shape_should_report_the_argument() {
             "let n: i64 = 5\n    h(n, id(true))",
             &[(Code::Mismatch, "true")],
         ),
-        ("U", "[U]", "h(5, id([true]))", &[(Code::Mismatch, "5")]),
-        ("U", "U?", "h(5, id(true))", &[(Code::Mismatch, "5")]),
+        // The literal `5` and `bool` make two groups of one join, and the report of a join has no
+        // direction (ADR 0052): the E0032 is at the call, as for a local `[bool]` in place of
+        // `id([true])`. The interim note named `5`, the label of the `i64` group.
+        (
+            "U",
+            "[U]",
+            "h(5, id([true]))",
+            &[(Code::Mismatch, "h(5, id([true]))")],
+        ),
+        (
+            "U",
+            "U?",
+            "h(5, id(true))",
+            &[(Code::Mismatch, "h(5, id(true))")],
+        ),
         (
             "U",
             "[U]?",
@@ -6589,16 +7143,16 @@ fn a_clash_with_an_unbound_shape_should_report_the_argument() {
     }
 }
 
-/// A misfit that reaches no code that reports it is not lost. The outer generic call drops the
-/// type that its argument found, so the inner call's E0050 is pushed when the body ends. The
-/// context is a hint, as it is not a type that the user wrote.
+/// A misfit in a loop that is the default of `??` is a member of the join of `??`. So is the same
+/// call without the loop. The join reports the two sides, not the inner call's E0050.
 #[test]
-fn a_misfit_that_no_code_reports_should_give_e0050_at_the_call() {
+fn a_misfit_in_a_loop_default_should_be_a_member_of_the_join() {
     with_prelude();
-    let src = parity_program(("", "print(1 == id(mk2()))"), false);
+    let body = "let o: i64? = None\nprint(o ?? loop { break id(mk2()) })";
+    let src = parity_program(("", body), false);
     let (_, found) = parity_found(&src);
     let codes: Vec<_> = found.iter().map(|(code, ..)| *code).collect();
-    assert_eq!(codes, [Code::CannotInfer], "{found:?}");
+    assert_eq!(codes, [Code::Mismatch], "{found:?}");
 }
 
 /// A parameter whose type is an alias that names no type parameter is shown as written, as in
@@ -6702,10 +7256,6 @@ const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
         ("", "print(mk2() < mk2())"),
         &[(Code::CannotInfer, (2, 11))],
     ),
-    // The concrete leader holds the later operand to its own type. The generic call gives no
-    // whole type, so the later operand leads, and the call is held to the leader's type.
-    (("", "print(mk2() < fi(1))"), &[(Code::Mismatch, (2, 11))]),
-    (("", "print(mk2() < 'a')"), &[(Code::Mismatch, (2, 11))]),
     // No context at all: nothing to misfit.
     (
         ("", "print(mk2() == mk2())"),
@@ -6724,35 +7274,24 @@ const KEPT_E0050_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
         ),
         &[(Code::BindingNotFound, (4, 14))],
     ),
-    // A branch that does not fit gives the join no type (the spec row `if`, `match`: a branch),
-    // so the misfit of an earlier branch waits, as the concrete twin's mismatch does.
-    (
-        ("", "let y: i64 = if true { mk2() } else { None }\nprint(y)"),
-        &[(Code::Mismatch, (2, 43))],
-    ),
-    (
-        (
-            "",
-            "let y: i64 = if true { mk2() } else if false { mk2() } else { 3 }\nprint(y)",
-        ),
-        &[(Code::Mismatch, (2, 52))],
-    ),
-    // The side of the type parameter has no `==`, which is the first mistake.
+    // The sides join, and a type parameter beside another type cannot be compared, whatever its
+    // bounds (Task 5d-2): E0047 comes before the `Eq` of the type parameter.
     (
         (
             "fn h<X>(v: X) -> bool {\n    v == mk2()\n}\n",
             "print(h(1))",
         ),
-        &[(Code::ParamLacks, (2, 5)), (Code::CannotInfer, (2, 10))],
+        &[(Code::CannotCompare, (2, 5))],
     ),
-    // The misfit fails its branch, so the join is untyped (the spec row `if`, `match`: a
-    // branch), and `==` waits.
+    // The misfit joins by the type that it found, `Two<_, bool>`, whose unbound `X` has no
+    // `Display`. The branches are members of the join of `==`, which reports at its head (ADR
+    // 0052).
     (
         (
             "",
             "let a: any Display = 1\nprint(1 == if true { a } else { mk2() })",
         ),
-        &[(Code::CannotInfer, (3, 37))],
+        &[(Code::Mismatch, (3, 13))],
     ),
 ];
 
@@ -6779,34 +7318,15 @@ type Placed = (Code, (usize, usize));
 /// concrete twin. Each row pins the code and the place of each diagnostic, by its line in `main`
 /// and its column there. Each text is true, and none of the programs is accepted.
 const DEPARTURE_ROWS: &[(ParityRow<'static>, &[Placed])] = &[
-    // The first element gives no whole type, so the `1` leads and the call is held to `i64`.
-    (("", "print([mk2(), 1])"), &[(Code::Mismatch, (1, 8))]),
     // The misfit gives no whole type, so the rule of E0067 sees no class.
     (
         ("", "let xs: [i64] = [mk2(); 3]\nprint(xs)"),
         &[(Code::Mismatch, (1, 18))],
     ),
-    // The call gives no whole type, so the `1` leads and the call is held to `i64`.
-    (("", "print(1 < mk2())"), &[(Code::Mismatch, (1, 11))]),
-    (("", "print(0 <= mk2() < 3)"), &[(Code::Mismatch, (1, 12))]),
     // No side gives a type, so no class has a missing `!=`, and the call cannot infer `X`.
     (
         ("", "print(mk2() != mk2())"),
         &[(Code::CannotInfer, (1, 7))],
-    ),
-    // The first `break` gives the loop no type, and the later `break 1` does not report the
-    // misfit that came before it.
-    (
-        (
-            "",
-            "let b = true\nprint(loop { if b { break mk2() }; break 1 })",
-        ),
-        &[(Code::CannotInfer, (2, 27))],
-    ),
-    // The first branch gives the join no type, so the `1` leads and the call is held to `i64`.
-    (
-        ("", "print(1 == if true { mk2() } else { 1 })"),
-        &[(Code::Mismatch, (1, 22))],
     ),
 ];
 
@@ -7538,11 +8058,13 @@ fn fill_or_sum_argument_should_take_the_written_context() {
         ("509id", REPRO_509_ID.to_string(), vec![]),
         ("557", REPRO_557.to_string(), vec![]),
         // The fill holds an optional of its own. That is no optional of the call: the context
-        // `[u8?]??` has one `?` more than the call makes.
+        // `[u8?]??` has one `?` more than the call makes. One wrap per conversion point (S25):
+        // the closed result `[_?]` needs two wraps, and so does the fill in the open form, as `1`
+        // in `let s: u8?? = id(1)`. Nothing gives the `None` its type, and the call reports it.
         (
             "fill of None, three layers",
             fill_program("let r: [u8?]?? = id([None; 2])"),
-            vec![],
+            vec![(Code::CannotInfer, (7, 22))],
         ),
         (
             "fill of a nested optional, lifted place",
@@ -7566,10 +8088,12 @@ fn negated_or_later_argument_should_give_the_error_of_its_twin() {
             fill_program("let r: Result<u8, i64> = Ok(-loop { break 2 })"),
             vec![(NegatedU8, (7, 33))],
         ),
+        // The loop takes the type of `k`, and each element is reported, as with an `if` there
+        // (ADR 0052).
         (
             "n557_20",
             fill_program("let r: Result<[u8], i64> = Ok([k, loop { break 2 }])"),
-            vec![(Mismatch, (7, 36))],
+            vec![(Mismatch, (7, 36)), (Mismatch, (7, 39))],
         ),
         (
             "a6",
@@ -7599,7 +8123,7 @@ fn negated_or_later_argument_should_give_the_error_of_its_twin() {
         (
             "a23",
             fill_e_program("let r: Result<u8, i64> = Ok(1 + loop { break k })"),
-            vec![(Mismatch, (8, 50))],
+            vec![(Mismatch, (8, 33))],
         ),
         (
             "d17",
@@ -7613,8 +8137,8 @@ fn negated_or_later_argument_should_give_the_error_of_its_twin() {
 /// GIVEN a sum, a `-` or an array fill of calls that wait for their types
 /// AND the value is an argument of a generic call, or sits in one
 /// WHEN the program is checked
-/// THEN a sum takes its default type, as the same sum outside the call does, so no type is
-///   missing. A `-` or a fill has no default: the call that waits is the one that misses its type.
+/// THEN a sum or a `-` takes its default type, as the same value outside the call does, so no type
+///   is missing. A fill has no default: the call that waits is the one that misses its type.
 #[test]
 fn sum_of_waiting_calls_should_take_its_default_type() {
     use Code::CannotInfer;
@@ -7649,15 +8173,18 @@ fn sum_of_waiting_calls_should_take_its_default_type() {
             fill_mk_program("let r = id(-(mk() + mk()))"),
             vec![],
         ),
+        // The fill is a member of the call's join (Task 5c): nothing gives `T` a type, and the
+        // call reports it, as for `id(if c == 1 { mk() } else { mk() })`.
         (
             "ctl-6",
             fill_mk_program("let r = id([mk(); 2])"),
-            vec![(CannotInfer, (7, 17))],
+            vec![(CannotInfer, (7, 13))],
         ),
         (
             "ctl-7",
             fill_mk_program("let r = id(-mk())"),
-            vec![(CannotInfer, (7, 17))],
+            // A `-` is a member (Task 5d-2): it takes its default type, as a sum does.
+            vec![],
         ),
     ];
     error_rows(&rows);
@@ -7703,49 +8230,53 @@ fn poisoned_join_should_take_the_anchor_type_for_a_sum_or_a_fill() {
 /// GIVEN a join whose context failed, with a fill or a `-` of a waiting call as a later branch
 /// AND a waiting branch of a nested join (`else if`) beside a literal
 /// WHEN the program is checked
-/// THEN the context is the only report. A branch that only waited holds no integer literal. So
-///   it is not a branch of literals, and neither is a join with such a branch: it does not take
-///   the type of the anchor, and no other report follows from that guess.
+/// THEN the join reports what it reports with no context, and nothing more. A `-` is a member
+///   (Task 5d-2): it takes the type that the join gives, so a `-` of `u8` is E0042. A fill of a
+///   waiting call is a member: it is an array, which no other branch is, and the `if` reports
+///   that at its head. So does a `-` beside a `string`.
 #[test]
-fn poisoned_join_should_add_no_report_for_a_waiting_fill_or_negation() {
+fn poisoned_join_should_report_as_the_join_with_no_context() {
     use Code::UnknownType;
     let rows: Vec<ErrorRow<'_>> = vec![
+        // The fill is a member (Task 5c): `[_]` differs from `u8` for each type of its element,
+        // so the `if` reports at its head, as `if c == 1 { v } else { "s" }` does here.
         (
             "p05",
             fill_mk_program("let r: Nope = if c == 1 { v } else { [mk(); 2] }"),
-            vec![(UnknownType, (7, 12))],
+            vec![(UnknownType, (7, 12)), (Code::Mismatch, (7, 19))],
         ),
         (
             "p43",
             fill_mk_program("let r: Nope = if c == 1 { v } else { -mk() }"),
-            vec![(UnknownType, (7, 12))],
+            vec![(UnknownType, (7, 12)), (Code::NegatedU8, (7, 42))],
         ),
         (
             "p66",
             fill_mk_program("let r: Nope = if c == 1 { \"s\" } else { -mk() }"),
-            vec![(UnknownType, (7, 12))],
+            vec![(UnknownType, (7, 12)), (Code::Mismatch, (7, 19))],
         ),
         (
             "nested `-`",
             fill_mk_program("let r: Nope = if c == 1 { v } else { -(-mk()) }"),
-            vec![(UnknownType, (7, 12))],
+            vec![(UnknownType, (7, 12)), (Code::NegatedU8, (7, 43))],
         ),
         (
             "fill of `-`",
             fill_mk_program("let r: Nope = if c == 1 { v } else { [-mk(); 2] }"),
-            vec![(UnknownType, (7, 12))],
+            vec![(UnknownType, (7, 12)), (Code::Mismatch, (7, 19))],
         ),
         (
             "t3",
             fill_mk_program("let r: Nope = if c == 1 { v } else if c == 2 { -mk() } else { 3 }"),
-            vec![(UnknownType, (7, 12))],
+            vec![(UnknownType, (7, 12)), (Code::NegatedU8, (7, 52))],
         ),
         (
             "l6",
             fill_mk_program(
                 "let r: Nope = if c == 1 { v } else if c == 2 { 3 } else { [mk(); 2] }",
             ),
-            vec![(UnknownType, (7, 12))],
+            // As `p05`.
+            vec![(UnknownType, (7, 12)), (Code::Mismatch, (7, 19))],
         ),
     ];
     error_rows(&rows);
@@ -7754,7 +8285,8 @@ fn poisoned_join_should_add_no_report_for_a_waiting_fill_or_negation() {
 /// GIVEN the rows of the two tables above that report the same before and after the fix
 /// AND the rows of values that are `i64` or hold no loop
 /// WHEN the program is checked
-/// THEN the report is the one that the base gave
+/// THEN the report is the one that the base gave. A `-` beside a `u8` is the exception: it is a
+///   member, which takes the `u8` (Task 5d-2)
 #[test]
 #[expect(clippy::too_many_lines, reason = "a table of rows")]
 fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
@@ -7770,22 +8302,23 @@ fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
             fill_program("let r: Result<[u8], bool> = Ok([v; 2])"),
             vec![],
         ),
+        // The fill is checked under its element `u8` (Task 5c): the E0032 is at `k`, as for
+        // `let r: [u8] = [k; 2]`.
         (
             "n509_13",
             fill_program("let r: Result<[u8], bool> = Ok([k; 2])"),
-            vec![(Mismatch, (7, 36))],
+            vec![(Mismatch, (7, 37))],
         ),
         ("n509_16", fill_program("let r = id([5; 2])"), vec![]),
+        // Each fill is a member of the join (Task 5c): the literal `5` takes `u8` from `v`, as in
+        // `if c == 1 { 5 } else { v }` (the unify rule).
         (
             "n509_17",
             fill_program("let r = if c == 1 { [5; 2] } else { [v; 2] }"),
-            vec![(Mismatch, (7, 42))],
+            vec![],
         ),
-        (
-            "n509_22",
-            fill_program("let r = [5; 2] == [v]"),
-            vec![(Mismatch, (7, 24))],
-        ),
+        // The sides of `==` join (Task 5d-2): the literal `5` takes `u8` from `v`, as in n509_17.
+        ("n509_22", fill_program("let r = [5; 2] == [v]"), vec![]),
         (
             "n557_1",
             fill_program("let r: u8 = 1 + loop { break 2 }"),
@@ -7821,10 +8354,12 @@ fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
             fill_program("let r: Result<[u8], i64> = Ok([2, loop { break 2 }])"),
             vec![],
         ),
+        // The loop takes the type `u8` of the element before it, as in
+        // `if c == 1 { v } else { loop { break 2 } }` (Task 5c).
         (
             "n557_21",
             fill_program("let r = [v, loop { break 2 }]"),
-            vec![(Mismatch, (7, 17))],
+            vec![],
         ),
         (
             "n557_26",
@@ -7854,21 +8389,22 @@ fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
             fill_e_program("let r: Result<u8, i64> = Ok(k * loop { break 2 })"),
             vec![(Mismatch, (8, 33))],
         ),
-        // A `-` of a call leads, as the call beside it does not: the `u8` is held to `i64`.
+        // A `-` is a member (Task 5d-2): the negation takes the type `u8` of its sibling, as `-2`
+        // does in `[-2, v]`: E0042 at it. So does an element (Task 5c).
         (
             "`-` of a call leads a sum",
             fill_mk_program("let r = -id(2) + v"),
-            vec![(Mismatch, (7, 22))],
+            vec![(Code::NegatedU8, (7, 13))],
         ),
         (
             "`-` of a call leads a join",
             fill_program("let r = if c == 1 { -id(2) } else { v }"),
-            vec![(Mismatch, (7, 41))],
+            vec![(Code::NegatedU8, (7, 25))],
         ),
         (
             "`-` of a call leads an array",
             fill_program("let r = [-id(2), v]"),
-            vec![(Mismatch, (7, 22))],
+            vec![(Code::NegatedU8, (7, 14))],
         ),
     ];
     error_rows(&rows);
@@ -7876,27 +8412,32 @@ fn fill_or_sum_argument_should_keep_its_report_before_and_after() {
 
 /// GIVEN a generic call whose arguments are an integer and a `==`, a `!=` or a `&&` of literals
 /// WHEN the program is checked
-/// THEN the operator is a `bool` value, as `true` is. It binds the parameter before the integer
-///   does, so the error is at the integer, as it is with `true`. Only an arithmetic operator
-///   takes its type from its operands.
+/// THEN the operator is a `bool` member, as `true` is, so the arguments for the parameter join
+///   at the call, as they do with `true`. Only an arithmetic operator takes its type from its
+///   operands.
 #[test]
-fn comparison_argument_should_bind_the_parameter_before_an_integer() {
+fn comparison_argument_should_join_as_a_bool_does() {
     use Code::Mismatch;
     let rows: Vec<ErrorRow<'_>> = vec![
         (
             "integer, then `==`",
             pick_program("let r = pick(5, 1 == 2)"),
-            vec![(Mismatch, (4, 18))],
+            vec![(Mismatch, (4, 13))],
         ),
         (
             "integer, then `!=`",
             pick_program("let r = pick(5, 1 != 2)"),
-            vec![(Mismatch, (4, 18))],
+            vec![(Mismatch, (4, 13))],
         ),
         (
             "`==`, then a `u8`",
             pick_program("let r = pick(1 == 2, v)"),
-            vec![(Mismatch, (4, 26))],
+            vec![(Mismatch, (4, 13))],
+        ),
+        (
+            "integer, then `true`",
+            pick_program("let r = pick(5, true)"),
+            vec![(Mismatch, (4, 13))],
         ),
     ];
     error_rows(&rows);
@@ -7904,21 +8445,29 @@ fn comparison_argument_should_bind_the_parameter_before_an_integer() {
 
 /// GIVEN a join whose context failed, with a sum of two `-` of waiting calls as a later branch
 /// WHEN the program is checked
-/// THEN the sum is a value of its own, as it is outside the join: its first call cannot infer its
-///   type. The sum does not take the type of the first branch, so no `u8` is negated.
+/// THEN the sum is a member (Task 5d-2), as it is with no context: it takes the type `u8` of the
+///   first branch, so each `-` reports E0042.
 #[test]
-fn poisoned_join_should_report_the_unbound_call_of_a_waiting_sum() {
-    use Code::{CannotInfer, UnknownType};
+fn poisoned_join_should_negate_the_type_of_a_sum_member() {
+    use Code::{NegatedU8, UnknownType};
     let rows: Vec<ErrorRow<'_>> = vec![
         (
             "sum of `-`",
             fill_mk_program("let r: Nope = if c == 1 { v } else { -mk() + -mk() }"),
-            vec![(UnknownType, (7, 12)), (CannotInfer, (7, 43))],
+            vec![
+                (UnknownType, (7, 12)),
+                (NegatedU8, (7, 42)),
+                (NegatedU8, (7, 50)),
+            ],
         ),
         (
             "difference of `-`",
             fill_mk_program("let r: Nope = if c == 1 { v } else { -mk() - -mk() }"),
-            vec![(UnknownType, (7, 12)), (CannotInfer, (7, 43))],
+            vec![
+                (UnknownType, (7, 12)),
+                (NegatedU8, (7, 42)),
+                (NegatedU8, (7, 50)),
+            ],
         ),
     ];
     error_rows(&rows);
@@ -7930,7 +8479,6 @@ fn poisoned_join_should_report_the_unbound_call_of_a_waiting_sum() {
 /// THEN each takes the context. Undo one cause to see its row red.
 #[test]
 fn each_ranking_cause_should_take_the_written_context() {
-    use Code::NegatedU8;
     let rows: Vec<ErrorRow<'_>> = vec![
         (
             "n509_1",
@@ -7945,7 +8493,7 @@ fn each_ranking_cause_should_take_the_written_context() {
         (
             "n557_6",
             fill_program("let r: Result<u8, i64> = Ok(-loop { break 2 })"),
-            vec![(NegatedU8, (7, 33))],
+            vec![(Code::NegatedU8, (7, 33))],
         ),
         (
             "n557_17",
@@ -8155,7 +8703,8 @@ fn receiver_optional_program(stmt: &str) -> String {
 /// (`b: Bx<i64?>` for `Pr<T, X>`, or a bound `M: Mk<i64?>` for `Pr<A, X>`)
 /// WHEN the call has an optional context: a written type or a hint of `??`
 /// THEN the call binds the whole optional, and the program has no error
-/// AND a context of another payload type, or with one optional more, keeps its error
+/// AND a context of another payload type keeps its error
+/// AND a context with one optional more takes the call's value, which converts to it
 /// AND a call whose type does not hold the receiver's optional binds the payload
 #[test]
 fn waiting_method_should_bind_the_whole_optional_when_its_receiver_gives_one() {
@@ -8208,11 +8757,12 @@ fn waiting_method_should_bind_the_whole_optional_when_its_receiver_gives_one() {
             receiver_optional_program("let x: i64? = fst(p.mkb())"),
             vec![],
         ),
-        // One more optional in the context than in the call's type.
+        // One more optional in the context than in the call's type: the call's value `i64?`
+        // converts to `i64??`, as the value of `fst(mkp(b))` does with a function `mkp`.
         (
             "g3",
             receiver_optional_program("let x: i64?? = fst(b.mkp())"),
-            vec![(Code::Mismatch, (RECEIVER_OPTIONAL_LINE, 24))],
+            vec![],
         ),
     ];
     error_rows(&rows);
@@ -8289,23 +8839,29 @@ fn waiting_variant_should_bind_the_whole_optional_when_its_alias_holds_one() {
 
 /// GIVEN a generic call with a variant through an alias that holds an optional
 /// WHEN the optional is not at the place that the call binds, or the alias holds an array of it
-/// THEN the report is the one that `main` gives
+/// THEN the report is the one that the join of the call gives: one wrap at most through the call
+///   (S25), so the literal `5` does not take the two wraps of `i64??`
 #[test]
 fn waiting_variant_should_keep_its_report_when_its_alias_holds_an_unrelated_optional() {
-    let rows: Vec<ErrorRow<'_>> = vec![
-        (
-            "g1",
-            alias_variant_program("let x: i64?? = snd(BP.P(a: None, b: 5))"),
-            vec![],
-        ),
-        // A false E0032, as on `main`: the deferred class of `first(mkll())`.
-        (
-            "g2",
-            alias_variant_program("let x: [i64?]? = unb(BL.B(v: []))"),
-            vec![(Code::Mismatch, (12, 26))],
-        ),
-    ];
+    let rows: Vec<ErrorRow<'_>> = vec![(
+        "g1",
+        alias_variant_program("let x: i64?? = snd(BP.P(a: None, b: 5))"),
+        vec![(Code::Mismatch, (12, 20))],
+    )];
     error_rows(&rows);
+}
+
+/// GIVEN `unb(BL.B(v: []))` under `[i64?]?`, with `type BL<X> = Bx<[X?]>`, which `main` rejects
+///   with a false E0032
+/// WHEN the program is checked
+/// THEN `T` is `[i64?]`, and the closed result takes one wrap at the top (Q24): no error
+#[test]
+fn an_alias_variant_call_under_an_optional_should_wrap_its_closed_result_once() {
+    // `unb` holds no call of itself here: `call_types` reads the first call of `unb`.
+    let src = "enum Bx<T> {\n    B(v: T)\n}\ntype BL<X> = Bx<[X?]>\n\
+               fn unb<T>(b: Bx<T>) -> T { match b { Bx.B(v) => v } }\n\
+               fn main() {\n    let x: [i64?]? = unb(BL.B(v: []))\n    print(x == None)\n}";
+    assert_eq!(call_types(src, "unb"), ["[i64?]", "[i64?]"]);
 }
 
 const LITERAL_HEAD: &str = concat!(
@@ -8332,17 +8888,39 @@ fn literal_program(stmt: &str) -> String {
 #[test]
 fn call_of_literals_should_bind_the_payload_when_its_declared_type_holds_an_unrelated_optional() {
     let rows: Vec<ErrorRow<'_>> = vec![
-        ("u1", literal_program("let x: i64?? = snd(kp(5))"), vec![]),
         (
             "u2",
             literal_program("let p: Pr<i64?, u8>? = first(kl(5))"),
             vec![],
         ),
-        ("u3", literal_program("let x: i64?? = snd(kv(5))"), vec![]),
         (
             "u4",
             literal_program("let x: i64?? = two(snd(kp(5)), None)"),
             vec![],
+        ),
+    ];
+    error_rows(&rows);
+}
+
+/// GIVEN a generic call of literals whose result is `i64`, under `i64??`
+/// WHEN the program is checked
+/// THEN it reports one E0032, as the value needs two wraps
+///
+/// Q24: a closed call's result wraps at most once at its top, and each member of an open call
+/// wraps at most once. The closed form gives `i64`, which needs two wraps; the open form needs two
+/// wraps of `5`. Both rows are valid on `main`, as `let s: u8?? = id(1)` is (S25).
+#[test]
+fn call_of_literals_under_two_more_optionals_should_report_the_second_wrap() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "u1",
+            literal_program("let x: i64?? = snd(kp(5))"),
+            vec![(Code::Mismatch, (9, 20))],
+        ),
+        (
+            "u3",
+            literal_program("let x: i64?? = snd(kv(5))"),
+            vec![(Code::Mismatch, (9, 20))],
         ),
     ];
     error_rows(&rows);
@@ -8365,6 +8943,8 @@ fn waiting_argument_should_keep_its_report_before_and_after() {
             wait_program("let x: G?? = make()"),
             vec![(NotConform, (16, 18))],
         ),
+        // The array is a member of the call's join (Task 5c): the E0154 of `S = G?` is at the
+        // call's head, as for an `if` argument (ADR 0052), and as on main.
         (
             "n428_5",
             wait_program("let x: G? = first([None])"),
@@ -8373,7 +8953,8 @@ fn waiting_argument_should_keep_its_report_before_and_after() {
         (
             "n428_11",
             wait_program("let x: i64?? = k"),
-            vec![(Mismatch, (16, 20)), (Mismatch, (17, 16))],
+            // The sides of `??` are closed, so they join at its head (ADR 0052).
+            vec![(Mismatch, (16, 20)), (Mismatch, (17, 13))],
         ),
         (
             "n428_12",
@@ -8388,12 +8969,14 @@ fn waiting_argument_should_keep_its_report_before_and_after() {
         (
             "c1",
             wait_c_program("let x: G? = first([o])"),
-            vec![(NotConform, (17, 23))],
+            // As `n428_5`.
+            vec![(NotConform, (17, 17))],
         ),
         (
             "c2",
             wait_c_program("let x: G? = first([Some(g)])"),
-            vec![(NotConform, (17, 23))],
+            // As `n428_5`.
+            vec![(NotConform, (17, 17))],
         ),
         (
             "c7",
@@ -8420,27 +9003,31 @@ fn waiting_argument_should_keep_its_report_before_and_after() {
 
 /// GIVEN the hint of `==`, `if` or `??`, or a `mut` argument, that makes a generic call fail
 /// WHEN the program is checked
-/// THEN the code and the position are those of the base, and only the text changes
+/// THEN the code and the position are those of the base, and only the text changes.
+///   An `if` or a `match` whose values do not join reports at its head (ADR 0052). So does an
+///   operator whose operands do not join (Task 5d-2).
 #[test]
 #[expect(clippy::too_many_lines, reason = "a table of rows")]
 fn hint_blame_should_keep_its_code_and_position_before_and_after() {
-    use Code::{CoalesceNotOptional, Mismatch, MutArgumentType};
+    use Code::{CoalesceNotOptional, Mismatch};
     let rows: Vec<ErrorRow<'_>> = vec![
         (
             "n499_1",
             blame_program("let x = v == loop { break 1 }"),
             vec![],
         ),
+        // valid: the spec gives `pick(a, loop { break 1 })` no error (Generic calls in a join)
         (
             "n499_2",
             blame_program("let x = v == id(loop { break 1 })"),
-            vec![(Mismatch, (8, 21))],
+            vec![],
         ),
         ("n499_3", blame_program("let x = v == id(1)"), vec![]),
+        // valid: the spec gives `pick(a, loop { break 1 })` no error (Generic calls in a join)
         (
             "n499_4",
             blame_program("let x: u8? = id(loop { break 1 })"),
-            vec![(Mismatch, (8, 21))],
+            vec![],
         ),
         (
             "n499_5",
@@ -8457,45 +9044,51 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
             blame_program("let x: u8 = first(ys)"),
             vec![(Mismatch, (8, 23))],
         ),
+        // The sides of `==` join, as the branches of n499_10 do: the report is at `==` (ADR 0052).
         (
             "n499_8",
             blame_program("let x = v == first(ys)"),
-            vec![(Mismatch, (8, 24))],
+            vec![(Mismatch, (8, 15))],
         ),
         (
             "n499_9",
             blame_program("let x = first(ys) == v"),
-            vec![(Mismatch, (8, 26))],
+            vec![(Mismatch, (8, 23))],
         ),
         (
             "n499_10",
             blame_program("let x = if c { v } else { first(ys) }"),
-            vec![(Mismatch, (8, 37))],
+            vec![(Mismatch, (8, 13))],
         ),
+        // valid: the spec gives `pick(a, loop { break 1 })` no error (Generic calls in a join)
         (
             "n499_11",
             blame_program("let x = if c { v } else { id(loop { break 1 }) }"),
-            vec![(Mismatch, (8, 34))],
+            vec![],
         ),
+        // The payload and the default join: the report is at `??`, the operator (ADR 0052).
         (
             "n499_12",
             blame_program("let x = o ?? first(ys)"),
-            vec![(Mismatch, (8, 24))],
+            vec![(Mismatch, (8, 15))],
         ),
+        // valid: the spec gives `pick(a, loop { break 1 })` no error (Generic calls in a join)
         (
             "n499_13",
             blame_program("let x = o ?? id(loop { break 1 })"),
-            vec![(Mismatch, (8, 21))],
+            vec![],
         ),
+        // The elements join (Task 5c): `u8` and `i64?` conflict, and the report of a join is at
+        // its head, `[` (ADR 0052).
         (
             "n499_14",
             blame_program("let x = [v, first(ys)]"),
-            vec![(Mismatch, (8, 17))],
+            vec![(Mismatch, (8, 13))],
         ),
         (
             "n499_15",
             blame_program("let x = v + first(ys)"),
-            vec![(Mismatch, (8, 23))],
+            vec![(Mismatch, (8, 15))],
         ),
         (
             "n499_16",
@@ -8505,17 +9098,17 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
         (
             "n499_17",
             blame_program("let x = if c { o } else { first(ys) }"),
-            vec![(Mismatch, (8, 37))],
+            vec![(Mismatch, (8, 13))],
         ),
         (
             "b2",
             blame_b_program("let x = v < first(ys)"),
-            vec![(Mismatch, (10, 23))],
+            vec![(Mismatch, (10, 15))],
         ),
         (
             "b3",
             blame_b_program("let x = v >= first(ys)"),
-            vec![(Mismatch, (10, 24))],
+            vec![(Mismatch, (10, 15))],
         ),
         (
             "b7",
@@ -8530,7 +9123,7 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
         (
             "b18",
             blame_b_program("let x = if c { q } else if c { v } else { q }"),
-            vec![(Mismatch, (10, 36))],
+            vec![(Mismatch, (10, 13))],
         ),
         ("b23", blame_b_program("let x = v == first([1, 2])"), vec![]),
         (
@@ -8538,13 +9131,15 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
             blame_b_program("let x = q == id(v) ?? q"),
             vec![(CoalesceNotOptional, (10, 18))],
         ),
-        ("499", REPRO_499.to_string(), vec![(Mismatch, (7, 22))]),
-        ("499if", REPRO_499_IF.to_string(), vec![(Mismatch, (6, 35))]),
-        ("499q", REPRO_499_Q.to_string(), vec![(Mismatch, (5, 22))]),
+        ("499", REPRO_499.to_string(), vec![(Mismatch, (7, 13))]),
+        ("499if", REPRO_499_IF.to_string(), vec![(Mismatch, (6, 11))]),
+        ("499q", REPRO_499_Q.to_string(), vec![(Mismatch, (5, 13))]),
+        // The sides join before the call binds `T`, so the join reports at `==`. It does not
+        // report the `mut` argument against a `T` that the other side gave.
         (
             "499mut",
             REPRO_499_MUT.to_string(),
-            vec![(MutArgumentType, (5, 26))],
+            vec![(Mismatch, (5, 13))],
         ),
     ];
     error_rows(&rows);
@@ -8552,7 +9147,10 @@ fn hint_blame_should_keep_its_code_and_position_before_and_after() {
 
 /// GIVEN the hint of `==`, `if`, `match` or `??` on a value that does not fit it
 /// WHEN the program is checked
-/// THEN the code and the position are those of the base, and only the text changes
+/// THEN the code and the position are those of the base, and only the text changes.
+///   An `if`, a `match` or a `loop` whose values do not join reports at its head (ADR 0052). A
+///   nested join reports at the head of the outer one. So does an operator whose operands do not
+///   join (Task 5d-2).
 #[test]
 fn hint_report_should_keep_its_code_and_position_before_and_after() {
     use Code::{BlockAsStatement, Mismatch};
@@ -8560,12 +9158,12 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
         (
             "n538_1",
             report_program("let x = if c == 1 { q } else { loop { break v } }"),
-            vec![(Mismatch, (7, 49))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_2",
             report_program("let x = if c == 1 { q } else { v }"),
-            vec![(Mismatch, (7, 36))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_3",
@@ -8575,59 +9173,60 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
         (
             "n538_4",
             report_program("let x = if c == 1 { q } else { if c == 2 { v } else { q } }"),
-            vec![(Mismatch, (7, 48))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_5",
             report_program("let x = match c { 1 => q; _ => loop { break v } }"),
-            vec![(Mismatch, (7, 49))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_6",
             report_program(
                 "let x = if c == 1 { q } else { loop { if c == 2 { break q }; break v } }",
             ),
-            vec![(Mismatch, (7, 72))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_7",
             report_program("let x = q == loop { break v }"),
-            vec![(Mismatch, (7, 31))],
+            vec![(Mismatch, (7, 15))],
         ),
         (
             "n538_8",
             report_program("let x = o ?? loop { break v }"),
-            vec![(Mismatch, (7, 31))],
+            vec![(Mismatch, (7, 15))],
         ),
+        // The `break` value is a member of the array's join: the E0032 is at the array's head.
         (
             "n538_9",
             report_program("let x = [q, loop { break v }]"),
-            vec![(Mismatch, (7, 17))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_10",
             report_program("let x = loop { if c == 1 { break q }; break loop { break v } }"),
-            vec![(Mismatch, (7, 62))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_11",
             report_program("let x = if c == 1 { o } else { loop { break v } }"),
-            vec![(Mismatch, (7, 49))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "n538_12",
             report_program("let x = if c == 1 { q } else { id(v) }"),
-            vec![(Mismatch, (7, 39))],
+            vec![(Mismatch, (7, 13))],
         ),
         (
             "b10",
             blame_b_program("let x = q < loop { break v }"),
-            vec![(Mismatch, (10, 30))],
+            vec![(Mismatch, (10, 15))],
         ),
         (
             "b12",
             blame_b_program("let x = q < id(v)"),
-            vec![(Mismatch, (10, 20))],
+            vec![(Mismatch, (10, 15))],
         ),
         (
             "b13",
@@ -8637,15 +9236,16 @@ fn hint_report_should_keep_its_code_and_position_before_and_after() {
         (
             "b14",
             blame_b_program("let x: i64? = loop { break v }"),
-            vec![(Mismatch, (10, 32))],
+            vec![(Mismatch, (10, 19))],
         ),
         (
             "b16",
             blame_b_program("let x: i64?? = id(v)"),
             vec![(Mismatch, (10, 23))],
         ),
-        ("538a", REPRO_538_A.to_string(), vec![(Mismatch, (4, 21))]),
-        ("538b", REPRO_538_B.to_string(), vec![(Mismatch, (5, 49))]),
+        // valid: the spec gives `pick(a, loop { break 1 })` no error (Generic calls in a join)
+        ("538a", REPRO_538_A.to_string(), vec![]),
+        ("538b", REPRO_538_B.to_string(), vec![(Mismatch, (5, 13))]),
     ];
     error_rows(&rows);
 }
@@ -8799,10 +9399,11 @@ fn an_ordering_with_a_type_parameter_should_report_that_the_operands_cannot_be_c
 /// GIVEN comparisons that the ordering rule for type parameters leaves as they were: an equality
 ///   of a parameter, an ordering with no parameter, and an operand whose type waits
 /// WHEN the program is checked
-/// THEN each report has the code and the place that it had before the rule. This test holds
-///   before and after the fix.
+/// THEN each report has the code that it had before the rule. The operands are members of one
+///   join (Task 5d-2), so a conflict of two types reports at the operator. An array beside a
+///   type parameter is E0047, as `5 < a` is.
 #[test]
-fn comparisons_that_the_ordering_rule_leaves_should_report_the_code_and_place_they_did_before() {
+fn comparisons_that_the_ordering_rule_leaves_should_keep_their_code() {
     use Code::{CannotCompare, Mismatch, NoOperator, ParamLacks};
     let mk = "fn mk<X>() -> [X] { [] }\n";
     let row = |name, program: &str, wanted: Vec<Wanted>| -> ErrorRow<'_> {
@@ -8827,12 +9428,12 @@ fn comparisons_that_the_ordering_rule_leaves_should_report_the_code_and_place_th
         row(
             "n512_1",
             "fn f(s: string) -> bool { 5 < s }",
-            vec![(Mismatch, (1, 27))],
+            vec![(Mismatch, (1, 29))],
         ),
         row(
             "n512_2",
             "fn f(s: string) -> bool { s < 5 }",
-            vec![(Mismatch, (1, 31))],
+            vec![(Mismatch, (1, 29))],
         ),
         row(
             "n512_3",
@@ -8842,7 +9443,7 @@ fn comparisons_that_the_ordering_rule_leaves_should_report_the_code_and_place_th
         row(
             "n512_8",
             "fn f(s: string) -> bool { 'a' < s }",
-            vec![(Mismatch, (1, 33))],
+            vec![(Mismatch, (1, 31))],
         ),
         row(
             "n512_9",
@@ -8852,7 +9453,7 @@ fn comparisons_that_the_ordering_rule_leaves_should_report_the_code_and_place_th
         row(
             "n512_10",
             &format!("{mk}fn f() -> bool {{ 5 < mk() }}"),
-            vec![(Mismatch, (2, 22))],
+            vec![(Mismatch, (2, 20))],
         ),
         row(
             "n512_11",
@@ -8862,8 +9463,886 @@ fn comparisons_that_the_ordering_rule_leaves_should_report_the_code_and_place_th
         row(
             "a waiting generic operand does not lead",
             &format!("{mk}fn f<T: Ord>(a: T) -> bool {{ a < mk() }}"),
-            vec![(Mismatch, (2, 34))],
+            vec![(CannotCompare, (2, 30))],
         ),
     ];
     error_rows(&rows);
+}
+
+/// GIVEN a generic call whose result cannot meet a known type, with no argument to decide `X`
+/// WHEN the call is checked under a written type, as an argument and in a comparison
+/// THEN the code that uses the value reports the mismatch, as for a callee that is not generic,
+/// and the call reports no E0050.
+#[test]
+fn an_open_call_against_a_known_type_should_report_the_mismatch_not_its_parameter() {
+    let src = "struct Box<A, B> {\n    a: A\n    b: B\n}\n\
+               fn mk2<X>() -> Box<X, bool> { panic(\"no\") }\n\
+               fn fi(_x: i64) -> i64 { 0 }\n\
+               fn main() {\n    let x: i64 = mk2()\n    print(fi(mk2()))\n    \
+               print(1 == mk2())\n    print(x)\n}";
+    codes(
+        src,
+        &[
+            (Code::Mismatch, (8, 18)),
+            (Code::Mismatch, (9, 14)),
+            (Code::CannotCompare, (10, 11)),
+        ],
+    );
+}
+
+/// GIVEN a safe call whose optional value meets a context
+/// WHEN the context is optional, its payload gives `E`; when it is not, nothing meets it
+/// THEN the argument that breaks the payload is the mismatch. A context that is not optional is a
+/// mismatch at the call, not an E0050 of the method.
+#[test]
+fn a_safe_call_against_a_known_context_should_report_the_mismatch() {
+    let src = "enum Two<A, B> {\n    P(A, B)\n}\n\
+               struct D {\n    fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") }\n    \
+               fn make<E>(self) -> Two<E, string> { panic(\"e\") }\n}\n\
+               fn h<U, V>(a: U, b: Two<U, V>?) {}\n\
+               fn f<T>(r: Two<T, string>) {}\n\
+               fn main() {\n    let d: D? = D()\n    h(true, d?.m2(\"s\"))\n    f(d?.make())\n}";
+    codes(
+        src,
+        &[(Code::Mismatch, (12, 19)), (Code::Mismatch, (13, 7))],
+    );
+}
+
+/// GIVEN a generic call whose parameter or result type is not found, or whose other type
+/// parameter is a built-in name
+/// WHEN nothing decides a type parameter of the call
+/// THEN the unknown type alone is reported, and the parameter that is not reported is still E0050.
+#[test]
+fn a_true_error_of_a_signature_should_decide_the_cannot_infer_of_a_call() {
+    codes(
+        "fn f<T>(x: Nope<T>) -> T { panic(\"x\") }\nfn main() {\n    let y = f(1)\n}",
+        &[(Code::UnknownType, (1, 12))],
+    );
+    codes(
+        "fn f<i64, T>() -> [T] { [] }\nfn main() {\n    print(f().len())\n}",
+        &[(Code::BuiltInName, (1, 6)), (Code::CannotInfer, (3, 11))],
+    );
+}
+
+/// GIVEN a generic call that returns `unit`
+/// WHEN it is the argument of a generic parameter that is not a bare type parameter
+/// THEN it is no value (E0043), as for a callee that is not generic.
+#[test]
+fn a_unit_argument_of_a_generic_place_should_report_no_value() {
+    with_prelude();
+    let src = "fn mk<E>(x: E?) {}\nfn f<T>(r: [T]) {}\nfn main() {\n    f(mk(Some(1)))\n}";
+    codes(src, &[(Code::NoValue, (4, 7))]);
+}
+
+/// The declarations of the tests below: a safe method call whose `F` only a context decides.
+const WAITING_SAFE_DECLS: &str = "struct Two<A, B> {\n    a: A\n    b: B\n}\n\
+    struct D {\n    n: i64\n}\n\
+    extend D {\n    fn m2<E, F>(self, x: E) -> Two<E, F> { panic(\"e\") }\n}\n\
+    fn id<T>(x: T) -> T { x }\n\
+    fn h<U, V>(_a: U, _b: Two<U, V>?) {}\n\
+    fn ha<U, V>(_a: U, _b: [Two<U, V>?]) {}\n\
+    fn hs<U, V>(_a: U, _b: Two<U, V>??) {}\n";
+
+/// GIVEN a safe generic call inside `id(..)`, an array or `Some(..)`, which is an argument of an
+///   outer call
+/// AND an earlier argument of the outer call that decides the `U` of the context
+/// WHEN the program is checked
+/// THEN the inner call stays open until the context reaches it, and the argument that does not fit
+///   the decided `U` is the mismatch
+#[test]
+fn a_waiting_call_inside_a_member_should_take_the_decided_part_of_the_context() {
+    with_prelude();
+    for (call, at) in [
+        ("h(true, id(d?.m2(\"s\")))", 22),
+        ("ha(true, [d?.m2(\"s\")])", 21),
+        ("hs(true, Some(d?.m2(\"s\")))", 25),
+    ] {
+        let src =
+            format!("{WAITING_SAFE_DECLS}fn main() {{\n    let d: D? = D(n: 1)\n    {call}\n}}");
+        let line = WAITING_SAFE_DECLS.lines().count() + 3;
+        codes_row(call, &src, &[(Code::Mismatch, (line, at))]);
+    }
+}
+
+/// GIVEN `Option.Some(None)` as the argument of a generic call with no context
+/// WHEN the program is checked
+/// THEN it is the same as `Some(None)`: the call cannot infer its parameter
+#[test]
+fn option_some_of_none_should_leave_the_parameter_uninferred_as_some_does() {
+    with_prelude();
+    let src = "fn f<T>(x: T?) -> T { panic(\"e\") }\n\
+               fn main() {\n    let y = f(Option.Some(None))\n    print(y)\n}";
+    codes(src, &[(Code::CannotInfer, (3, 13))]);
+}
+
+/// GIVEN a generic call that returns `unit` and gets `None` for its parameter
+/// WHEN it is the argument of another generic call
+/// THEN its parameter, which no context can reach, cannot be inferred, and the `unit` is no value
+#[test]
+fn a_member_call_whose_result_does_not_name_its_parameter_should_report_cannot_infer() {
+    with_prelude();
+    let src = "fn mk<E>(x: E?) {}\nfn f<T>(r: [T]) {}\nfn main() {\n    f(mk(None))\n}";
+    codes(src, &[(Code::CannotInfer, (4, 7)), (Code::NoValue, (4, 7))]);
+}
+
+/// The control of `a_waiting_call_inside_a_member_should_take_the_decided_part_of_the_context`:
+/// the type of a `let` reached the inner call before that fix too, and the fix keeps it.
+///
+/// GIVEN a generic call inside `id(..)` under a `let` with a written type
+/// WHEN the program is checked
+/// THEN the written type reaches the inner call and no error is reported
+#[test]
+fn a_waiting_call_inside_id_should_still_take_the_type_of_the_let() {
+    with_prelude();
+    let src = "struct Two<A, B> {\n    a: A\n    b: B\n}\n\
+               fn id<T>(x: T) -> T { x }\n\
+               fn k2<X>() -> Two<X, bool> { panic(\"e\") }\n\
+               fn main() {\n    let x: Two<i64, bool> = id(k2())\n    print(x.a)\n}";
+    clean(src);
+}
+
+/// The declarations of the bound tests below: an interface, a struct that conforms to it, a generic
+/// enum and generic calls that wait for their context.
+const BOUND_DECLS: &str = "interface I {\n}\ninterface J {\n}\nstruct W: I {\n}\n\
+                           enum Two<A, B> {\n    P(A, B)\n}\n\
+                           fn none<T>() -> T? { None }\n\
+                           fn arr<X>() -> [X] { panic(\"e\") }\n";
+
+/// GIVEN a generic call whose bound `I` holds for no number type
+/// WHEN an integer literal and a call that waits for its context are the arguments for `T`
+/// THEN the bound reports at the literal, as `main` does, and no join conflict comes in its place
+#[test]
+fn a_literal_beside_a_waiting_member_should_break_the_bound() {
+    with_prelude();
+    let src =
+        format!("{BOUND_DECLS}fn h<T: I>(_p: T, _a: T) {{}}\nfn main() {{\n    h(5, arr())\n}}");
+    codes(&src, &[(Code::NotConform, (14, 7))]);
+}
+
+/// GIVEN a generic call whose parameter `T` has the bounds `I` and `J`
+/// WHEN the part of an argument at `T` is `i64`
+/// THEN each bound that `i64` breaks reports at that argument, as `main` does
+#[test]
+fn a_member_that_breaks_two_bounds_should_report_each_bound() {
+    with_prelude();
+    let src = format!(
+        "{BOUND_DECLS}fn h<T: I & J>(_p: Two<T, i64>, _a: T) {{}}\n\
+         fn main() {{\n    let n: i64 = 5\n    h(Two.P(n, 7), W())\n}}"
+    );
+    codes(
+        &src,
+        &[(Code::NotConform, (15, 7)), (Code::NotConform, (15, 7))],
+    );
+}
+
+/// GIVEN a generic call whose member breaks the bound of `T`
+/// WHEN a call that waits for its context gives the other parameter `U`
+/// THEN the bound reports, and `U`, which nothing gives a type, is E0050, as on `main`
+#[test]
+fn a_waiting_call_after_a_broken_bound_should_report_cannot_infer() {
+    with_prelude();
+    let src = format!(
+        "{BOUND_DECLS}fn h<T: I, U>(_p: Two<T, i64>, _a: U?) {{}}\n\
+         fn main() {{\n    let n: i64 = 5\n    h(Two.P(n, 7), none())\n}}"
+    );
+    codes(
+        &src,
+        &[(Code::CannotInfer, (15, 5)), (Code::NotConform, (15, 7))],
+    );
+}
+
+/// GIVEN a generic call whose member breaks the bound of `T`
+/// WHEN a plain `None` gives the other parameter `U`
+/// THEN only the bound reports: a `None` waits for no context, as on `main`
+#[test]
+fn a_plain_none_after_a_broken_bound_should_add_no_report() {
+    with_prelude();
+    let src = format!(
+        "{BOUND_DECLS}fn h<T: I, U>(_p: Two<T, i64>, _a: U?) {{}}\n\
+         fn main() {{\n    let n: i64 = 5\n    h(Two.P(n, 7), None)\n}}"
+    );
+    codes(&src, &[(Code::NotConform, (15, 7))]);
+}
+
+/// GIVEN a parameter that is an array of an optional of `T`, or an array of arrays of it
+/// WHEN an array literal of plain values, or of arrays of `None` and values, is the argument
+/// THEN each element wraps into its part and the program checks, as on `main`
+/// AND a `[]` beside a `None` still leaves `T` with no type
+#[test]
+fn an_array_argument_should_wrap_each_element_into_its_optional_part() {
+    use Code::CannotInfer;
+    check_partial_rows(&[
+        ("fn g1<T>(xs: [T?]) {}\n", "g1([1, 2])", &[]),
+        ("fn g4<T>(xs: [[T?]]) {}\n", "g4([[None], [1]])", &[]),
+        (
+            "fn g1<T>(xs: [T?]) {}\n",
+            "g1([None, []])",
+            &[(CannotInfer, "g1(")],
+        ),
+    ]);
+}
+
+/// Two conformances of `S` that each give a method `name`.
+const TWO_NAMES: &str = "interface Label {\n    fn name(self) -> string\n}\n\
+                         interface Code {\n    fn name(self) -> i64\n}\n\
+                         struct S {\n}\n\
+                         extend S: Label {\n    fn name(self) -> string { \"a\" }\n}\n\
+                         extend S: Code {\n    fn name(self) -> i64 { 7 }\n}\n";
+
+/// GIVEN a method call that only its context can pick, from two conformances
+/// WHEN it is the argument of a bare type parameter that nothing else gives a type
+/// THEN the call reports E0050 for that parameter, as on `main`, and not the ambiguous method
+/// AND a written type on the `let` picks the method, and the program checks
+#[test]
+fn a_method_that_waits_at_a_bare_parameter_should_report_cannot_infer() {
+    use Code::CannotInfer;
+    check_rows_after(
+        TWO_NAMES,
+        &[
+            (
+                "",
+                "let s = S()\nlet x = id(s.name())",
+                &[(CannotInfer, "id(")],
+            ),
+            ("", "let s = S()\nlet x: string = id(s.name())", &[]),
+        ],
+    );
+}
+
+/// Declarations of the bounds that name another type parameter.
+const NAMED_BOUND_DECLS: &str = "interface K<X> {\n}\n\
+                                 struct V: K<i64> {\n}\n\
+                                 struct Plain {\n}\n";
+
+/// GIVEN `fn h<T: K<U>, U>`, whose bound on `T` names `U`
+/// WHEN the arguments give `U` the type `string` and `T` the type `V`, which conforms to `K<i64>`
+/// THEN the bound reports E0154 at the argument that holds the member of `T`, as on `main`,
+/// and no join conflict
+#[test]
+fn a_bound_that_names_a_later_parameter_should_be_checked_with_its_type() {
+    check_rows_after(
+        NAMED_BOUND_DECLS,
+        &[(
+            "fn h<T: K<U>, U>(_a: T, _b: U, _c: Two<T, U>) {}\n",
+            "h(5, \"s\", Two.P(V(), \"t\"))",
+            &[(Code::NotConform, "Two.P(")],
+        )],
+    );
+}
+
+/// GIVEN a bound that names a type parameter whose own bound breaks, or a second bound beside it
+/// WHEN the member of that parameter breaks its own bound
+/// THEN only that bound reports, as on `main`
+#[test]
+fn a_broken_bound_should_hide_the_bounds_that_name_its_parameter() {
+    use Code::NotConform;
+    check_rows_after(
+        NAMED_BOUND_DECLS,
+        &[
+            (
+                "fn hi<T: I, U: K<T.Item>>(_p: Two<T, U>) {}\n",
+                "hi(Two.P(Plain(), V()))",
+                &[(NotConform, "Two.P(")],
+            ),
+            (
+                "fn h2<T: I & K<U>, U>(_a: T, _b: U) {}\n",
+                "let a = 5\nlet b = \"s\"\nh2(a, b)",
+                &[(NotConform, "a, b")],
+            ),
+        ],
+    );
+}
+
+/// The declarations of `each_waiting_call_of_a_generic_call_should_report_its_own_mistake`: `g`
+/// names `T` in a struct and in a `Result`, and `mk` and `mk2` leave their own parameters to their
+/// context. The call is on line 9.
+const WAITING_DECLS: &str = "struct Two<A, B> {\n    a: A\n    b: B\n}\n\
+    fn mk<E>() -> Result<i64, E> { Ok(1) }\n\
+    fn mk2<X>() -> Two<X, bool> { panic(\"e\") }\n\
+    fn g<T>(_c: Two<T, bool>, _d: Result<T, string>) -> i64 { 0 }\n\
+    fn main() {\n    ";
+
+/// GIVEN a generic call whose arguments are generic calls at parameters that are not a bare `T`
+/// WHEN an argument does not fit its parameter, or a waiting call keeps its own parameter open
+/// THEN each misfit is E0032, and each waiting call reports its own open parameter (E0050), as
+///     on `main`
+#[test]
+fn each_waiting_call_of_a_generic_call_should_report_its_own_mistake() {
+    use Code::{CannotInfer, Mismatch};
+    with_prelude();
+    let rows: [(&str, &[Wanted]); 3] = [
+        (
+            "print(g(mk2(), mk2()))",
+            &[(CannotInfer, (9, 13)), (Mismatch, (9, 20))],
+        ),
+        (
+            "print(g(mk2(), Err(\"e\")))",
+            &[(CannotInfer, (9, 13)), (CannotInfer, (9, 20))],
+        ),
+        (
+            "print(g(mk(), mk2()))",
+            &[(Mismatch, (9, 13)), (Mismatch, (9, 19))],
+        ),
+    ];
+    for (call, expected) in rows {
+        codes_row(call, &format!("{WAITING_DECLS}{call}\n}}"), expected);
+    }
+}
+
+/// The declarations of `a_bound_with_an_open_number_should_check_the_associated_type_part`: the
+/// bound of `S` names `U`, and `P` conforms to `Holds<i64>` with `Item = string`. The call is on
+/// line 13.
+const OPEN_NUMBER_BOUND_DECLS: &str = "interface Holds<Y> {\n    type Item\n}\n\
+    enum Two<A, B> {\n    P(A, B)\n}\n\
+    struct P: Holds<i64> {\n    type Item = string\n}\n\
+    fn h<S: Holds<U>, U>(_s: S, _p: Two<S.Item, U>) {}\n\
+    fn k<S: Holds<U>, U>(_p: Two<S.Item, U>, _s: S) {}\n\
+    fn main() {\n    ";
+
+/// GIVEN `fn h<S: Holds<U>, U>(_s: S, _p: Two<S.Item, U>)`, with `U` from an integer literal
+/// WHEN the part of the argument at `S.Item` is not the `Item` of `S`
+/// THEN the argument is E0032, in either order of the parameters, as on `main`
+#[test]
+fn a_bound_with_an_open_number_should_check_the_associated_type_part() {
+    let rows: [(&str, &[Wanted]); 4] = [
+        ("h(P(), Two.P(5, 4))", &[(Code::Mismatch, (13, 12))]),
+        ("h(P(), Two.P(true, 4))", &[(Code::Mismatch, (13, 12))]),
+        ("k(Two.P(5, 4), P())", &[(Code::Mismatch, (13, 7))]),
+        ("h(P(), Two.P(\"s\", 4))", &[]),
+    ];
+    for (call, expected) in rows {
+        codes_row(
+            call,
+            &format!("{OPEN_NUMBER_BOUND_DECLS}{call}\n}}"),
+            expected,
+        );
+    }
+}
+
+/// The declarations of the tests of a bound of an open call. `part` and `whole` are bounded calls,
+/// at a part and at the whole place. `eo()` gives an open variable. The bound of the closed `T` of
+/// `f` and `g` names an open parameter.
+const OPEN_BOUND_DECLS: &str = "interface Seen {\n    fn seen(self) -> i64\n}\n\
+    struct Eye: Seen {\n    v: i64\n    fn seen(self) -> i64 { self.v }\n}\n\
+    interface K<U> {\n    fn k(self, u: U) -> i64\n}\n\
+    struct X: K<i64> {\n    fn k(self, u: i64) -> i64 { u }\n}\n\
+    struct Box<U> {\n    v: U\n}\n\
+    struct P2<A, B> {\n    a: A\n    b: B\n}\n\
+    fn pick<T>(_a: T, b: T) -> T { b }\n\
+    fn eo<T>() -> [T?] { [] }\n\
+    fn eb<U>() -> Box<U?> { Box(v: None) }\n\
+    fn ep<A, B>() -> P2<[A?], [B?]> { P2(a: [], b: []) }\n\
+    fn part<T: Seen>(x: T) -> [T] { print(x.seen()); [x] }\n\
+    fn whole<T: Seen>(x: T) -> T { print(x.seen()); x }\n\
+    fn f<T: K<U>, U>(x: T, u: U) -> Box<U> { print(x.k(u)); Box(v: u) }\n\
+    fn g<U, T: K<U>>(u: U, x: T) -> Box<U> { print(x.k(u)); Box(v: u) }\n\
+    fn f3<T: K<U>, U>(x: T, u: U) -> P2<[T], [U]> { print(x.k(u)); P2(a: [x], b: [u]) }\n\
+    fn main() {\n    ";
+
+/// GIVEN a generic call whose open form can give a bounded parameter a type that breaks its bound
+/// WHEN the join around the call gives that type through an open variable
+/// AND the variable is from `eo()` or a literal, in each order, or under a required type
+/// THEN the broken bound fails the candidate: the join reports (E0032) in each order, and under
+/// a required type the member that does not convert reports, as on `main`
+/// AND a bound that no member closes reports at its call (E0154)
+/// AND the open form does not settle the call with the broken bound
+#[test]
+fn an_open_call_should_check_each_bound_that_its_open_form_changes() {
+    with_prelude();
+    let bound = |needle: &'static str| Some((Code::NotConform, needle));
+    let join = Some((Code::Mismatch, "pick"));
+    let rows: [(&str, Option<(Code, &str)>); 14] = [
+        // The bound of an open parameter at a part, with the open variable of `eo()`: the
+        // candidate `[Eye?]` breaks `T: Seen`, so it fails, in each order.
+        ("print(pick(eo(), part(Eye(v: 1))).len())", join),
+        ("print(pick(part(Eye(v: 1)), eo()).len())", join),
+        (
+            "let x: [Eye?] = pick(eo(), part(Eye(v: 1)))\n    print(x.len())",
+            Some((Code::Mismatch, "part(")),
+        ),
+        // A bound whose subject and interface argument both reopen, and that no member closes.
+        ("print(pick(ep(), f3(X(), 3)).a.len())", bound("X()")),
+        ("print(pick(f3(X(), 3), ep()).a.len())", bound("X()")),
+        // The bound of a closed parameter that names an open one: the open form breaks it, and
+        // the closed form reports the join.
+        ("print(pick(f(X(), 3), Box<i64?>(v: None)).v ?? 0)", join),
+        ("print(pick(Box<i64?>(v: None), f(X(), 3)).v ?? 0)", join),
+        ("print(pick(g(3, X()), Box<i64?>(v: None)).v ?? 0)", join),
+        ("print(pick(f(X(), 3), Box(v: None)).v ?? 0)", join),
+        ("print(pick(f(X(), 3), eb()).v ?? 0)", join),
+        ("print(pick(eb(), f(X(), 3)).v ?? 0)", join),
+        // The controls: a closed `[Eye?]` and a `Box<i64>`, which the closed form takes.
+        (
+            "let ys: [Eye?] = []\n    print(pick(ys, part(Eye(v: 1))).len())",
+            join,
+        ),
+        ("print(pick(f(X(), 3), Box<i64>(v: 4)).v)", None),
+        ("print(pick(whole(Eye(v: 1)), Eye(v: 2)).v)", None),
+    ];
+    for (row, expected) in rows {
+        let src = format!("{OPEN_BOUND_DECLS}{row}\n}}");
+        let found = expected.map(|(code, needle)| (code, in_row(&src, row, needle)));
+        codes_row(row, &src, found.as_slice());
+    }
+}
+
+/// GIVEN a generic call whose bound `T: K<U>` has a closed subject `T`
+/// AND an argument of `U` that is still open: an integer literal, a `None` or an empty array
+/// WHEN a join around the call gives `U` its type after the call
+/// THEN the bound is checked with that type: E0154 when it breaks, as on `main`
+/// AND no error when it holds, also when `U` is not `i64`
+/// AND when the open form of the call settles, only the open form's types are checked: a broken
+/// bound of the open form fails the candidate (E0032 at the join)
+#[test]
+fn a_bound_should_wait_for_an_interface_argument_that_closes_after_its_subject() {
+    with_prelude();
+    let bound = Some((Code::NotConform, "X()"));
+    let rows: [(&str, Option<(Code, &str)>); 11] = [
+        // The literal `3` is `u8` only after the join: `X` is no `K<u8>`.
+        ("print(pick(f(X(), 3), Box<u8>(v: 1)).v)", bound),
+        ("print(pick(Box<u8>(v: 1), f(X(), 3)).v)", bound),
+        ("print(pick(g(3, X()), Box<u8>(v: 1)).v)", bound),
+        // A `None` and an empty array get their type from the join too.
+        (
+            "print(pick(f(X(), None), Box<string?>(v: None)).v ?? \"\")",
+            bound,
+        ),
+        (
+            "print(pick(Box<string?>(v: None), f(X(), None)).v ?? \"\")",
+            bound,
+        ),
+        (
+            "print(pick(f(X(), []), Box<[string]>(v: [])).v.len())",
+            bound,
+        ),
+        // The controls: the bound holds with the type that the join gives.
+        ("print(pick(f(Y(), 3), Box<u8>(v: 1)).v)", None),
+        ("print(pick(f(X(), 3), Box<i64>(v: 1)).v)", None),
+        // The open form `f<Z, u8?>` settles: the closed form's `Z: K<u8>` is not checked.
+        ("print(pick(f(Z(), 3), Box<u8?>(v: None)).v ?? 0)", None),
+        ("print(pick(Box<u8?>(v: None), f(Z(), 3)).v ?? 0)", None),
+        // The open form `f3<X?, u8?>` breaks its bound: the candidate fails, and the join
+        // reports once.
+        (
+            "print(pick3(ep(), f3(X(), 3), P2<[X?], [u8?]>(a: [], b: [])).a.len())",
+            Some((Code::Mismatch, "pick3")),
+        ),
+    ];
+    let more = "struct Y: K<u8> {\n    fn k(self, u: u8) -> i64 { 7 }\n}\n\
+        struct Z: K<u8?> {\n    fn k(self, u: u8?) -> i64 { 5 }\n}\n\
+        fn pick3<T>(_a: T, _b: T, c: T) -> T { c }\n";
+    for (row, expected) in rows {
+        let src = format!("{more}{OPEN_BOUND_DECLS}{row}\n}}");
+        let found = expected.map(|(code, needle)| (code, in_row(&src, row, needle)));
+        codes_row(row, &src, found.as_slice());
+    }
+}
+
+/// GIVEN a generic call at a bare `T` whose argument is checked late
+/// AND the call is a branch beside a sibling, or the right side of a `??`
+/// WHEN the call meets the hint of its siblings
+/// THEN `T` takes the siblings' type, not that type with the `?` that the hint adds
+/// AND the value is not optional, as on `main`
+#[test]
+fn a_late_argument_under_a_hint_should_meet_the_siblings_without_the_added_optional() {
+    let decls = "fn id<T>(x: T) -> T { x }\nfn last<T>(xs: [T]) -> T { xs[0] }\nfn main() {\n    \
+        let c = [1].len() == 2\n    let k = [1].len()\n    let s = \"b\"\n    \
+        let mi: i64? = Some(3)\n    let o: [i64?]? = None\n    let oi: i64? = None\n    ";
+    let never = |line| vec![(Code::NeverNone, (line, 11))];
+    let rows: [(&str, &str, Vec<Wanted>); 9] = [
+        // A late argument of a type of its own that can be optional takes the hint's `?`.
+        (
+            "coalesce-if-none",
+            "let x = oi ?? id(if c { k } else { None })\n    print(x ?? 0)",
+            vec![],
+        ),
+        (
+            "if-int",
+            "let x = if c { 1 } else { id(2 * 3) }\n    print(x + 1)",
+            vec![],
+        ),
+        (
+            "if-str",
+            "let x = if c { s } else { id(\"a\" + s) }\n    print(x.len())",
+            vec![],
+        ),
+        (
+            "if-arr",
+            "let x = if c { [mi] } else { id([1]) }\n    print(x == None)",
+            never(11),
+        ),
+        (
+            "match-int",
+            "let x = match k { 1 => 1; _ => id(2 * 3) }\n    print(x + 1)",
+            vec![],
+        ),
+        (
+            "match-arr",
+            "let x = match k { 1 => [mi]; _ => id([1]) }\n    print(x == None)",
+            never(11),
+        ),
+        (
+            "coalesce",
+            "let x = o ?? id([1])\n    print(x.len())",
+            vec![],
+        ),
+        (
+            "coalesce-last",
+            "let x = oi ?? last([1, 2])\n    print(x + 1)",
+            vec![],
+        ),
+        (
+            "if-last",
+            "let x = if c { [mi] } else { last([[1], [2]]) }\n    print(x == None)",
+            never(11),
+        ),
+    ];
+    let rows: Vec<ErrorRow<'_>> = (rows.into_iter())
+        .map(|(name, row, wanted)| (name, format!("{decls}{row}\n}}"), wanted))
+        .collect();
+    error_rows(&rows);
+}
+
+/// GIVEN a generic call with a method call or a block at a place of `T`
+/// WHEN the call joins its arguments
+/// THEN the method call and the block's value are members of the join, as a local is
+/// AND a mismatch names the argument that gives `T` its type, with the conversion fix
+#[test]
+fn a_method_call_and_a_block_should_be_members_of_the_join_of_a_call() {
+    let decls = "struct B {\n    k: i64\n    fn get<T>(self, x: T) -> T { x }\n    \
+        fn some<T>(self, x: T) -> T? { print(self.k); Some(x) }\n}\n\
+        fn pick<T>(a: T, _b: T) -> T { a }\nfn max<T>(a: T, _b: T) -> T { a }\nfn main() {\n    \
+        let b: B? = Some(B(k: 1))\n    let p = B(k: 2)\n    let xs: [u8] = [1]\n    \
+        let n: u8 = 3\n    let s = \"abc\"\n    ";
+    let clean_rows = ["let x: i64? = pick(1, { Some(2) })\n    print(x ?? 0)"];
+    let rows: Vec<ErrorRow<'_>> = (clean_rows.iter())
+        .map(|&row| (row, format!("{decls}{row}\n}}"), vec![]))
+        .collect();
+    error_rows(&rows);
+    // The join report of two members, as for `max(k, n)` with two locals: the label names the
+    // argument that gives `T` its type, and the fix converts the other one.
+    let src = format!("{decls}print(max(xs.len(), n))\n}}");
+    let ds = found(&src);
+    assert_eq!(
+        ds,
+        [(Code::Mismatch, (14, 11), vec![(14, 15), (14, 25)])],
+        "{ds:?}"
+    );
+    let (_, diagnostics) = checked(&src);
+    assert!(
+        !diagnostics[0].fixes().is_empty(),
+        "the report should give the conversion `i64(...)`"
+    );
+    let src = format!("{decls}print(max(n, s.len()))\n}}");
+    let ds = found(&src);
+    assert_eq!(
+        ds,
+        [(Code::Mismatch, (14, 11), vec![(14, 15), (14, 18)])],
+        "{ds:?}"
+    );
+}
+
+/// GIVEN an inner call at a place of an outer call that names two of its type parameters
+/// WHEN the inner call is the argument itself, or the operand of one or two `dbg` calls
+/// THEN the inner call stays closed in each form (Q28), and each form gives the same reports
+#[test]
+fn an_inner_call_through_dbg_should_stay_closed_at_a_place_of_two_parameters() {
+    let decls = "struct Two<A, B> {\n    a: A\n    b: B\n}\n\
+        fn pair<A, B>(a: A, b: B) -> Two<A, B> { Two(a: a, b: b) }\n\
+        fn outer<T, U>(p: Two<T, U>, _a: T, _b: U) -> Two<T, U> { p }\n\
+        fn main() {\n    let a: i64? = None\n    let b: bool? = None\n    ";
+    let join = vec![(Code::Mismatch, (10, 13)), (Code::Mismatch, (10, 13))];
+    let rows: Vec<ErrorRow<'_>> = [
+        "let t = outer(pair(1, true), a, b)",
+        "let t = outer(dbg(pair(1, true)), a, b)",
+        "let t = outer(dbg(dbg(pair(1, true))), a, b)",
+    ]
+    .into_iter()
+    .map(|row| {
+        (
+            row,
+            format!("{decls}{row}\n    print(t.a ?? 0)\n}}"),
+            join.clone(),
+        )
+    })
+    .collect();
+    error_rows(&rows);
+}
+
+/// `g(mut b?.cells)`, where nothing but the place binds the `T` of `g`.
+const CHAIN_UNBOUND: &str = "struct Board {\n    cells: [i64]\n}\nfn g<T>(mut x: T) {\n    \
+    let y = x\n    x = y\n}\nfn main() {\n    let mut b: Board? = Board(cells: [1])\n    \
+    g(mut b?.cells)\n    print(b == None)\n}";
+
+/// GIVEN a generic call with a `mut` argument whose type cannot be the parameter's type
+/// WHEN the call is under a typed `let`, or nothing else binds the parameter
+/// THEN the `mut` check reports first (E0170), at the argument, as on `main`
+/// AND no report of the result or of an unbound parameter follows
+#[test]
+fn a_mut_argument_should_be_checked_before_the_result_of_its_call() {
+    let rows: Vec<ErrorRow<'_>> = vec![
+        (
+            "typed let",
+            "fn first<T>(mut xs: [T]) -> T { xs = xs; xs[0] }\nfn main() {\n    \
+                let mut names = [\"a\"]\n    let x: i64 = first(mut names)\n    print(x)\n}"
+                .to_owned(),
+            vec![(Code::MutArgumentType, (4, 28))],
+        ),
+        (
+            "unbound chain",
+            CHAIN_UNBOUND.to_owned(),
+            vec![(Code::MutArgumentType, (10, 11))],
+        ),
+    ];
+    // `tests/diagnostics/E0170-chain-unbound.err` pins the text: `g` writes back `[i64]`.
+    error_rows(&rows);
+}
+
+/// GIVEN a generic call under a required type, with one argument that the type does not take
+/// and one open argument (`None`) that it takes
+/// WHEN the call checks its members against the required type
+/// THEN the report names the argument that fails, as on `main`, not the whole call
+#[test]
+fn a_required_type_should_name_the_argument_that_fails_beside_an_open_one() {
+    let decls = "fn pair<T>(a: T, b: T) -> [T] { [a, b] }\nfn main() {\n    let s = \"x\"\n    ";
+    let rows: Vec<ErrorRow<'_>> = [
+        ("let a: [i64?] = pair(s, None)", (4, 26)),
+        ("let a: [i64?] = pair(None, s)", (4, 32)),
+    ]
+    .into_iter()
+    .map(|(row, at)| {
+        let src = format!("{decls}{row}\n    print(a.len())\n}}");
+        (row, src, vec![(Code::Mismatch, at)])
+    })
+    .collect();
+    error_rows(&rows);
+}
+
+/// The rows of a join test: each statement goes into `main` after `decls`, with the errors
+/// that it gives as `(code, needle)`, each found in the statement.
+fn join_rows(decls: &str, rows: &[(&str, &[(Code, &str)])]) {
+    let rows: Vec<ErrorRow<'_>> = (rows.iter())
+        .map(|&(row, wanted)| {
+            let src = format!("{decls}{row}\n}}");
+            let wanted = (wanted.iter())
+                .map(|&(code, needle)| (code, in_row(&src, row, needle)))
+                .collect();
+            (row, src, wanted)
+        })
+        .collect();
+    error_rows(&rows);
+}
+
+/// GIVEN a generic call with a `mut` argument at a place of `T`, under a required type
+/// WHEN the `mut` argument does not have the type that the required type gives `T`
+/// THEN the `mut` argument is no member of the join: `T` takes the required type, and the
+///   `mut` argument is E0170 only, as on `main`
+/// AND another argument that does not fit `T` keeps its own E0032, as on `main`
+#[test]
+fn a_mut_argument_should_not_decide_its_parameter_under_a_required_type() {
+    let decls = "fn put<T>(mut xs: [T], x: T) -> T {\n    xs = [x]\n    xs[0]\n}\n\
+        fn pick<T>(a: T, _b: T) -> T { a }\n\
+        fn main() {\n    let mut names = [\"a\"]\n    ";
+    let e170 = Code::MutArgumentType;
+    join_rows(
+        decls,
+        &[
+            (
+                "let x: i64 = put(mut names, 1)\n    print(x)",
+                &[(e170, "names")],
+            ),
+            (
+                "let x: i64 = put(mut names, \"s\")\n    print(x)",
+                &[(e170, "names"), (Code::Mismatch, "\"s\"")],
+            ),
+            (
+                "let x: i64? = put(mut names, 1)\n    print(x ?? 0)",
+                &[(e170, "names")],
+            ),
+            // The controls: the `mut` argument fits, and a call with no required type.
+            ("let x: string = put(mut names, \"s\")\n    print(x)", &[]),
+            (
+                "let x = pick(1, put(mut names, 2))\n    print(x)",
+                &[(Code::Mismatch, "2")],
+            ),
+        ],
+    );
+}
+
+/// GIVEN a generic method call with arguments, plain or after `?.`, as a member of the join of
+/// a generic call
+/// WHEN the join takes a candidate
+/// THEN the method's type parameter takes its part of the candidate, as a plain generic call
+///   does: the programs that `main` accepts are valid
+/// AND a member that does not fit keeps its E0032
+/// AND with a second method of the same name that takes `mut self`, the literal keeps its
+///   default type, as on `main`
+#[test]
+fn a_generic_method_call_with_arguments_should_take_part_in_the_join() {
+    let decls = "struct B {\n    k: i64\n    fn get<T>(self, x: T) -> T { x }\n}\n\
+        fn pick<T>(a: T, _b: T) -> T { a }\n\
+        fn main() {\n    let b: B? = Some(B(k: 1))\n    let bx = B(k: 2)\n    ";
+    join_rows(
+        decls,
+        &[
+            ("let x: i64? = pick(1, b?.get(1))\n    print(x ?? 0)", &[]),
+            ("let x: i64? = pick(b?.get(1), 1)\n    print(x ?? 0)", &[]),
+            ("let x = pick(1, b?.get(1))\n    print(x ?? 0)", &[]),
+            (
+                "let x: i64? = pick(1, bx.get(Some(2)))\n    print(x ?? 0)",
+                &[],
+            ),
+            (
+                "let x: u8? = pick(bx.get(1), 2)\n    print(x ?? 0)\n    print(b?.k ?? 0)",
+                &[],
+            ),
+            (
+                "let x: u8 = pick(bx.get(1), \"s\")\n    print(x)\n    print(b?.k ?? 0)",
+                &[(Code::Mismatch, "\"s\"")],
+            ),
+        ],
+    );
+    let decls = "struct Bx {\n    v: i64\n    fn m<U>(self, u: U) -> U { u }\n}\n\
+        struct A {\n    n: i64\n    fn m(mut self) { self.n = 1 }\n}\n\
+        fn id<T>(t: T) -> T { t }\n\
+        fn main() {\n    let b = Bx(v: 1)\n    ";
+    join_rows(
+        decls,
+        &[(
+            "let u: u8 = id(b.m(1))\n    print(u)",
+            &[(Code::Mismatch, "b.m(1)")],
+        )],
+    );
+}
+
+/// GIVEN a block with statements before its value, as a member of the join of a generic call
+/// WHEN the join takes a candidate
+/// THEN the block's value takes the candidate, as a block with no statements does: the
+///   programs that `main` accepts are valid
+/// AND a block whose value is `never` gives E0138, as on `main`
+#[test]
+fn a_block_with_statements_should_take_part_in_the_join() {
+    let decls = "fn pick<T>(a: T, _b: T) -> T { a }\nfn id<T>(x: T) -> T { x }\n\
+        fn main() {\n    let c = [1].len() == 1\n    ";
+    join_rows(
+        decls,
+        &[
+            (
+                "let x: i64? = pick(1, { let y = 2; Some(y) })\n    print(x ?? 0)\n    print(c)",
+                &[],
+            ),
+            (
+                "let x: i64? = pick({ let y = 2; Some(y) }, 1)\n    print(x ?? 0)\n    print(c)",
+                &[],
+            ),
+            (
+                "let x = pick(1, { let y = 2; Some(y) })\n    print(x ?? 0)\n    print(c)",
+                &[],
+            ),
+            (
+                "let x = id({ if c { break }; return 1 })",
+                &[
+                    (Code::TypeArgument, "{ if"),
+                    (Code::JumpOutsideLoop, "break"),
+                    (Code::UnexpectedReturnValue, "1 })"),
+                ],
+            ),
+        ],
+    );
+}
+
+/// GIVEN a generic call `f3` whose open form gives its bounded `T` a type that breaks the bound
+/// AND a member of the outer join that closes that type after `f3`, or before it
+/// WHEN the outer join tests the candidate
+/// THEN the broken bound fails the candidate, and the outer call reports its join once (E0032),
+///   in each order of the members
+/// AND no E0154 is given for the open form
+#[test]
+fn a_broken_bound_of_an_open_form_should_fail_the_candidate_in_each_order() {
+    let decls = "interface K<U> { fn k(self, u: U) -> i64 }\n\
+        struct X: K<i64> { fn k(self, u: i64) -> i64 { u } }\n\
+        struct P2<A, B> {\n    a: A\n    b: B\n}\n\
+        fn f3<T: K<U>, U>(x: T, u: U) -> P2<[T], [U]> {\n    print(x.k(u))\n    P2(a: [x], b: [u])\n}\n\
+        fn ep<A, B>() -> P2<[A?], [B?]> { P2(a: [], b: []) }\n\
+        fn pick3<T>(a: T, _b: T, _c: T) -> T { a }\n\
+        fn main() {\n    ";
+    let join: &[(Code, &str)] = &[(Code::Mismatch, "pick3")];
+    join_rows(
+        decls,
+        &[
+            (
+                "print(pick3(ep(), f3(X(), 3), P2<[X?], [u8?]>(a: [], b: [])).a.len())",
+                join,
+            ),
+            (
+                "print(pick3(f3(X(), 3), ep(), P2<[X?], [u8?]>(a: [], b: [])).a.len())",
+                join,
+            ),
+            (
+                "print(pick3(P2<[X?], [u8?]>(a: [], b: []), ep(), f3(X(), 3)).a.len())",
+                join,
+            ),
+            (
+                "print(pick3(ep(), f3(X(), None), P2<[X?], [string?]>(a: [], b: [])).a.len())",
+                join,
+            ),
+        ],
+    );
+}
+
+/// GIVEN a generic call whose parameter type holds two open variables (`Result<T, U>`)
+///   and an argument with a written type that fails inside (`missing`)
+/// WHEN the argument types unify with the parameter type
+/// THEN the call reports only the error inside the argument, as on `main`: no E0032 for the types
+///
+/// The guard rows hold before and after: one open variable gives no report, and a real conflict
+/// between the written type and the parameter type is still E0032.
+#[test]
+fn failed_argument_with_a_written_type_should_not_mismatch_a_generic_parameter() {
+    let decls = "enum G0<T, U> {\n    V4(U)\n    V5(T)\n}\n\
+        struct Box2<T, U> {\n    a: T\n    b: U\n    fn swap<V>(self, v: Result<V, U>) {}\n}\n\
+        fn h<T, U>(v: Result<T, U>) {}\n\
+        fn g<T, U>(v: G0<T, U>) {}\n\
+        fn hw<T, U>(v: Result<T, U>, w: T) {}\n\
+        fn h13<T, U>(v14: G0<T, U>, v15: T) -> T { v15 }\n\
+        fn k<T>(v: Result<T, bool>) {}\n\
+        fn h2<T>(v: Result<T, string>) {}\n\
+        fn main() {\n    ";
+    let (e32, e33, e52) = (
+        Code::Mismatch,
+        Code::BindingNotFound,
+        Code::FunctionNotFound,
+    );
+    join_rows(
+        decls,
+        &[
+            ("h(Result<i64, bool>.Ok(missing))", &[(e33, "missing")]),
+            ("h(Result<i64, bool>.Err(missing))", &[(e33, "missing")]),
+            ("g(G0<i64, bool>.V4(missing))", &[(e33, "missing")]),
+            ("g(G0<i64, bool>.V5(missing))", &[(e33, "missing")]),
+            ("hw(Result<i64, bool>.Ok(missing), 1)", &[(e33, "missing")]),
+            (
+                "print(h13(G0<i64, bool>.V4(missing(1)), 7))",
+                &[(e52, "missing")],
+            ),
+            (
+                "print(h13(G0<i64, bool>.V4({ let _ = missing; false }), 7))",
+                &[(e33, "missing")],
+            ),
+            // Guards.
+            ("k(Result<i64, bool>.Ok(missing))", &[(e33, "missing")]),
+            (
+                "h2(Result<i64, bool>.Ok(missing))",
+                &[(e32, "h2"), (e33, "missing")],
+            ),
+            (
+                "hw(Result<i64, bool>.Ok(missing), \"s\")",
+                &[(e32, "Result"), (e33, "missing")],
+            ),
+            (
+                "Box2(a: 1, b: true).swap(Result<i64, bool>.Ok(missing))",
+                &[(e33, "missing")],
+            ),
+        ],
+    );
 }

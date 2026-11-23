@@ -102,7 +102,7 @@ fn main() {
 
     let v23: i64?? = second(if c { Some(1) } else { todo("w") }, None)
     let w23: i64?? = second(Some(1), None)
-    print("{form(v23)} {form(w23)}") // none none
+    print("{form(v23)} {form(w23)}") // some none some none
     let v24: i64? = h(if c { 1 } else { todo("y") }, None)
     let w24: i64? = h(1, None)
     print("{v24 ?? 9} {w24 ?? 9} {v24 == w24}") // 1 1 true

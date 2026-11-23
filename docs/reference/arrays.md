@@ -30,7 +30,7 @@ fn main() {
 
 **Element types**
 
-- All the elements have one type. [E0032](../diagnostics/E0032.md)
+- The elements are the members of a [join](expressions.md#joins). The array has the type of one of them, and each other element converts to it. [E0032](../diagnostics/E0032.md)
 - The other elements decide the type of an integer literal, so `[1, 2.5]` is an `[f64]` ([Literals](literals.md#the-type-of-an-integer-literal)).
 - A `None` element makes the type of the other elements optional. So `[4, None, 6]` is an `[i64?]`.
 - `[]` alone does not tell its type. [E0050](../diagnostics/E0050.md)
