@@ -1330,6 +1330,15 @@ fn call_whose_own_join_fails_should_report_once_when_no_candidate_opens_it() {
             &[(Code::Mismatch, (1, 19))],
         ),
         ("let x = id(pick(a, \"s\"))", &[(Code::Mismatch, (1, 12))]),
+        // A `Some` or a `None` beside it is no taker of the failed call either.
+        (
+            "let x = pick(None, Some(pick(a, \"s\")))",
+            &[(Code::Mismatch, (1, 25))],
+        ),
+        (
+            "let x = pick(Some(pick(1, \"s\")), None)",
+            &[(Code::Mismatch, (1, 19))],
+        ),
         // The outer call fails at `nope`, so no join opens the inner call: the end of the
         // function reports its conflict.
         (
@@ -2946,4 +2955,140 @@ fn failed_some_of_a_struct_defined_twice_should_make_the_array_optional() {
         .count()
         + 1;
     error_rows(&[("array of Lid", src, vec![(Code::DefinedTwice, (line, 8))])]);
+}
+
+/// The functions of `array_of_ifs_at_a_place_of_two_parameters_should_report_the_none_beside_it`.
+const PLACE_FUNCTIONS: &str = "struct Two<A, B> {\n    a: A\n    b: B\n}\nfn fk<T, U>(x: [Two<T, U>], y: T, z: U) -> T { y }\n";
+
+#[test]
+fn array_of_ifs_at_a_place_of_two_parameters_should_report_the_none_beside_it() {
+    // GIVEN a call whose first argument is an array of an `if`, at a place of two type
+    //       parameters
+    // AND a `None` and a literal as the two other arguments
+    // WHEN it is checked
+    // THEN it reports one E0032 at the `if`: the `None` is no `i64`, so the elements cannot
+    //      take `T` from it
+    let row = |line: &str| {
+        format!("{PLACE_FUNCTIONS}fn main() {{\n    let c = [1].len() == 1\n    {line}\n}}\n")
+    };
+    let at = |col: usize| (PLACE_FUNCTIONS.lines().count() + 3, col + 4);
+    error_rows(&[(
+        "if of two structs",
+        row("let x = fk([if c { Two(a: 1, b: 1) } else { Two(a: 2, b: 2) }], None, 1)"),
+        vec![(Code::Mismatch, at(13))],
+    )]);
+}
+
+/// The functions of `literal_beside_a_known_argument_should_take_its_type_through_a_variant`.
+const VARIANT_FUNCTIONS: &str =
+    "enum Pr<A, B> {\n    P(a: A, b: B)\n}\nfn hh<T, V>(a: T, b: [Pr<T, V>]) -> T { a }\n";
+
+#[test]
+fn literal_beside_a_known_argument_should_take_its_type_through_a_variant() {
+    // GIVEN `hh(a: T, b: [Pr<T, V>])` called with a `u8` and an array of two variants, each with
+    //       a literal at `T`, the second with a `None` at `V`
+    // WHEN it is checked
+    // THEN each type argument is closed, and `T` is the `u8` of the first argument
+    let src = format!(
+        "{VARIANT_FUNCTIONS}fn main() {{\n    let a: u8 = 3\n    let x = hh(a, [Pr.P(a: 1, b: 2), Pr.P(a: 1, b: None)])\n    print(x)\n}}\n"
+    );
+    assert_eq!(join_type(&src), "u8");
+}
+
+#[test]
+fn array_with_an_optional_at_each_depth_should_merge_the_optionals() {
+    // GIVEN an array of a `[None]` and a `Some` of a nested array of `u8` and `u8?`
+    // WHEN it is checked
+    // THEN each element takes the `?` of the other at its depth
+    type_rows(&[("let x = [[None], Some([[a, m]])]", "[[[u8?]?]?]")]);
+}
+
+#[test]
+fn call_result_beside_a_literal_should_not_take_an_optional_inside_its_array() {
+    // GIVEN an `if` whose branch is the result of a call, `[[u8?]]`, beside a literal that has
+    //       an optional at another depth, `[[u8]?]`
+    // WHEN it is checked
+    // THEN it reports one E0032: the result of a call takes no `?` inside its array
+    let body = "let x = if c { id([[o]]) } else { [Some([b])] }";
+    one_conflict_rows(&[(
+        body,
+        in_body(body, "if"),
+        &[in_body(body, "id("), in_body(body, "b])")],
+    )]);
+}
+
+#[test]
+fn compound_assignment_should_report_the_value_not_the_place() {
+    // GIVEN `x += v` where `v` is an optional or a `None`, and `x` is a number
+    // WHEN it is checked
+    // THEN the one E0032 is at `v`: the place `x` converts to nothing
+    body_rows(&[
+        (
+            "let mut x: i64 = 1\nx += Some(1)",
+            &[(Code::Mismatch, (2, 6))],
+        ),
+        ("let mut x = 1\nx += none()", &[(Code::Mismatch, (2, 6))]),
+    ]);
+}
+
+#[test]
+fn if_let_with_no_else_should_add_no_label_for_its_made_arm() {
+    // GIVEN an array whose element is an array with an `if let` of an enum with no `else`, beside
+    //       `[1]`
+    // WHEN it is checked
+    // THEN the E0032 names the `if let` once, not its block: the made arm has no value position
+    let body =
+        "let tn: Tree<u8> = Tree.Node(v: a)\nlet x = [[if let Tree.Node(w) = tn { u() }], [1]]";
+    one_conflict_rows(&[(
+        body,
+        in_body(body, "[[if"),
+        &[in_body(body, "if let"), in_body(body, "1]]")],
+    )]);
+}
+
+#[test]
+fn members_that_wrap_nothing_should_keep_a_block_and_a_break_with_no_value() {
+    // GIVEN `pick` of two blocks with no value, and of two loops with a bare `break`
+    // WHEN it is checked
+    // THEN no `unit` value is added to a block or to a `break`: no conversion changed it
+    let src =
+        program("let x = pick({ }, { let q = 1 })\nlet y = pick(loop { break }, loop { break })");
+    let (program, ds) = checked_with(PRELUDE_SOURCE, &src);
+    let found = errors(&src, &ds);
+    assert!(found.is_empty(), "{found:?}");
+    let printed = program.expect("no errors").to_string();
+    for part in [
+        "(call pick<unit> (block) (block (let q#",
+        "(call pick<unit> (loop (block (break))) (loop (block (break))))",
+    ] {
+        assert!(printed.contains(part), "{part} in {printed}");
+    }
+}
+
+/// The value positions that the joins visit and settle when `main` is `let x<hint> = chain`, where
+/// `chain` is `left ?? (left ?? (... ?? end))` with `n` copies of `left`.
+fn coalesce_chain_steps(hint: &str, left: &str, end: &str, n: usize) -> usize {
+    let chain = (0..n).fold(end.to_owned(), |rest, _| format!("{left} ?? ({rest})"));
+    let src = program(&format!("let x{hint} = {chain}"));
+    VALUE_STEPS.set(0);
+    SETTLED.set(0);
+    let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+    assert!(errors(&src, &ds).is_empty(), "{n} sides");
+    VALUE_STEPS.get() + SETTLED.get()
+}
+
+#[test]
+fn coalesce_chain_should_cost_linear_value_steps() {
+    // GIVEN a chain of 40, 80 and 120 sides of `??`, where each side is a `Some` of a literal
+    // AND the chain has no type to meet
+    // AND the same chain of an optional local under a written `u8?`
+    // WHEN each is checked
+    // THEN the steps grow linearly: a `??` whose join settled its sides is not walked again
+    for (row, hint, left, end) in [
+        ("literals", "", "Some(1)", "2"),
+        ("locals under a type", ": u8?", "m", "None"),
+    ] {
+        let steps = [40, 80, 120].map(|n| coalesce_chain_steps(hint, left, end, n));
+        assert_near_linear_for(&format!("{row}: "), steps[0], steps[1], steps[2]);
+    }
 }
