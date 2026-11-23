@@ -1633,3 +1633,42 @@ fn an_unbuilt_type_that_a_type_names_should_point_at_the_name() {
         ]
     );
 }
+
+/// The W0013 of `src`.
+fn unread_fields(src: &str) -> Vec<Found> {
+    found(src).into_iter().filter(|f| f.0 == W0013).collect()
+}
+
+/// A struct that generated code shows has each field read, through `print` and through a generic
+/// call with a `Display` bound. `dbg` shows a field too, and that is not a read: its warning names
+/// the `dbg`.
+#[test]
+fn shown_type_should_count_a_field_as_read() {
+    judge_unused();
+    // GIVEN a struct whose field no code reads by name
+    let decl = "struct Point {\n    x: i64\n}\nfn show<T: Display>(t: T) {\n    print(t)\n}\n";
+    for body in ["print(p)", "show(p)"] {
+        // WHEN the value is shown by generated code
+        let src = format!("{decl}fn main() {{\n    let p = Point(x: 1)\n    {body}\n}}");
+        // THEN the field is read
+        assert_eq!(unread_fields(&src), [], "{body}");
+    }
+    let src = format!("{decl}fn main() {{\n    let p = Point(x: 1)\n    dbg(p)\n}}");
+    assert_eq!(unread_fields(&src), [(W0013, (2, 5), vec![(9, 5)])]);
+}
+
+/// A call may show its type argument, so each field of a struct that is the type argument is
+/// read. This holds when a join decides the type after the call.
+#[test]
+fn field_should_count_as_read_through_an_inferred_type_argument() {
+    judge_unused();
+    // GIVEN a call whose type argument is an open variable until the array's join gives it `Point?`
+    let src = "struct Point {\n    x: i64\n}\n\
+        fn id<T>(v: T) -> T { v }\n\
+        fn first<T>(_xs: [T]) -> T? { None }\n\
+        fn make<T>(c: bool) -> [T] { [] }\n\
+        fn main() {\n    let _a = [id(first(make(true))), Point(x: 1)]\n}";
+    // WHEN the program is checked
+    // THEN the field `x` is read
+    assert_eq!(unread_fields(src), []);
+}
