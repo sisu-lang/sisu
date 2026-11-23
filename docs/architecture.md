@@ -209,8 +209,13 @@ It gives W0012 for an item or an `extend` block that no live code uses. It gives
 code does not read or a variant that it does not build. It gives W0014 for a local
 or parameter of live code that nothing reads. It gives W0016 for a `let mut` that only writes to a copy of a place.
 `check/operator.rs` checks operators (arithmetic, comparison,
-equality, `is` and `??`). `check/branch.rs` checks `if` and `if let` and the join of
-their branch types. `check/call.rs` checks calls, method calls and constructors. `check/member.rs`
+equality, `is` and `??`). `check/branch.rs` checks `if` and `if let`. `check/join.rs` finds the one type of a
+join: the type of one member that each other member converts to. The members are the branches of an
+`if`, the arms of a `match`, the elements of an array and the `break` values of a loop. They are also the
+two sides of `??` or of an operator, and the arguments of one type parameter of a call.
+`check/infer.rs` holds the inference table of a function. Each `None`, `[]`, integer literal and type
+parameter of a call is a variable there until a join or a use settles it. No variable reaches `tir`
+([ADR 0052](adr/0052-a-join-takes-the-type-of-one-of-its-members.md)). `check/call.rs` checks calls, method calls and constructors. `check/member.rs`
 checks fields and methods found through `.` and `?.`,
 including the methods of `extend` blocks.
 `check/alias.rs` resolves each type alias before any signature, each after the

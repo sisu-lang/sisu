@@ -383,6 +383,7 @@ fn main() {
 **Rules**
 
 - The left operand must be an optional. [E0048](../diagnostics/E0048.md)
+- The payload of `a` and `b` are the members of a [join](expressions.md#joins).
 - When `a` is a `T?` and `b` is a `T`, the result is a `T`.
 - When `b` is a `T?` too, the result is a `T?`. So `a ?? b ?? 0` tries `a`, then `b`, then gives `0`.
 - `b` can be an expression that never finishes, such as `panic("...")` ([Types](types.md#never)). Then the result is a `T`.

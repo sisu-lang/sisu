@@ -19,7 +19,7 @@ notes = [["ADR 0011", "docs/adr/0011-let-mut-marks-what-can-change.md"]]
 [[area.feature]]
 text = "Functions, <code>if</code> as a value, loops"
 state = "works"
-notes = [["Roadmap: what works today", "docs/roadmap.md#what-works-today"], ["ADR 0034", "docs/adr/0034-loop-and-loop-labels.md"]]
+notes = [["Roadmap: what works today", "docs/roadmap.md#what-works-today"], ["ADR 0034", "docs/adr/0034-loop-and-loop-labels.md"], ["ADR 0052", "docs/adr/0052-a-join-takes-the-type-of-one-of-its-members.md"]]
 
 [[area.feature]]
 text = "<code>let ... else</code>, and <code>return</code>, <code>break</code> and <code>continue</code> as expressions"
