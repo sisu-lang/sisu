@@ -952,6 +952,7 @@ mod tests {
         array, at, eye, heading, if_else, if_without_else, int, local, none, orders,
     };
     use super::super::*;
+    use super::{Units, without_variables};
     use crate::check::expectation::Origin;
     use crate::check::infer::Kind;
     use crate::check::tests::joins::with_params;
@@ -2023,5 +2024,190 @@ mod tests {
             run(JoinForm::If, units),
             vec![(Code::NoValue, Span::new(20, 30))]
         );
+    }
+    #[test]
+    fn open_literal_should_leave_its_group_where_f64_holds_it() {
+        // GIVEN a literal, `f: f64` and `"s"`
+        // THEN a literal up to 2^53 has no group: `f64` holds it
+        for value in [1, 1 << 53] {
+            let groups = shown_groups_of(value);
+            assert_eq!(groups, vec![group("f64", 2), group("string", 3)], "{value}");
+        }
+        // AND 2^53 + 1 keeps its label: `f64` cannot hold it
+        let groups = shown_groups_of((1 << 53) + 1);
+        assert_eq!(
+            groups,
+            vec![group("i64", 1), group("f64", 2), group("string", 3)]
+        );
+    }
+
+    /// The groups of the join of the literal `value`, `f: f64` and `"s"`.
+    fn shown_groups_of(value: u64) -> Vec<(String, Vec<Span>)> {
+        with_params("", "", |c, _| {
+            let mut values = vec![Ok(int(c, value, 1)), Ok(local(Type::F64, 2)), Ok(string(3))];
+            let mut members = whole(&mut values);
+            let site = site(JoinForm::If);
+            let Err(conflict) = c.join_members(&mut members, site.hole, None, None) else {
+                panic!("the members should have no candidate");
+            };
+            let DiagnosticKind::JoinMismatch { groups, .. } =
+                c.conflict_kind(site, None, &conflict)
+            else {
+                panic!("a conflict should give a `JoinMismatch`");
+            };
+            groups
+        })
+    }
+
+    #[test]
+    fn without_variables_should_write_each_open_variable_as_a_hole() {
+        // GIVEN a text that names two open variables, after other text
+        // THEN each name, with its digits, is one `_`
+        assert_eq!(without_variables("Box<infer#3, [infer#12]>"), "Box<_, [_]>");
+        assert_eq!(without_variables("Box<string>"), "Box<string>");
+    }
+
+    #[test]
+    fn open_name_should_write_an_open_payload_of_an_optional_as_its_value() {
+        with_params("", "", |c, _| {
+            let hole = c.table.fresh(Kind::Any, at(1));
+            // GIVEN `Some(None)` and `Some([])`, whose payloads are open
+            // THEN the payload is written as the value that leaves it open
+            assert_eq!(c.open_name(Type::optional(Type::optional(hole))), "None?");
+            assert_eq!(c.open_name(Type::optional(Type::array(hole))), "[]?");
+            // AND an optional of an array of an optional has the same form
+            let inner = Type::array(Type::optional(hole));
+            assert_eq!(c.open_name(Type::optional(inner)), "[None]?");
+        });
+    }
+
+    #[test]
+    fn poisoned_member_should_add_a_unit_leaf_only_when_its_type_is_unit() {
+        // Each row: the type of the poison, what the member is, and whether it adds its label.
+        let rows = [
+            (Some(Type::UNIT), Units::Only, true),
+            (Some(Type::NEVER), Units::Skipped, false),
+            (Some(Type::I64), Units::Free, false),
+            (None, Units::Free, false),
+        ];
+        for (ty, wanted, adds) in rows {
+            with_params("", "", |c, _| {
+                // GIVEN a failed member of the type `ty`
+                let proof = c.proof(at(7));
+                let mut value: Checked = Err(match ty {
+                    Some(ty) => Poisoned::typed(ty, proof),
+                    None => Poisoned::untyped(proof),
+                });
+                let mut member = JoinMember {
+                    value: &mut value,
+                    at: Place::Whole,
+                    label: at(5),
+                };
+                // WHEN its `unit` leaves are made
+                let mut out = Vec::new();
+                let units = c.member_units(&mut member, None, &mut out);
+                // THEN a `unit` poison is one leaf at its label, and no other poison is a leaf
+                assert!(units == wanted, "the member of the type {ty:?}");
+                let leaves = (out.iter())
+                    .map(|(span, cause)| (*span, matches!(cause, NoValueCause::Plain)))
+                    .collect::<Vec<_>>();
+                let one = if adds {
+                    vec![(at(5), true)]
+                } else {
+                    Vec::new()
+                };
+                assert_eq!(leaves, one, "the member of the type {ty:?}");
+            });
+        }
+    }
+
+    #[test]
+    fn units_should_tell_the_leaves_of_a_value_apart() {
+        // The `unit` leaves that `units` finds in `build`, and what the value is.
+        let run = |build: fn(&mut Checker<'_>) -> tir::Expr| {
+            with_params(UNITS, "", |c, _| {
+                let mut e = build(c);
+                let mut out = Vec::new();
+                let units = c.units(&mut e, None, &mut out);
+                (units, out.iter().map(|&(span, _)| span).collect::<Vec<_>>())
+            })
+        };
+        // GIVEN `if c { 1 } else { 2 }`, THEN no leaf is `unit`
+        let (units, leaves) = run(|c| if_else(int(c, 1, 1), int(c, 2, 2), Type::I64, 3));
+        assert!(units == Units::Free && leaves.is_empty());
+        // GIVEN `if c { u() } else { u() }`, THEN each leaf is `unit`: one leaf at the `if`
+        let (units, leaves) =
+            run(|c| if_else(unit_call(c, "u", 1), unit_call(c, "u", 2), Type::UNIT, 3));
+        assert!(units == Units::Only && leaves == vec![at(3)]);
+        // GIVEN `if c { u() } else { 1 }`, THEN the leaves are mixed
+        let (units, leaves) = run(|c| if_else(unit_call(c, "u", 1), int(c, 2, 2), Type::I64, 3));
+        assert!(units == Units::Mixed && leaves == vec![at(1)]);
+        // GIVEN an `if` whose branches are each mixed, THEN it is mixed
+        let (units, leaves) = run(|c| {
+            let left = if_else(unit_call(c, "u", 1), int(c, 2, 2), Type::I64, 3);
+            let right = if_else(unit_call(c, "u", 4), int(c, 5, 5), Type::I64, 6);
+            if_else(left, right, Type::I64, 7)
+        });
+        assert!(units == Units::Mixed && leaves == vec![at(1), at(4)]);
+        // GIVEN `if c { if c { u() } else { 1 } } else { u() }`, THEN the leaves are mixed, and
+        //       each `u()` is its own leaf: the `if` is no one leaf
+        let (units, leaves) = run(|c| {
+            let inner = if_else(unit_call(c, "u", 1), int(c, 2, 2), Type::I64, 3);
+            if_else(inner, unit_call(c, "u", 4), Type::I64, 5)
+        });
+        assert!(units == Units::Mixed && leaves == vec![at(1), at(4)]);
+    }
+
+    #[test]
+    fn unit_cause_should_name_push_only_for_a_block_that_ends_in_a_push() {
+        with_params(UNITS, "", |c, _| {
+            // GIVEN a block with no statement and no value
+            let empty = tir::Block {
+                stmts: Vec::new(),
+                value: None,
+                ty: Type::UNIT,
+            };
+            let e = tir::Expr::new(ExprKind::Block(empty), Type::UNIT, at(1));
+            // THEN its cause is plain: no call made it
+            assert!(matches!(c.unit_cause(&e, None), NoValueCause::Plain));
+            // GIVEN a block whose value is `u()`, THEN its cause is the call of `u`
+            let call = unit_call(c, "u", 2);
+            let full = tir::Block {
+                stmts: Vec::new(),
+                value: Some(Box::new(call)),
+                ty: Type::UNIT,
+            };
+            let e = tir::Expr::new(ExprKind::Block(full), Type::UNIT, at(1));
+            let cause = c.unit_cause(&e, None);
+            assert!(matches!(cause, NoValueCause::Call { ref name, .. } if name == "u"));
+        });
+    }
+
+    #[test]
+    fn binder_origin_should_skip_a_never_member_and_a_failed_one() {
+        let param = Symbol::intern("T");
+        // The span and the type of the origin that the members give.
+        let origin = |c: &Checker<'_>, types: &[Type], fails: &[bool], never: bool| {
+            let first = if never { Type::NEVER } else { types[0] };
+            let mut values = vec![Ok(local(first, 1)), Ok(local(types[0], 2))];
+            let members = whole(&mut values);
+            match c.binder_origin(param, &members, fails) {
+                Some(Origin::Inferred { at, ty, .. }) => Some((at, ty)),
+                Some(_) => panic!("a binder gives an inferred origin"),
+                None => None,
+            }
+        };
+        with_params("", "a: u8", |c, types| {
+            // GIVEN a `never` member before `a: u8`, THEN `a` gives the type
+            let wanted = Some((at(2), Type::U8));
+            assert_eq!(origin(c, types, &[false, false], true), wanted);
+            // GIVEN a failed member before `a`, THEN `a` gives the type, not the failed member
+            assert_eq!(origin(c, types, &[true, false], false), wanted);
+            // AND a member that does not fail gives it
+            assert_eq!(
+                origin(c, types, &[false, false], false),
+                Some((at(1), Type::U8))
+            );
+        });
     }
 }

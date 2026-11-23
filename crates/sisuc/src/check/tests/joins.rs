@@ -3092,3 +3092,40 @@ fn coalesce_chain_should_cost_linear_value_steps() {
         assert_near_linear_for(&format!("{row}: "), steps[0], steps[1], steps[2]);
     }
 }
+
+#[test]
+fn unit_leaves_of_a_failed_join_should_each_get_their_report() {
+    // GIVEN joins with a failed `unit` call, a failed untyped member or an `if` that mixes
+    //       `unit` leaves with other leaves
+    // WHEN each is checked
+    // THEN a `unit` leaf has its own E0043, and a failed untyped member has none
+    body_rows(&[
+        // The failed call is a `unit` leaf under the required `i64`, and in an array.
+        (
+            "let x: i64 = if c { u(1) } else { 1 }",
+            &[(Code::ArgumentCount, (1, 21)), (Code::NoValue, (1, 21))],
+        ),
+        (
+            "let x = [u(1), 1]",
+            &[(Code::ArgumentCount, (1, 10)), (Code::NoValue, (1, 10))],
+        ),
+        // The untyped member `nope` is no `unit`: it gets no E0043.
+        (
+            "let x = [u(), 1, nope]",
+            &[(Code::NoValue, (1, 10)), (Code::BindingNotFound, (1, 18))],
+        ),
+        // The inner `if` has a `unit` leaf and a leaf with a value, so each `u()` is reported.
+        (
+            "let x = [if c { if d { u() } else { 1 } } else { u() }, \"s\"]",
+            &[(Code::NoValue, (1, 24)), (Code::NoValue, (1, 50))],
+        ),
+    ]);
+}
+
+#[test]
+fn failed_part_of_an_optional_argument_should_offer_no_conversion() {
+    // GIVEN `g(Some(n), 1)` with `n: i64`, under the required `f64`
+    // WHEN it is checked
+    // THEN the one E0032 has no fix: `Some(f64(n))` would not make the call valid
+    assert_eq!(fixes_of("let x: f64 = g(Some(n), 1)").len(), 0);
+}
