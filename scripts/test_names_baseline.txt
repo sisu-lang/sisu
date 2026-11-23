@@ -1177,7 +1177,6 @@ crates/sisuc/src/parser.rs::class_with_members
 crates/sisuc/src/parser.rs::comma_after_a_method_is_not_a_field_comma
 crates/sisuc/src/parser.rs::comma_between_members
 crates/sisuc/src/parser.rs::comma_fix_keeps_the_text_the_lexer_skipped
-crates/sisuc/src/parser.rs::comma_fix_parses_clean
 crates/sisuc/src/parser.rs::compound_assignment_spans
 crates/sisuc/src/parser.rs::const_items
 crates/sisuc/src/parser.rs::const_statement_fix_leaves_a_let_that_parses

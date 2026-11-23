@@ -64,23 +64,23 @@ error[E0011]: a range pattern needs a start and an end
    |
    = help: write `start..end`
 
-error[E0011]: expected a pattern, found `..`
+error[E0011]: expected a pattern, found `...`
   --> E0011-rest-pattern.sisu:76:16
    |
 76 |         E.P(x, ...) => print(x)
-   |                ^^
+   |                ^^^
 
-error[E0011]: expected a pattern, found `..`
+error[E0011]: expected a pattern, found `...`
   --> E0011-rest-pattern.sisu:83:18
    |
 83 |         E.P { x, ... } => print(x)
-   |                  ^^
+   |                  ^^^
 
-error[E0011]: expected a pattern, found `..`
+error[E0011]: expected a pattern, found `...`
   --> E0011-rest-pattern.sisu:90:13
    |
 90 |         E.P(..., y) => print(y)
-   |             ^^
+   |             ^^^
 
 sisu: 13 errors
 sisu: for more on a code, run `sisu explain <code>`: E0011
