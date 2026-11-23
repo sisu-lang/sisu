@@ -9,7 +9,7 @@ BENCH =
 ARGS =
 
 .DEFAULT_GOAL := help
-.PHONY: help setup audit-setup build test memory-safety test-health bless lint deny miri check coverage mutation-test mutation-status fuzz fuzz-coverage fuzz-gaps bench compile-speed scaling structs-gate callgrind site
+.PHONY: help setup audit-setup build test form-matrix memory-safety test-health bless lint deny miri check coverage mutation-test mutation-status fuzz fuzz-coverage fuzz-gaps bench compile-speed scaling structs-gate callgrind site
 
 help: ## List the targets
 	@awk 'BEGIN { FS = ":.*## " } /^[a-z-]+:.*## / { printf "  %-15s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -32,9 +32,12 @@ audit-setup: ## For the audit-sisu skill: add opt and clang, with the ASan runti
 build: ## Build sisu and the two runtime archives
 	cargo build --workspace
 
-test: ## Run every test but the memory tests (make memory-safety) with nextest, whose setup script builds the runtime
+test: ## Run every test but the memory tests (make memory-safety) and the form matrix (make form-matrix, and CI) with nextest, whose setup script builds the runtime
 	scripts/heavy-run.sh cargo nextest run --workspace --locked
 	list=$$(mktemp) && cargo nextest list --workspace --locked --message-format json > $$list && python3 scripts/nextest_filters.py .config/nextest.toml $$list; status=$$?; rm -f $$list; exit $$status
+
+form-matrix: ## Run the form matrix: each form of tests/form_matrix.txt in each position, checked for no crash and no breaking safe fix
+	scripts/heavy-run.sh cargo nextest run --workspace --locked --ignore-default-filter -E 'binary(form_matrix)'
 
 memory-safety: ## Run the memory checkers (ASan, Valgrind, --rc-checks) of every run case; the last line names the result and the commit
 	head=$$(git rev-parse HEAD); [ -z "$$(git status --porcelain)" ] || dirty=' with uncommitted changes'; \

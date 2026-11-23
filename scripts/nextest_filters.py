@@ -2,17 +2,18 @@
 
 A filter that matches no test does nothing and says nothing: a renamed test then loses its
 override. A `default-filter` is checked the same way. It also must leave out only the memory tests
-(`DEFAULT_FILTER_OUT`), so that a loose leaf cannot drop other tests from `make test`.
+(`DEFAULT_FILTER_OUT`) and the form matrix binary (`DEFAULT_FILTER_OUT_BINARY`). Then a loose leaf
+cannot drop other tests from `make test`.
 
 Usage: python3 nextest_filters.py CONFIG LIST_JSON
 CONFIG is .config/nextest.toml. LIST_JSON is the output of
 `cargo nextest list --workspace --message-format json`. It prints one line for each leaf that
 matches no test. It prints one for each leaf that is not `=name` or a substring: nextest also has
 /regex/, ~x and #glob, which this check does not read. It also prints one line for each test that
-the default-filter leaves out and that is not a memory test. It prints one for each memory test
-that the default-filter keeps. It exits 1 when it prints a line. It prints each line where a stale
-leaf is. It skips an override with a `platform` key. It prints nothing and exits 0 when every leaf
-is fine.
+the default-filter leaves out and that is no memory test. It does the same for a binary that is
+not the form matrix. It prints one for each memory test that the default-filter keeps. It exits 1
+when it prints a line. It prints each line where a stale leaf is. It skips an override with a
+`platform` key. It prints nothing and exits 0 when every leaf is fine.
 """
 
 import json
@@ -27,6 +28,8 @@ from typing import Any
 LEAF = re.compile(r"\btest\s*\(\s*(/.*?/|[^)]*)\)")
 # The names of the tests that a profile's `default-filter` may leave out.
 DEFAULT_FILTER_OUT = ("memory::", "site_memory::")
+# The binary of the form matrix, which `make form-matrix` and CI run, not `make test`.
+DEFAULT_FILTER_OUT_BINARY = "sisuc::form_matrix"
 # A TOML string or comment. Read in order, so a quote in a comment and a `#` in a string are no
 # token.
 TOKEN = re.compile(
@@ -88,6 +91,7 @@ def check(config_path: str, list_path: str) -> list[str]:
     """Return one line for each bad leaf, and one for each test the default-filter treats wrongly.
 
     A wrong case is a test left out that is not a memory test, or a memory test that is kept.
+    Another wrong case is a whole binary left out that is not the form matrix.
     """
     raw = Path(config_path).read_bytes()
     suites = json.loads(Path(list_path).read_text(encoding="utf-8"))["rust-suites"]
@@ -105,11 +109,15 @@ def default_filter_problems(suites: dict[str, Any]) -> list[str]:
     """Return one line for each wrong case: a memory test kept, or another test left out.
 
     nextest lists a binary that the default-filter leaves out with no tests. Every memory test is
-    in a binary that has other tests, so such a binary is always wrong.
+    in a binary that has other tests, so such a binary is always wrong. The form matrix binary is
+    the one exception.
     """
     lines: list[str] = []
     for suite_name, suite in suites.items():
-        if suite.get("status") == "skipped-default-filter":
+        if (
+            suite.get("status") == "skipped-default-filter"
+            and suite_name != DEFAULT_FILTER_OUT_BINARY
+        ):
             lines.append(f"{suite_name}: the default-filter leaves out the whole binary")
         for name, case in suite.get("testcases", {}).items():
             match = case.get("filter-match", {})

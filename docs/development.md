@@ -63,7 +63,8 @@ $ make setup   # LLVM 23 into .llvm/23, the pre-commit and commit-msg hooks, car
 ```console
 $ make help    # every target
 $ make build   # sisu and the two runtime archives
-$ make test    # unit tests and end-to-end cases, but not the memory tests
+$ make test    # unit tests and end-to-end cases, but not the memory tests or the form matrix
+$ make form-matrix   # the form matrix: each form in each position (CI runs it too)
 $ make memory-safety   # the memory tests: ASan, Valgrind and --rc-checks on every run case
 $ make lint    # fmt, clippy (also with the fuzz feature), expect messages, unused dependencies, Ruff and Pyrefly on the Python files, typos, file hygiene, shell and workflow lint, as in CI
 $ make deny    # advisories, licenses, sources
@@ -107,6 +108,16 @@ as one left after a rename, fails the target, because its override then does
 nothing. Write a leaf as `test(=name)` or as a substring of the name: the check
 does not read a regex, `~` or `#` leaf, so it fails those too.
 
+`make form-matrix` runs the form matrix, `crates/sisuc/tests/form_matrix.rs`. It
+puts each value of `form_matrix.txt` (a small expression) in each context (a
+place where an expression can go). Then it runs `sisu check` on each of the
+40,000 programs. `make test` leaves it out, because each of its 16 parts takes
+about 90 s. CI runs it on each pull request, in the `Test` job. Run it after a
+change to the front end (`parser.rs`, `lexer/`, `check/`, `diagnostic/` or
+`front_end.rs`) or to the form matrix files (`form_matrix.rs` and
+`form_matrix.txt`). The filter check of `make test` accepts that the form matrix
+is left out, and no other test.
+
 `make test-health` prints the counts and times of your last `make test`: the
 test count, the time of each test binary, the ten slowest tests and the number
 of tests over budget. CI shows it in the job summary. A milestone pull request
@@ -136,7 +147,8 @@ On macOS, it runs a `--rc-checks` build.
 Each native, ASan and `--rc-checks` run must exit 0 and print `<name>.out` on stdout, and `<name>.err` or nothing on stderr.
 The Valgrind run must exit 0 and print `<name>.out` on stdout. On ARM64 it does not compare stdout. It never checks stderr.
 `make test` does not run the memory tests: the `default-filter` of the default and `ci` profiles in
-`.config/nextest.toml` leaves them out, and `scripts/nextest_filters.py` fails when it leaves out any other test.
+`.config/nextest.toml` leaves them out. The default profile also leaves out the form matrix.
+`scripts/nextest_filters.py` fails when the default filter leaves out any other test.
 `make memory-safety` runs them with the `memory` profile.
 A command-line filter is intersected with the default filter, so to run one memory test, add `--profile memory` (or `--ignore-default-filter`), for example `cargo nextest run --profile memory -E 'test(memory::<name>.sisu)'`.
 Run it after a change to code generation, drops, the runtime or the harness, before a pull request.
@@ -410,7 +422,7 @@ and stops. `LOG=<file>` writes the whole output to that file, opened only once
 the run holds the lock. Use it instead of a shell redirect, which would empty a
 running log before the second run could refuse.
 
-`make test`, `make memory-safety`, `make coverage`, `make mutation-test` and `make miri` also hold
+`make test`, `make form-matrix`, `make memory-safety`, `make coverage`, `make mutation-test` and `make miri` also hold
 one lock for all the worktrees of the clone. The lock is a file in the clone's
 `.git` (`scripts/heavy-run.sh`). Two such runs at the same time link hundreds
 of programs at once, and then the disk stops for every other process. So a

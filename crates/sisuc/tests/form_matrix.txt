@@ -1,11 +1,11 @@
-# The neighbouring forms of the checker's special cases: each spelling of a value that the
-# checker treats in its own way, and each position that a join or an expected type gives it.
+# The form matrix: each spelling of a value that the checker treats in its own way, in each
+# position that a join or an expected type gives it.
 #
 # A fix brief and a review take their "fix the class" list from here: list each value in each
-# context, and probe each pair. When a review finds a neighbour that this file does not name, add
+# context, and probe each pair. When a review finds a form that this file does not name, add
 # it here, so that the next list has it.
 #
-# `tests/neighbours.rs` puts each value of `[values]` into the `$` of each line of `[contexts]`.
+# `tests/form_matrix.rs` puts each value of `[values]` into the `$` of each line of `[contexts]`.
 # It writes the statement into the two `{stmt}` places of `[template]` (`main` and a generic
 # function), and runs `sisu check` on each program.
 #
@@ -21,7 +21,7 @@
 #
 # A line that starts with `#` is a comment. Each value and each context is one line.
 #
-# The path of the file is one more neighbour: the renderer repairs the header of a cut line, and
+# The path of the file is one more form: the renderer repairs the header of a cut line, and
 # the path can hold text that looks like a header. No value or context writes the path, so the unit
 # test `a_header_whose_path_holds_a_line_break_should_give_the_true_column` in
 # `crates/sisuc/src/diagnostic/render.rs` holds its three forms: a path that holds a line break

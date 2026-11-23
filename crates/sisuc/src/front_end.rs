@@ -325,7 +325,7 @@ fn badness(syntax: &Result<Vec<Diagnostic>, Diagnostic>) -> (bool, usize) {
 /// carriers' code, but not where a carrier was. A fix that two diagnostics carry is applied once.
 ///
 /// The caller runs it on a thread with a stack of `STACK_SIZE`, as `front_end` needs. The
-/// fixture test of `diagnostic::explanations` and `tests/neighbours.rs` call it.
+/// fixture test of `diagnostic::explanations` and `tests/form_matrix.rs` call it.
 pub fn safe_fix_breaches(source: &str) -> Vec<String> {
     let codes = |ds: &[Diagnostic]| ds.iter().map(Diagnostic::code).collect::<Vec<_>>();
     let diagnostics = front_end(source).1;

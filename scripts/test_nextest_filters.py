@@ -246,12 +246,20 @@ class NextestFilters(unittest.TestCase):
     def test_default_filter_should_skip_no_whole_binary(self) -> None:
         suites: dict[str, dict[str, Any]] = {
             "sisuc::cases": {"status": "listed", "testcases": {}},
-            "sisuc::neighbours": {"status": "skipped-default-filter", "testcases": {}},
+            "sisuc::reference": {"status": "skipped-default-filter", "testcases": {}},
             "sisuc::programs": {"status": "skipped", "testcases": {}},
         }
         found = problems("", suites)
         self.assertEqual(len(found), 1)
-        self.assertIn("sisuc::neighbours", found[0])
+        self.assertIn("sisuc::reference", found[0])
+
+    def test_default_filter_should_leave_out_the_form_matrix_and_no_other_binary(self) -> None:
+        left_out: dict[str, Any] = {"status": "skipped-default-filter", "testcases": {}}
+        listed: dict[str, dict[str, Any]] = {"sisuc::cases": {"status": "listed", "testcases": {}}}
+        self.assertEqual(problems("", {**listed, "sisuc::form_matrix": left_out}), [])
+        found = problems("", {**listed, "sisuc::form_matrix": left_out, "sisuc::other": left_out})
+        self.assertEqual(len(found), 1)
+        self.assertIn("sisuc::other", found[0])
 
     def test_a_bad_leaf_should_fail_the_run_and_print_its_line(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
