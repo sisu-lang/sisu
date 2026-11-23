@@ -339,6 +339,16 @@ mod tests {
             "struct Pile {\n    n: i64\n    fn show(mut self) { print(self.n) }\n}\nfn main() {\n    let pile = Pile(n: 0)\n    pile.show()\n}\n",
             "fn g(s: i64?) -> i64 {\n    match s {\n        Some(_) => 1..   }\n}\n\nfn main() {\n    print(\"{g(None)}\")\n}\n",
             "fn g(s: i64?) -> i64 {\n    match s {\n        Some(_) => 1..=   }\n}\n\nfn main() {\n    print(\"{g(None)}\")\n}\n",
+            "enum // c\nclass Tray<T> {\n    item: T\n\npub  -> C2 {\n}\n}\n",
+            "enum\nclass Tray {\n    x: i64\n    pub -> C2 {}\n}\nfn main() {}\n",
+            "// G\nstruct Point {\n    x: i6,\n    y: i \n    fn move_by( self, ad_l \"\").len()\n}\nfn f(mut p: Point) {\n    p.move_by(1, 1)\n}\n\nfn local() {d()\n}\n",
+            "enum E {\n    A,\n    B\n    fn bump(mut self, x \"\") {}\n}\nfn f(mut e: E) {\n    e.bump(1)\n}\nfn main() {}\n",
+            "struct S {\n    x: i64, fn f(self, @) {}\n}\nfn g(mut s: S) {\n    s.f()\n}\nfn main() {}\n",
+            "class C { x: i64,; y: i64 }\nfn main() {}\n",
+            "enum E { A,; B }\nfn main() {}\n",
+            "fn main() { match 1 { 0 => print(1),; _ => print(2) } }\n",
+            "struct S {\n    x: i64, ;\n    y: i64\n}\nfn main() {}\n",
+            "struct S {\n    mut @ x: i64\n}\nfn main() {}\n",
         ];
         let failures: Vec<String> = crate::on_compiler_stack(|| {
             rows.iter()

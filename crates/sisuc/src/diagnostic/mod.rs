@@ -68,6 +68,14 @@ const _: () = assert!(
     "a Diagnostic of 128 bytes or more makes clippy::result_large_err fire"
 );
 
+/// What `sound_fixes` decides for one fix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FixVerdict {
+    Drop,
+    Keep,
+    Demote,
+}
+
 /// An edit to the source, with a message, that resolves a diagnostic.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Fix {
@@ -164,6 +172,18 @@ impl Diagnostic {
     /// Keeps only the fixes that `keep` accepts.
     pub(crate) fn retain_fixes(&mut self, keep: impl FnMut(&Fix) -> bool) {
         self.fixes.retain(keep);
+    }
+
+    /// Keeps each fix that `judge` does not drop, and marks it unsafe when `judge` demotes it.
+    pub(crate) fn judge_fixes(&mut self, mut judge: impl FnMut(&Fix) -> FixVerdict) {
+        self.fixes.retain_mut(|fix| match judge(fix) {
+            FixVerdict::Drop => false,
+            FixVerdict::Keep => true,
+            FixVerdict::Demote => {
+                fix.safe = false;
+                true
+            }
+        });
     }
 
     /// Marks unsafe each fix that `risky` accepts.

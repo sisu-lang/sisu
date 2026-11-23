@@ -4,7 +4,7 @@
 // AND a range with one bound or none that is no bare `..` in a sub-pattern: `..=`, `..n` and `..` in an arm
 // WHEN `sisu check` runs on it
 // THEN it reports E0011 "expected a pattern" at 12:16, 19:18, 26:13, 33:13, 40:18, 46:17 and 50:16
-// AND it reports E0011 "expected a pattern" at 76:16, 83:18 and 90:13, as for a bare `..`
+// AND it reports E0011 "expected a pattern, found `...`" over 3 bytes at 76:16, 83:18 and 90:13
 // AND it reports E0011 "a range pattern needs a start and an end" at 55:16, 62:16 and 69:9
 // AND the help of the last three is `start..=end`, `start..n` and `start..end`
 fn rest_after_a_field(e: E) {

@@ -679,9 +679,9 @@ fn failed_struct_write_should_keep_its_root_reassigned() {
         };
         format!("{decls}fn main() {{\n    let mut {init}\n    {body}\n}}")
     };
-    let comma = "struct T { n: i64; xs: [i64],}\nfn f(mut a: i64) {\n    a += 1\n}\n";
+    let broken = "struct T { n: i64; xs: }\nfn f(mut a: i64) {\n    a += 1\n}\n";
     let poisoned = |body: &str| {
-        format!("{comma}fn main() {{\n    let mut t = T(n: 1, xs: [1])\n    {body}\n}}")
+        format!("{broken}fn main() {{\n    let mut t = T(n: 1, xs: [1])\n    {body}\n}}")
     };
     let slice = |body: &str| {
         format!(
@@ -702,21 +702,21 @@ fn failed_struct_write_should_keep_its_root_reassigned() {
             made("while t.n < 3 {\n        t.m = 2\n    }"),
             vec![NoMember],
         ),
-        ("comma t.n = 2", poisoned("t.n = 2"), vec![Code::FieldComma]),
+        ("broken t.n = 2", poisoned("t.n = 2"), vec![Expected]),
         (
-            "comma t.xs[0] = 2",
+            "broken t.xs[0] = 2",
             poisoned("t.xs[0] = 2"),
-            vec![Code::FieldComma],
+            vec![Expected],
         ),
         (
-            "comma t.n.push(2)",
+            "broken t.n.push(2)",
             poisoned("t.n.push(2)"),
-            vec![Code::FieldComma],
+            vec![Expected],
         ),
         (
-            "comma mut parameter",
-            format!("{comma}fn g(mut t: T) {{\n    t.n = 2\n}}\nfn main() {{}}"),
-            vec![Code::FieldComma],
+            "broken mut parameter",
+            format!("{broken}fn g(mut t: T) {{\n    t.n = 2\n}}\nfn main() {{}}"),
+            vec![Expected],
         ),
         (
             "untyped root",
