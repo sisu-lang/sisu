@@ -10,6 +10,13 @@ that rewords many diagnostics on purpose. With `--primary`, only the code, sever
 position and count count, for a change that adds or moves secondary labels on purpose. `--full` is
 the default, and is still accepted.
 
+Under each program that is `changed`, `newly accepted` or `newly rejected`, the script prints one
+line for each primary position that both builds report. `code changed at L:C: A -> B` means the
+position is the same and the code differs. `text changed at L:C: A` means the position and the code
+are the same and the message differs; `--codes` and `--primary` do not compare text, so they print
+no such line. Diagnostics at one position pair in order. A report that moved gets no line, so it is
+not mistaken for a changed code or message.
+
 With `--apply`, the script looks at each safe fix that only one build gives on a changed program.
 It applies the fix alone, and the build that gave it checks the result again. Under the
 program, the script prints `lost clean fix` or `lost fix` for a fix of the base, and `new fix` or
@@ -98,6 +105,23 @@ def show(ds: list[Diagnostic]) -> str:
         )
         or "none"
     )
+
+
+def change_lines(base: list[Diagnostic], head: list[Diagnostic]) -> list[str]:
+    """Return a line for each position of both builds where the code or the message differs.
+
+    The diagnostics of one position pair in order. The message is compared only when both builds
+    have text (`full`).
+    """
+    lines = []
+    for line, col in dict.fromkeys(d[2:4] for d in base):
+        here = [[d for d in ds if d[2:4] == (line, col)] for ds in (base, head)]
+        for b, h in zip(*here, strict=False):
+            if b[0] != h[0]:
+                lines.append(f"  code changed at {line}:{col}: {b[0]} -> {h[0]}")
+            elif b[5] and h[5] and json.loads(b[5])["message"] != json.loads(h[5])["message"]:
+                lines.append(f"  text changed at {line}:{col}: {b[0]}")
+    return lines
 
 
 def reports(sisu: str, args: list[str]) -> list[dict[str, Any]] | None:
@@ -215,8 +239,10 @@ def main(  # noqa: PLR0913  the builds, the directories and one keyword for each
         if k := kind(base, head):
             counts[k] = counts.get(k, 0) + 1
             print(f"{k}: {path}\n  base: {show(base)}\n  head: {show(head)}")
-            if apply and k != "crash":
-                for line in fix_lines(base_sisu, head_sisu, path):
+            if k != "crash":
+                for line in change_lines(base, head):
+                    print(line)
+                for line in fix_lines(base_sisu, head_sisu, path) if apply else []:
                     print(line)
     tally = ", ".join(f"{n} {k}" for k, n in sorted(counts.items())) or "no differences"
     print(f"diag_diff: {len(paths)} programs, {tally}")
