@@ -116,7 +116,8 @@ def wording(text: str) -> dict[str, Any]:
     """Return the JSON of a diagnostic's `text` without its positions, but with every label."""
     d = json.loads(text)
     d["secondary"] = [
-        {k: v for k, v in s.items() if k not in ("line", "column")} for s in d["secondary"]
+        {k: v for k, v in s.items() if k not in ("line", "column", "start", "end")}
+        for s in d["secondary"]
     ]
     return d
 

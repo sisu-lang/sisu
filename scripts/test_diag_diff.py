@@ -167,10 +167,13 @@ class DiagDiff(unittest.TestCase):
         WHEN diag_diff runs
         THEN it prints the base and head lines only
         """
-        message = E0032.replace("}]}", '}],"message":"m"}')
+        # A secondary label of `sisu check --format json` also gives its byte offsets.
+        message = E0032.replace('"column":9}', '"column":9,"start":20,"end":23}').replace(
+            "}]}", '}],"message":"m"}'
+        )
         for moved in (
             message.replace('"column":5', '"column":6'),
-            message.replace('"column":9', '"column":10'),
+            message.replace('"column":9,"start":20,"end":23', '"column":10,"start":21,"end":24'),
         ):
             self.assertEqual(len(self.diff_lines(message, moved)), 2)
 
