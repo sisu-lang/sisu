@@ -14,22 +14,30 @@ struct Cell<T>: K<T> {
 }
 
 fn f<T: K<U>, U>(mut t: T, u: U) -> U {
+    t = t
     t.put(u)
 }
 
 fn g<U, T: K<U>>(mut u: U, mut t: T) -> U {
+    u = u
+    t = t
     t.put(u)
 }
 
 fn h<T: K<[U]>, U>(mut t: T, u: U) -> U {
+    t = t
     u
 }
 
 fn k<U, T: K<[U]>>(mut u: U, mut t: T) -> U {
+    u = u
+    t = t
     u
 }
 
 fn f2<U: K<i64>, T: K<U>>(mut u: U, mut t: T) -> i64 {
+    u = u
+    t = t
     1
 }
 

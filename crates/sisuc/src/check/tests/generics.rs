@@ -10357,8 +10357,8 @@ fn tree(depth: usize, leaf: &str) -> String {
     format!("P<{below}, {below}>")
 }
 
-/// A type of seven levels has 128 paths to 8 types. A walk over it makes more than `MEMO_AFTER`
-/// visits, so it keeps its answers.
+/// A type of ten levels has 1024 paths to 11 types. `MEMO_AFTER` is 64, so a walk over it makes 16
+/// times more visits than the smallest walk that keeps its answers.
 #[test]
 fn generic_calls_over_deep_types_should_check_clean() {
     with_prelude();
@@ -10385,8 +10385,8 @@ fn main() {
     print(r == None)
 }
 "#
-    .replace("CLOSED", &tree(7, "[i64]"))
-    .replace("OPEN", &tree(7, "[T]"));
+    .replace("CLOSED", &tree(10, "[i64]"))
+    .replace("OPEN", &tree(10, "[T]"));
     let bound = r#"
 struct P<A, B> {
     a: A
@@ -10421,19 +10421,20 @@ fn main() {
     print(bb(mut n, mut c))
 }
 "#
-    .replace("CLOSED", &tree(7, "[i64]"))
-    .replace("OPEN", &tree(7, "[U]"));
+    .replace("CLOSED", &tree(10, "[i64]"))
+    .replace("OPEN", &tree(10, "[U]"));
     clean_row("a mut place of a deep type", &places);
     clean_row("a bound with a deep type", &bound);
 }
 
-/// `big` has 66 places, and a mask holds 64. `many` has 40 optional places, and `t` has a deep
-/// type. Each call is in a block. Only `f()` has no type for its parameter.
+/// `big` has 640 places, and a mask holds 64, so 10 times more. `many` has 400 optional places.
+/// `t` has a type of ten levels with 1024 paths, 16 times `MEMO_AFTER`. Each call is in a block.
+/// Only `f()` has no type for its parameter.
 #[test]
-fn generic_calls_in_blocks_with_many_arguments_should_rank_each_block() {
+fn calls_with_many_arguments_in_blocks_should_leave_only_the_untyped_call_as_an_error() {
     with_prelude();
-    let params: Vec<String> = (0..66).map(|i| format!("a{i}: T")).collect();
-    let optionals: Vec<String> = (0..40).map(|i| format!("b{i}: [T?]")).collect();
+    let params: Vec<String> = (0..640).map(|i| format!("a{i}: T")).collect();
+    let optionals: Vec<String> = (0..400).map(|i| format!("b{i}: [T?]")).collect();
     let src = r#"
 struct P<A, B> {
     a: A
@@ -10472,12 +10473,12 @@ fn main() {
     print(a)
 }
 "#
-    .replace("CLOSED", &tree(7, "[i64]"))
-    .replace("OPEN", &tree(7, "[U]"))
+    .replace("CLOSED", &tree(10, "[i64]"))
+    .replace("OPEN", &tree(10, "[U]"))
     .replace("PARAMS_BIG", &params.join(", "))
     .replace("PARAMS_MANY", &optionals.join(", "))
-    .replace("ARGS_BIG", &["1"; 66].join(", "))
-    .replace("ARGS_MANY", &["[None]"; 40].join(", "));
+    .replace("ARGS_BIG", &["1"; 640].join(", "))
+    .replace("ARGS_MANY", &["[None]"; 400].join(", "));
     let at = line_col(&src, src.find("f() }").expect("the program holds the call"));
     codes(&src, &[(Code::CannotInfer, at)]);
 }
@@ -10566,12 +10567,11 @@ struct Two<A, B> {
     b: B
 }
 fn id<T>(x: T) -> T { x }
-fn f<A, B>(t: Two<A, B>, a: A) -> B { t.b }
 fn f2<A, B>(t: Two<A, B>) -> A { t.a }
 fn main() {
     let c = [1].len() == 1
     let x = f2(Two(a: id([if c { 1 } else { 2 }]), b: 1))
-    print(c)
+    print(x.len())
 }
 ",
         ),
@@ -10620,34 +10620,14 @@ fn main() {
         ),
         (
             "an optional argument in an array",
-            r#"
-struct Two<A, B> {
-    a: A
-    b: B
-}
-interface Holds<X> {
-    fn get(self) -> X
-}
-struct H: Holds<H> {
-    v: i64
-    fn get(self) -> H { self }
-}
-struct Box<T> {
-    v: T
-    fn mk<U>(self, u: U) -> Two<T, U> { Two(a: self.v, b: u) }
-}
-fn kk<T, U: Holds<T>>(a: T, b: U) -> T { a }
-fn k4<T: Ord, U>(a: [T], b: U) -> U { b }
-fn k5<T: Ord, U>(a: T?, b: U) -> U { b }
+            r"
 fn k6<T: Ord, U>(a: T, b: U) -> U { b }
 fn main() {
-    let bx = Box(v: "s")
-    let h = H(v: 1)
     let u: u8 = 3
     let x = [k6(1, None), Some(u)]
-    print(u)
+    print(x.len())
 }
-"#,
+",
         ),
     ] {
         clean_row(row, src);

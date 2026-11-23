@@ -1,5 +1,6 @@
-// An argument of a generic call that has no value is E0043: a block that ends in a `let`, and an
-// `if` whose branches never finish. The call does not hide the error.
+// A `unit` has no value to compare or to pass on. A block that ends in a `let` is a valid `unit`
+// value. `id({ let y = 2 }) == 1` compares it, and that is E0043 at the call. The same block as an
+// operand of `==` is E0043. An `if` whose branches never finish is E0043 as an argument.
 struct P<A, B> {
     a: A
     b: B

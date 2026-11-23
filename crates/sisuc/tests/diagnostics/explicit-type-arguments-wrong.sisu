@@ -1,7 +1,7 @@
 // A call with written type arguments gets only the errors of its count and of its types. The
 // wrong number of arguments is E0053, and the wrong number of types is E0137. A type that does
-// not exist is E0030. A written type that breaks a bound is not reported again. An alias of a
-// missing type does not hide the error of its use.
+// not exist is E0030. When the count is wrong, the bounds are not reported: `k<S, i64>(S())` gives
+// E0053 only. `Bad.m(1)` gives no error of its own, because the alias `Bad` is poisoned.
 interface Conv<U> {
     fn conv(self) -> U
 }

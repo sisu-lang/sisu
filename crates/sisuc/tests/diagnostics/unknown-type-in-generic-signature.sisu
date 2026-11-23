@@ -41,8 +41,14 @@ fn f<T: Ia>(a: T, _b: Nope) -> T { a }
 fn g<T: Ia>(a: T) -> Nope { 1 }
 fn f2<T: Ia, U>(a: T, _b: U?, _c: Nope) -> U? { None }
 fn g2<T: Ia, U>(a: T, _b: U?) -> Nope { 1 }
-fn sg<T>(mut a: T, b: T) -> Nope { 1 }
-fn keep<T>(mut a: [T]) -> [T] { a }
+fn sg<T>(mut a: T, b: T) -> Nope {
+    a = a
+    1
+}
+fn keep<T>(mut a: [T]) -> [T] {
+    a = a
+    a
+}
 
 fn main() {
     let a = f(5, 1)

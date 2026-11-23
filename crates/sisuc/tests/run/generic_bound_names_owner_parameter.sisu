@@ -33,7 +33,7 @@ fn f<T: K<U>, U>(t: T, mut u: U) -> i64 {
 
 fn main() {
     let s = S(v: B(n: 1))
-    print(s.m(A(n: 2)))
+    print(s.m(A(n: 2)))      // 1
     let mut b = B(n: 3)
-    print(f(A(n: 1), mut b))
+    print(f(A(n: 1), mut b)) // 1
 }

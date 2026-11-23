@@ -1,6 +1,6 @@
 // The result of a generic call with an open type parameter is checked against the type of its
-// place. A closed part that differs is E0032. The type of the call shows its open parameters as
-// `_`, and the type of the place keeps its names.
+// place. A closed part that differs is E0032. In `s_same` and `e_same`, `X` is the type parameter
+// of the caller. A `_` shows only where no part was taken, as `Other` against `Two` in `s_other`.
 struct Two<A, B> {
     a: A
     b: B

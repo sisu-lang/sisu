@@ -9,5 +9,5 @@ fn id<T>(x: T) -> T { x }
 
 fn main() {
     let a = id<never>(never(n: 3))
-    print(a.n)
+    print(a.n) // 3
 }

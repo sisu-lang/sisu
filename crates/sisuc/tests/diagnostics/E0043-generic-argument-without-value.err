@@ -1,30 +1,30 @@
 error[E0043]: `id` returns `unit`
-  --> E0043-generic-argument-without-value.sisu:18:13
+  --> E0043-generic-argument-without-value.sisu:19:13
    |
-18 |     let a = id({ let y = 2 }) == 1
+19 |     let a = id({ let y = 2 }) == 1
    |             ^^^^^^^^^^^^^^^^^
    |
-  ::: E0043-generic-argument-without-value.sisu:8:19
+  ::: E0043-generic-argument-without-value.sisu:9:19
    |
- 8 | fn id<T>(x: T) -> T {
+ 9 | fn id<T>(x: T) -> T {
    |                   - `id` declares `-> T`
 
 error[E0043]: expression has no value
-  --> E0043-generic-argument-without-value.sisu:19:13
+  --> E0043-generic-argument-without-value.sisu:20:13
    |
-19 |     let b = { let z = 3 } == id(1)
+20 |     let b = { let z = 3 } == id(1)
    |             ^^^^^^^^^^^^^
 
 error[E0043]: expression has no value
-  --> E0043-generic-argument-without-value.sisu:20:24
+  --> E0043-generic-argument-without-value.sisu:21:24
    |
-20 |     let z: i64? = h(c, if c { todo("a") } else { panic("b") })
+21 |     let z: i64? = h(c, if c { todo("a") } else { panic("b") })
    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ never finishes
 
 warning[W0003]: `todo` panics when it runs
-  --> E0043-generic-argument-without-value.sisu:20:31
+  --> E0043-generic-argument-without-value.sisu:21:31
    |
-20 |     let z: i64? = h(c, if c { todo("a") } else { panic("b") })
+21 |     let z: i64? = h(c, if c { todo("a") } else { panic("b") })
    |                               ^^^^
 
 sisu: 3 errors, 1 warning

@@ -32,5 +32,5 @@ fn take<S: Source, U>(t: Tri<S, U, S.Item>) -> S.Item {
 
 fn main() {
     let a = take(Mk().tri(1))
-    print(a)
+    print(a) // 1
 }

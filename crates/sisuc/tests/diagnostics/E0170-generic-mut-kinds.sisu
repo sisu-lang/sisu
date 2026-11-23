@@ -38,18 +38,22 @@ struct Box1: Source<i64>, Other<i64> {
 }
 
 fn fs<T>(mut x: S1<T>) -> T {
+    x = x
     x.v
 }
 
 fn fe<T>(mut x: E1<T>) -> i64 {
+    x = x
     1
 }
 
 fn fa<T>(mut x: any Source<T>) -> T {
+    x = x
     x.get()
 }
 
 fn fo<T>(mut x: T??) -> i64 {
+    x = x
     1
 }
 
