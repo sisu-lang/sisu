@@ -649,8 +649,8 @@ struct Parser<'a> {
     comments: &'a [usize],
     /// Where each line break is.
     breaks: &'a [usize],
-    /// The error of each bad format spec and each range written with `:` so far that no broken
-    /// item took. The parser went on, so no other error follows them.
+    /// Recovered errors (format specs, `:` ranges, `E0015`, `E0122`, and `E0175`) that no broken
+    /// item took. When a lexer error breaks an item, `resolve_broken` keeps those before it.
     recovered: Vec<Diagnostic>,
     /// Whether the parser reads the head of a `for`, `if`, `while` or `match`, outside any
     /// bracket or block in it. There, a `{` after `..` opens the body, not the end of the range.
@@ -1586,16 +1586,11 @@ impl<'a> Parser<'a> {
         fatal: Diagnostic,
         lexed_start: Option<usize>,
     ) -> Diagnostic {
-        if lexed_start.is_some_and(|start| start <= fatal.span().start()) {
+        if lexed_start == Some(fatal.span().start()) {
             let limit = fatal.span().start();
-            let mut keep = recovered;
-            for i in recovered..self.recovered.len() {
-                if self.recovered[i].span().start() < limit {
-                    self.recovered.swap(keep, i);
-                    keep += 1;
-                }
-            }
-            self.recovered.truncate(keep);
+            let tail = self.recovered.split_off(recovered);
+            self.recovered
+                .extend(tail.into_iter().filter(|d| d.span().start() < limit));
             fatal
         } else {
             self.recovered.drain(recovered..).fold(fatal, earlier)
@@ -1685,11 +1680,14 @@ impl<'a> Parser<'a> {
         mut line: impl FnMut(&mut Self, usize) -> Result<(), Diagnostic>,
     ) -> Result<Vec<Ident>, Diagnostic> {
         let mut broken_methods = Vec::new();
+        let mut end = 0usize;
         self.skip_newlines();
         while !self.at(&TokenKind::RBrace) {
             self.depth = Height::default();
             let start = self.pos;
-            let end = self.item_end(start);
+            if self.pos >= end || self.at(&TokenKind::Fn) {
+                end = self.item_end(start);
+            }
             if let Err(error) = line(self, end) {
                 let Some(Broken {
                     name,
@@ -1833,14 +1831,18 @@ impl<'a> Parser<'a> {
     fn member_line(&mut self, owner: &Owner) -> Result<Member, Diagnostic> {
         let member = self.member(owner)?;
         if matches!(member, Member::Field(_)) && self.at(&TokenKind::Comma) {
-            self.recovered
-                .push(self.member_comma(diagnostic::Member::Field));
-            self.bump();
-            self.eat(&TokenKind::Semicolon);
+            self.recover_comma(diagnostic::Member::Field);
             return Ok(member);
         }
         self.line_end()?;
         Ok(member)
+    }
+
+    /// Records `E0015` for the comma at the next token and consumes it with any trailing `;`.
+    fn recover_comma(&mut self, member: diagnostic::Member) {
+        self.recovered.push(self.member_comma(member));
+        self.bump();
+        self.eat(&TokenKind::Semicolon);
     }
 
     /// The error for the comma at the next token, which ends a `member`. Its fix deletes a comma
@@ -2008,10 +2010,7 @@ impl<'a> Parser<'a> {
                 .into());
             }
             if self.at(&TokenKind::Comma) {
-                self.recovered
-                    .push(self.member_comma(diagnostic::Member::Variant));
-                self.bump();
-                self.eat(&TokenKind::Semicolon);
+                self.recover_comma(diagnostic::Member::Variant);
                 return Ok(EnumMember::Variant(variant));
             }
             EnumMember::Variant(variant)
@@ -3819,7 +3818,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// `case`, `default:` or `else =>` where an arm starts.
+    /// Reports `case`, `default:`, or `else =>` where an arm starts. When a lexer error precedes
+    /// the `case` subject, this method pushes `E0122` to `self.recovered` and moves `self.pos`
+    /// to that subject.
     fn arm_idiom(&mut self) -> Option<Diagnostic> {
         let token = self.peek();
         if !matches!(token.kind, TokenKind::Ident(_) | TokenKind::Else) {
@@ -3910,10 +3911,7 @@ impl<'a> Parser<'a> {
         while !self.at(&TokenKind::RBrace) {
             arms.push(self.child(base, &mut reach, Self::arm)?);
             if self.at(&TokenKind::Comma) {
-                self.recovered
-                    .push(self.member_comma(diagnostic::Member::Arm));
-                self.bump();
-                self.eat(&TokenKind::Semicolon);
+                self.recover_comma(diagnostic::Member::Arm);
                 self.skip_newlines();
                 continue;
             }
@@ -12008,11 +12006,39 @@ mod tests {
         }
     }
 
+    type CodeAt = (Code, (usize, usize));
+    type FixAt = (usize, bool, String);
+    type DiagnosticFixRow<'a> = (&'a str, String, Vec<CodeAt>, Option<FixAt>);
+
+    fn assert_diagnostic_fix_table(rows: &[DiagnosticFixRow<'_>]) {
+        for (name, src, want_codes, want_fix) in rows {
+            let ds = parsed(src).diagnostics;
+            let got: Vec<_> = ds
+                .iter()
+                .map(|d| (d.code(), line_col(src, d.span().start())))
+                .collect();
+            assert_eq!(&got, want_codes, "row `{name}`");
+            match want_fix {
+                Some((idx, safe, want_after)) => {
+                    let edits = fix_edits(&ds[*idx]).expect("row should have fix");
+                    assert_eq!(edits.0, *safe, "row `{name}` fix safety");
+                    assert_eq!(
+                        apply_fix(src, &ds[*idx]),
+                        *want_after,
+                        "row `{name}` fix output"
+                    );
+                }
+                None => {
+                    assert!(
+                        ds.iter().all(|d| fix_edits(d).is_none()),
+                        "row `{name}` should have no fix"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "table covers 15 skipped-character recovery forms"
-    )]
     fn case_with_skipped_character_should_keep_character_and_report_both() {
         let wrap_arm = |arm_src: &str| {
             format!(
@@ -12073,11 +12099,18 @@ mod tests {
                 )),
             ),
             (
-                "case @ binding",
+                "case @ binding, unchanged",
                 wrap_arm("case @ => print(1)"),
                 vec![(Code::UnexpectedCharacter, (7, 14))],
                 None,
             ),
+        ];
+        assert_diagnostic_fix_table(&rows);
+    }
+
+    #[test]
+    fn removal_end_should_stop_before_a_lexer_error() {
+        let rows = [
             (
                 "enum class @ E",
                 "enum class @ E {\n    A\n}".to_string(),
@@ -12087,7 +12120,10 @@ mod tests {
             (
                 "struct mut @ x",
                 "struct S {\n    mut @ x: i64\n}".to_string(),
-                vec![(Code::StructFieldMut, (2, 5)), (Code::UnexpectedCharacter, (2, 9))],
+                vec![
+                    (Code::StructFieldMut, (2, 5)),
+                    (Code::UnexpectedCharacter, (2, 9)),
+                ],
                 Some((0, true, "struct S {\n    @ x: i64\n}".to_string())),
             ),
             (
@@ -12096,10 +12132,20 @@ mod tests {
                 vec![(Code::MutSelf, (2, 10))],
                 Some((0, true, "class C {\n    fn f(@ self) {}\n}".to_string())),
             ),
+        ];
+        assert_diagnostic_fix_table(&rows);
+    }
+
+    #[test]
+    fn checked_should_keep_recovered_errors_only_before_a_lexer_error() {
+        let rows = [
             (
                 "slice colon before lexer error",
                 "fn main() {\n    let a = [1]\n    let _ = a[1:]\n    $\n}".to_string(),
-                vec![(Code::ForeignRange, (3, 16)), (Code::UnexpectedCharacter, (4, 5))],
+                vec![
+                    (Code::ForeignRange, (3, 16)),
+                    (Code::UnexpectedCharacter, (4, 5)),
+                ],
                 Some((
                     0,
                     false,
@@ -12107,7 +12153,16 @@ mod tests {
                 )),
             ),
             (
-                "slice colon before parse error",
+                "format spec before lexer error",
+                "fn main() {\n    print(\"{x:+}\")\n    $\n}".to_string(),
+                vec![
+                    (Code::UnsupportedFormatSpec, (2, 14)),
+                    (Code::UnexpectedCharacter, (3, 5)),
+                ],
+                None,
+            ),
+            (
+                "slice colon before parse error, unchanged",
                 "fn main() {\n    let a = [1]\n    let _ = a[1:]\n    let = 2\n}".to_string(),
                 vec![(Code::ForeignRange, (3, 16))],
                 Some((
@@ -12117,37 +12172,25 @@ mod tests {
                 )),
             ),
             (
-                "lexer error before slice colon",
+                "format spec before parse error, unchanged",
+                "fn main() {\n    print(\"{x:+}\")\n    let = 2\n}".to_string(),
+                vec![(Code::UnsupportedFormatSpec, (2, 14))],
+                None,
+            ),
+            (
+                "lexer error before slice colon, unchanged",
                 "fn main() {\n    let a = [1]\n    $\n    let _ = a[1:]\n}".to_string(),
                 vec![(Code::UnexpectedCharacter, (3, 5))],
                 None,
             ),
+            (
+                "lexer error before format spec, unchanged",
+                "fn main() {\n    $\n    print(\"{x:+}\")\n}".to_string(),
+                vec![(Code::UnexpectedCharacter, (2, 5))],
+                None,
+            ),
         ];
-        for (name, src, want_codes, want_fix) in rows {
-            let ds = parsed(&src).diagnostics;
-            let got: Vec<_> = ds
-                .iter()
-                .map(|d| (d.code(), line_col(&src, d.span().start())))
-                .collect();
-            assert_eq!(got, want_codes, "row `{name}`");
-            match want_fix {
-                Some((idx, safe, want_after)) => {
-                    let edits = fix_edits(&ds[idx]).expect("row should have fix");
-                    assert_eq!(edits.0, safe, "row `{name}` fix safety");
-                    assert_eq!(
-                        apply_fix(&src, &ds[idx]),
-                        want_after,
-                        "row `{name}` fix output"
-                    );
-                }
-                None => {
-                    assert!(
-                        ds.iter().all(|d| fix_edits(d).is_none()),
-                        "row `{name}` should have no fix"
-                    );
-                }
-            }
-        }
+        assert_diagnostic_fix_table(&rows);
     }
 
     #[test]
@@ -12172,15 +12215,15 @@ mod tests {
                 wrap_arm("E.P(x, rest @ ..=) => print(x)"),
             ),
             (
-                "variant rest @ ..5",
+                "variant rest @ ..5, unchanged",
                 wrap_arm("E.P(x, rest @ ..5) => print(x)"),
             ),
             (
-                "variant rest @ ...",
+                "variant rest @ ..., unchanged",
                 wrap_arm("E.P(x, rest @ ...) => print(x)"),
             ),
             (
-                "variant rest @ ..<",
+                "variant rest @ ..<, unchanged",
                 wrap_arm("E.P(x, rest @ ..<) => print(x)"),
             ),
             (
@@ -12259,13 +12302,13 @@ mod tests {
                 "...",
             ),
             (
-                "rust rest ..",
+                "rust rest .., unchanged",
                 wrap_arm("E.P(x, ..) => print(x)"),
                 Code::Expected,
                 "..",
             ),
             (
-                "arm ellipsis",
+                "arm ellipsis, unchanged",
                 wrap_arm("... => print(1)"),
                 Code::ForeignRange,
                 "...",
@@ -12310,25 +12353,25 @@ mod tests {
                 None,
             ),
             (
-                "class comma semicolon",
+                "class comma semicolon, unchanged",
                 "class C { x: i64,; y: i64 }",
                 vec![(Code::FieldComma, (1, 17))],
                 Some((0, "class C { x: i64; y: i64 }")),
             ),
             (
-                "enum comma semicolon",
+                "enum comma semicolon, unchanged",
                 "enum E { A,; B }",
                 vec![(Code::FieldComma, (1, 11))],
                 Some((0, "enum E { A; B }")),
             ),
             (
-                "match arm comma semicolon",
+                "match arm comma semicolon, unchanged",
                 "fn main() { match 1 { 0 => print(1),; _ => print(2) } }",
                 vec![(Code::FieldComma, (1, 36))],
                 Some((0, "fn main() { match 1 { 0 => print(1); _ => print(2) } }")),
             ),
             (
-                "struct comma space semicolon",
+                "struct comma space semicolon, unchanged",
                 "struct S {\n    x: i64, ;\n    y: i64\n}",
                 vec![(Code::FieldComma, (2, 11))],
                 Some((0, "struct S {\n    x: i64 ;\n    y: i64\n}")),
@@ -12355,7 +12398,7 @@ mod tests {
                 None,
             ),
             (
-                "struct comma before parse error",
+                "struct comma before parse error, unchanged",
                 "struct S {\n    x: i64,\n    123\n}",
                 vec![(Code::FieldComma, (2, 11))],
                 Some((0, "struct S {\n    x: i64\n    123\n}")),
@@ -12373,6 +12416,19 @@ mod tests {
                 assert!(edits.0, "row `{name}` fix should be safe");
                 assert_eq!(apply_fix(src, &ds[idx]), want_after, "row `{name}`");
             }
+        }
+    }
+
+    #[test]
+    fn comma_recovery_should_keep_the_item_intact() {
+        for src in [
+            "class C { x: i64,; y: i64 }",
+            "enum E { A,; B }",
+            "fn main() { match 1 { 0 => print(1),; _ => print(2) } }",
+            "struct S { x: i64, fn f(self) { $ } }",
+            "struct S { x: i64, fn f(self, @) {} y: i64 }",
+        ] {
+            assert!(parsed(src).program.broken.is_empty(), "{src}");
         }
     }
 
