@@ -584,8 +584,8 @@ fn rust_files(root: &Path, dir: &Path, out: &mut Vec<String>) {
 }
 
 /// The files of `src/` outside `check/infer.rs` and `check/infer/` that name `TypeKind::Infer`,
-/// with how many lines name it. Three arms are left out, in `mono.rs` and `codegen/layout.rs`:
-/// each ends in `unreachable!`.
+/// with how many times they name it. A line whose arm ends in the `unreachable!` of `write_back`
+/// does not count.
 fn infer_matches() -> BTreeMap<String, usize> {
     const UNREACHABLE: &str = "the checker's write_back should leave no inference variable";
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -599,18 +599,16 @@ fn infer_matches() -> BTreeMap<String, usize> {
         let text = fs::read_to_string(root.join(&file))
             .unwrap_or_else(|e| panic!("{file} should be readable: {e}"));
         let lines: Vec<&str> = text.lines().collect();
-        let exempt = matches!(file.as_str(), "mono.rs" | "codegen/layout.rs");
-        let count = lines
+        let count: usize = lines
             .iter()
             .enumerate()
-            .filter(|(_, line)| line.contains("TypeKind::Infer"))
             .filter(|&(i, _)| {
-                !(exempt
-                    && lines
-                        .get(i + 1)
-                        .is_some_and(|next| next.contains(UNREACHABLE)))
+                !lines
+                    .get(i + 1)
+                    .is_some_and(|next| next.contains(UNREACHABLE))
             })
-            .count();
+            .map(|(_, line)| line.matches("TypeKind::Infer").count())
+            .sum();
         if count > 0 {
             found.insert(file, count);
         }
@@ -636,7 +634,7 @@ fn infer_matches_should_not_grow() {
         ("check/operator.rs", 6),
         ("check/tests/joins.rs", 1),
         ("conformance.rs", 4),
-        ("generate/coverage.rs", 6),
+        ("generate/coverage.rs", 1),
         ("payload_limit.rs", 1),
         ("tir.rs", 2),
         ("types.rs", 4),
@@ -657,6 +655,8 @@ fn infer_matches_should_not_grow() {
             wrong.push(format!(
                 "`{file}` has {now} `TypeKind::Infer`, the row says {allowed}: a body type is resolved in `resolve_local` or `close`, not matched here"
             ));
+        } else if now == 0 {
+            wrong.push(format!("`{file}` has no `TypeKind::Infer`: remove its row"));
         } else if now < allowed {
             wrong.push(format!(
                 "`{file}` has {now} `TypeKind::Infer`, the row says {allowed}: lower the row"

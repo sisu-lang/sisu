@@ -2123,10 +2123,7 @@ impl Checker<'_> {
     /// Whether the condition local `id` can be named by W0011: its type holds no poison, it is
     /// `self` or has a binding, and nothing wrote it after the write count `writes`.
     fn unchanged(&mut self, id: tir::LocalId, writes: u32) -> bool {
-        if self
-            .holds(self.resolve_local(self.body.locals[id.0].ty))
-            .poison
-        {
+        if self.holds(self.local_type(id)).poison {
             return false;
         }
         if id.0 == 0 && self.body.self_type != SelfType::Absent {

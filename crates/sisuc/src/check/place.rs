@@ -275,13 +275,6 @@ impl CheckedPlace {
         }
     }
 
-    /// Whether the `?.` of the place takes a class object out of its optional. `local_ty` is the
-    /// resolved type of a local of the body.
-    pub(super) fn guards_class(&self, local_ty: impl Fn(tir::LocalId) -> Type) -> bool {
-        (self.guard.as_ref())
-            .is_some_and(|guard| matches!(local_ty(guard.bind).kind(), TypeKind::Class(..)))
-    }
-
     /// The type of the place as a value: a `?.` of its root field makes it an optional.
     pub(super) fn value_ty(&self) -> Option<Type> {
         self.ty.map(|ty| {
@@ -295,6 +288,12 @@ impl CheckedPlace {
 }
 
 impl Checker<'_> {
+    /// Whether the `?.` of `place` takes a class object out of its optional.
+    pub(super) fn guards_class(&self, place: &CheckedPlace) -> bool {
+        (place.guard.as_ref())
+            .is_some_and(|guard| matches!(self.local_type(guard.bind).kind(), TypeKind::Class(..)))
+    }
+
     /// `target = value`; a root that cannot be written is reported, and `value` still checked.
     pub(super) fn assign(
         &mut self,
@@ -606,10 +605,7 @@ impl Checker<'_> {
             let reported = self.error(d);
             // A `?.` on a struct value held the report of its write, which is the only one.
             if let Some(guard) = &place.guard
-                && matches!(
-                    self.resolve_local(self.body.locals[guard.bind.0].ty).kind(),
-                    TypeKind::Struct(..)
-                )
+                && matches!(self.local_type(guard.bind).kind(), TypeKind::Struct(..))
             {
                 return Err(Poisoned::new(type_of(&read), reported));
             }
@@ -1321,10 +1317,7 @@ impl Checker<'_> {
                 Some(guard),
                 Some(TypeKind::Array(_)),
             ) if self.one_line(object.span)
-                && matches!(
-                    self.resolve_local(self.body.locals[guard.bind.0].ty).kind(),
-                    TypeKind::Class(..)
-                ) =>
+                && matches!(self.local_type(guard.bind).kind(), TypeKind::Class(..)) =>
             {
                 UnwrapHelp::Object(self.source.text(object.span).to_string())
             }
@@ -1359,9 +1352,7 @@ impl Checker<'_> {
                         if change == Change::Push
                             && inner.held.is_some()
                             && inner.guard.is_some()
-                            && !inner.guards_class(|id| {
-                                self.resolve_local(self.body.locals[id.0].ty)
-                            })
+                            && !self.guards_class(&inner)
                             && (matches!(payload(e).kind(), TypeKind::Array(_))
                                 || self.finds_mut_self(innermost(e), Symbol::intern("push"))) =>
                     {
@@ -1820,10 +1811,7 @@ impl Checker<'_> {
         else {
             return None;
         };
-        if !matches!(
-            self.resolve_local(self.body.locals[bind.0].ty).kind(),
-            TypeKind::Class(..)
-        ) {
+        if !matches!(self.local_type(*bind).kind(), TypeKind::Class(..)) {
             return None;
         }
         Some(match &base.kind {
@@ -2200,10 +2188,7 @@ impl Checker<'_> {
     /// The value `place` holds, read at `span`.
     pub(super) fn read(&self, place: tir::Place, span: Span) -> tir::Expr {
         let (kind, ty) = match place {
-            tir::Place::Local(id) => (
-                ExprKind::Local(id),
-                self.resolve_local(self.body.locals[id.0].ty),
-            ),
+            tir::Place::Local(id) => (ExprKind::Local(id), self.local_type(id)),
             tir::Place::Field { base, index } => {
                 let ty = self.field_type(base.ty, index).expect(
                     "a place whose type is known should not be a field whose type is `Error`",
