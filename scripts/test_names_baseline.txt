@@ -251,7 +251,6 @@ crates/sisuc/src/check/tests/mod.rs::failed_tail_of_an_optional_body_reports_onc
 crates/sisuc/src/check/tests/mod.rs::failed_value_reports_once
 crates/sisuc/src/check/tests/mod.rs::field_on_i64
 crates/sisuc/src/check/tests/mod.rs::for_variable_has_no_fix
-crates/sisuc/src/check/tests/mod.rs::functions_in_any_order
 crates/sisuc/src/check/tests/mod.rs::header_jump_leaves_target_untyped
 crates/sisuc/src/check/tests/mod.rs::if_let_needs_optional
 crates/sisuc/src/check/tests/mod.rs::if_let_scope

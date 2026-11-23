@@ -472,7 +472,7 @@ fn let_else_should_warn_only_for_a_call_in_its_value() {
     let src = |line: &str| {
         format!("fn f(o: i64?) -> i64? {{\n    {line}\n    Some(v)\n}}\nfn main() {{}}")
     };
-    assert!(diags(&src("let v = o else { return f(o) }")).is_empty());
+    assert_eq!(diags(&src("let v = o else { return f(o) }")), Vec::new());
     warns(
         &src("let v = f(o) else { return None }"),
         (1, 4, "f"),

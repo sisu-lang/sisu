@@ -36,6 +36,7 @@ pub(crate) enum Severity {
 
 /// One error or warning about the source. Only `diagnostic` and its modules build one.
 #[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) struct Diagnostic {
     /// Its severity is the code's.
     code: Code,
