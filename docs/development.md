@@ -63,7 +63,8 @@ $ make setup   # LLVM 23 into .llvm/23, the pre-commit and commit-msg hooks, car
 ```console
 $ make help    # every target
 $ make build   # sisu and the two runtime archives
-$ make test    # unit tests and end-to-end cases, but not the memory tests
+$ make test    # unit tests and end-to-end cases, but not the memory tests or the form matrix
+$ make form-matrix   # the form matrix: each form in each position (CI runs it too)
 $ make memory-safety   # the memory tests: ASan, Valgrind and --rc-checks on every run case
 $ make lint    # fmt, clippy (also with the fuzz feature), expect messages, unused dependencies, Ruff and Pyrefly on the Python files, typos, file hygiene, shell and workflow lint, as in CI
 $ make deny    # advisories, licenses, sources
@@ -106,6 +107,14 @@ After the tests pass, `make test` checks each `test(...)` leaf of a filter in
 as one left after a rename, fails the target, because its override then does
 nothing. Write a leaf as `test(=name)` or as a substring of the name: the check
 does not read a regex, `~` or `#` leaf, so it fails those too.
+
+`make form-matrix` runs the form matrix, `crates/sisuc/tests/form_matrix.rs`.
+It puts each value of `form_matrix.txt` (a small expression) in each context (a
+place where an expression can go). Then it runs `sisu check` on each of the
+40,000 programs. `make test` leaves it out, because each of its 16 parts takes
+about 90 s. CI runs it on each pull request, in the `Test` job. Run it after a
+change to `check/` or `diagnostic/`. The filter check of `make test` accepts
+that the form matrix is left out, and no other test.
 
 `make test-health` prints the counts and times of your last `make test`: the
 test count, the time of each test binary, the ten slowest tests and the number

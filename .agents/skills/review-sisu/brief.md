@@ -246,7 +246,7 @@ work under review.
   its repro on the target.
 - For each fix, try the neighbouring cases: the same rule in each
   position the language allows it, and each path the fix changed.
-  `crates/sisuc/tests/neighbours.txt` lists the known values and
+  `crates/sisuc/tests/form_matrix.txt` lists the known values and
   positions; report each one that it does not name. A regression that a
   fix adds blocks.
 - Compare with the base of the whole work, not with the base of this

@@ -1,12 +1,12 @@
-//! Each value of `neighbours.txt` in each of its contexts: the forms that the checker treats in
-//! their own way, in each position that a join or an expected type gives them. Most of the
-//! programs are wrong. So the test asks that `sisu check` ends with its own exit status, not with
-//! a crash. It also asks that each safe fix keeps the contract of `sisuc::safe_fix_breaches`.
+//! The form matrix: each value of `form_matrix.txt` (a small expression) in each of its contexts (a
+//! place where an expression can go). `sisu check` must end with its own exit status, not with a
+//! crash. Each safe fix must keep the contract of `sisuc::safe_fix_breaches`. Most of the programs
+//! are wrong. `make form-matrix` runs it, and CI too; `make test` does not.
 
 use std::path::Path;
 use std::process::Command;
 
-/// The sections of `neighbours.txt`: the template, with its two `{stmt}` places, and the function
+/// The sections of `form_matrix.txt`: the template, with its two `{stmt}` places, and the function
 /// whose bound failed, with its one. Then the values, the failed values and the contexts, one for
 /// each line that is not empty and not a comment.
 struct Forms {
@@ -18,7 +18,7 @@ struct Forms {
 }
 
 fn forms() -> Forms {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/neighbours.txt");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/form_matrix.txt");
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("{} should be readable: {e}", path.display()));
     let mut forms = Forms {
@@ -115,7 +115,7 @@ fn programs() -> Vec<(&'static str, String, String)> {
     programs
 }
 
-/// The part of the program at `index`. Not slices: the contexts of `neighbours.txt` are in groups,
+/// The part of the program at `index`. Not slices: the contexts of `form_matrix.txt` are in groups,
 /// so slices would give the parts unequal costs.
 fn part(index: usize) -> usize {
     index % PARTS
@@ -209,25 +209,25 @@ macro_rules! parts {
 }
 
 parts! {
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_00 => 0,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_01 => 1,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_02 => 2,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_03 => 3,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_04 => 4,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_05 => 5,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_06 => 6,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_07 => 7,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_08 => 8,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_09 => 9,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_10 => 10,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_11 => 11,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_12 => 12,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_13 => 13,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_14 => 14,
-    neighbouring_forms_should_check_with_no_crash_and_no_breaking_safe_fix_part_15 => 15,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_00 => 0,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_01 => 1,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_02 => 2,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_03 => 3,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_04 => 4,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_05 => 5,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_06 => 6,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_07 => 7,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_08 => 8,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_09 => 9,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_10 => 10,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_11 => 11,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_12 => 12,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_13 => 13,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_14 => 14,
+    each_form_in_each_position_should_check_with_no_crash_and_no_breaking_safe_fix_part_15 => 15,
 }
 
-/// GIVEN the template of `neighbours.txt` with each `{stmt}` empty
+/// GIVEN the template of `form_matrix.txt` with each `{stmt}` empty
 /// WHEN `sisu check` runs on it
 /// THEN it ends with no error, so each program meets its statement and no error of the template.
 #[test]
@@ -265,14 +265,15 @@ fn parts_should_hold_each_program_once() {
     );
 }
 
-/// GIVEN the programs of `programs()` and a new, empty directory in `NEIGHBOURS_DUMP`
+/// GIVEN the programs of `programs()` and a new, empty directory in `FORM_MATRIX_DUMP`
 /// WHEN the test runs
 /// THEN each program is in `<index>.sisu` there, the index padded to 5 digits, so that
 /// `scripts/diag_diff.py` can compare two builds on them.
 #[test]
 #[ignore = "a dump for diag_diff"]
 fn programs_should_dump_when_asked() {
-    let dir = std::env::var_os("NEIGHBOURS_DUMP").expect("NEIGHBOURS_DUMP should name a directory");
+    let dir =
+        std::env::var_os("FORM_MATRIX_DUMP").expect("FORM_MATRIX_DUMP should name a directory");
     let dir = Path::new(&dir);
     std::fs::create_dir_all(dir).expect("the dump directory should be made");
     let empty = std::fs::read_dir(dir)
