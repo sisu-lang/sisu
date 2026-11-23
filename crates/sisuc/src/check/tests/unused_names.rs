@@ -1658,17 +1658,40 @@ fn shown_type_should_count_a_field_as_read() {
 }
 
 /// A call may show its type argument, so each field of a struct that is the type argument is
-/// read. This holds when a join decides the type after the call.
+/// read. This holds when a join decides the type after the call, whether the argument is an
+/// optional of the variable or the bare variable.
 #[test]
 fn field_should_count_as_read_through_an_inferred_type_argument() {
     judge_unused();
-    // GIVEN a call whose type argument is an open variable until the array's join gives it `Point?`
-    let src = "struct Point {\n    x: i64\n}\n\
-        fn id<T>(v: T) -> T { v }\n\
-        fn first<T>(_xs: [T]) -> T? { None }\n\
-        fn make<T>(c: bool) -> [T] { [] }\n\
-        fn main() {\n    let _a = [id(first(make(true))), Point(x: 1)]\n}";
+    // GIVEN a call whose type argument is an open variable until the array's join gives it `Point`
+    let decl = "struct Point {\n    x: i64\n}\n";
+    for (calls, body) in [
+        (
+            "fn id<T>(v: T) -> T { v }\n\
+            fn first<T>(_xs: [T]) -> T? { None }\n\
+            fn make<T>(_c: bool) -> [T] { [] }\n",
+            "let _a = [id(first(make(true))), Point(x: 1)]",
+        ),
+        (
+            "fn mk<T>(_c: bool) -> T { panic(\"x\") }\n",
+            "let a = [mk(true), Point(x: 1)]\n    print(a.len())",
+        ),
+    ] {
+        // WHEN the program is checked
+        let src = format!("{decl}{calls}fn main() {{\n    {body}\n}}");
+        // THEN the field `x` is read
+        assert_eq!(unread_fields(&src), [], "{body}");
+    }
+}
+
+/// `dbg` shows a field that a join types after the call, and that is not a read: the warning
+/// names the `dbg`, as it does for a type that is known at the call.
+#[test]
+fn dbg_should_label_a_field_when_a_join_decides_its_type() {
+    judge_unused();
+    // GIVEN a `dbg` of an empty array whose element type the array's join decides
+    let src = "struct Point {\n    x: i64\n}\nfn main() {\n    let a = [dbg([]), [Point(x: 1)]]\n    print(a.len())\n}";
     // WHEN the program is checked
-    // THEN the field `x` is read
-    assert_eq!(unread_fields(src), []);
+    // THEN the field `x` is not read, and the warning names the `dbg`
+    assert_eq!(unread_fields(src), [(W0013, (2, 5), vec![(5, 14)])]);
 }

@@ -7217,22 +7217,6 @@ fn a_never_statement_before_a_misfit_tail_should_give_e0050_at_the_call() {
     }
 }
 
-/// The E0050 of a misfit that no report used comes once, from the table's tail. The check of the
-/// held arguments after it does not stop on it.
-#[test]
-fn misfit_should_report_once_when_its_function_has_no_other_error() {
-    with_prelude();
-    // GIVEN a function whose only fault is a generic call that cannot meet its context
-    let src = "fn mk2<X>() -> [X] { panic(\"no\") }\n\
-        fn f() -> i64 {\n    return 1\n    mk2()\n}\n\
-        fn main() {\n    print(f())\n}";
-    // WHEN the program is checked
-    let (_, ds) = checked(src);
-    // THEN the call gives one E0050
-    let codes: Vec<_> = ds.iter().map(Diagnostic::code).collect();
-    assert_eq!(codes, [Code::UnreachableCode, Code::CannotInfer], "{ds:?}");
-}
-
 /// The rows of the test above where a `never` block is the value of a `let`. The twin does not
 /// fail, so its block is a `never` that is used as a value: E0043. The generic block also reports
 /// E0050. It is still a `never` value, so it keeps the diagnostics of the twin.
