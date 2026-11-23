@@ -908,8 +908,8 @@ struct Checker<'src> {
     /// `ObligationId`, each waiting for the types that it names (see `Table::obligation`).
     obligations: Vec<generic::BoundObligation>,
     /// The E0050 of each generic call of `table`'s function whose result cannot meet its context
-    /// (see `Misfit`). A report that uses the result takes its entry. `with_table` pushes each
-    /// entry left when the function ends.
+    /// (see `Misfit`). A report that uses the result takes its entry. `with_table` reports each
+    /// entry left, for the table of a function or of a constant, when its code ends.
     misfits: Vec<Option<Diagnostic>>,
     /// While `signature` resolves the parameter and return types: the interface of each `any`
     /// type they write, with the span as written. `record` keeps a use here when the body has
@@ -1348,6 +1348,10 @@ pub(crate) fn check<'src>(
     checker.instantiation_cycles(&functions, &unbuilt);
     checker.report_loops();
     let classes = checker.classes.iter().map(lower_class).collect();
+    debug_assert!(
+        checker.misfits.is_empty(),
+        "a misfit was pushed outside a table, so no report of it would stand"
+    );
     let broken = parser_marked(program, &items);
     debug_assert!(
         checker.diagnostics.promises_kept(broken),
@@ -2785,7 +2789,8 @@ impl Checker<'_> {
             if let Some(mut_self) = &f.mut_self {
                 c.warn_unused_mut_self((id, f.name.name), mut_self);
             }
-            // The value's mismatch is reported once the body is gone, so a misfit is taken now.
+            // The value's mismatch is reported once the body is gone. `with_table` reports each
+            // misfit left, so the one that mismatch uses is taken now.
             let misfit = (c.misfit_type(&body))
                 .filter(|&found| ret.is_some_and(|ret| ret != Type::UNIT && ret != found));
             if misfit.is_some() {
