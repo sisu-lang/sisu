@@ -23,6 +23,9 @@ git grep -n -E '^\s*//' -- '<scope>/*.rs' '<scope>/*.sisu'
 git grep -n -E '^\s*#($|[^!\[])' -- '<scope>/*.py' '<scope>/*.sh'
 ```
 
+For a file, use the file as the pathspec, with the command of its comment mark, such as
+`git grep -n -E '^\s*//' -- <file>`.
+
 A line in a multi-line string can match. Read each hit, and remove each one that is not a
 comment. Read each file of the scope for comments after code on the same line, and add them.
 
