@@ -5116,20 +5116,248 @@ const MEMBER_BOUND_ROWS: [(&str, &str, &[Wanted]); 2] = [
     (
         "q5-bad, a read through a bound that names a member",
         "interface Has2<X> {\n    type Inner\n}\ninterface I<T: J> {\n    fn f(self, x: T.A.Inner)\n}\ninterface J {\n    type B\n    type A: Has2<Self.B>\n}\nfn main() {}",
-        &[(Code::UnknownType, (5, 23))],
+        &[],
     ),
     (
         "q5-self, the same inside one interface, with a requirement that reads the closure",
         "interface Has2<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface J {\n    type C: Conv<Self.A.Inner>\n    type B\n    type A: Has2<Self.B>\n    fn f(self) -> Self.A.Inner\n}\nfn main() {}",
-        &[(Code::UnknownType, (6, 25))],
+        &[],
     ),
 ];
 
-/// A read through an associated type whose bound names a member does not panic. The pinned E0030
-/// is the known order limit of #722, and not the rule: the bound `Has2<Self.B>` of `A` resolves
-/// after the interfaces that read `A`, so a read through `A` does not find it yet. A fix of #722
-/// changes the wanted codes of these rows to none.
+/// A read through an associated type whose bound names a member resolves on demand and checks
+/// clean.
 #[test]
 fn a_read_through_an_associated_type_whose_bound_names_a_member_should_not_panic() {
     check_rows(&MEMBER_BOUND_ROWS);
+}
+
+/// The three #722 shapes, their forward-order twins, cross-interface parameter bounds,
+/// inheritance, mixed bounds, and transitive chains resolve on demand.
+#[test]
+fn associated_type_member_bounds_should_resolve_on_demand() {
+    let rows: [(&str, &str); 13] = [
+        (
+            "later, cross-interface",
+            "interface Has2<X> {\n    type Inner\n}\ninterface I<T: J> {\n    fn f(self, x: T.A.Inner)\n}\ninterface J {\n    type B\n    type A: Has2<Self.B>\n}\nfn main() {}",
+        ),
+        (
+            "later, unchanged",
+            "interface Has2<X> {\n    type Inner\n}\ninterface J {\n    type B\n    type A: Has2<Self.B>\n}\ninterface I<T: J> {\n    fn f(self, x: T.A.Inner)\n}\nfn main() {}",
+        ),
+        (
+            "one, same-interface",
+            "interface Has2<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface J {\n    type C: Conv<Self.A.Inner>\n    type B\n    type A: Has2<Self.B>\n    fn f(self) -> Self.A.Inner\n}\nfn main() {}",
+        ),
+        (
+            "one, unchanged",
+            "interface Has2<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface J {\n    type B\n    type A: Has2<Self.B>\n    type C: Conv<Self.A.Inner>\n    fn f(self) -> Self.A.Inner\n}\nfn main() {}",
+        ),
+        (
+            "param, same-interface parameter bound",
+            "interface Has2<X> {\n    type Inner\n}\ninterface Conv<X> {}\ninterface J<U: Conv<Self.A.Inner>> {\n    type B\n    type A: Has2<Self.B>\n}\nfn main() {}",
+        ),
+        (
+            "cross-interface member-bearing parameter bound",
+            "interface Src {\n    type Item\n}\ninterface Conv<X> {\n    type Out\n}\ninterface Has2<X> {\n    type Y\n}\nstruct Impl: Src {\n    type Item = i64\n}\nstruct Impl2: Conv<i64> {\n    type Out = i64\n}\ninterface I<T: J<Impl, Impl2>> {\n    fn f(self, x: T.A.Y)\n}\ninterface J<V: Src, U: Conv<V.Item>> {\n    type A: Has2<U.Out>\n}\nfn main() {}",
+        ),
+        (
+            "same-interface param bound reading assoc whose bound reads later param",
+            "interface Src {\n    type Item\n}\ninterface Conv<X> {\n    type Out\n}\ninterface Has<X> {\n    type Z\n}\ninterface Has2<X> {\n    type Y\n}\ninterface J<W: Has<Self.A.Y>, V: Src, U: Conv<V.Item>> {\n    type A: Has2<U.Out>\n}\nfn main() {}",
+        ),
+        (
+            "non-member bound beside self-referencing member bound",
+            "interface Source {\n    type Item\n}\ninterface Convert<X> {}\ninterface J<S: Source & Convert<S.Item>> {}\nfn main() {}",
+        ),
+        (
+            "inherited interface declaring member-bound assoc type",
+            "interface Has2<X> {\n    type Inner\n}\ninterface I<T: Sub> {\n    fn f(self, x: T.A.Inner)\n}\ninterface Sub: Base {}\ninterface Base {\n    type B\n    type A: Has2<Self.B>\n}\nfn main() {}",
+        ),
+        (
+            "inherited interface, unchanged",
+            "interface Has2<X> {\n    type Inner\n}\ninterface Base {\n    type B\n    type A: Has2<Self.B>\n}\ninterface Sub: Base {}\ninterface I<T: Sub> {\n    fn f(self, x: T.A.Inner)\n}\nfn main() {}",
+        ),
+        (
+            "mixed non-member and member bounds",
+            "interface Marker {}\ninterface Has2<X> {\n    type Inner\n}\ninterface I<T: J> {\n    fn f(self, x: T.A.Inner)\n}\ninterface J {\n    type B\n    type A: Marker & Has2<Self.B>\n}\nfn need<M: Marker>(m: M) {}\nfn use_j<T: J>(x: T.A) {\n    need(x)\n}\nfn main() {}",
+        ),
+        (
+            "transitive reverse chain I1 to I5",
+            "interface Has<X> {\n    type Inner\n}\ninterface I1<T: I2> {\n    fn f(self, x: T.A.Inner)\n}\ninterface I2 {\n    type Next: I3\n    type A: Has<Self.Next.A.Inner>\n}\ninterface I3 {\n    type Next: I4\n    type A: Has<Self.Next.A.Inner>\n}\ninterface I4 {\n    type Next: I5\n    type A: Has<Self.Next.A.Inner>\n}\ninterface I5 {\n    type B\n    type A: Has<Self.B>\n}\nfn main() {}",
+        ),
+        (
+            "rescope member-bearing bound check against valid param bound",
+            "interface Has3<X, Y> {\n    type Inner\n}\nstruct Box<X: Eq> {\n    v: X\n}\ninterface I<T: J<i64>> {\n    fn f(self, x: T.A.Inner)\n}\ninterface J<U: Eq> {\n    type B\n    type A: Has3<Box<U>, Self.B>\n}\nfn main() {}",
+        ),
+    ];
+    for (name, src) in rows {
+        clean_row(name, src);
+    }
+}
+
+/// A deep reverse chain of member-bearing associated-type bounds resolves without stack overflow.
+#[test]
+fn deep_associated_type_bound_chain_should_resolve_without_overflow() {
+    crate::on_compiler_stack(|| {
+        let mut src = String::from(
+            "interface Has<X> {\n    type Inner\n}\ninterface I0<T: I1> {\n    fn f(self, x: T.A.Inner)\n}\n",
+        );
+        for i in 1..200 {
+            let _ = writeln!(
+                src,
+                "interface I{i} {{\n    type Next: I{}\n    type A: Has<Self.Next.A.Inner>\n}}",
+                i + 1
+            );
+        }
+        src.push_str("interface I200 {\n    type B\n    type A: Has<Self.B>\n}\nfn main() {}");
+        clean(&src);
+    });
+}
+
+/// Checks queued inside on-demand bound resolution do not poison outer requirements, and bound
+/// errors are reported once.
+#[test]
+fn associated_type_bound_checks_should_keep_outer_parameters_typed_and_rescope() {
+    let rows: [(&str, &str, &[Wanted]); 4] = [
+        (
+            "finding 2: failed check in J.A does not poison I.f param x",
+            "interface Has3<X, Y> {\n    type Inner\n}\nstruct Box<X: Eq> {\n    v: X\n}\ninterface I<T: J<i64>> {\n    fn f(self, x: T.A.Inner)\n}\ninterface J<U> {\n    type B\n    type A: Has3<Box<U>, Self.B>\n}\nfn g<T: J<i64>, X: I<T>>(x: X) {\n    x.f(1)\n}\nfn main() {}",
+            &[(Code::NotConform, (12, 22)), (Code::Mismatch, (15, 9))],
+        ),
+        (
+            "pending-bound rescope fails when U: Eq is missing",
+            "interface Has3<X, Y> {\n    type Inner\n}\nstruct Box<X: Eq> {\n    v: X\n}\ninterface I<T: J<i64>> {\n    fn f(self, x: T.A.Inner)\n}\ninterface J<U> {\n    type B\n    type A: Has3<Box<U>, Self.B>\n}\nfn main() {}",
+            &[(Code::NotConform, (12, 22))],
+        ),
+        (
+            "error inside A's member bound demanded from I is reported once",
+            "interface I<T: J> {\n    fn f(self, x: T.A.Inner)\n}\ninterface J {\n    type B\n    type A: Missing<Self.B>\n}\nfn main() {}",
+            &[(Code::UnknownType, (6, 13))],
+        ),
+        (
+            "non-member param bound error in J is reported once",
+            "interface Has3<X, Y> {\n    type Inner\n}\ninterface I<T: J<i64>> {\n    fn f(self, x: T.A.Inner)\n}\ninterface J<U: Missing> {\n    type B\n    type A: Has3<U, Self.B>\n}\nfn main() {}",
+            &[(Code::UnknownType, (7, 16))],
+        ),
+    ];
+    check_rows(&rows);
+}
+
+/// Cyclic member-bearing bounds report E0030 once per cycle without panicking or cascading.
+#[test]
+fn associated_type_bound_cycles_should_report_loop_without_cascading() {
+    let rows: [(&str, &str, &[Wanted]); 7] = [
+        (
+            "self-cycle",
+            "interface Has<X> {\n    type Inner\n}\ninterface I {\n    type A: Has<Self.A.Inner>\n}\nfn main() {}",
+            &[(Code::UnknownType, (5, 24))],
+        ),
+        (
+            "2-node same-interface cycle",
+            "interface Has<X> {\n    type Inner\n}\ninterface I {\n    type A: Has<Self.B.Inner>\n    type B: Has<Self.A.Inner>\n}\nfn main() {}",
+            &[(Code::UnknownType, (6, 24))],
+        ),
+        (
+            "cross-interface cycle",
+            "interface Has<X> {\n    type Inner\n}\ninterface I {\n    type Step: J\n    type A: Has<Self.Step.B.Inner>\n}\ninterface J {\n    type Step: I\n    type B: Has<Self.Step.A.Inner>\n}\nfn main() {}",
+            &[(Code::UnknownType, (10, 29))],
+        ),
+        (
+            "non-cyclic dependent alongside cycle stays quiet",
+            "interface Has<X> {\n    type Inner\n}\ninterface I {\n    type C: Has<Self.A.Inner>\n    type A: Has<Self.A.Inner>\n}\nfn main() {}",
+            &[(Code::UnknownType, (6, 24))],
+        ),
+        (
+            "cycle with failed non-member bound keeps failed set",
+            "interface Has<X> {\n    type Inner\n}\ninterface I {\n    type A: Missing & Has<Self.B.Inner>\n    type B: Has<Self.A.Inner>\n    fn f(self, x: Self.A.Inner)\n}\nfn main() {}",
+            &[(Code::UnknownType, (5, 13)), (Code::UnknownType, (6, 24))],
+        ),
+        (
+            "finding 4: recursive Self.Kid.A.Inner cycle",
+            "interface Has<X> {\n    type Inner\n}\ninterface Tree {\n    type Kid: Tree\n    type A: Has<Self.Kid.A.Inner>\n}\nfn main() {}",
+            &[(Code::UnknownType, (6, 28))],
+        ),
+        (
+            "mutual param and assoc cycle",
+            "interface Has<X> {\n    type Inner\n}\ninterface J<U: Has<Self.A.Inner>> {\n    type A: Has<U.Inner>\n}\nfn main() {}",
+            &[(Code::UnknownType, (5, 19))],
+        ),
+    ];
+    check_rows(&rows);
+}
+
+/// Resolving K member-bearing associated types over a parameter closure of size C is O(K + C).
+#[test]
+fn associated_type_member_bounds_should_compute_parameter_closures_once() {
+    let wide_src = |k: usize, c: usize| {
+        let mut src = String::from(
+            "interface Has<X, Y> {\n    type Out\n}\ninterface C0 {\n    type Item\n}\n",
+        );
+        for i in 1..c {
+            let _ = writeln!(src, "interface C{i}: C{} {{}}", i - 1);
+        }
+        let _ = writeln!(
+            src,
+            "interface I<U: C{}, T: J<U>> {{\n    fn f(self, x: T.A0.Out)\n}}",
+            c - 1
+        );
+        let _ = writeln!(src, "interface J<U: C{}> {{\n    type B", c - 1);
+        for i in 0..k {
+            let _ = writeln!(src, "    type A{i}: Has<U.Item, Self.B>");
+        }
+        src.push_str("}\nfn main() {}");
+        src
+    };
+    let chain_src = |n: usize| {
+        let mut src = String::from(
+            "interface Has<X> {\n    type Inner\n}\ninterface I0<T: I1> {\n    fn f(self, x: T.A.Inner)\n}\n",
+        );
+        for i in 1..n {
+            let _ = writeln!(
+                src,
+                "interface I{i} {{\n    type Next: I{}\n    type A: Has<Self.Next.A.Inner>\n}}",
+                i + 1
+            );
+        }
+        let _ = writeln!(
+            src,
+            "interface I{n} {{\n    type B\n    type A: Has<Self.B>\n}}\nfn main() {{}}"
+        );
+        src
+    };
+    let measure = |src: &str| {
+        CLOSURE_STEPS.set(0);
+        LOOKUP_STEPS.set(0);
+        BOUND_STEPS.set(0);
+        SCOPES_KEPT.set(0);
+        clean(src);
+        (
+            CLOSURE_STEPS.get() + LOOKUP_STEPS.get() + BOUND_STEPS.get(),
+            SCOPES_KEPT.get(),
+        )
+    };
+    // Fixed C = 30 with K = 20, 40, 60: steps grow linearly in K and scopes stay constant.
+    let (s20, k20) = measure(&wide_src(20, 30));
+    let (s40, k40) = measure(&wide_src(40, 30));
+    let (s60, k60) = measure(&wide_src(60, 30));
+    assert_near_linear(s20, s40, s60);
+    assert_eq!(k20, k40);
+    assert_eq!(k40, k60);
+    assert!(
+        s60 - s20 < 40 * 10,
+        "step delta {} should be O(K), not O(K * C)",
+        s60 - s20
+    );
+
+    // Scaling K and C together detects O(K * C) regressions immediately.
+    let (both20, _) = measure(&wide_src(20, 20));
+    let (both40, _) = measure(&wide_src(40, 40));
+    let (both60, _) = measure(&wide_src(60, 60));
+    assert_near_linear(both20, both40, both60);
+
+    // Reverse chain of interfaces scales linearly in N.
+    let (c20, _) = measure(&chain_src(20));
+    let (c40, _) = measure(&chain_src(40));
+    let (c60, _) = measure(&chain_src(60));
+    assert_near_linear(c20, c40, c60);
 }

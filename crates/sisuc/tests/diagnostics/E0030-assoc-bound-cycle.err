@@ -1,0 +1,34 @@
+error[E0030]: `Self.A.Inner` is not known here: a bound of `Self.A` waits for this bound
+ --> E0030-assoc-bound-cycle.sisu:9:24
+  |
+9 |     type A: Has<Self.A.Inner>
+  |                        ^^^^^
+  |
+  = help: write one of the bounds that wait for each other without an associated type
+
+error[E0030]: `Self.A.Inner` is not known here: a bound of `Self.A` waits for this bound
+  --> E0030-assoc-bound-cycle.sisu:14:24
+   |
+14 |     type B: Has<Self.A.Inner>
+   |                        ^^^^^
+   |
+   = help: write one of the bounds that wait for each other without an associated type
+
+error[E0030]: `Self.Step.A.Inner` is not known here: a bound of `Self.Step.A` waits for this bound
+  --> E0030-assoc-bound-cycle.sisu:24:29
+   |
+24 |     type B: Has<Self.Step.A.Inner>
+   |                             ^^^^^
+   |
+   = help: write one of the bounds that wait for each other without an associated type
+
+error[E0030]: `Self.Kid.A.Inner` is not known here: a bound of `Self.Kid.A` waits for this bound
+  --> E0030-assoc-bound-cycle.sisu:29:28
+   |
+29 |     type A: Has<Self.Kid.A.Inner>
+   |                            ^^^^^
+   |
+   = help: write one of the bounds that wait for each other without an associated type
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0030
