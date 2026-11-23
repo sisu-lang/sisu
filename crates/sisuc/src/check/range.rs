@@ -4,6 +4,7 @@
 use super::array::must_unwrap;
 use super::call::Dot;
 use super::string::single_term;
+use super::use_kind::Use;
 use super::{Checked, Checker, Expectation, Origin, Poisoned, known_type};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
@@ -125,12 +126,12 @@ impl Checker<'_> {
     ) -> Checked {
         if error_for_good(range) {
             self.stamp_push(base);
-            drop(self.value(base, Expectation::None));
+            drop(self.value_as(base, Use::Receiver));
             let d = self.index_outside(base, range, None);
             return Err(Poisoned::untyped(self.diagnostics.error(d)));
         }
         let outer = std::mem::replace(&mut self.body.indexed, true);
-        let checked = self.value(base, Expectation::None);
+        let checked = self.value_as(base, Use::Receiver);
         // The bounds are not part of the chain that the index ends.
         self.body.indexed = false;
         let ty = match known_type(&checked) {

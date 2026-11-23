@@ -9,6 +9,7 @@ use rustc_hash::FxHashMap;
 use super::enums::reserved_name;
 use super::prelude::{self, PRELUDE};
 use super::reports::Reported;
+use super::use_kind::Use;
 use super::{Binding, Body, Checker, Declared, Definition, built_in_type, is_language_interface};
 use crate::diagnostic::DiagnosticKind;
 use crate::source::Span;
@@ -471,8 +472,18 @@ impl Checker<'_> {
         }
     }
 
-    /// `meaning`, and for a read of a local, the mark that an expression reads it.
-    pub(super) fn resolve_name(&mut self, name: Symbol, site: Site) -> Resolved {
+    /// `meaning`, and for a read of a local, the mark that an expression reads it. `use_` is the
+    /// position of the read.
+    pub(super) fn resolve_name(
+        &mut self,
+        name: Symbol,
+        site: Site,
+        #[expect(
+            unused_variables,
+            reason = "Task A5 of body inference stage 2 reads it"
+        )]
+        use_: Use,
+    ) -> Resolved {
         if site.at == Position::Value
             && let Some(b) = self.lookup(name)
         {

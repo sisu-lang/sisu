@@ -7,6 +7,7 @@ use super::infer::Kind;
 use super::join::{Heading, JoinForm};
 use super::place::{Change, first_safe, is_struct};
 use super::reports::Reported;
+use super::use_kind::Use;
 use super::{Checked, Checker, Declared, Expectation, Misfit, Origin, Poisoned, payload, type_of};
 use crate::ast;
 use crate::diagnostic::{
@@ -260,7 +261,7 @@ impl Checker<'_> {
             return self.range_index(span, base, range);
         }
         let outer = std::mem::replace(&mut self.body.indexed, true);
-        let checked = self.value(base, Expectation::None);
+        let checked = self.value_as(base, Use::Receiver);
         // An optional array is reported, and its element goes on typed, but no code reads it.
         let optional = type_of(&checked).is_some_and(is_optional_array);
         let class_write = (self.body.write_chain.is_some() && optional)

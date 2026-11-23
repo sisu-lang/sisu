@@ -36,6 +36,7 @@ mod stmt;
 mod string;
 mod structs;
 mod unused_names;
+mod use_kind;
 
 use std::borrow::Cow;
 use std::cmp::Reverse;

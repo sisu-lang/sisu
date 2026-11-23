@@ -8,6 +8,7 @@ use super::member::{Access, FieldOwner, FoundField, safe_value};
 use super::names::{Resolved, Site};
 use super::reports::Reported;
 use super::unused_names::{Copied, Owner, Used};
+use super::use_kind::Use;
 use super::{
     Binding, BindingKind, Checked, Checker, Declared, Expectation, Origin, Poisoned, as_optional,
     block_expr, known_type, payload, type_of,
@@ -1147,6 +1148,11 @@ impl Checker<'_> {
         name: Symbol,
         change: Change,
     ) -> CheckedPlace {
+        #[expect(
+            unused_variables,
+            reason = "Task A5 of body inference stage 2 reads it"
+        )]
+        let use_ = Use::of_change(change);
         // A `push` stamps by the rule of `push_receiver`.
         let stamp = (!change.holds()).then(|| self.write_stamp());
         let Some(b) = self.lookup(name) else {
@@ -1457,7 +1463,7 @@ impl Checker<'_> {
             std::mem::replace(&mut self.body.quiet, quiet),
             std::mem::replace(&mut self.body.write_chain, chain),
         );
-        let checked = self.value(base, Expectation::None);
+        let checked = self.value_as(base, Use::of_change(change));
         (self.body.indexed, self.body.quiet, self.body.write_chain) = outer;
         // A `?.` on a base that failed, such as the `?.` of a write before it, reports nothing
         // more.

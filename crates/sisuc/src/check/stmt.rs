@@ -14,6 +14,7 @@ use super::pattern::LetPattern;
 use super::prelude::PRELUDE;
 use super::reports::Reported;
 use super::unused_names::{Owner, Pending};
+use super::use_kind::Use;
 use super::{
     Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, Expectation, LoopContext,
     LoopFrame, LoopKind, Origin, Poisoned, SelfType, block_expr, built_in_type, known_type,
@@ -879,7 +880,7 @@ impl Checker<'_> {
         // The subject is indexed in the loop: a `?.` fix of an E0062 in it leads to a `for` on an
         // optional, as an index does.
         let outer = std::mem::replace(&mut self.body.indexed, true);
-        let checked = self.value(e, Expectation::None);
+        let checked = self.value_as(e, Use::Receiver);
         self.body.indexed = outer;
         let (element, d) = match type_of(&checked).map(|ty| (ty, ty.kind())) {
             Some((_, TypeKind::Array(element))) => (Some(element), None),

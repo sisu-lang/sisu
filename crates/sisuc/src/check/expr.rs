@@ -9,6 +9,7 @@ use super::infer::{Kind, LiteralCheck};
 use super::names::{self, Resolved};
 use super::reports::Reported;
 use super::stmt::optional_unit;
+use super::use_kind::Use;
 use super::{
     Checked, CheckedBlock, Checker, Expectation, Origin, Poisoned, SelfType, Uninferred, payload,
     type_of, wrap, wrap_block,
@@ -106,6 +107,13 @@ impl Checker<'_> {
     /// types a `None`, a `[]` and an integer literal. It flows into `if` and `if let` branches, a
     /// block's value, array elements, arithmetic and unary `-`; it never wraps.
     pub(super) fn expr(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
+        self.expr_as(e, Use::Read(expected))
+    }
+
+    /// `expr` for `e` in the position `use_`. Only a bare name reads its position: any other
+    /// expression takes the expectation of `use_`.
+    pub(super) fn expr_as(&mut self, e: &ast::Expr, use_: Use) -> Checked {
+        let expected = use_.expectation();
         #[cfg(test)]
         super::EXPR_CHECKS.set(super::EXPR_CHECKS.get() + 1);
         // The chain that an index ends runs only through field bases, method receivers and
@@ -122,7 +130,7 @@ impl Checker<'_> {
         if !matches!(e.kind, ExprKind::Field { .. } | ExprKind::Index { .. }) {
             self.body.write_chain = None;
         }
-        let checked = self.expr_kind(e, expected);
+        let checked = self.expr_kind(e, expected, use_);
         self.body.indexed = outer;
         self.body.write_chain = chain;
         checked
@@ -220,7 +228,7 @@ impl Checker<'_> {
         clippy::too_many_lines,
         reason = "one arm per node kind, so the dispatch reads in one place"
     )]
-    fn expr_kind(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
+    fn expr_kind(&mut self, e: &ast::Expr, expected: Expectation, use_: Use) -> Checked {
         let node = |kind, ty| Ok(tir::Expr::new(kind, ty, e.span));
         match &e.kind {
             ExprKind::Int { value, literal } => self.integer(e.span, *value, *literal, expected),
@@ -243,7 +251,7 @@ impl Checker<'_> {
                 Err(Poisoned::untyped(reported))
             }
             ExprKind::NoneLit => self.none(e.span, expected),
-            ExprKind::Name(name) => self.name(e.span, *name, expected),
+            ExprKind::Name(name) => self.name(e.span, *name, use_),
             ExprKind::Call {
                 callee,
                 types,
@@ -275,7 +283,7 @@ impl Checker<'_> {
                     return Err(value);
                 }
                 let reported = self.diagnostics.mark();
-                let checked = self.name(name.span, name.name, Expectation::None);
+                let checked = self.name(name.span, name.name, Use::Read(Expectation::None));
                 // The type arguments follow the name, so `Holder.W<i64>` followed by `.` does not
                 // parse: the fix of a bare variant would break the syntax.
                 self.diagnostics
@@ -437,11 +445,13 @@ impl Checker<'_> {
         }
     }
 
-    /// A read of `name`: a local, a constant, or an unknown name, which is reported. The `expected`
-    /// type of a local with no type may give the type that the help of its E0050 writes.
-    fn name(&mut self, span: Span, name: Symbol, expected: Expectation) -> Checked {
+    /// A read of `name`: a local, a constant, or an unknown name, which is reported. The expected
+    /// type of `use_` for a local with no type may give the type that the help of its E0050
+    /// writes.
+    fn name(&mut self, span: Span, name: Symbol, use_: Use) -> Checked {
         let quiet = self.body.quiet == Some(span);
-        match self.resolve_name(name, names::Site::value(quiet)) {
+        let expected = use_.expectation();
+        match self.resolve_name(name, names::Site::value(quiet), use_.converted()) {
             Resolved::Local { local, ty, .. } => {
                 if let Some(ty) = ty {
                     return Ok(tir::Expr::new(tir::ExprKind::Local(local), ty, span));
@@ -499,6 +509,12 @@ impl Checker<'_> {
     /// type is expected, nor an `if` without an `else` whose branch has a value.
     pub(super) fn value(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
         self.value_in(e, expected, false)
+    }
+
+    /// `value` of `e` in the position `use_`, which a bare name reads.
+    pub(super) fn value_as(&mut self, e: &ast::Expr, use_: Use) -> Checked {
+        let checked = read_jump(self.expr_as(e, use_));
+        self.value_of(e, checked, use_.expectation(), false)
     }
 
     /// `value`; `returning` says that `e` is the value of a `return` in a function with no

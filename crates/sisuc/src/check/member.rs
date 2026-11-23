@@ -10,6 +10,7 @@ use super::generic::{Site, named_params};
 use super::place::{Change, first_safe, is_struct};
 use super::reports::Reported;
 use super::unused_names::Used;
+use super::use_kind::Use;
 use super::{
     Checked, Checker, ClassInfo, Declared, Expectation, Holder, Poisoned, as_optional, known_type,
     type_of, wrap,
@@ -88,7 +89,7 @@ impl Checker<'_> {
         name: &ast::Ident,
         member: impl FnOnce(&mut Self, Checked) -> Checked,
     ) -> Checked {
-        let scrutinee = self.value_kept(receiver);
+        let scrutinee = self.value_kept(receiver, Use::Receiver);
         self.member_of(span, safe, scrutinee, receiver, name, member)
     }
 
