@@ -3,9 +3,9 @@
 use std::iter;
 use std::ops::Range;
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Edit, Fix, Severity};
+use crate::diagnostic::{Code, Diagnostic, DiagnosticKind, Edit, Fix, FixVerdict, Severity};
 use crate::source::{PRELUDE_BASE, Span};
 use crate::timings::{Stage, Timings};
 use crate::{ast, check, lexer, mono, parser, tir};
@@ -146,16 +146,16 @@ fn internal_error(d: &Diagnostic) -> ! {
     )
 }
 
-/// `diagnostics` without each fix of a lexer or parser diagnostic that leaves `source` lexing or
-/// parsing worse than it does, and with each fix unsafe that edits over a comment or another
-/// lexer error: a fix that is shown never breaks the syntax, and a safe one never takes text it
-/// was not about. A checker fix is not judged: the checker runs only on items that parse, and
-/// the fuzz target asserts that every fix shown keeps the syntax, the checker's included. Two
-/// cases are judged. One is a fix at the end of a line (`ends_a_line`), which can change where a
-/// statement ends. The other, also demoted, is a fix with an edit on each side of a dropped
-/// `;`, which puts the `;` in new text. Finding them is cheap: a few binary searches in the sorted
-/// marks for each fix, and a look at the blanks around each edit. Only judging one costs a parse,
-/// and then all fixes of that diagnostic are judged.
+/// Filters and demotes fixes in `diagnostics`. Drops each syntax fix that makes `source` lex or
+/// parse worse. Marks a fix unsafe when it edits over a comment or another lexer error, or adds a
+/// syntax diagnostic. A shown fix never breaks syntax, and a safe fix never takes unrelated text.
+/// A checker fix is not judged: the checker runs only on items that parse, and the fuzz target
+/// asserts that every fix shown keeps the syntax, the checker's included. Two cases are judged.
+/// One is a fix at the end of a line (`ends_a_line`), which can change where a statement ends. The
+/// other, also demoted, is a fix with an edit on each side of a dropped `;`, which puts the `;` in
+/// new text. Finding them is cheap: a few binary searches in the sorted marks for each fix, and a
+/// look at the blanks around each edit. Only judging one costs a parse, and then all fixes of that
+/// diagnostic are judged.
 /// Judging one lexes and parses the whole source again, so judging every checker fix made N
 /// warnings cost N parses. For the same reason only the first `JUDGED` syntax fixes are judged;
 /// later ones are dropped. On clean syntax a W0007 fix is kept as it is: neither judged, counted
@@ -173,16 +173,17 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
         .iter()
         .any(|d| (syntax_fix(d) || failed) && !d.fixes().is_empty())
     {
-        let syntax = syntax(source);
-        let before = badness(&syntax);
+        let before_syntax = syntax(source);
+        let before = badness(&before_syntax);
         if before != (false, 0) {
             keep_lexing_semicolon_fixes(source, &mut sound);
         }
         // Past a bracket error, the worst there is, no fix is worse: only the parser's reports
         // are judged.
-        let reported: FxHashSet<(Code, Span)> = (syntax.iter().flatten())
+        let reported: FxHashSet<(Code, Span)> = (before_syntax.iter().flatten())
             .map(|d| (d.code(), d.span()))
             .collect();
+        let before_counts = code_counts(&before_syntax);
         let marks = marks(source);
         let semicolons: Vec<usize> = (marks.iter().copied())
             .filter(|&at| source.as_bytes().get(at) == Some(&b';'))
@@ -200,9 +201,19 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
             // A fix beside one that spans a `;` is judged too: that costs work and no result.
             let unsure = |fix: &Fix| around(fix, own) || ends_a_line(source, fix);
             if reported || d.fixes().iter().any(unsure) {
-                d.retain_fixes(|fix| {
+                d.judge_fixes(|fix| {
                     judged += 1;
-                    judged <= JUDGED && syntax_errors(&fix.apply(source)) <= before
+                    if judged > JUDGED {
+                        return FixVerdict::Drop;
+                    }
+                    let after = syntax(&fix.apply(source));
+                    if badness(&after) > before {
+                        FixVerdict::Drop
+                    } else if adds_syntax_code(&before_counts, &after) {
+                        FixVerdict::Demote
+                    } else {
+                        FixVerdict::Keep
+                    }
                 });
             }
             d.demote_fixes(|fix| {
@@ -304,6 +315,40 @@ fn syntax(source: &str) -> Result<Vec<Diagnostic>, Diagnostic> {
     lexer::lex(source).map(|lexed| parser::parse(lexed, false).diagnostics)
 }
 
+/// The diagnostics held in `syntax`.
+fn syntax_diagnostics(syntax: &Result<Vec<Diagnostic>, Diagnostic>) -> &[Diagnostic] {
+    match syntax {
+        Ok(ds) => ds,
+        Err(d) => std::slice::from_ref(d),
+    }
+}
+
+/// How many times each diagnostic code appears in `syntax`.
+fn code_counts(syntax: &Result<Vec<Diagnostic>, Diagnostic>) -> FxHashMap<Code, usize> {
+    let mut counts = FxHashMap::default();
+    for d in syntax_diagnostics(syntax) {
+        *counts.entry(d.code()).or_insert(0) += 1;
+    }
+    counts
+}
+
+/// Whether `after` reports any diagnostic code more times than `before`.
+fn adds_syntax_code(
+    before: &FxHashMap<Code, usize>,
+    after: &Result<Vec<Diagnostic>, Diagnostic>,
+) -> bool {
+    let ds = syntax_diagnostics(after);
+    if ds.is_empty() {
+        return false;
+    }
+    let mut seen: FxHashMap<Code, usize> = FxHashMap::default();
+    ds.iter().any(|d| {
+        let count = seen.entry(d.code()).or_insert(0);
+        *count += 1;
+        *count > before.get(&d.code()).copied().unwrap_or(0)
+    })
+}
+
 /// How badly a source fails to lex or to parse, given its `syntax`: a lexer error, which stops
 /// the parser, is worse than any number of parser errors.
 fn badness(syntax: &Result<Vec<Diagnostic>, Diagnostic>) -> (bool, usize) {
@@ -328,7 +373,7 @@ fn badness(syntax: &Result<Vec<Diagnostic>, Diagnostic>) -> (bool, usize) {
 /// fixture test of `diagnostic::explanations` and `tests/form_matrix.rs` call it.
 pub fn safe_fix_breaches(source: &str) -> Vec<String> {
     let codes = |ds: &[Diagnostic]| ds.iter().map(Diagnostic::code).collect::<Vec<_>>();
-    let diagnostics = front_end(source).1;
+    let diagnostics = sound_fixes(source, &front_end(source).1);
     let mut applied: Vec<&Fix> = Vec::new();
     let mut breaches = Vec::new();
     for d in &diagnostics {
@@ -388,11 +433,10 @@ pub(crate) fn moved(fix: &Fix, at: usize) -> usize {
 
 /// The lexer and parser diagnostics of `source`.
 fn syntax_codes(source: &str) -> Vec<Code> {
-    let diagnostics = match lexer::lex(source) {
-        Ok(lexed) => parser::parse(lexed, false).diagnostics,
-        Err(d) => vec![d],
-    };
-    diagnostics.iter().map(Diagnostic::code).collect()
+    syntax_diagnostics(&syntax(source))
+        .iter()
+        .map(Diagnostic::code)
+        .collect()
 }
 
 /// `a` with one occurrence of each code of `b` removed.
@@ -721,7 +765,8 @@ mod tests {
     }
 
     /// Parser and checker fixes stop before comments, and parser `removal_end` stops before lexer
-    /// errors. Any fix that still spans a lexer error becomes unsafe.
+    /// errors. Any fix that still spans a lexer error or reveals a syntax diagnostic becomes
+    /// unsafe.
     #[test]
     fn a_safe_fix_should_be_unsafe_when_it_deletes_a_comment_or_a_lexer_error() {
         for (src, code, safe) in [
@@ -741,7 +786,7 @@ mod tests {
             (
                 "class C {\n    fn f(mut $ self) {}\n}\n",
                 Code::MutSelf,
-                true,
+                false,
             ),
             (
                 "fn main() {\n    let mut // c\n        n = 0\n    print(n)\n}\n",

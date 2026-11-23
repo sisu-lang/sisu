@@ -11973,21 +11973,21 @@ mod tests {
 
         for (name, src, at, edit, want) in [
             (
-                "same-line enum class",
+                "same-line enum class, unchanged",
                 "enum class Color {\n    Red\n    Blue\n}\nfn main() {}",
                 (1, 6),
                 (5, 11),
                 "enum Color {\n    Red\n    Blue\n}\nfn main() {}",
             ),
             (
-                "same-line enum class with comment before name",
+                "same-line enum class with comment before name, unchanged",
                 "enum class // c\nFoo {\n    A\n}",
                 (1, 6),
                 (5, 11),
                 "enum // c\nFoo {\n    A\n}",
             ),
             (
-                "same-line enum class with newline before name",
+                "same-line enum class with newline before name, unchanged",
                 "enum class\nFoo {\n    A\n}",
                 (1, 6),
                 (5, 11),
