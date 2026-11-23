@@ -303,31 +303,33 @@ impl Checker<'_> {
                     && (place as usize) < self.interfaces[id.0].type_params.len()
                 {
                     let resolving = self.ensure_interface_params(id);
-                    if resolving && self.in_assoc_bound() {
+                    if resolving && (self.in_assoc_bound() || self.in_on_demand()) {
                         let place = place as usize;
-                        let closure = self.closure_len(base_ty);
-                        let found = self.lookup_assoc_in_closure(base_ty, closure, name.name);
-                        if !found.is_empty() {
+                        if self.ensure_deferred_self_param(id, place) {
+                            let closure = self.closure_len(base_ty);
+                            let found = self.lookup_assoc_in_closure(base_ty, closure, name.name);
+                            if !found.is_empty() {
+                                return self.finish_member_lookup(base_ty, name, &found);
+                            }
+                            if self.pending_param_declares(id, place, name.name) {
+                                self.interfaces[id.0].bounds[place].failed = true;
+                                if !self.body.unknown.contains(&place) {
+                                    self.body.unknown.push(place);
+                                }
+                                self.error(DiagnosticKind::UnknownType {
+                                    name: name.name.to_string(),
+                                    at: name.span,
+                                    form: UnknownForm::BoundsLoop {
+                                        base: self.type_name(base_ty),
+                                    },
+                                });
+                                return None;
+                            }
+                            if self.is_unknown(base_ty) {
+                                return None;
+                            }
                             return self.finish_member_lookup(base_ty, name, &found);
                         }
-                        if self.pending_param_declares(id, place, name.name) {
-                            self.interfaces[id.0].bounds[place].failed = true;
-                            if !self.body.unknown.contains(&place) {
-                                self.body.unknown.push(place);
-                            }
-                            self.error(DiagnosticKind::UnknownType {
-                                name: name.name.to_string(),
-                                at: name.span,
-                                form: UnknownForm::BoundsLoop {
-                                    base: self.type_name(base_ty),
-                                },
-                            });
-                            return None;
-                        }
-                        if self.is_unknown(base_ty) {
-                            return None;
-                        }
-                        return self.finish_member_lookup(base_ty, name, &found);
                     }
                 }
             }
