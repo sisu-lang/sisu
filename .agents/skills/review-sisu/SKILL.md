@@ -98,7 +98,7 @@ with one `--report` for each reviewer, such as `--report sol --report opus`. Wit
 It fails when a report is missing or has no `Model:` first line, or when the checkout differs from the record of `prepare`. A
 missing report means that the reviewer failed or that you did not save its reply. Check that the `Model:` line names the model you launched. A difference
 means that a reviewer wrote in the repository, so the round is a failed run: show the user the difference and
-ask how to go on. An outside seat's launch can write anywhere, so this check is the guard. It does not see a
+ask how to go on. An outside seat's launch can write anywhere, except agy, which cannot write in the repository ([launchers.md](launchers.md)), so this check is the guard. It does not see a
 write to an ignored file. When only HEAD moved, `verify`
 names the new commits and still fails, because a reviewer can commit too. When you made each of
 those commits, the round is good.
