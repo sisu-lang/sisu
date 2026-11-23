@@ -93,7 +93,7 @@ jobs:
       - id: gate
         env:
           MIN_LINE_COVERAGE: 98.5
-          # shortcut: below 94 while the join checks miss branches; raise to 94.0 when #790 closes
+          # shortcut: below 94.0 while the join checks miss branches; raise to 94.0 when #790 closes
           MIN_BRANCH_COVERAGE: 92.5
         run: |
           file=target/llvm-cov/coverage.json

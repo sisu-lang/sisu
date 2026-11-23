@@ -653,9 +653,9 @@ pub(crate) struct Folded {
     size: u64,
 }
 
-/// The declarations of the forms of `gap_forms` that join `any` values and that use `dbg` and
-/// `any` in a generic function. Their names start with `Gap` or `gap_`. The text is fixed and makes
-/// no draw.
+/// The declarations of the forms of `gap_forms` that join `any` values and optionals of objects,
+/// and that use `dbg` and `any` in a generic function. Their names start with `Gap` or `gap_`.
+/// The text is fixed and makes no draw.
 const ANY_GAP_ITEMS: &str = r"interface GapSeen { fn seen(self) -> i64 }
 interface GapHeard: AnyObject { fn loud(self) -> i64 }
 class GapEye: GapSeen { v: i64; fn seen(self) -> i64 { self.v } }
@@ -2000,8 +2000,8 @@ impl Gen<'_> {
     /// - a `string` field that appends to itself with `+=` and with `a.f = a.f + e`;
     /// - a `match` with an arm that no value reaches (W0006), and a statement with an
     ///   unnecessary `;` (W0007). The checker accepts a warning in a generated program;
-    /// - the generic forms of `GENERIC_GAP_ITEMS`, each for the points of the checker in
-    ///   `GAP_POINTS` (`coverage.rs`):
+    /// - the generic forms of `GENERIC_GAP_ITEMS` that the joins bullet below does not list, each
+    ///   for the points of the checker in `GAP_POINTS` (`coverage.rs`):
     ///   - `gap_chain`: a bound that waits for a later parameter, and one that names an earlier;
     ///   - `GapPicker`, with `gap_take`: a method with written type arguments, and two
     ///     conformances that answer it;
@@ -2013,8 +2013,9 @@ impl Gen<'_> {
     ///   - `gap_wait` and `gap_wide`: a parameter that waits for an unbound type, and one that
     ///     is optional under a hint;
     ///   - `GapAlias`, `GapAnyOf` and `GapItem`: an alias body that keeps a check.
-    /// - the forms of `ANY_GAP_ITEMS`, each for the points of the checker in `GAP_POINTS`. Each
-    ///   value is on the branch that runs:
+    /// - the forms of `ANY_GAP_ITEMS` that the joins bullet below does not list. Each is for the
+    ///   points of the checker in `GAP_POINTS` or the joins in `JOIN_ORDERS`. Each value is on
+    ///   the branch that runs:
     ///   - `is` with an `any` on each side;
     ///   - `gap_none`: a `Some` and a `None` before an `any` branch;
     ///   - `gap_kept`: a `Some` of an object under a hint of a `Some` of another object;
@@ -2040,12 +2041,15 @@ impl Gen<'_> {
     ///   - `gap_tail`: a self call in tail position that passes a named argument;
     /// - a `never` part of a string, as a statement on a branch that does not run;
     /// - the forms of joins and of type inference, each for a function that `tests/run`
-    ///   reaches and no drawn rule does (`make fuzz-gaps`):
+    ///   reaches and no drawn rule does (`make fuzz-gaps`). Each has a point in `GAP_POINTS`
+    ///   (`coverage.rs`): the function in the brackets. `gap_wrapped` has none, because `gap_put`
+    ///   reaches `obligation_breaks` too:
     ///   - `gap_open`: a generic call that takes its type from an `any` beside it (`settle_open`);
-    ///   - `gap_wrapped`: a call whose bound waits for a `T??` beside it (`obligation_breaks`);
+    ///   - `gap_wrapped`: a call whose bound `T: GapSeen` waits for the `GapOwl??` beside it, so
+    ///     that `T` becomes `GapOwl` (`obligation_breaks`);
     ///   - `gap_fnone() == gap_unit()`: a `unit` beside an open `T?` (`open_any`);
     ///   - `gap_nothing`: a generic method that waits for its type in an argument (`own_params`);
-    ///   - `gap_bump`: a generic `mut self` method through a bound (`unknown_param`);
+    ///   - `gap_bump`: a call whose bound takes a type argument (`unknown_param`);
     ///   - `gap_put`: an argument at an associated type that the join decides (`put_back`).
     ///
     /// `main` takes `gap_args` in the programs of `MAIN_ARGS_GATE`. `open_main` and
