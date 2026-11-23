@@ -164,6 +164,7 @@ pub(crate) fn runtime_library(allocator: Allocator) -> Result<PathBuf, String> {
 /// Nextest's setup script writes `SISU_TEST_RUNTIME_DIR`. Without it, search ancestors above the
 /// binary's folder, then fall back two levels up.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn test_runtime(allocator: Allocator) -> PathBuf {
     let exe = std::env::current_exe().expect("the test binary should know its path");
     test_runtime_in(
@@ -174,6 +175,7 @@ pub(crate) fn test_runtime(allocator: Allocator) -> PathBuf {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn test_runtime_in(env_dir: Option<&std::ffi::OsStr>, exe: &Path, allocator: Allocator) -> PathBuf {
     let archive = archive_name(allocator);
     if let Some(dir) = env_dir {
@@ -194,6 +196,7 @@ fn test_runtime_in(env_dir: Option<&std::ffi::OsStr>, exe: &Path, allocator: All
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

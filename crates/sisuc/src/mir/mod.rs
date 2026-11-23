@@ -87,6 +87,7 @@ pub(crate) use print::print;
 /// The mir of `program` as lowering leaves it under the assumed flags, before any pass: enough
 /// to see which `Equal` may call a written method, and much cheaper than `build`.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn lowered(program: &tir::Program) -> Program {
     lower(program, &params::assumed(program))
 }
@@ -779,4 +780,5 @@ fn certified(function: &Function, functions: &[Function]) {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) mod tests;

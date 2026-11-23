@@ -862,6 +862,7 @@ pub unsafe extern "C" fn sisu_show_close(sink: *mut Sink, bytes: *const u8, len:
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::{Sink as FileSink, Stdout, sisu_free};

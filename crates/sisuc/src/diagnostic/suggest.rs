@@ -76,6 +76,7 @@ fn edit_distance(a: &str, b: &str) -> usize {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::closest;
 

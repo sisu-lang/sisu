@@ -15,6 +15,7 @@ mod swap;
 mod writer;
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) mod coverage;
 
 use arbitrary::Unstructured;
@@ -686,6 +687,7 @@ impl Cost {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::unread_struct_fields;
 

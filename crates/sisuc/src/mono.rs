@@ -1706,6 +1706,7 @@ fn concrete(ty: Type) -> bool {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::fmt::Write as _;
 

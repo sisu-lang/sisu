@@ -52,6 +52,7 @@ use crate::tir::{
 /// The mir of `program`, before any pass, each function lowered under its parameters' `modes`:
 /// `Use` operands and borrow sites are still undecided.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn lower(program: &tir::Program, modes: &[Vec<bool>]) -> super::Program {
     #[cfg(debug_assertions)]
     tir::assert_exit_flags(program);
@@ -1891,6 +1892,7 @@ impl Mentions {
 
     /// Whether the body mentions `local` at all.
     #[cfg(test)]
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub(super) fn mentions(&self, local: usize) -> bool {
         !self.at[local].is_empty()
     }

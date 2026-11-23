@@ -2250,6 +2250,7 @@ fn put_back_breaks(
 /// Whether `value` is a conversion: a wrap to an optional, a box to `any` or a number
 /// conversion. A test counts the `break` values that the loop's join converted.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn converted(value: &Checked) -> bool {
     (value.as_ref()).is_ok_and(|e| {
         matches!(

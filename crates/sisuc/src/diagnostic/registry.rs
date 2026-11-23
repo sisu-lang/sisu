@@ -7692,6 +7692,7 @@ fn insert_mut(message: &str, declared: Span) -> Fix {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

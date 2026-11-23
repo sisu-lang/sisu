@@ -3209,6 +3209,7 @@ fn mut_param(name: String, ty: Ty, size: u64, adds: Adds) -> Var {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::generate::coverage::{SEEDS, search_seeds, seed};

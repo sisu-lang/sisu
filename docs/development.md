@@ -455,7 +455,8 @@ should reach. It also names a region on an `assert!`, `assert_eq!` or
 `assert_ne!` line that ran (or a `debug_` one): such a region is the message,
 which runs only when the assert fails. Test code is left out:
 `crates/*/tests/`, and unit-test modules in their own file, `src/**/tests.rs`
-or under `src/**/tests/`. The `Coverage:` line comes again as the last line,
+or under `src/**/tests/`. With the nightly toolchain, the `#[cfg(test)]`
+modules and functions are left out too (see below). The `Coverage:` line comes again as the last line,
 so the end of a long log gives the figures. The report never fails on low
 coverage.
 
@@ -480,8 +481,14 @@ whose next line is such a panic; the lines of an inline `#[cfg(test)] mod` in th
 file. The region lists keep their own rules for these. It says `(none)` when no
 line qualifies. A run with lines only has no third list. The nightly `Coverage` job
 of CI measures branches too and prints `Branch coverage (exact)`. It fails when
-line coverage is below 98.5%, when branch coverage is below 92.5%, or when the
-branch figure is missing. `make setup` installs the nightly toolchain, so a
+line coverage is below 98.5%, when branch coverage is below 94.5%, or when the
+branch figure is missing. The figures are of product code. Each `#[cfg(test)]`
+module and function also has `#[cfg_attr(coverage_nightly, coverage(off))]`,
+so the nightly toolchain does not instrument it. A test module holds branches
+that no passing test takes, such as the failing side of an `assert!`. The
+`coverage-off` hook (`scripts/coverage_off.py`) fails on a `#[cfg(test)]`
+module or function without the attribute. A `#[cfg(test)]` statement, such as
+a step counter, cannot have the attribute, so its branches count. `make setup` installs the nightly toolchain, so a
 local `make coverage` measures branches. To change the nightly toolchain, edit
 `scripts/coverage-toolchain`: both the script and the job read it. Commit new files, or
 `git add -N` them, so the diff sees them. Before the report, the output has a

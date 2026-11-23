@@ -329,6 +329,7 @@ pub(crate) struct Lexed<'src> {
 
 /// The tokens of `source`, or its first diagnostic: for tests that need source that lexes clean.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn lex_clean(source: &str) -> Result<Vec<Token>, Diagnostic> {
     let lexed = lex(source)?;
     match lexed.diagnostics.into_iter().next() {
@@ -1761,6 +1762,7 @@ fn unexpected(c: char, at: usize) -> Diagnostic {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::diagnostic::Code;

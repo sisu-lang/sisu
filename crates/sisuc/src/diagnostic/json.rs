@@ -175,6 +175,7 @@ fn to_line(value: &impl Serialize) -> String {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::diagnostic::{DiagnosticKind, Expected, UnwrapHelp};

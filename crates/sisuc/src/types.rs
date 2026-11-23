@@ -320,12 +320,14 @@ thread_local! {
 
 /// How many types `Type::subst` has substituted on this thread: those that name a parameter.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn substituted() -> usize {
     SUBSTITUTED.get()
 }
 
 /// Sets the count of `substituted` to 0, and the budget after which a substitution panics.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn start_substituting(budget: usize) {
     SUBSTITUTED.set(0);
     SUBSTITUTED_BUDGET.set(budget);
@@ -859,6 +861,7 @@ impl fmt::Debug for Type {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
 

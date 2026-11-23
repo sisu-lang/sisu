@@ -85,6 +85,7 @@ pub(crate) fn parse(lexed: Lexed<'_>, prelude: bool) -> Parsed {
 
 /// The program of `source`, which must lex and parse without a diagnostic.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn parse_ok(source: &str) -> Program {
     let parsed = parse(
         crate::lexer::lex(source).expect("the source should lex"),
@@ -5311,6 +5312,7 @@ enum Head {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
     use crate::diagnostic::Code;

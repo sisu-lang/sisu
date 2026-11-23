@@ -1068,6 +1068,7 @@ thread_local! {
 /// What `source` writes to its standard output, built at O0 and run once. For the tests of the
 /// generator, which check the text of values.
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub(crate) fn stdout_of(source: &str) -> Vec<u8> {
     let dir = run::private_dir(&std::env::temp_dir(), fresh_names("-test"))
         .expect("the test should make its directory");
@@ -1090,6 +1091,7 @@ pub(crate) fn stdout_of(source: &str) -> Vec<u8> {
 }
 
 #[cfg(test)]
+#[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::collections::BTreeMap;
     use std::ops::Range;
