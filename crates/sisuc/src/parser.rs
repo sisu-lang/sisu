@@ -6177,10 +6177,10 @@ mod tests {
             let src = format!("fn main() {{\n    {header} {body}\n}}");
             assert!(parsed(&src).diagnostics.is_empty(), "{src}");
         }
-        assert!(
+        assert_eq!(
             parsed("fn main() {\n    match (o ?? return) {\n        _ => f()\n    }\n}")
-                .diagnostics
-                .is_empty()
+                .diagnostics,
+            Vec::new(),
         );
     }
 

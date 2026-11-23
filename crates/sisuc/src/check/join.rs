@@ -1370,6 +1370,8 @@ pub(super) fn put_back(
     value: &mut Option<tir::Expr>,
     all: bool,
 ) -> bool {
+    #[cfg(test)]
+    super::reached("put_back");
     if value.is_none() {
         return true;
     }

@@ -257,6 +257,8 @@ fn take2<T>(mut x: T?, n: i64) { x = None }
 fn keep<T>(mut x: T?) -> T? { x }
 fn opt<T>(v: T?) -> T? { v }
 fn g() {}
+// A function that names `unit` as its return type.
+fn gu() -> unit {}
 fn pick<T>(a: T, b: T) -> T { a }
 // A field and a parameter of a nested optional, which a call whose arguments leave a part open
 // meets whole, with no wrap.
@@ -523,6 +525,7 @@ ocs()?.s.xs
 ocs()?.s.xs[0]
 # A `unit` value, and a `unit?` value: a safe call of a method that returns `unit`.
 g()
+gu()
 olg()?.log()
 # `unit` places: a mutable local, a field and an element.
 mu
@@ -809,6 +812,11 @@ let _a = loop { if c { break 1 }; break 1 + $ }
 let _a = loop { if c { break 1 }; break $ }
 let _a = match k { 0 => 5; 1 => Some(1); _ => $ }
 let _a = [5, Some(1), $]
+# Array literals with an optional call or `None` alongside an integer and `$`.
+let _a = [5, oi(), $]
+let _a = [5, $, oi()]
+let _a = [$, 5, oi()]
+let _a = [5, None, $]
 # A branch in a poisoned context: the right side of `??` after an unknown name, an argument of a
 # call with the wrong count, and a `break` after a failed `break`.
 let _a = missing ?? (if c { $ } else { 8 })

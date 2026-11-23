@@ -393,6 +393,41 @@ impl Checker<'_> {
         named && self.is_push_place(receiver)
     }
 
+    /// Whether `receiver.method(..)` skips generic ranking. Returns true for a parked receiver, or
+    /// for a `mut self` call after `?.` that checks under `Body::write_chain`.
+    pub(super) fn skips_ranking(
+        &mut self,
+        receiver: &ast::Expr,
+        method: Symbol,
+        safe: bool,
+    ) -> bool {
+        self.parks_receiver(receiver, method, safe)
+            || (!safe && self.chain_mut_self_call(receiver, method))
+    }
+
+    /// Whether `receiver.method(..)` calls a `mut self` method after a `?.` with a walked root.
+    /// When true, `value_kept` checks `receiver` under `Body::write_chain`.
+    pub(super) fn chain_mut_self_call(&mut self, receiver: &ast::Expr, method: Symbol) -> bool {
+        if !self.mut_self_names.contains(&method)
+            || first_safe(receiver).is_none()
+            || !self.is_push_place(receiver)
+        {
+            return false;
+        }
+        let Ok((root, ty)) = self.struct_walk(receiver) else {
+            return false;
+        };
+        if matches!(root, StructRoot::Other) {
+            return false;
+        }
+        let inner = innermost(ty);
+        match inner.kind() {
+            TypeKind::Struct(..) | TypeKind::Enum(..) => self.finds_mut_self(inner, method),
+            TypeKind::Param(..) | TypeKind::Assoc(..) => true,
+            _ => false,
+        }
+    }
+
     /// Whether the chain of indexes and fields of the place `e` ends in a local or in an
     /// expression such as a call, whose field is a place. It ends in no constant, function, type
     /// or unknown name.
@@ -1312,17 +1347,35 @@ impl Checker<'_> {
                     Change::Assign | Change::Element | Change::Field => Change::Element,
                 };
                 let outer = std::mem::replace(&mut self.body.indexed, true);
-                let inner = self.place(span, base, inner_change);
+                let mut inner = self.place(span, base, inner_change);
                 // The array of an optional array is no place, but its element has a type.
                 let optional = inner.value_ty().filter(|&ty| is_optional_array(ty));
                 // A root that failed or cannot change has no write to help with.
                 let usage = change.index_usage(inner.reported.is_none() && inner.writable);
-                let (element, element_report) = match optional {
-                    Some(ty) => {
-                        let reported = self.optional_array_target(base, &inner);
-                        (optional_element(ty), Some(reported))
+                let elem = optional.and_then(optional_element);
+                let (element, element_report) = match (optional, elem) {
+                    (Some(_), Some(e))
+                        if change == Change::Push
+                            && inner.held.is_some()
+                            && inner.guard.is_some()
+                            && !inner.guards_class(&self.body.locals)
+                            && (matches!(payload(e).kind(), TypeKind::Array(_))
+                                || self.finds_mut_self(innermost(e), Symbol::intern("push"))) =>
+                    {
+                        let d = match inner.held.take().expect("the guard should hold a report") {
+                            DiagnosticKind::ChainWriteOnStruct { at, .. } => {
+                                DiagnosticKind::ChainWriteOnStruct { at, replace: None }
+                            }
+                            d => d,
+                        };
+                        let reported = self.error(d);
+                        (Some(e), Some(reported))
                     }
-                    None => self.element(base, (inner.value_ty(), false), usage),
+                    (Some(_), elem) => {
+                        let reported = self.optional_array_target(base, &inner);
+                        (elem, Some(reported))
+                    }
+                    (None, _) => self.element(base, (inner.value_ty(), false), usage),
                 };
                 // The index is not part of the chain that it ends.
                 self.body.indexed = false;

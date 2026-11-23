@@ -369,6 +369,8 @@ fn open_params(
 /// The type parameters of a callee after its `owner` ones, as themselves at their indices.
 /// They follow the owner's arguments in a list that `Type::subst` reads.
 fn own_params(names: &[Symbol], owner: usize) -> impl Iterator<Item = Type> {
+    #[cfg(test)]
+    super::reached("own_params");
     (0u32..)
         .zip(names)
         .skip(owner)
@@ -990,6 +992,8 @@ impl Bindings {
     /// The first parameter that `ty`, a callee's, names and that is unbound or rejected, which
     /// `known` has no type for. `None` when `ty` names none.
     fn unknown_param(&self, ty: Type) -> Option<usize> {
+        #[cfg(test)]
+        super::reached("unknown_param");
         self.unknown_in(ty, &mut WalkMemo::default())
     }
 
@@ -3919,6 +3923,8 @@ impl Checker<'_> {
         e: &mut tir::Expr,
         candidate: Type,
     ) -> Result<(), Reported> {
+        #[cfg(test)]
+        super::reached("settle_open");
         let Some((with, waits)) = self.open_types(call, candidate) else {
             return Err(self.proof(e.span)); // proof: quiet reader
         };
@@ -4079,7 +4085,7 @@ impl Checker<'_> {
                 method,
                 safe,
                 ..
-            } if self.parks_receiver(receiver, method.name, *safe) => Some(Expectation::None),
+            } if self.skips_ranking(receiver, method.name, *safe) => Some(Expectation::None),
             // A method call with no argument is a member closed, as a local is, unless it waits
             // for its context to pick a method.
             K::MethodCall { args, .. } if args.is_empty() && !self.sibling_waits(e) => {
@@ -5454,7 +5460,7 @@ impl Checker<'_> {
             safe,
             ..
         } = &e.kind
-            && self.parks_receiver(receiver, method.name, *safe)
+            && self.skips_ranking(receiver, method.name, *safe)
         {
             if method.name.as_str() != "push" {
                 self.unranked_mut_self.insert(method.name);

@@ -10,6 +10,7 @@ diagnostic/mod.rs	<sisuc::diagnostic::Fix>::message
 diagnostic/mod.rs	<sisuc::diagnostic::Fix>::safe
 diagnostic/registry.rs	<sisuc::diagnostic::registry::Code>::explanation
 front_end.rs	sisuc::front_end::badness
+front_end.rs	sisuc::front_end::code_counts
 front_end.rs	sisuc::front_end::decode
 front_end.rs	sisuc::front_end::ends_a_line
 front_end.rs	sisuc::front_end::marks
@@ -17,6 +18,7 @@ front_end.rs	sisuc::front_end::moved
 front_end.rs	sisuc::front_end::other_mark_in
 front_end.rs	sisuc::front_end::sound_fixes
 front_end.rs	sisuc::front_end::syntax
+front_end.rs	sisuc::front_end::syntax_diagnostics
 front_end.rs	sisuc::front_end::syntax_errors
 lib.rs	sisuc::check_bytes
 source.rs	<sisuc::source::LineIndex>::line_start
