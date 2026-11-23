@@ -1133,7 +1133,6 @@ impl Checker<'_> {
         self.body.required.clear();
         self.body.conformed.clear();
         self.body.leaves.clear();
-        self.body.scope = None;
     }
 
     /// Resolves deferred or waiting member bounds of parameter `place` on `id` on demand.
@@ -1389,25 +1388,6 @@ impl Checker<'_> {
         }
     }
 
-    /// Resolves into `found` the bounds `members` of `params`, as (parameter, place) pairs, that
-    /// name an associated type of a parameter in their arguments. `found` holds the others, and
-    /// `at` is the place of the first parameter. The bounds that `found` holds are in scope.
-    ///
-    /// An associated type `S.Item` holds the arguments of the bound of `S` that declares `Item`,
-    /// so that bound is resolved first. Which bounds declare `Item`, and which declare the same
-    /// one, depends on the names of their interfaces and the text of their arguments and not on
-    /// their types, so the order is known before any bound resolves, and it does not depend on
-    /// the order of the parameters. A bound waits for each declaration of the name it writes that
-    /// another bound gives, so the resolution finds the type ambiguous if two differ (E0156). A
-    /// declaration that only the bound gives is no wait: then no other bound gives the type, and
-    /// the resolution reports it. The bounds resolve in waves. Each wave holds the bounds that
-    /// wait for no one now. Its bounds go into scope together at its end, and the fact that a
-    /// bound failed goes into scope at once. Each bound and each name is read a fixed number of
-    /// times.
-    ///
-    /// The bounds left wait for each other. Each that is on a loop of bounds is reported at the
-    /// associated type it writes (E0030), and the others that wait for it stay unknown, with no
-    /// report of their own.
     /// Resolves one wave `now` of non-`Self` member bounds and adds them to scope.
     #[expect(
         clippy::too_many_arguments,
@@ -1487,6 +1467,22 @@ impl Checker<'_> {
         (is_self_member, member_index)
     }
 
+    /// Resolves into `found` the bounds `members` of `params`, as (parameter, place) pairs, that
+    /// name an associated type of a parameter in their arguments. `found` holds the others, and
+    /// `at` is the place of the first parameter. The bounds that `found` holds are in scope.
+    ///
+    /// An associated type `S.Item` holds the arguments of the bound of `S` that declares `Item`,
+    /// so that bound resolves first. Interface names and argument text decide which bounds declare
+    /// `Item` and which match. The resolution order is known before any bound resolves, and does
+    /// not depend on parameter order. A bound waits for each declaration of its written name on
+    /// other bounds. Thus resolution finds an ambiguity if two differ (E0156). A declaration that
+    /// only the bound gives is no wait: then no other bound gives the type, and resolution
+    /// reports it. The bounds resolve in waves. Each wave holds the bounds that wait for no one
+    /// now. Its bounds enter scope together at its end, while a bound failure enters at once. Each
+    /// bound and each name is read a fixed number of times.
+    ///
+    /// The remaining bounds wait for each other. Each bound on a loop reports E0030 at its
+    /// associated type. Other bounds that wait for it stay unknown with no report of their own.
     fn resolve_member_bounds(
         &mut self,
         at: usize,

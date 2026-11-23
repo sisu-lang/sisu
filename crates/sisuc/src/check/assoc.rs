@@ -273,11 +273,6 @@ impl Checker<'_> {
         match base_ty.kind() {
             TypeKind::Assoc(_, iface, _, k) => {
                 if self.ensure_assoc_bounds(iface, k as usize) {
-                    let closure = self.closure_len(base_ty);
-                    let found = self.lookup_assoc_in_closure(base_ty, closure, name.name);
-                    if !found.is_empty() {
-                        return self.finish_member_lookup(base_ty, name, &found);
-                    }
                     if self.pending_assoc_declares(iface, k as usize, name.name) {
                         self.interfaces[iface.0].assoc[k as usize].bounds.failed = true;
                         self.body.unknown_assoc.insert(base_ty);
@@ -289,6 +284,11 @@ impl Checker<'_> {
                             },
                         });
                         return None;
+                    }
+                    let closure = self.closure_len(base_ty);
+                    let found = self.lookup_assoc_in_closure(base_ty, closure, name.name);
+                    if !found.is_empty() {
+                        return self.finish_member_lookup(base_ty, name, &found);
                     }
                     if self.is_unknown(base_ty) {
                         return None;
@@ -306,11 +306,6 @@ impl Checker<'_> {
                     if resolving && (self.in_assoc_bound() || self.in_on_demand()) {
                         let place = place as usize;
                         if self.ensure_deferred_self_param(id, place) {
-                            let closure = self.closure_len(base_ty);
-                            let found = self.lookup_assoc_in_closure(base_ty, closure, name.name);
-                            if !found.is_empty() {
-                                return self.finish_member_lookup(base_ty, name, &found);
-                            }
                             if self.pending_param_declares(id, place, name.name) {
                                 self.interfaces[id.0].bounds[place].failed = true;
                                 if !self.body.unknown.contains(&place) {
@@ -324,6 +319,11 @@ impl Checker<'_> {
                                     },
                                 });
                                 return None;
+                            }
+                            let closure = self.closure_len(base_ty);
+                            let found = self.lookup_assoc_in_closure(base_ty, closure, name.name);
+                            if !found.is_empty() {
+                                return self.finish_member_lookup(base_ty, name, &found);
                             }
                             if self.is_unknown(base_ty) {
                                 return None;
