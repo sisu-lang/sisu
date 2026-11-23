@@ -2023,9 +2023,12 @@ impl Checker<'_> {
             return None;
         }
         Some(NeverReassignedForm::Param {
-            class: b
-                .ty
-                .is_some_and(|ty| matches!(unwrapped(ty).kind(), TypeKind::Class(..))),
+            class: b.ty.is_some_and(|ty| {
+                matches!(
+                    unwrapped(self.resolve_local(ty)).kind(),
+                    TypeKind::Class(..)
+                )
+            }),
         })
     }
 
@@ -2120,7 +2123,10 @@ impl Checker<'_> {
     /// Whether the condition local `id` can be named by W0011: its type holds no poison, it is
     /// `self` or has a binding, and nothing wrote it after the write count `writes`.
     fn unchanged(&mut self, id: tir::LocalId, writes: u32) -> bool {
-        if self.holds(self.body.locals[id.0].ty).poison {
+        if self
+            .holds(self.resolve_local(self.body.locals[id.0].ty))
+            .poison
+        {
             return false;
         }
         if id.0 == 0 && self.body.self_type != SelfType::Absent {

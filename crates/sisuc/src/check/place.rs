@@ -275,12 +275,11 @@ impl CheckedPlace {
         }
     }
 
-    /// Whether the `?.` of the place takes a class object out of its optional. `locals` are the
-    /// locals of the body.
-    pub(super) fn guards_class(&self, locals: &[tir::Local]) -> bool {
-        self.guard
-            .as_ref()
-            .is_some_and(|guard| matches!(locals[guard.bind.0].ty.kind(), TypeKind::Class(..)))
+    /// Whether the `?.` of the place takes a class object out of its optional. `local_ty` is the
+    /// resolved type of a local of the body.
+    pub(super) fn guards_class(&self, local_ty: impl Fn(tir::LocalId) -> Type) -> bool {
+        (self.guard.as_ref())
+            .is_some_and(|guard| matches!(local_ty(guard.bind).kind(), TypeKind::Class(..)))
     }
 
     /// The type of the place as a value: a `?.` of its root field makes it an optional.
@@ -608,7 +607,7 @@ impl Checker<'_> {
             // A `?.` on a struct value held the report of its write, which is the only one.
             if let Some(guard) = &place.guard
                 && matches!(
-                    self.body.locals[guard.bind.0].ty.kind(),
+                    self.resolve_local(self.body.locals[guard.bind.0].ty).kind(),
                     TypeKind::Struct(..)
                 )
             {
@@ -941,7 +940,8 @@ impl Checker<'_> {
         }
         // A `char` has no arithmetic, and a rewrite of the statement would break the
         // assignment: `target` stands for the value, which `assign` accepts.
-        if self.lookup(name).is_some_and(|b| b.ty == Some(Type::CHAR)) {
+        let local_ty = self.lookup(name).and_then(|b| b.ty);
+        if local_ty.map(|ty| self.resolve_local(ty)) == Some(Type::CHAR) {
             self.char_compound(op_span, value);
             return self.assign(span, target, target);
         }
@@ -1188,6 +1188,7 @@ impl Checker<'_> {
         let (local, ty) = (b.local, b.ty);
         let shown = b.shown.clone();
         let cause = binding_cause(b);
+        let ty = ty.map(|ty| self.resolve_local(ty));
         let ((held, forbidden), refused) = match cause {
             Some(cause) if change == Change::MutArg => ((None, None), Some(cause)),
             Some(cause) => (self.forbid(change, name.to_string(), span, cause), None),
@@ -1321,7 +1322,7 @@ impl Checker<'_> {
                 Some(TypeKind::Array(_)),
             ) if self.one_line(object.span)
                 && matches!(
-                    self.body.locals[guard.bind.0].ty.kind(),
+                    self.resolve_local(self.body.locals[guard.bind.0].ty).kind(),
                     TypeKind::Class(..)
                 ) =>
             {
@@ -1358,7 +1359,9 @@ impl Checker<'_> {
                         if change == Change::Push
                             && inner.held.is_some()
                             && inner.guard.is_some()
-                            && !inner.guards_class(&self.body.locals)
+                            && !inner.guards_class(|id| {
+                                self.resolve_local(self.body.locals[id.0].ty)
+                            })
                             && (matches!(payload(e).kind(), TypeKind::Array(_))
                                 || self.finds_mut_self(innermost(e), Symbol::intern("push"))) =>
                     {
@@ -1817,7 +1820,10 @@ impl Checker<'_> {
         else {
             return None;
         };
-        if !matches!(self.body.locals[bind.0].ty.kind(), TypeKind::Class(..)) {
+        if !matches!(
+            self.resolve_local(self.body.locals[bind.0].ty).kind(),
+            TypeKind::Class(..)
+        ) {
             return None;
         }
         Some(match &base.kind {
@@ -2116,7 +2122,7 @@ impl Checker<'_> {
                 }
             }
             &ast::ExprKind::Name(name) => (self.binding(name).and_then(|b| b.ty))
-                .map(|ty| (StructRoot::Binding(name), ty))
+                .map(|ty| (StructRoot::Binding(name), self.resolve_local(ty)))
                 .ok_or(WalkStop::Undecided),
             ast::ExprKind::SelfValue => match self.body.self_type.known() {
                 Some(ty) if is_struct(ty) => Ok((StructRoot::SelfValue, ty)),
@@ -2157,7 +2163,7 @@ impl Checker<'_> {
             }
             &ast::ExprKind::Name(name) => {
                 let b = self.binding(name)?;
-                Some((b.kind == BindingKind::Var, b.ty?))
+                Some((b.kind == BindingKind::Var, self.resolve_local(b.ty?)))
             }
             _ => None,
         }
@@ -2194,7 +2200,10 @@ impl Checker<'_> {
     /// The value `place` holds, read at `span`.
     pub(super) fn read(&self, place: tir::Place, span: Span) -> tir::Expr {
         let (kind, ty) = match place {
-            tir::Place::Local(id) => (ExprKind::Local(id), self.body.locals[id.0].ty),
+            tir::Place::Local(id) => (
+                ExprKind::Local(id),
+                self.resolve_local(self.body.locals[id.0].ty),
+            ),
             tir::Place::Field { base, index } => {
                 let ty = self.field_type(base.ty, index).expect(
                     "a place whose type is known should not be a field whose type is `Error`",

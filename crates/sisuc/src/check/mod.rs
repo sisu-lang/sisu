@@ -1517,6 +1517,12 @@ fn block_type(checked: &CheckedBlock) -> Option<Type> {
 }
 
 impl<'src> Checker<'src> {
+    /// `ty`, the type of a local that the body read, with each variable that has a type replaced
+    /// by it. A local's type is resolved here, so no `.kind()` site resolves it on its own.
+    fn resolve_local(&self, ty: Type) -> Type {
+        self.table.resolve(ty)
+    }
+
     /// The one way to build a checker; `check` and the tests call it.
     #[expect(
         clippy::zero_sized_map_values,

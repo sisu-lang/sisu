@@ -1451,6 +1451,7 @@ impl Checker<'_> {
                     b.also.push(name.span);
                     (b.ty, b.span)
                 });
+                let earlier = earlier.map(|(ty, at)| (ty.map(|ty| self.resolve_local(ty)), at));
                 if let (Some((Some(want), earlier)), Some(got)) = (earlier, ty)
                     && want != got
                 {

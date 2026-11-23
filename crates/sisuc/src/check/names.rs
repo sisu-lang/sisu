@@ -444,7 +444,7 @@ impl Checker<'_> {
     ) -> Resolved {
         Resolved::Local {
             local,
-            ty,
+            ty: ty.map(|ty| self.resolve_local(ty)),
             hidden: if hides_name {
                 self.poison_kind_use(name).map(|(kind, _)| kind)
             } else {
