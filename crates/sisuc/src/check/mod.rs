@@ -520,6 +520,9 @@ struct LoopFrame {
     /// The token of the error that failed the loop: a failed jump, loop label or `break` value
     /// in it. It then has no type.
     failed: Option<Reported>,
+    /// Enclosing `(owner_loop_index, slot, site_body_depth)` entries whose stashed value holds a
+    /// `break` for this loop.
+    stashed: Vec<(usize, usize, usize)>,
 }
 
 impl LoopFrame {
@@ -540,6 +543,7 @@ impl LoopFrame {
             crossed: false,
             bare: None,
             failed: None,
+            stashed: Vec::new(),
         }
     }
 }
@@ -1097,6 +1101,9 @@ struct Body {
     self_type: SelfType,
     /// Loops open around the code being checked, innermost last: what a `break` would act on.
     loops: Vec<LoopContext>,
+    /// Each outer `break_value` currently being checked:
+    /// `(owner_loop_index, slot, site_body_depth)`.
+    active_breaks: Vec<(usize, usize, usize)>,
     /// The E0050 of each generic call whose result cannot meet its context (see `Misfit`). A
     /// report that uses the result takes its entry. Each entry left is pushed when the body ends.
     misfits: Vec<Option<Diagnostic>>,

@@ -1377,6 +1377,20 @@ impl Checker<'_> {
             }
             _ => None,
         });
+        if keyword == "break"
+            && self.frame(target).kind == LoopKind::Loop
+            && let Some(&entry) = self
+                .body
+                .active_breaks
+                .iter()
+                .rev()
+                .find(|&&(owner, _, _)| owner < target)
+        {
+            let stashed = &mut self.frame(target).stashed;
+            if !stashed.contains(&entry) {
+                stashed.push(entry);
+            }
+        }
         let value = value
             .map(|v| {
                 let start = label.is_none().then(|| v.span.start());
@@ -1551,16 +1565,7 @@ impl Checker<'_> {
             self.body.loop_unlifted.insert(span, found);
         }
         if let (Ok(body), Some(_)) = (&mut checked, &ty) {
-            let mut values: FxHashMap<Span, tir::Expr> = (labels.into_iter().zip(values))
-                .filter_map(|(at, value)| Some((at, value.ok()?)))
-                .collect();
-            let bare = frame.bare.is_some();
-            if !values.is_empty() {
-                body.each_expr_mut(&mut |e| {
-                    put_back_breaks(e, 0, frame.crossed, (&mut values, bare));
-                });
-                debug_assert!(values.is_empty(), "each `break` value should be put back");
-            }
+            self.restore_loop_breaks(body, &mut frame, labels, values);
         }
         let body = match checked {
             Ok(body) => body,
@@ -1600,6 +1605,38 @@ impl Checker<'_> {
             LoopContext::Body(frame) => frame,
             LoopContext::Header { .. } => unreachable!("a jump's target should be a loop body"),
         }
+    }
+
+    /// Puts `values` back into `body` and into any stashed outer `break` values in `frame`.
+    fn restore_loop_breaks(
+        &mut self,
+        body: &mut tir::Block,
+        frame: &mut LoopFrame,
+        labels: Vec<Span>,
+        values: Vec<Checked>,
+    ) {
+        let mut values: FxHashMap<Span, tir::Expr> = (labels.into_iter().zip(values))
+            .filter_map(|(at, value)| Some((at, value.ok()?)))
+            .collect();
+        if values.is_empty() {
+            return;
+        }
+        let bare = frame.bare.is_some();
+        let inner_depth = 1 + body_depth(&self.body.loops);
+        body.each_expr_mut(&mut |e| {
+            put_back_breaks(e, 0, frame.crossed, (&mut values, bare));
+        });
+        for (owner, slot, site_depth) in std::mem::take(&mut frame.stashed) {
+            if let Some((_, Ok(expr))) = &mut self.frame(owner).values[slot] {
+                put_back_breaks(
+                    expr,
+                    site_depth - inner_depth,
+                    frame.crossed,
+                    (&mut values, bare),
+                );
+            }
+        }
+        debug_assert!(values.is_empty(), "each `break` value should be put back");
     }
 
     /// `v` is the value of the `break` at `span` that ends the loop body at `target`. It is
@@ -1650,7 +1687,14 @@ impl Checker<'_> {
             (_, expected) => branch_expectation(expected),
         };
         self.body.label_typo = typo.map(|name| (name.span, span.start()));
+        if let Some(slot) = slot {
+            let site_depth = body_depth(&self.body.loops);
+            self.body.active_breaks.push((target, slot, site_depth));
+        }
         let checked = self.expr(v, expected);
+        if slot.is_some() {
+            self.body.active_breaks.pop();
+        }
         self.body.label_typo = None;
         let checked = self.refuse_unwanted(v, checked, expected, false);
         let Some(slot) = slot else {
@@ -2199,6 +2243,14 @@ fn reread(e: &tir::Expr) -> tir::Expr {
         _ => unreachable!("a fixed place should be a local or a field of one"),
     };
     tir::Expr::new(kind, e.ty, e.span)
+}
+
+/// How many open loop bodies lie in `loops`.
+fn body_depth(loops: &[LoopContext]) -> usize {
+    loops
+        .iter()
+        .filter(|entry| matches!(entry, LoopContext::Body(_)))
+        .count()
 }
 
 /// Puts each value of `values` back in its `break` in `e`, by the span of that `break`. Each such
