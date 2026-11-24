@@ -137,6 +137,61 @@ fn chained_never(p: bool) -> i64 {
     }
 }
 
+fn gp(c: bool, d: bool) -> i64 {
+    g: loop {
+        let rt = t: loop {
+            let rp = p: loop {
+                break g (if d { break p (if c { break g (break t 1) } else { 5 }) } else { 7 })
+            }
+            break rp + 10
+        }
+        break rt + 100
+    }
+}
+
+fn gp4(c: bool, d: bool) -> i64 {
+    g: loop {
+        let rt = t: loop {
+            let rp = p: loop {
+                if c { break p 5 }
+                break g (if d { break p (break g (break t 1)) } else { 7 })
+            }
+            break rp + 10
+        }
+        break rt + 100
+    }
+}
+
+fn gp5(tag: string, c: bool, d: bool) -> string {
+    g: loop {
+        let rt = t: loop {
+            let rp = p: loop {
+                break g (if d {
+                    break p (if c { break g (break t (tag + "-t")) } else { tag + "-p" })
+                } else {
+                    tag + "-g"
+                })
+            }
+            break rp + "-rt"
+        }
+        break rt + "-rg"
+    }
+}
+
+fn open_outer_with_inner_and_outer_break(p: bool) -> i64 {
+    a: loop {
+        let rb = b: loop {
+            break a (d: loop {
+                let rc = c: loop {
+                    break d (break a (if p { break c 1 } else { break b 2 }))
+                }
+                break rc + 10
+            })
+        }
+        break rb + 100
+    }
+}
+
 fn rc_string(tag: string, p: bool, q: bool, nest: bool) -> string {
     a: loop {
         let rb = b: loop {
@@ -235,4 +290,19 @@ fn main() {
     print("{a3.len()}:{a3[0]}") // 1:s1-a
     let a4 = rc_array(tag, t, f, t)
     print("{a4.len()}:{a4[0]}:{a4[1]}:{a4[2]}") // 3:s1-c:s1-rb:s1-ra
+
+    print(gp(t, t)) // 101
+    print(gp(f, t)) // 115
+    print(gp(f, f)) // 7
+
+    print(gp4(t, f)) // 115
+    print(gp4(f, t)) // 101
+    print(gp4(f, f)) // 7
+
+    print(gp5(tag, t, t)) // s1-t-rg
+    print(gp5(tag, f, t)) // s1-p-rt-rg
+    print(gp5(tag, f, f)) // s1-g
+
+    print(open_outer_with_inner_and_outer_break(t)) // 11
+    print(open_outer_with_inner_and_outer_break(f)) // 102
 }

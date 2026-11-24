@@ -352,6 +352,7 @@ mod tests {
             "struct S {\n    mut @ x: i64\n}\nfn main() {}\n",
             "fn main() {\n    outer: loop {\n        let a = loop { break outer (if true { break 2 } else { 5 }) }\n        print(a)\n    }\n}\n",
             "fn f(p: bool) -> i64 {\n    a: loop {\n        let rb = b: loop {\n            let rc = c: loop {\n                break a (if p { break b (break c 1) } else { 3 })\n            }\n            break rc + 10\n        }\n        break rb + 100\n    }\n}\nfn main() { print(f(true)) }\n",
+            "fn f(c: bool, d: bool) -> i64 {\n    g: loop {\n        let rt = t: loop {\n            let rp = p: loop {\n                break g (if d { break p (if c { break g (break t 1) } else { 5 }) } else { 7 })\n            }\n            break rp + 10\n        }\n        break rt + 100\n    }\n}\nfn main() { print(f(true, true)) }\n",
             "struct P {\n    x: f64\n    fn set(mut self) {\n        self.x = .1\n    }\n}\nstruct L<T%> {}\nfn f(mut o: L<P>) {\n    o.set()\n}\nfn main() {}\n",
             "struct P {\n    x: f64\n    fn set(mut self) {\n        self.x = .1\n    }\n}\nstruct L<T%> {\n    ps: [P]\n}\nfn f(mut o: L<P>?) {\n    o?.ps[0].set()\n}\nfn main() {}\n",
             "struct P {\n    x: f64\n    fn set(mut self) {\n        self.x = .1\n    }\n}\nfn main() {\n    let mut x = Missing()\n    x.set()\n    print(x)\n}\n",
