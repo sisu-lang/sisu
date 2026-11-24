@@ -751,7 +751,40 @@ struct GapSlot<T>: GapPut<T> {
 }
 fn gap_bump<T: GapPut<i64>>(mut t: T) -> bool { t.put(5, true) }
 struct GapBit: GapSource { type Item = bool; v: bool; fn next(self) -> bool { self.v } }
-fn gap_put<S: GapSource>(_v: S.Item) -> S? { None }";
+fn gap_put<S: GapSource>(_v: S.Item) -> S? { None }
+struct GapBoxed: GapHolds<i64> { type Item = i64; k: i64; fn gets(self) -> Item { self.k } }
+struct GapWrap: GapHolds<GapBoxed> { type Item = GapBoxed; b: GapBoxed; fn gets(self) -> Item { self.b } }
+struct GapOut: GapConvert<GapBoxed> { k: i64; fn convert(self) -> GapBoxed { GapBoxed(k: self.k) } }
+interface GapMembers {
+    type C: GapConvert<Self.A.Item>
+    type B: GapHolds<i64>
+    type A: GapHolds<Self.B>
+    fn get_a(self) -> Self.A.Item
+    fn take(self, x: Self.A.Item) -> i64
+    fn read_c(self, c: Self.C) -> i64
+}
+struct GapMembered: GapMembers {
+    type C = GapOut
+    type B = GapBoxed
+    type A = GapWrap
+    fn get_a(self) -> GapBoxed { GapBoxed(k: 12) }
+    fn take(self, x: GapBoxed) -> i64 { GapWrap(b: x).gets().gets() }
+    fn read_c(self, c: GapOut) -> i64 { c.convert().k }
+}
+fn gap_members<T: GapMembers>(o: T, c: T.C) -> i64 { o.take(o.get_a()) + o.read_c(c) }
+interface GapParamBound<U: GapConvert<Self.A.Item>> {
+    type B: GapHolds<i64>
+    type A: GapHolds<Self.B>
+    fn combine(self, u: U) -> Self.A.Item
+    fn score(self, x: Self.A.Item) -> i64
+}
+struct GapScored: GapParamBound<GapOut> {
+    type B = GapBoxed
+    type A = GapWrap
+    fn combine(self, u: GapOut) -> GapBoxed { u.convert() }
+    fn score(self, x: GapBoxed) -> i64 { x.gets() }
+}
+fn gap_scored<U: GapConvert<P.A.Item>, P: GapParamBound<U>>(p: P, u: U) -> i64 { p.score(p.combine(u)) }";
 
 /// The declarations of the forms of `gap_forms` that reach lowering and the runtime. Their names
 /// start with `Gap` or `gap_`. The text is fixed and makes no draw. `gap_forms` writes the
@@ -2051,6 +2084,13 @@ impl Gen<'_> {
     ///   - `gap_nothing`: a generic method that waits for its type in an argument (`own_params`);
     ///   - `gap_bump`: a call whose bound takes a type argument (`unknown_param`);
     ///   - `gap_put`: an argument at an associated type that the join decides (`put_back`).
+    /// - the forms of member-bearing interface bounds, each for the functions of the checker that
+    ///   resolve such a bound on demand (`tests/run/assoc_later_bound.sisu` reaches them). Each has
+    ///   a point in `GAP_POINTS` (`coverage.rs`):
+    ///   - `gap_members`: an associated type whose bound names `Self.A.Item` before the
+    ///     bound of `A` (`assoc_entry_matches`);
+    ///   - `gap_scored`: a parameter of an interface whose bound names `Self.A.Item`
+    ///     (`resolve_deferred_self_entry`).
     ///
     /// `main` takes `gap_args` in the programs of `MAIN_ARGS_GATE`. `open_main` and
     /// `print_gap_args` write it.
@@ -2183,6 +2223,8 @@ impl Gen<'_> {
             "print(gap_slot.v)",
             "let gap_bit: GapBit? = if gap_off { GapBit(v: true) } else { None }",
             "print([gap_put(loop { break true }), gap_bit].len())",
+            "print(gap_members(GapMembered(), GapOut(k: 99)))",
+            "print(gap_scored(GapScored(), GapOut(k: 7)))",
         ] {
             calls.push(line);
         }

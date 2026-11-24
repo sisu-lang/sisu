@@ -1010,6 +1010,8 @@ impl Checker<'_> {
         let Some(name) = wanted else {
             return true;
         };
+        #[cfg(test)]
+        super::reached("assoc_entry_matches");
         entry
             .iface
             .is_none_or(|iface| self.iface_declares_assoc(iface, name))
@@ -1452,6 +1454,8 @@ impl Checker<'_> {
         name: Symbol,
         written: &ast::TypeExpr,
     ) -> Option<Bound> {
+        #[cfg(test)]
+        super::reached("resolve_deferred_self_entry");
         let res = self.resolving_params_mut(id);
         res.deferred_self[i].retain(|&(bj, _)| bj != j);
         res.active_param[i] = true;

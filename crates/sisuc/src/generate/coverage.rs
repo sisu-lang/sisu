@@ -374,6 +374,8 @@ const GAP_POINTS: &[&str] = &[
     "own_params",
     "unknown_param",
     "put_back",
+    "assoc_entry_matches",
+    "resolve_deferred_self_entry",
 ];
 
 /// The joins that `Gen::gap_forms` writes in both orders of their members, each with how to find
@@ -7301,6 +7303,98 @@ fn main() { let c = [1].len() == 2; let b: Bit? = if c { Bit(v: true) } else { N
 struct Bit: Source { type Item = bool; v: bool; fn next(self) -> bool { self.v } }
 fn put<S: Source>(_v: S.Item) -> S? { None }
 fn main() { let b: Bit? = put<Bit>(true); print(b == None) }",
+            &[],
+        ),
+        (
+            "an associated type bound names a member that comes later",
+            r"interface Holds<Y> { type Item; fn gets(self) -> Item }
+interface Convert<T> { fn convert(self) -> T }
+struct Boxed: Holds<i64> { type Item = i64; k: i64; fn gets(self) -> Item { self.k } }
+struct Wrap: Holds<Boxed> { type Item = Boxed; b: Boxed; fn gets(self) -> Item { self.b } }
+struct Out: Convert<Boxed> { k: i64; fn convert(self) -> Boxed { Boxed(k: self.k) } }
+interface Members {
+    type C: Convert<Self.A.Item>
+    type B: Holds<i64>
+    type A: Holds<Self.B>
+    fn get_a(self) -> Self.A.Item
+    fn read_c(self, c: Self.C) -> i64
+}
+struct Membered: Members {
+    type C = Out
+    type B = Boxed
+    type A = Wrap
+    fn get_a(self) -> Boxed { Boxed(k: 12) }
+    fn read_c(self, c: Out) -> i64 { c.convert().k }
+}
+fn members<T: Members>(o: T, c: T.C) -> i64 { o.read_c(c) }
+fn main() { print(members(Membered(), Out(k: 99))) }",
+            &["assoc_entry_matches", "written_interface"],
+        ),
+        (
+            "an associated type bound names no member",
+            r"interface Holds<Y> { type Item; fn gets(self) -> Item }
+interface Convert<T> { fn convert(self) -> T }
+struct Boxed: Holds<i64> { type Item = i64; k: i64; fn gets(self) -> Item { self.k } }
+struct Wrap: Holds<Boxed> { type Item = Boxed; b: Boxed; fn gets(self) -> Item { self.b } }
+struct Out: Convert<Boxed> { k: i64; fn convert(self) -> Boxed { Boxed(k: self.k) } }
+interface Members {
+    type C: Convert<Boxed>
+    type A: Holds<Boxed>
+    fn read_c(self, c: Self.C) -> i64
+}
+struct Membered: Members {
+    type C = Out
+    type A = Wrap
+    fn read_c(self, c: Out) -> i64 { c.convert().k }
+}
+fn members<T: Members>(o: T, c: T.C) -> i64 { o.read_c(c) }
+fn main() { print(members(Membered(), Out(k: 99))) }",
+            &[],
+        ),
+        (
+            "a parameter bound names a member of Self",
+            r"interface Holds<Y> { type Item; fn gets(self) -> Item }
+interface Convert<T> { fn convert(self) -> T }
+struct Boxed: Holds<i64> { type Item = i64; k: i64; fn gets(self) -> Item { self.k } }
+struct Wrap: Holds<Boxed> { type Item = Boxed; b: Boxed; fn gets(self) -> Item { self.b } }
+struct Out: Convert<Boxed> { k: i64; fn convert(self) -> Boxed { Boxed(k: self.k) } }
+interface Scored<U: Convert<Self.A.Item>> {
+    type B: Holds<i64>
+    type A: Holds<Self.B>
+    fn combine(self, u: U) -> Self.A.Item
+    fn score(self, x: Self.A.Item) -> i64
+}
+struct Scorer: Scored<Out> {
+    type B = Boxed
+    type A = Wrap
+    fn combine(self, u: Out) -> Boxed { u.convert() }
+    fn score(self, x: Boxed) -> i64 { x.gets() }
+}
+fn scored<U: Convert<P.A.Item>, P: Scored<U>>(p: P, u: U) -> i64 { p.score(p.combine(u)) }
+fn main() { print(scored(Scorer(), Out(k: 7))) }",
+            &[
+                "assoc_entry_matches",
+                "resolve_deferred_self_entry",
+                "written_interface",
+            ],
+        ),
+        (
+            "a parameter bound names no member of Self",
+            r"interface Holds<Y> { type Item; fn gets(self) -> Item }
+interface Convert<T> { fn convert(self) -> T }
+struct Boxed: Holds<i64> { type Item = i64; k: i64; fn gets(self) -> Item { self.k } }
+struct Wrap: Holds<Boxed> { type Item = Boxed; b: Boxed; fn gets(self) -> Item { self.b } }
+struct Out: Convert<Boxed> { k: i64; fn convert(self) -> Boxed { Boxed(k: self.k) } }
+interface Scored<U: Convert<Boxed>> {
+    type A: Holds<Boxed>
+    fn combine(self, u: U) -> Boxed
+}
+struct Scorer: Scored<Out> {
+    type A = Wrap
+    fn combine(self, u: Out) -> Boxed { u.convert() }
+}
+fn scored<U: Convert<Boxed>, P: Scored<U>>(p: P, u: U) -> i64 { p.combine(u).k }
+fn main() { print(scored(Scorer(), Out(k: 7))) }",
             &[],
         ),
     ];
