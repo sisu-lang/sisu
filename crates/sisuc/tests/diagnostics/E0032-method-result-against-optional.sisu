@@ -1,0 +1,17 @@
+// A method with its own type parameter gives a closed result when its arguments fix them. That
+// result is checked against the declared type of the `let`. A struct that differs is E0032.
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+struct Box<T> {
+    v: T
+
+    fn mk<U>(self, u: U) -> Two<T, U> { Two(a: self.v, b: u) }
+}
+
+fn main() {
+    let bx = Box(v: "s")
+    let y: Two<i64, bool?>? = bx.mk(true)
+}

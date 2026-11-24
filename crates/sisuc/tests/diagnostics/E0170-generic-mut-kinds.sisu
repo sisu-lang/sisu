@@ -1,0 +1,78 @@
+// A `mut` argument of a generic call must have exactly the type of its place. The error shows
+// the open type parameters of the parameter as `_`: for a struct, an enum, an `any` and an
+// optional, and for an array in an optional context.
+struct S1<T> {
+    v: T
+}
+
+struct S2<T> {
+    v: T
+}
+
+enum E1<T> {
+    A(T)
+}
+
+enum E2<T> {
+    B(T)
+}
+
+interface Source<T> {
+    fn get(self) -> T
+}
+
+interface Other<T> {
+    fn other(self) -> T
+}
+
+struct Box1: Source<i64>, Other<i64> {
+    n: i64
+
+    fn get(self) -> i64 {
+        self.n
+    }
+
+    fn other(self) -> i64 {
+        self.n
+    }
+}
+
+fn fs<T>(mut x: S1<T>) -> T {
+    x = x
+    x.v
+}
+
+fn fe<T>(mut x: E1<T>) -> i64 {
+    x = x
+    1
+}
+
+fn fa<T>(mut x: any Source<T>) -> T {
+    x = x
+    x.get()
+}
+
+fn fo<T>(mut x: T??) -> i64 {
+    x = x
+    1
+}
+
+fn keep<T>(mut a: [T]) -> [T] {
+    a = a
+    a
+}
+
+fn main() {
+    let mut s = S2(v: 1)
+    let mut e = E2.B(1)
+    let mut a: any Source<i64> = Box1(n: 1)
+    let mut o: any Other<i64> = Box1(n: 2)
+    let mut n = 5
+    let mut ys = [1]
+    print(fs(mut s))
+    print(fe(mut e))
+    print(fa(mut a))
+    print(fa(mut o))
+    print(fo(mut n))
+    let t: [u8]? = keep(mut ys)
+}

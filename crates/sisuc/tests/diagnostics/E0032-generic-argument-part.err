@@ -1,0 +1,20 @@
+error[E0032]: expected `Two<_, i64>`, found `One<i64>`
+  --> E0032-generic-argument-part.sisu:30:18
+   |
+30 |     let a = take(One(a: 1))
+   |                  ^^^^^^^^^
+
+error[E0032]: expected `Two<_, i64>`, found `Two<i64, string>`
+  --> E0032-generic-argument-part.sisu:31:18
+   |
+31 |     let b = take(mk3(1, "a", "b"))
+   |                  ^^^^^^^^^^^^^^^^
+
+error[E0032]: expected `Two<[_], any Show>`, found `Two<i64, S>`
+  --> E0032-generic-argument-part.sisu:32:19
+   |
+32 |     let c = take4(mk4(1, s))
+   |                   ^^^^^^^^^
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

@@ -1,0 +1,47 @@
+// A call gives one type parameter two arguments of different types that have no common type.
+// The error is at the call and names each argument. This holds also when the call is the argument
+// of another call, or when `dbg` wraps it. The help says that an `any` holds both.
+interface Seen {
+    fn seen(self) -> i64
+}
+
+struct Eye: Seen {
+    v: i64
+
+    fn seen(self) -> i64 {
+        self.v
+    }
+}
+
+struct Lid: Seen {
+    v: i64
+
+    fn seen(self) -> i64 {
+        self.v + 100
+    }
+}
+
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+fn pk<X>(a: X, b: X) -> Two<X, X> {
+    Two(a: a, b: b)
+}
+
+fn h<U, V>(a: U, b: Two<U, V>) -> i64 {
+    1
+}
+
+fn outer<T, U>(p: Two<T, U>, a: T, b: U) -> i64 {
+    1
+}
+
+fn main() {
+    let s: any Seen = Eye(v: 1)
+    print(h(s, pk(Eye(v: 1), Lid(v: 2))))
+    print(outer(pk(Eye(v: 1), Lid(v: 2)), s, s))
+    print(outer(dbg(pk(Eye(v: 1), Lid(v: 2))), s, s))
+    print(h(1, pk(Eye(v: 1), Lid(v: 2))))
+}

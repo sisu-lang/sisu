@@ -1,0 +1,37 @@
+error[E0154]: `S` does not conform to `Ia`
+  --> E0154-mut-bound-names-associated.sisu:44:19
+   |
+44 |     let b = g(mut s, mut n)
+   |                   ^
+   |
+  ::: E0154-mut-bound-names-associated.sisu:22:9
+   |
+22 | fn g<T: Ia & Conv<U>, U>(mut a: T, mut b: U) -> U {
+   |         -- required by this bound
+   |
+   = help: make `S` conform to `Ia`
+
+error[E0154]: `i64` does not conform to `Source`
+  --> E0154-mut-bound-names-associated.sisu:45:19
+   |
+45 |     let c = k(mut i, mut s)
+   |                   ^
+   |
+  ::: E0154-mut-bound-names-associated.sisu:27:9
+   |
+27 | fn k<R: Source, T: Conv<R.Item>>(mut r: R, mut t: T) -> R.Item {
+   |         ------ required by this bound
+
+error[E0154]: `i64` does not conform to `Source`
+  --> E0154-mut-bound-names-associated.sisu:46:27
+   |
+46 |     let d = k2(mut s, mut j)
+   |                           ^
+   |
+  ::: E0154-mut-bound-names-associated.sisu:32:10
+   |
+32 | fn k2<R: Source, T: Conv<R.Item>>(mut t: T, mut r: R) -> R.Item {
+   |          ------ required by this bound
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0154

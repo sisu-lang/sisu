@@ -1,0 +1,16 @@
+error[E0139]: `T` has no `!=`
+ --> E0139-operand-failed-beside-parameter.sisu:4:5
+  |
+4 |     a != nope
+  |     ^ this has type `T`
+  |
+  = help: add a bound: `T: Eq`
+
+error[E0033]: cannot find binding `nope`
+ --> E0139-operand-failed-beside-parameter.sisu:4:10
+  |
+4 |     a != nope
+  |          ^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0033, E0139

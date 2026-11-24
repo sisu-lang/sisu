@@ -1,0 +1,42 @@
+error[E0032]: the arguments for `X` of this call have different types
+  --> E0032-held-argument-of-two-structs.sisu:43:16
+   |
+43 |     print(h(s, pk(Eye(v: 1), Lid(v: 2))))
+   |                ^^ ---------  --------- `Lid`
+   |                   |
+   |                   this argument gives `X` the type `Eye`
+   |
+   = help: the values have no shared type; `any Seen` holds each of them
+
+error[E0032]: the arguments for `X` of this call have different types
+  --> E0032-held-argument-of-two-structs.sisu:44:17
+   |
+44 |     print(outer(pk(Eye(v: 1), Lid(v: 2)), s, s))
+   |                 ^^ ---------  --------- `Lid`
+   |                    |
+   |                    this argument gives `X` the type `Eye`
+   |
+   = help: the values have no shared type; `any Seen` holds each of them
+
+error[E0032]: the arguments for `X` of this call have different types
+  --> E0032-held-argument-of-two-structs.sisu:45:21
+   |
+45 |     print(outer(dbg(pk(Eye(v: 1), Lid(v: 2))), s, s))
+   |                     ^^ ---------  --------- `Lid`
+   |                        |
+   |                        this argument gives `X` the type `Eye`
+   |
+   = help: the values have no shared type; `any Seen` holds each of them
+
+error[E0032]: the arguments for `X` of this call have different types
+  --> E0032-held-argument-of-two-structs.sisu:46:16
+   |
+46 |     print(h(1, pk(Eye(v: 1), Lid(v: 2))))
+   |                ^^ ---------  --------- `Lid`
+   |                   |
+   |                   this argument gives `X` the type `Eye`
+   |
+   = help: the values have no shared type; `any Seen` holds each of them
+
+sisu: 4 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

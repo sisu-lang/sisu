@@ -1,0 +1,41 @@
+// The result of a generic call with an open type parameter is checked against the type of its
+// place. A closed part that differs is E0032. In `s_same` and `e_same`, `X` is the type parameter
+// of the caller. A `_` shows only where no part was taken, as `Other` against `Two` in `s_other`.
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+struct Other<A, B> {
+    a: A
+    b: B
+}
+
+enum Gen<A, B> {
+    P(a: A, b: B)
+}
+
+fn mkp<X>() -> Two<X, bool>? {
+    None
+}
+
+fn mkg<X>() -> Gen<X, bool>? {
+    None
+}
+
+fn s_same<X>() -> Two<X, i64>? {
+    mkp()
+}
+
+fn s_other<X>() -> Other<X, i64>? {
+    mkp()
+}
+
+fn e_same<X>() -> Gen<X, i64>? {
+    mkg()
+}
+
+fn main() {
+    let a: Two<i64, i64>? = mkp()
+    let b = if a == None { mkp() } else { a }
+}

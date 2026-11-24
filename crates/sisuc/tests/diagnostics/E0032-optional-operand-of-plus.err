@@ -1,0 +1,8 @@
+error[E0032]: expected `i64`, `u8`, `f64` or `string`, found `i64?`
+ --> E0032-optional-operand-of-plus.sisu:4:13
+  |
+4 |     let d = Some(1) + Some(2)
+  |             ^^^^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

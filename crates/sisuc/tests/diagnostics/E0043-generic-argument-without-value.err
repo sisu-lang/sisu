@@ -1,0 +1,31 @@
+error[E0043]: `id` returns `unit`
+  --> E0043-generic-argument-without-value.sisu:19:13
+   |
+19 |     let a = id({ let y = 2 }) == 1
+   |             ^^^^^^^^^^^^^^^^^
+   |
+  ::: E0043-generic-argument-without-value.sisu:9:19
+   |
+ 9 | fn id<T>(x: T) -> T {
+   |                   - `id` declares `-> T`
+
+error[E0043]: expression has no value
+  --> E0043-generic-argument-without-value.sisu:20:13
+   |
+20 |     let b = { let z = 3 } == id(1)
+   |             ^^^^^^^^^^^^^
+
+error[E0043]: expression has no value
+  --> E0043-generic-argument-without-value.sisu:21:24
+   |
+21 |     let z: i64? = h(c, if c { todo("a") } else { panic("b") })
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ never finishes
+
+warning[W0003]: `todo` panics when it runs
+  --> E0043-generic-argument-without-value.sisu:21:31
+   |
+21 |     let z: i64? = h(c, if c { todo("a") } else { panic("b") })
+   |                               ^^^^
+
+sisu: 3 errors, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0043, W0003

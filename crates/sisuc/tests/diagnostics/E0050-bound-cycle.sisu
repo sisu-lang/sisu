@@ -1,0 +1,39 @@
+// Two type parameters that name each other in their bounds take their types from the arguments.
+// A parameter that no argument fixes gives E0050.
+interface K<V> {
+    fn put(self, v: V) -> i64
+}
+
+struct A: K<B> {
+    n: i64
+
+    fn put(self, v: B) -> i64 {
+        1
+    }
+}
+
+struct B: K<A> {
+    n: i64
+
+    fn put(self, v: A) -> i64 {
+        2
+    }
+}
+
+fn h<T: K<U>, U: K<T>>(t: T, u: U) -> i64 {
+    t.put(u) + u.put(t)
+}
+
+fn h3<X, T: K<U>, U: K<T>>(x: X, t: T, u: U) -> X {
+    x
+}
+
+fn h4<T: K<U>, U>(t: T) -> i64 {
+    1
+}
+
+fn main() {
+    print(h(A(n: 1), B(n: 2)))
+    print(h3(7, A(n: 1), B(n: 2)))
+    let r: i64 = h4(A(n: 1))
+}

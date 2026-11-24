@@ -1,0 +1,36 @@
+// An argument of a generic call must fit the part of the parameter type that is closed. A struct
+// of another declaration, or a different closed type argument, is E0032 at the argument. The error
+// shows the type of the parameter with `_` for each open type parameter.
+interface Show {
+    fn show(self) -> string
+}
+
+struct S: Show {
+    v: i64
+
+    fn show(self) -> string { "s" }
+}
+
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+struct One<A> {
+    a: A
+}
+
+fn mk3<A, B>(a: A, b: B, c: B) -> Two<A, B> { Two(a: a, b: b) }
+fn mk4<A, B>(a: A, b: B) -> Two<A, B> { Two(a: a, b: b) }
+fn take<T>(x: Two<T, i64>) -> T { x.a }
+fn take4<T>(x: Two<[T], any Show>) -> i64 { 0 }
+
+fn main() {
+    let s = S(v: 1)
+    let a = take(One(a: 1))
+    let b = take(mk3(1, "a", "b"))
+    let c = take4(mk4(1, s))
+    print(a)
+    print(b)
+    print(c)
+}

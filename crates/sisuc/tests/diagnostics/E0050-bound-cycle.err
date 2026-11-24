@@ -1,0 +1,10 @@
+error[E0050]: cannot infer `U` for `h4`
+  --> E0050-bound-cycle.sisu:38:18
+   |
+38 |     let r: i64 = h4(A(n: 1))
+   |                  ^^
+   |
+   = help: write the type: `h4<..., ...>(...)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0050

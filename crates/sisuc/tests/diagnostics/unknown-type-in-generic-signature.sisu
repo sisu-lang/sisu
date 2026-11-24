@@ -1,0 +1,65 @@
+// A generic function whose signature names a type that does not exist gets E0030 at the name. Its
+// calls are still checked: a bound that breaks is E0154 at the argument, and a result that does
+// not fit its place is E0032. A method whose result type does not exist is not a second answer
+// for a call of `get`.
+interface Ia {
+    fn get(self) -> i64
+}
+
+interface Ib {
+    fn get(self) -> string
+}
+
+interface Ic {
+    fn get(self) -> Nope
+}
+
+struct S {
+}
+
+extend S: Ia {
+    fn get(self) -> i64 { 1 }
+}
+
+extend S: Ib {
+    fn get(self) -> string { "s" }
+}
+
+struct R {
+}
+
+extend R: Ia {
+    fn get(self) -> i64 { 1 }
+}
+
+extend R: Ic {
+    fn get(self) -> Nope { 1 }
+}
+
+fn id<T>(x: T) -> T { x }
+fn f<T: Ia>(a: T, _b: Nope) -> T { a }
+fn g<T: Ia>(a: T) -> Nope { 1 }
+fn f2<T: Ia, U>(a: T, _b: U?, _c: Nope) -> U? { None }
+fn g2<T: Ia, U>(a: T, _b: U?) -> Nope { 1 }
+fn sg<T>(mut a: T, b: T) -> Nope {
+    a = a
+    1
+}
+fn keep<T>(mut a: [T]) -> [T] {
+    a = a
+    a
+}
+
+fn main() {
+    let a = f(5, 1)
+    let b = g(5)
+    let c = f2(5, None, 1)
+    let d = g2(5, None)
+    let mut x = 1
+    let r: i64? = sg(mut x, 2)
+    let mut ys = [1]
+    let s: string = keep(mut ys)
+    let e: i64 = id(S().get())
+    let h: i64 = id(R().get())
+    print(e)
+}

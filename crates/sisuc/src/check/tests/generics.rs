@@ -10346,3 +10346,315 @@ fn failed_argument_with_a_written_type_should_not_mismatch_a_generic_parameter()
         ],
     );
 }
+
+/// The type `P<..>` that holds `leaf` at the end of `depth` levels, each of which holds two of the
+/// level below. It has few distinct types and many paths to them.
+fn tree(depth: usize, leaf: &str) -> String {
+    if depth == 0 {
+        return leaf.to_string();
+    }
+    let below = tree(depth - 1, leaf);
+    format!("P<{below}, {below}>")
+}
+
+/// A type of ten levels has 1024 paths to 11 types. `MEMO_AFTER` is 64, so a walk over it makes 16
+/// times more visits than the smallest walk that keeps its answers.
+#[test]
+fn generic_calls_over_deep_types_should_check_clean() {
+    with_prelude();
+    let places = r#"
+struct P<A, B> {
+    a: A
+    b: B
+}
+
+fn mk() -> CLOSED {
+    panic("no")
+}
+
+fn f<T>(mut x: OPEN, mut y: OPEN) -> T? {
+    x = x
+    y = y
+    None
+}
+
+fn main() {
+    let mut u = mk()
+    let mut v = mk()
+    let r = f(mut u, mut v)
+    print(r == None)
+}
+"#
+    .replace("CLOSED", &tree(10, "[i64]"))
+    .replace("OPEN", &tree(10, "[T]"));
+    let bound = r#"
+struct P<A, B> {
+    a: A
+    b: B
+}
+
+interface K<V> {
+    fn put(self, v: V) -> i64
+}
+
+struct Cell<T>: K<T> {
+    v: T
+
+    fn put(self, v: T) -> i64 {
+        1
+    }
+}
+
+fn mk() -> Cell<CLOSED> {
+    panic("no")
+}
+
+fn bb<U, T: K<OPEN>>(mut u: U, mut t: T) -> U {
+    u = u
+    t = t
+    u
+}
+
+fn main() {
+    let mut n = 1
+    let mut c = mk()
+    print(bb(mut n, mut c))
+}
+"#
+    .replace("CLOSED", &tree(10, "[i64]"))
+    .replace("OPEN", &tree(10, "[U]"));
+    clean_row("a mut place of a deep type", &places);
+    clean_row("a bound with a deep type", &bound);
+}
+
+/// `big` has 640 places, and a mask holds 64, so 10 times more. `many` has 400 optional places.
+/// `t` has a type of ten levels with 1024 paths, 16 times `MEMO_AFTER`. Each call is in a block.
+/// Only `f()` has no type for its parameter.
+#[test]
+fn calls_with_many_arguments_in_blocks_should_leave_only_the_untyped_call_as_an_error() {
+    with_prelude();
+    let params: Vec<String> = (0..640).map(|i| format!("a{i}: T")).collect();
+    let optionals: Vec<String> = (0..400).map(|i| format!("b{i}: [T?]")).collect();
+    let src = r#"
+struct P<A, B> {
+    a: A
+    b: B
+}
+
+fn id<V>(v: V) -> V {
+    v
+}
+
+fn f<U>() -> i64 {
+    1
+}
+
+fn big<T>(PARAMS_BIG) -> T {
+    a0
+}
+
+fn many<T>(x: T, PARAMS_MANY) -> T {
+    x
+}
+
+fn mk() -> CLOSED {
+    panic("no")
+}
+
+fn t<T, U>(x: T, y: OPEN) -> T {
+    x
+}
+
+fn main() {
+    let a = id({ f() })
+    let b = id({ big(ARGS_BIG) })
+    let c = id({ many(1, ARGS_MANY) })
+    let d = id({ t(1, mk()) })
+    print(a)
+}
+"#
+    .replace("CLOSED", &tree(10, "[i64]"))
+    .replace("OPEN", &tree(10, "[U]"))
+    .replace("PARAMS_BIG", &params.join(", "))
+    .replace("PARAMS_MANY", &optionals.join(", "))
+    .replace("ARGS_BIG", &["1"; 640].join(", "))
+    .replace("ARGS_MANY", &["[None]"; 400].join(", "));
+    let at = line_col(&src, src.find("f() }").expect("the program holds the call"));
+    codes(&src, &[(Code::CannotInfer, at)]);
+}
+
+/// The closed type argument decides the place, and the open one waits for the result.
+#[test]
+fn late_arguments_under_a_closed_place_should_check_clean() {
+    with_prelude();
+    for (row, src) in [
+        (
+            "a late call under a struct, an optional and an array",
+            r"
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+struct Count: Source {
+    n: i64
+    type Item = i64
+    fn next(self) -> i64? { self.n }
+}
+
+struct Tri<A, B, C> {
+    a: A
+    b: B
+    c: C
+}
+
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+struct M {
+    v: i64
+    fn tri(self, n: i64) -> Tri<Count, i64, i64> { Tri(a: Count(n: n), b: n, c: n) }
+    fn two(self, n: i64) -> Two<i64, bool> { Two(a: n, b: true) }
+}
+
+fn f<S: Source, U>(t: Tri<S, U, S.Item>, u: U) -> i64 { 0 }
+fn fopt<S: Source, U>(t: Tri<S, U, S.Item>?, u: U) -> i64 { 0 }
+fn fa<S: Source, U>(t: [Tri<S, U, S.Item>], u: U) -> i64 { 0 }
+fn g<A, B>(xs: [Two<A, B>]) -> i64 { 0 }
+
+fn main() {
+    let c = [1].len() == 1
+    let m = M(v: 1)
+    print(f(if c { m.tri(1) } else { m.tri(2) }, 1))
+    print(fopt(if c { m.tri(1) } else { m.tri(2) }, 1))
+    print(fopt(if c { Some(m.tri(1)) } else { None }, 1))
+    print(f(m.tri(3), 1))
+    print(fa([if c { m.tri(1) } else { m.tri(2) }], 1))
+    print(g([if c { m.two(1) } else { m.two(2) }]))
+    print(g([m.two(1)]))
+}
+",
+        ),
+        (
+            "an array of late calls with an unnamed parameter",
+            r#"
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+struct M {
+    v: i64
+    fn two(self, n: i64) -> Two<i64, bool> { Two(a: n, b: true) }
+}
+
+fn g<A, B, C>(xs: [Two<A, B>], z: C) -> C { z }
+
+fn main() {
+    let c = [1].len() == 1
+    let m = M(v: 1)
+    print(g([if c { m.two(1) } else { m.two(2) }], "z"))
+}
+"#,
+        ),
+        (
+            "a late array under a struct",
+            r"
+struct Two<A, B> {
+    a: A
+    b: B
+}
+fn id<T>(x: T) -> T { x }
+fn f2<A, B>(t: Two<A, B>) -> A { t.a }
+fn main() {
+    let c = [1].len() == 1
+    let x = f2(Two(a: id([if c { 1 } else { 2 }]), b: 1))
+    print(x.len())
+}
+",
+        ),
+    ] {
+        clean_row(row, src);
+    }
+}
+
+/// The other member of the array gives the type parameter its type.
+#[test]
+fn bounds_with_open_type_arguments_should_check_clean_in_a_join() {
+    with_prelude();
+    for (row, src) in [
+        (
+            "a bound with an associated type of an open parameter",
+            r"
+interface Holds<X> {
+    fn get(self) -> X
+}
+
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+
+struct H: Holds<H> {
+    v: i64
+    fn get(self) -> H { self }
+}
+
+struct Count: Source {
+    n: i64
+    type Item = H
+    fn next(self) -> H? { None }
+}
+
+fn kk2<T: Source, U: Holds<T.Item>>(a: T, b: U) -> T { a }
+
+fn main() {
+    let h = H(v: 1)
+    let n = Count(n: 2)
+    let x = [kk2(n, h), n]
+    print(x.len())
+}
+",
+        ),
+        (
+            "an optional argument in an array",
+            r"
+fn k6<T: Ord, U>(a: T, b: U) -> U { b }
+fn main() {
+    let u: u8 = 3
+    let x = [k6(1, None), Some(u)]
+    print(x.len())
+}
+",
+        ),
+    ] {
+        clean_row(row, src);
+    }
+}
+
+/// The two bounds give `get` two result types, and the declared type decides which one is meant.
+#[test]
+fn array_members_of_a_method_with_two_answers_should_check_clean_under_an_optional() {
+    with_prelude();
+    clean(
+        r"
+interface Ia {
+    fn get(self, n: i64) -> i64
+}
+interface Ib {
+    fn get(self, n: i64) -> string
+}
+fn id<T>(x: T) -> T { x }
+fn ida<T>(x: [T]) -> [T] { x }
+fn one<T: Ia & Ib>(t: T) -> i64 {
+    let x: [i64]? = id([t.get(1)])
+    let y: [i64]? = ida([t.get(2)])
+    (x ?? [0])[0] + (y ?? [0])[0]
+}
+fn main() {
+}
+",
+    );
+}

@@ -1,0 +1,8 @@
+error[E0033]: cannot find binding `nope`
+  --> E0033-argument-after-open-array.sisu:22:13
+   |
+22 |     print(g(nope, [if c { m.two(1) } else { m.two(2) }]))
+   |             ^^^^
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0033

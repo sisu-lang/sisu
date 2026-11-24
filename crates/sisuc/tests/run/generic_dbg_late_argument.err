@@ -1,0 +1,2 @@
+generic_dbg_late_argument.sisu:17:31: C().m(1, 2) = P(a: 1, b: 2)
+generic_dbg_late_argument.sisu:18:32: [C().m(1, 2)] = [P(a: 1, b: 2)]

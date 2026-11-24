@@ -1,0 +1,59 @@
+error[E0050]: cannot infer `U` for `f`
+  --> open-parameter-with-failed-bound.sisu:21:13
+   |
+21 |     let a = f(1, if c { none() } else { none() })
+   |             ^
+   |
+   = help: annotate the result, or write the type: `f<..., ...>(...)`
+
+error[E0154]: `i64` does not conform to `K`
+  --> open-parameter-with-failed-bound.sisu:21:15
+   |
+21 |     let a = f(1, if c { none() } else { none() })
+   |               ^
+   |
+  ::: open-parameter-with-failed-bound.sisu:11:9
+   |
+11 | fn f<T: K, U>(t: T, a: U) -> U {
+   |         - required by this bound
+
+error[E0050]: cannot infer `U` for `g`
+  --> open-parameter-with-failed-bound.sisu:22:13
+   |
+22 |     let b = g(1, [none(), none()])
+   |             ^
+   |
+   = help: annotate the result, or write the type: `g<..., ...>(...)`
+
+error[E0154]: `i64` does not conform to `K`
+  --> open-parameter-with-failed-bound.sisu:22:15
+   |
+22 |     let b = g(1, [none(), none()])
+   |               ^
+   |
+  ::: open-parameter-with-failed-bound.sisu:15:9
+   |
+15 | fn g<T: K, U>(t: T, a: [U]) -> U {
+   |         - required by this bound
+
+error[E0050]: cannot infer `U` for `f`
+  --> open-parameter-with-failed-bound.sisu:23:13
+   |
+23 |     let d = f(1, none())
+   |             ^
+   |
+   = help: annotate the result, or write the type: `f<..., ...>(...)`
+
+error[E0154]: `i64` does not conform to `K`
+  --> open-parameter-with-failed-bound.sisu:23:15
+   |
+23 |     let d = f(1, none())
+   |               ^
+   |
+  ::: open-parameter-with-failed-bound.sisu:11:9
+   |
+11 | fn f<T: K, U>(t: T, a: U) -> U {
+   |         - required by this bound
+
+sisu: 6 errors
+sisu: for more on a code, run `sisu explain <code>`: E0050, E0154
