@@ -92,9 +92,9 @@ CODEX_MODEL=<model> sol-review <effort> RUN/brief.md RUN/<stem>.md <repository r
 
 ## claude -p
 
-For a Claude model that the Agent tool does not give, or when no Agent tool is
-available. For example, a `fable-*` subagent runs Fable 5.1, not Fable 5.2. Run
-it from the repository root:
+For a Claude model that the Agent tool does not give, such as Fable 5.2: a
+`fable-*` subagent runs Fable 5.1. Use it too when no Agent tool is available.
+Run it from the repository root:
 
 ```
 claude -p "Read RUN/brief.md and follow it. Your scratch directory is RUN/outside-scratch. Write your report to RUN/<stem>.md; your final reply is that report." --model <model ID, such as claude-fable-5-2> --effort <effort> --permission-mode dontAsk --allowedTools "Read Grep Glob Bash Edit(/RUN/**)" --add-dir RUN --add-dir <each skill directory in the brief> --no-session-persistence < /dev/null > RUN/<stem>-cli.log 2>&1
