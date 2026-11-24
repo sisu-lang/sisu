@@ -1,8 +1,9 @@
 // GIVEN a generic method call whose result names an integer literal's type, such as
-// `C().g(1, 2)` of type `P<T, i64>`, or `C().k(1, 2)` of type `P<X, Y>`
-// AND that call is a late argument of a generic call: a plain parameter, an array element, or one
-// of two arguments
-// AND a context that is not an optional or `any`: `u8`, `u8?` or `f64`
+// `C().g(1, 2)` of type `P<T, i64>`, or `C().k(1, true)` of type `P<X, Y>`
+// AND that call is a late argument of a generic call: a plain parameter, an optional parameter, an
+// array element, or one of two arguments
+// AND a context of type `u8`, `u8?` or `f64`, at a typed `let`, a call argument, a struct field,
+// a `return` or an `if` branch
 // WHEN `main` calls the generic function in each of these places and prints each result
 // THEN the literal takes its type from the context, so the call checks and `main` prints the value
 // AND an argument whose type is its own, such as `C().k8()`, decides the same type in either order
@@ -29,6 +30,14 @@ fn f<A, B>(p: P<A, B>, _q: P<A, B>) -> A { p.a }
 fn h2<A, B>(p: P<A, B>, _q: [B]) -> A { p.a }
 
 fn pair<A, B>(p: P<A, B>, _q: P<A, B>) -> A { p.a }
+
+fn ho<A, B>(_c: bool, p: P<A, B>?) -> A? { if let Some(q) = p { q.a } else { None } }
+
+fn take(x: u8?) -> u8? { x }
+
+struct Q {
+    v: u8?
+}
 
 fn by_param() -> u8 {
     let y: u8 = hp(true, C().g(1, 2))
@@ -120,6 +129,47 @@ fn array_concrete_first() -> u8 {
     y
 }
 
+fn literal_and_bool_optional() -> u8 {
+    let y: u8? = hs(true, [C().k(22, true)])
+    y ?? 0
+}
+
+fn literal_and_variable_optional() -> u8 {
+    let c = true
+    let y: u8? = hs(true, [C().k(23, c)])
+    y ?? 0
+}
+
+fn two_literal_and_bool_elements_optional() -> u8 {
+    let y: u8? = hs(true, [C().k(24, true), C().k(2, false)])
+    y ?? 0
+}
+
+fn literal_and_bool_at_optional_parameter() -> u8 {
+    let y: u8? = ho(true, Some(C().k(25, true)))
+    y ?? 0
+}
+
+fn literal_and_bool_at_call_argument() -> u8 {
+    let y = take(hs(true, [C().k(26, true)]))
+    y ?? 0
+}
+
+fn literal_and_bool_at_field() -> u8 {
+    let y = Q(v: hs(true, [C().k(27, true)])).v
+    y ?? 0
+}
+
+fn literal_and_bool_returned() -> u8? {
+    hs(true, [C().k(28, true)])
+}
+
+fn literal_and_bool_in_branch() -> u8 {
+    let c = true
+    let y: u8? = if c { hs(true, [C().k(29, true)]) } else { None }
+    y ?? 0
+}
+
 fn main() {
     print(by_param())                   // 1
     print(by_param_optional())          // 2
@@ -139,5 +189,13 @@ fn main() {
     print(concrete_before_literal())    // 19
     print(array_literal_first())        // 20
     print(array_concrete_first())       // 8
+    print(literal_and_bool_optional())  // 22
+    print(literal_and_variable_optional()) // 23
+    print(two_literal_and_bool_elements_optional()) // 24
+    print(literal_and_bool_at_optional_parameter()) // 25
+    print(literal_and_bool_at_call_argument()) // 26
+    print(literal_and_bool_at_field())  // 27
+    print(literal_and_bool_returned() ?? 0) // 28
+    print(literal_and_bool_in_branch()) // 29
     print(C().g(1, 2).b)                // 2
 }
