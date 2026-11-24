@@ -7352,6 +7352,31 @@ fn main() { print(members(Membered(), Out(k: 99))) }",
             &[],
         ),
         (
+            "an associated type bound names a member that comes earlier",
+            r"interface Holds<Y> { type Item; fn gets(self) -> Item }
+interface Convert<T> { fn convert(self) -> T }
+struct Boxed: Holds<i64> { type Item = i64; k: i64; fn gets(self) -> Item { self.k } }
+struct Wrap: Holds<Boxed> { type Item = Boxed; b: Boxed; fn gets(self) -> Item { self.b } }
+struct Out: Convert<Boxed> { k: i64; fn convert(self) -> Boxed { Boxed(k: self.k) } }
+interface Members {
+    type B: Holds<i64>
+    type A: Holds<Self.B>
+    type C: Convert<Self.A.Item>
+    fn get_a(self) -> Self.A.Item
+    fn read_c(self, c: Self.C) -> i64
+}
+struct Membered: Members {
+    type B = Boxed
+    type A = Wrap
+    type C = Out
+    fn get_a(self) -> Boxed { Boxed(k: 12) }
+    fn read_c(self, c: Out) -> i64 { c.convert().k }
+}
+fn members<T: Members>(o: T, c: T.C) -> i64 { o.read_c(c) }
+fn main() { print(members(Membered(), Out(k: 99))) }",
+            &["written_interface"],
+        ),
+        (
             "a parameter bound names a member of Self",
             r"interface Holds<Y> { type Item; fn gets(self) -> Item }
 interface Convert<T> { fn convert(self) -> T }
