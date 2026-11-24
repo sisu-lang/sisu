@@ -1,0 +1,41 @@
+// GIVEN `payload<A, B>(t: Two<A, B>?, _u: B)` and `depth<A, B>(t: Two<A, B>??, _u: B)`
+// AND a late branch join that has one wrap too many for the first, and too few for the second
+// WHEN `sisu check` runs
+// THEN E0032 reports each join, as a late value meets its parameter and takes one wrap only
+// AND the reports start at 29:13 and 35:11
+// AND no other error is reported
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+struct M {
+    fn two(self, n: i64) -> Two<i64, bool> { Two(a: n, b: true) }
+    fn opt2(self, n: i64) -> Two<i64, bool>?? { Some(Some(Two(a: n, b: true))) }
+}
+
+fn payload<A, B>(t: Two<A, B>?, _u: B) -> A? { t?.a }
+fn depth<A, B>(t: Two<A, B>??, _u: B) -> i64 {
+    match t {
+        None => 0
+        Some(None) => 1
+        Some(Some(_)) => 2
+    }
+}
+
+fn t2_at_t1() -> i64 {
+    let m = M()
+    let c = [1].len() == 1
+    payload(if c { m.opt2(1) } else { m.opt2(2) }, true) ?? -1
+}
+
+fn t0_at_t2() -> i64 {
+    let m = M()
+    let c = [1].len() == 1
+    depth(if c { m.two(1) } else { m.two(2) }, true)
+}
+
+fn main() {
+    print(t2_at_t1())
+    print(t0_at_t2())
+}

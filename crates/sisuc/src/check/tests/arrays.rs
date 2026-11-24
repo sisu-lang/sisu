@@ -182,15 +182,15 @@ fn a_part_that_fails_on_its_own_in_a_quiet_element_should_add_no_report() {
     // GIVEN a loop whose values do not join, in a part of the element that failed first, or as
     // an operand or argument beside it
     let looped = "loop {\n        if true { break 1 }\n        break true\n    }";
-    // The join of the loop reports at (2, n): the head of the outer join, the `+`, or else the
-    // `loop` (ADR 0052).
+    // The join of the loop reports at (2, n): the `loop`, as an `if` beside `+` reports at the
+    // `if` (ADR 0052).
     let join = |n| Some((Code::Mismatch, (2, n)));
     for (element, at, code, own) in [
         (
             format!("nope + {looped}"),
             (2, 20),
             Code::BindingNotFound,
-            join(25),
+            join(27),
         ),
         (
             format!("nope ?? {looped}"),

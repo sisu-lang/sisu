@@ -2907,6 +2907,38 @@ impl Checker<'_> {
                 }
                 let Some(want) = want else { continue };
                 let want = self.table.resolve(want);
+                if nested_join(&args[i].value) && !defaulted {
+                    let at = args[i].value.span;
+                    // `[x; n]` is the one nested join with no form of its own: its value is
+                    // an element.
+                    let (form, head) = self
+                        .own_join(&args[i].value)
+                        .unwrap_or((JoinForm::Array, at));
+                    let heading = Heading {
+                        head,
+                        whole: at,
+                        returns: None,
+                    };
+                    let origin = call.declarer.origin(i);
+                    let slot = call.slots[i]
+                        .as_mut()
+                        .expect("a tied member should have its value");
+                    let mut member = [JoinMember {
+                        value: slot,
+                        at: Place::Whole,
+                        label: at,
+                    }];
+                    if let Err(poisoned) = self.join_form(
+                        form,
+                        heading,
+                        &mut member,
+                        Expectation::Required(want, origin),
+                        None,
+                    ) {
+                        failed.get_or_insert_with(|| poisoned.reported());
+                    }
+                    continue;
+                }
                 let snapshot = self.table.snapshot();
                 let fits = self.unify(want, ty);
                 if defaulted {
@@ -3817,6 +3849,20 @@ impl Checker<'_> {
                 let d = self.mismatch(e.span, None, want, got, origin);
                 Err(mismatch_poison(self.diagnostics.error(d)))
             }
+            // A value that met an optional as its payload takes the wrap.
+            Some(ty) => {
+                let want = self.table.resolve(filled);
+                let want = self.normalize(want).unwrap_or(want);
+                match checked {
+                    Ok(value)
+                        if matches!(want.kind(), TypeKind::Optional(_))
+                            && self.table.resolve(ty) != want =>
+                    {
+                        self.lift(value, want)
+                    }
+                    checked => checked,
+                }
+            }
             _ => checked,
         }
     }
@@ -3987,16 +4033,25 @@ impl Checker<'_> {
     /// parameter meets the argument once the argument decides that parameter. One that the
     /// decided type cannot give meets it too: the parameter's bound reports.
     fn meets_late(&mut self, filled: Type, ty: Type, at: Span) -> bool {
+        // Unify before wrap: a value that does not meet an optional meets its payload, and the
+        // wrap comes after (`late_argument`).
+        let snapshot = self.table.snapshot();
+        if self.meets_whole(filled, ty, at) {
+            self.keep_snapshot(snapshot);
+            return true;
+        }
+        self.table.rollback(snapshot);
+        let TypeKind::Optional(inner) = filled.kind() else {
+            return false;
+        };
+        self.meets_whole(inner, ty, at)
+    }
+
+    /// `meets_late` for `filled` as a whole, with no wrap.
+    fn meets_whole(&mut self, filled: Type, ty: Type, at: Span) -> bool {
         if !filled.has_assoc() {
             return self.unify(filled, ty);
         }
-        // A value meets an optional as its payload: the wrap comes after.
-        let (filled, ty) = match (filled.kind(), ty.kind()) {
-            (TypeKind::Optional(inner), kind) if !matches!(kind, TypeKind::Optional(_)) => {
-                (inner, ty)
-            }
-            _ => (filled, ty),
-        };
         let open = self.assoc_open(filled, at);
         if !self.unify(open, ty) {
             return false;
