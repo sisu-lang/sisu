@@ -1013,3 +1013,7 @@ let _a: i64 = id([1, $])
 # A nested array with a `[]` beside each layer, and a nested fill.
 let _a = [[[$], []], []]
 let _a = [[[$; 2]; 2]; 2]
+# A `break` inside a stashed outer `break` value, through a `never` break and an inner loop break.
+o: loop { let _a = loop { break o (if c { break $ } else { $ }) } }
+la: loop { let _b = lb: loop { let _c = lc: loop { break la (if c { break lb (break lc $) } else { $ }) } } }
+lg: loop { let _t = lt: loop { let _p = lp: loop { break lg (if c { break lp (if c { break lg (break lt $) } else { $ }) } else { $ }) } } }

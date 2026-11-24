@@ -2688,3 +2688,77 @@ fn indexed_safe_chain_should_keep_replace_help_only_for_present_array_fields() {
         assert!(d.help().is_some(), "row `{row}` should have help: {d:?}");
     }
 }
+
+#[test]
+fn failed_receiver_call_should_not_depend_on_other_mut_self_methods() {
+    judge_unused();
+    let decls = "struct P {\n    x: i64\n    fn show(self) { print(self.x) }\n}\n\
+                 struct L<T> { ps: [P] }\n\
+                 class C { x: i64 }\n";
+    let unchanged_rows = [
+        (
+            "class missing method, unchanged",
+            format!(
+                "{decls}fn f(mut c: C) {{ c.nope(); print(c.x) }}\nfn main() {{ let mut c = C(x: 1); f(mut c); print(c.x) }}"
+            ),
+            vec![NeverReassigned, NoMember],
+        ),
+        (
+            "class missing field then method, unchanged",
+            format!(
+                "{decls}fn f(mut c: C) {{ c.nope.set(); print(c.x) }}\nfn main() {{ let mut c = C(x: 1); f(mut c); print(c.x) }}"
+            ),
+            vec![NeverReassigned, NoMember],
+        ),
+        (
+            "i64 missing method, unchanged",
+            format!(
+                "{decls}fn f(mut x: i64) {{ x.nope(); print(x) }}\nfn main() {{ let mut x = 1; f(mut x); print(x) }}"
+            ),
+            vec![NeverReassigned, NoMember],
+        ),
+        (
+            "intact optional safe chain plain method, unchanged",
+            format!(
+                "{decls}fn f(mut o: L<P>?) {{ o?.ps[0].show() }}\nfn main() {{ let mut o: L<P>? = None; f(mut o); print(o != None) }}"
+            ),
+            vec![NeverReassigned, MayBeNone],
+        ),
+    ];
+    for (row, src, want) in unchanged_rows {
+        let (_, ds) = checked(&src);
+        let got: Vec<Code> = ds.iter().map(Diagnostic::code).collect();
+        assert_eq!(got, want, "row `{row}`: {ds:?}");
+    }
+
+    let broken_method =
+        "struct P {\n    x: f64\n    fn set(mut self) {\n        self.x = .1\n    }\n}\n";
+    let failing_rows = [
+        (
+            "broken L plain call",
+            format!(
+                "{broken_method}struct L<T%> {{}}\nfn f(mut o: L<P>) {{\n    o.set()\n}}\nfn main() {{}}\n"
+            ),
+        ),
+        (
+            "broken L safe chain call",
+            format!(
+                "{broken_method}struct L<T%> {{\n    ps: [P]\n}}\nfn f(mut o: L<P>?) {{\n    o?.ps[0].set()\n}}\nfn main() {{}}\n"
+            ),
+        ),
+        (
+            "let mut of unknown call",
+            format!(
+                "{broken_method}fn main() {{\n    let mut x = Missing()\n    x.set()\n    print(x)\n}}\n"
+            ),
+        ),
+    ];
+    let mut red = Vec::new();
+    for (row, src) in failing_rows {
+        let breaches = crate::on_compiler_stack(|| crate::front_end::safe_fix_breaches(&src));
+        if !breaches.is_empty() {
+            red.push(format!("row `{row}`: {breaches:?}"));
+        }
+    }
+    assert!(red.is_empty(), "{}", red.join("\n"));
+}
