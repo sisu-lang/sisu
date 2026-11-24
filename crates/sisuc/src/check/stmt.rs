@@ -6,7 +6,7 @@ use super::array::must_unwrap;
 use super::branch::{branch_expectation, whole_members};
 use super::enums::unwrapped;
 use super::expectation::own_name;
-use super::expr::local;
+use super::expr::{local, whole_literal};
 use super::extend::mut_self_removal;
 use super::generic::Ahead;
 use super::join::{Heading, JoinForm};
@@ -16,9 +16,9 @@ use super::reports::Reported;
 use super::unused_names::{Owner, Pending};
 use super::use_kind::Use;
 use super::{
-    Binding, BindingKind, Checked, CheckedBlock, Checker, Declared, Expectation, LoopContext,
-    LoopFrame, LoopKind, Origin, Poisoned, SelfType, block_expr, built_in_type, known_type,
-    starts_in, tail, type_of,
+    Binding, BindingKind, BridgeLet, Checked, CheckedBlock, Checker, Declared, Expectation,
+    LoopContext, LoopFrame, LoopKind, Origin, Poisoned, SelfType, block_expr, built_in_type,
+    known_type, starts_in, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::conformance::ensure_stack;
@@ -434,6 +434,9 @@ impl Checker<'_> {
                     None => self.value(init, Expectation::None),
                 };
                 let uninferred = self.uninferred_of(init_expr);
+                // Only the E0050 of a whole literal writes the binding (see `settle_let`).
+                let literal = whole_literal(init_expr);
+                let binding = literal.and_then(|_| self.let_binding(init_expr.span));
                 self.body.let_init = None;
                 self.body.failed_let = None;
                 // `let _ = e` binds nothing: the value is an expression statement, which
@@ -470,6 +473,18 @@ impl Checker<'_> {
                 }
                 if let (None, Some(uninferred)) = (ty, uninferred) {
                     self.body.uninferred.insert(local, uninferred);
+                }
+                // A value with open variables keeps them until the first use of the local.
+                if let Some(ty) =
+                    ty.filter(|&ty| ty.holds_infer() && !self.table.open_roots(ty).is_empty())
+                {
+                    let open = BridgeLet {
+                        value: init_expr.span,
+                        ty,
+                        binding,
+                        literal,
+                    };
+                    self.bridge.insert(local, open);
                 }
                 Ok(tir::Stmt::Let {
                     local,

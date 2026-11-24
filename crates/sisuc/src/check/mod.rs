@@ -912,6 +912,9 @@ struct Checker<'src> {
     /// (see `Misfit`). A report that uses the result takes its entry. `with_table` reports each
     /// entry left, for the table of a function or of a constant, when its code ends.
     misfits: Vec<Option<Diagnostic>>,
+    /// The locals of `table`'s function whose `let` kept its value open, until their first read or
+    /// write. `with_table` closes each entry left.
+    bridge: FxHashMap<tir::LocalId, BridgeLet>,
     /// While `signature` resolves the parameter and return types: the interface of each `any`
     /// type they write, with the span as written. `record` keeps a use here when the body has
     /// no owner, because a signature is resolved outside a body. No other body is resolved while
@@ -975,6 +978,19 @@ struct ClosureIndex {
 /// any walk may use it.
 type LeafKey = (Type, tir::InterfaceId, TypeArgs);
 type LeafAnswers = FxHashMap<LeafKey, Option<Type>>;
+
+/// A `let` without a type whose value keeps its inference variables open until the first read or
+/// write of the local (see `Checker::close_let`). It keeps what the E0050 of `main` needs there.
+struct BridgeLet {
+    /// The span of the value.
+    value: Span,
+    /// The type of the value, which holds the open variables.
+    ty: Type,
+    /// What the `let` writes before its type: `mut`, then the name.
+    binding: Option<String>,
+    /// The literal, when the value is a whole `None` or `[]`: its E0050 gets a help from a use.
+    literal: Option<Literal>,
+}
 
 /// The E0050 of a `None` or `[]` that a `let` initializes. A later use of the local can give the
 /// type that the help of the E0050 writes.
@@ -1350,8 +1366,8 @@ pub(crate) fn check<'src>(
     checker.report_loops();
     let classes = checker.classes.iter().map(lower_class).collect();
     debug_assert!(
-        checker.misfits.is_empty(),
-        "a misfit was pushed outside a table, so no report of it would stand"
+        checker.misfits.is_empty() && checker.bridge.is_empty(),
+        "a misfit or an open `let` was kept outside a table, so no report of it would stand"
     );
     let broken = parser_marked(program, &items);
     debug_assert!(
@@ -1623,6 +1639,7 @@ impl<'src> Checker<'src> {
             table: infer::Table::default(),
             obligations: Vec::new(),
             misfits: Vec::new(),
+            bridge: FxHashMap::default(),
             signature_anys: None,
             extend_head: None,
             uses: Vec::new(),
@@ -1648,16 +1665,26 @@ impl<'src> Checker<'src> {
 
     /// Checks with a fresh inference table, then puts the type of each variable in `result`
     /// (`infer::WriteBack`). It reports each `Any` variable that no type reached (E0050), and
-    /// restores the table before it. A misfit that no report used gives its E0050 first. A
+    /// restores the table before it. An open `let` that no code used closes first (see
+    /// `BridgeLet`), and a misfit that no report used gives its E0050. A
     /// top-level function, a method and the value of a constant call it. No other code takes the
     /// table, and each of them has its own variables.
     fn with_table<R: WriteBack>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         let outer = std::mem::take(&mut self.table);
         let outer_obligations = std::mem::take(&mut self.obligations);
         let outer_misfits = std::mem::take(&mut self.misfits);
+        let outer_bridge = std::mem::take(&mut self.bridge);
         let shown_from = (self.dbg_shown.len(), self.read_shown.len());
         let errors = self.diagnostics.errors();
         let mut result = f(self);
+        // A local that no code read closes as its `let` does on `main`.
+        let mut left: Vec<BridgeLet> = std::mem::replace(&mut self.bridge, outer_bridge)
+            .into_values()
+            .collect();
+        left.sort_by_key(|open| open.value.start());
+        for open in left {
+            self.settle_let(&open);
+        }
         for d in std::mem::replace(&mut self.misfits, outer_misfits)
             .into_iter()
             .flatten()

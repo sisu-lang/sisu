@@ -42,3 +42,70 @@ fn let_without_a_type_should_keep_its_roots_open() {
         }
     });
 }
+
+#[test]
+fn second_read_should_see_the_closed_type() {
+    // GIVEN a local whose `let` gives an integer, read once and then read under another type
+    let rows = [
+        (
+            "a read that wants no type",
+            "fn main() {\n    let n = 7\n    print(n)\n    let _b: u8 = n\n}\n",
+            (4, 18),
+        ),
+        (
+            "an integer division",
+            "fn main() {\n    let n = 7\n    print(n / 2)\n    let _f: f64 = n\n}\n",
+            (4, 19),
+        ),
+    ];
+    for (row, src, at) in rows {
+        // WHEN it is checked
+        // THEN the second read sees `i64`, as on `main`: E0032 at that read
+        codes_row(row, src, &[(Code::Mismatch, at)]);
+    }
+}
+
+#[test]
+fn local_that_no_type_reaches_should_report_as_on_main() {
+    // GIVEN a `None` or a `[]` that a `let` without a type keeps
+    let rows = [
+        (
+            "a local that nothing reads",
+            "fn main() {\n    let _x = None\n}\n",
+            vec![(Code::CannotInfer, (2, 14))],
+        ),
+        (
+            "a local pushed twice, with two types",
+            "fn main() {\n    let mut pushed = []\n    pushed.push('a')\n    pushed.push(\"b\")\n    print(pushed.len())\n}\n",
+            vec![(Code::CannotInfer, (2, 22))],
+        ),
+    ];
+    for (row, src, expected) in rows {
+        // WHEN it is checked
+        // THEN it gets the E0050 of `main` at its literal, and nothing else
+        codes_row(row, src, &expected);
+    }
+}
+
+#[test]
+fn first_write_should_see_the_closed_type() {
+    // GIVEN a local whose `let` gives an integer, first written with a `u8`, whole and at an
+    // element
+    let rows = [
+        (
+            "a write of the local",
+            "fn main() {\n    let b: u8 = 3\n    let mut w = 1\n    w = b\n    print(w)\n}\n",
+            (4, 9),
+        ),
+        (
+            "a write with the local at its root",
+            "fn main() {\n    let b: u8 = 3\n    let mut a = [0; 3]\n    a[0] = b\n    print(a)\n}\n",
+            (4, 12),
+        ),
+    ];
+    for (row, src, at) in rows {
+        // WHEN it is checked
+        // THEN the write sees `i64`, as on `main`: E0032 at the written value
+        codes_row(row, src, &[(Code::Mismatch, at)]);
+    }
+}

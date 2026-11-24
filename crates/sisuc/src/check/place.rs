@@ -1150,7 +1150,7 @@ impl Checker<'_> {
     ) -> CheckedPlace {
         #[expect(
             unused_variables,
-            reason = "Task A5 of body inference stage 2 reads it"
+            reason = "a use settles an open `let` in the second part of body inference stage 2"
         )]
         let use_ = Use::of_change(change);
         // A `push` stamps by the rule of `push_receiver`.
@@ -1190,6 +1190,7 @@ impl Checker<'_> {
         let (local, ty) = (b.local, b.ty);
         let shown = b.shown.clone();
         let cause = binding_cause(b);
+        let ty = self.close_let(name, local, ty);
         let ty = ty.map(|ty| self.resolve_local(ty));
         let ((held, forbidden), refused) = match cause {
             Some(cause) if change == Change::MutArg => ((None, None), Some(cause)),

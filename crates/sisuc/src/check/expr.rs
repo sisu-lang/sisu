@@ -11,8 +11,8 @@ use super::reports::Reported;
 use super::stmt::optional_unit;
 use super::use_kind::Use;
 use super::{
-    Checked, CheckedBlock, Checker, Expectation, Origin, Poisoned, SelfType, Uninferred, payload,
-    type_of, wrap, wrap_block,
+    BridgeLet, Checked, CheckedBlock, Checker, Expectation, Origin, Poisoned, SelfType, Uninferred,
+    payload, type_of, wrap, wrap_block,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::conformance::ensure_stack;
@@ -165,7 +165,10 @@ impl Checker<'_> {
     /// `f64` must hold it exactly.
     fn integer(&mut self, at: Span, value: i64, literal: Span, expected: Expectation) -> Checked {
         // A member's literal is an `Int` variable: its fit waits for the type that the join gives.
-        if matches!(expected, Expectation::Member) {
+        // So is the whole value of a `let` without a type, until the first use of the local.
+        if matches!(expected, Expectation::Member)
+            || (expected == Expectation::None && self.open_let_value(at))
+        {
             let ty = self.int_variable(LiteralCheck {
                 span: at,
                 literal,
@@ -880,6 +883,9 @@ impl Checker<'_> {
                 conversion: false,
                 layers: false,
             },
+            Expectation::None if self.open_let_value(span) => {
+                return self.none(span, Expectation::Member);
+            }
             Expectation::None => {
                 return Err(Poisoned::untyped(
                     self.report_uninferred(Literal::None, span),
@@ -1010,24 +1016,87 @@ impl Checker<'_> {
     /// `Option.None` or a `[]` that the checker reported as the last diagnostic. Call it before
     /// `let_init` is cleared.
     pub(super) fn uninferred_of(&self, init: &ast::Expr) -> Option<Uninferred> {
-        // Not `bare_none_written`: `Opt.None` of an alias goes to `generic_call`, which reports
-        // another E0050 that no use type replaces.
-        let literal = match &init.kind {
-            _ if bare_none(init) => Literal::None,
-            ExprKind::ArrayLit(elements) if elements.is_empty() => Literal::EmptyArray,
-            _ => return None,
-        };
+        self.uninferred_at(
+            whole_literal(init)?,
+            init.span,
+            self.let_binding(init.span)?,
+        )
+    }
+
+    /// The E0050 of the `literal` at `span`, which a `let` that writes `binding` initializes, if
+    /// the checker reported it as the last diagnostic.
+    fn uninferred_at(&self, literal: Literal, span: Span, binding: String) -> Option<Uninferred> {
         let last = self.diagnostics.last()?;
-        if last.code() != Code::CannotInfer || last.span() != init.span {
+        if last.code() != Code::CannotInfer || last.span() != span {
             return None;
         }
         Some(Uninferred {
             at: self.diagnostics.len() - 1,
-            span: init.span,
+            span,
             literal,
-            binding: self.let_binding(init.span)?,
+            binding,
             settled: None,
         })
+    }
+
+    /// The open `let` of `local`, if it has one, closed at this first read or write: the type of
+    /// the local after it, which `ty` is when it has none. After an E0050 the local has no type,
+    /// as on `main`, and a later use gives its help as there (see `Checker::inferred_by_use`).
+    pub(super) fn close_let(
+        &mut self,
+        name: Symbol,
+        local: tir::LocalId,
+        ty: Option<Type>,
+    ) -> Option<Type> {
+        if self.bridge.is_empty() {
+            return ty;
+        }
+        let Some(open) = self.bridge.remove(&local) else {
+            return ty;
+        };
+        let closed = self.settle_let(&open);
+        if let Some(b) = self.lookup(name) {
+            b.ty = closed;
+        }
+        self.body.locals[local.0].ty = closed.unwrap_or(Type::UNIT);
+        if closed.is_none()
+            && let Some((literal, binding)) = open.literal.zip(open.binding)
+            && let Some(uninferred) = self.uninferred_at(literal, open.value, binding)
+        {
+            self.body.uninferred.insert(local, uninferred);
+        }
+        closed
+    }
+
+    /// Closes the value of `open` as `close_open` closes the value of a `let` on `main`: each
+    /// open `Int` is `i64`, and each open `Any` is E0050 at its first source. The closed type,
+    /// or `None` after an E0050.
+    pub(super) fn settle_let(&mut self, open: &BridgeLet) -> Option<Type> {
+        let unsettled = self.table.unsettled(open.ty);
+        let ty = self.table.default_open(open.ty);
+        self.unify(open.ty, ty);
+        for unsettled in &unsettled {
+            let literal = self.unsettled_literal(unsettled.origin);
+            let binding = open
+                .binding
+                .clone()
+                .filter(|_| unsettled.origin == open.value);
+            self.error(DiagnosticKind::CannotInfer {
+                literal,
+                binding,
+                ty: None,
+                at: unsettled.origin,
+                regroup: None,
+            });
+        }
+        unsettled.is_empty().then_some(ty)
+    }
+
+    /// Whether `span` is the whole value of a `let` without a type that binds a name. There a
+    /// literal keeps its variable open, as a join member does, until the first use of the local
+    /// (see `BridgeLet`).
+    pub(super) fn open_let_value(&self, span: Span) -> bool {
+        matches!(self.body.let_init, Some((init, name, ..)) if init == span && name.as_str() != "_")
     }
 
     /// What the `let` whose whole initializer is the literal at `span` writes before its type,
@@ -1088,6 +1157,18 @@ pub(super) fn literal_type(ty: Option<Type>) -> Type {
 /// Whether `e` is the empty optional, as `None`, `Option.None` or `Option<T>.None`.
 pub(super) fn none_literal(e: &ast::Expr) -> bool {
     matches!(e.kind, ExprKind::NoneLit) || option_none(e).is_some()
+}
+
+/// The literal that `init` is, when it is a whole `None`, `Option.None` or `[]`: an E0050 of it
+/// can get its help from a later use of the local.
+pub(super) fn whole_literal(init: &ast::Expr) -> Option<Literal> {
+    // Not `bare_none_written`: `Opt.None` of an alias goes to `generic_call`, which reports
+    // another E0050 that no use type replaces.
+    match &init.kind {
+        _ if bare_none(init) => Some(Literal::None),
+        ExprKind::ArrayLit(elements) if elements.is_empty() => Some(Literal::EmptyArray),
+        _ => None,
+    }
 }
 
 /// Whether `e` is the empty optional without a type argument: `None` or `Option.None`.

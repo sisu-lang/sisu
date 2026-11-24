@@ -1013,3 +1013,14 @@ let _a: i64 = id([1, $])
 # A nested array with a `[]` beside each layer, and a nested fill.
 let _a = [[[$], []], []]
 let _a = [[[$; 2]; 2]; 2]
+# A `let` without a type, whose local a later statement reads first: under its own type (the
+# write closes `_o` first), as a join member, with no type, as the value of a write, as a scrutinee,
+# as a receiver, at a conversion to `any`, and as a `mut` argument of a generic function.
+let mut _r = $; let mut _o = $; _o = _r
+let mut _j = $; let _k = if true { _j } else { _j }
+let mut _p = $; print(_p)
+let mut _w = $; _w = _w
+let mut _q = $; match _q { _ => {} }
+let mut _c = $; print(_c.len())
+let mut _a = $; let _d: any Display = _a
+let mut _g = $; take(mut _g)

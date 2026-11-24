@@ -480,7 +480,7 @@ impl Checker<'_> {
         site: Site,
         #[expect(
             unused_variables,
-            reason = "Task A5 of body inference stage 2 reads it"
+            reason = "a use settles an open `let` in the second part of body inference stage 2"
         )]
         use_: Use,
     ) -> Resolved {
@@ -489,6 +489,7 @@ impl Checker<'_> {
         {
             b.read |= !site.quiet;
             let (local, ty, hides_name) = (b.local, b.ty, b.hides_name);
+            let ty = self.close_let(name, local, ty);
             return self.local_of(name, local, ty, hides_name);
         }
         self.meaning(name, site)
