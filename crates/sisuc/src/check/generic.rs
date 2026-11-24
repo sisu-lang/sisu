@@ -2952,18 +2952,29 @@ impl Checker<'_> {
                 }
             }
         }
-        // An argument that is a join of its own, or whose parameter type is an associated type of
-        // a decided parameter. One that does not wait for its context goes first: its type does
-        // not come from the context, and it decides what a later one meets (closed first, Q22).
-        // An associated type decides no parameter, so its argument goes after the guide.
-        // A call at a closed place of an outer call (Q28) takes that place as its context, and its
-        // arguments meet it. So each of them goes after the guide.
-        let closed = self.body.closed_place;
+        // An argument goes before the guide only when its type is its own (rank `Concrete`) and it
+        // is a join of its own: its type does not come from the context, and it decides what a
+        // later one meets (closed first, Q22). That holds only under a context whose top is an
+        // optional or `any`, where the guide meets the whole type and not the payload (Q24). Under
+        // any other context, and at a closed place of an outer call (Q28), every argument goes
+        // after the guide. An associated type decides no parameter, so its argument goes after the
+        // guide.
+        let guide_first = self.body.closed_place
+            || !matches!(
+                expected.ty().map(|t| self.table.resolve(t).kind()),
+                Some(TypeKind::Optional(_) | TypeKind::Any(..))
+            );
         let mut order: Vec<(bool, bool, usize)> = (0..args.len())
             .filter(|&i| call.slots[i].is_none())
             .map(|i| {
-                let waits = self.sibling_waits(&args[i].value);
-                (closed || waits || !joins(i), waits, i)
+                let mut fit = true;
+                let ranked = self.rank_value(&args[i].value, &mut fit);
+                let waits = fit && ranked.rank == Rank::Waits;
+                (
+                    guide_first || ranked.rank != Rank::Concrete || !joins(i),
+                    waits,
+                    i,
+                )
             })
             .collect();
         order.sort_unstable();

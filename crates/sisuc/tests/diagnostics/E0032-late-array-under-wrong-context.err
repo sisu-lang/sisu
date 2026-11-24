@@ -1,10 +1,8 @@
-error[E0032]: expected `string`, found `i64`
-  --> E0032-late-array-under-wrong-context.sisu:21:21
+error[E0032]: expected `P<string, _>`, found `P<i64, i64>`
+  --> E0032-late-array-under-wrong-context.sisu:21:31
    |
 21 |     let y: string = hs(true, [C().k(1)])
-   |            ------   ^^^^^^^^^^^^^^^^^^^^
-   |            |
-   |            declared as `string` here
+   |                               ^^^^^^^^
 
 error[E0032]: the elements of this array have different types
   --> E0032-late-array-under-wrong-context.sisu:26:28
