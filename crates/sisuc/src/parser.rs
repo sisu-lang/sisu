@@ -1633,7 +1633,7 @@ impl<'a> Parser<'a> {
     /// The class or enum that `body` parses, from here to `end`, and the error of each broken
     /// method. A method whose error follows its name is broken alone and leaves the item; any
     /// other error breaks the whole item, whose one error is then the earliest in it. Keeps
-    /// recovered diagnostics strictly before a fatal lexer error outside methods.
+    /// recovered diagnostics strictly before a fatal lexer error anywhere in `end`.
     fn with_methods(
         &mut self,
         end: usize,
@@ -1649,22 +1649,25 @@ impl<'a> Parser<'a> {
         let mut methods = Vec::new();
         let parsed = body(self, &mut errors, &mut methods);
         debug_assert!(rising(&methods), "the method spans should rise");
-        let outside = self
-            .lexer_in(bytes)
-            .find(|d| !holds(&methods, d.span().start()))
-            .cloned();
+        let (lexed_start, outside) = {
+            let mut lexed = self.lexer_in(bytes).peekable();
+            let start = lexed.peek().map(|d| d.span().start());
+            (
+                start,
+                lexed.find(|d| !holds(&methods, d.span().start())).cloned(),
+            )
+        };
         match (parsed, outside) {
             (Ok(item), None) => Ok((item, errors)),
             (parsed, outside) => {
                 self.pos = end;
-                let outside_start = outside.as_ref().map(|d| d.span().start());
                 let fatal = errors
                     .into_iter()
                     .chain(outside)
                     .chain(parsed.err())
                     .reduce(earlier)
                     .expect("a broken item should hold an error");
-                let error = self.resolve_broken(recovered, fatal, outside_start);
+                let error = self.resolve_broken(recovered, fatal, lexed_start);
                 Err(error)
             }
         }
@@ -12496,6 +12499,72 @@ mod tests {
                 steps(&build(200)),
                 steps(&build(300)),
             );
+        }
+    }
+
+    #[test]
+    fn with_methods_should_keep_lexer_error_inside_broken_method_beside_outer_lexer_error() {
+        let unchanged = [
+            (
+                "outer lexer error before broken method, unchanged",
+                "struct S {\n    x: i64,\n    @\n    fn f(self) { $ }\n    y: i64\n}",
+                vec![
+                    (Code::FieldComma, (2, 11)),
+                    (Code::UnexpectedCharacter, (3, 5)),
+                ],
+            ),
+            (
+                "parse error in method with outer lexer error, unchanged",
+                "struct S {\n    x: i64,\n    fn f(self) { let = 1 }\n    @\n    y: i64\n}",
+                vec![(Code::FieldComma, (2, 11))],
+            ),
+        ];
+        for (row, src, want) in unchanged {
+            let ds = parsed(src).diagnostics;
+            let got: Vec<_> = ds
+                .iter()
+                .map(|d| (d.code(), line_col(src, d.span().start())))
+                .collect();
+            assert_eq!(got, want, "row `{row}`");
+            let breaches = crate::on_compiler_stack(|| crate::front_end::safe_fix_breaches(src));
+            assert!(breaches.is_empty(), "row `{row}`: {breaches:?}");
+        }
+
+        let rows = [
+            (
+                "struct comma before broken method and outer lexer error",
+                "struct S {\n    x: i64,\n    fn f(self) { $ }\n    @\n    y: i64\n}",
+                vec![
+                    (Code::FieldComma, (2, 11)),
+                    (Code::UnexpectedCharacter, (3, 18)),
+                ],
+            ),
+            (
+                "class comma before broken method and outer lexer error",
+                "class C {\n    x: i64,\n    fn f(self) { $ }\n    @\n    y: i64\n}",
+                vec![
+                    (Code::FieldComma, (2, 11)),
+                    (Code::UnexpectedCharacter, (3, 18)),
+                ],
+            ),
+            (
+                "enum comma before broken method and outer lexer error",
+                "enum E {\n    A,\n    fn f(self) { $ }\n    @\n    B\n}",
+                vec![
+                    (Code::FieldComma, (2, 6)),
+                    (Code::UnexpectedCharacter, (3, 18)),
+                ],
+            ),
+        ];
+        for (row, src, want) in rows {
+            let ds = parsed(src).diagnostics;
+            let got: Vec<_> = ds
+                .iter()
+                .map(|d| (d.code(), line_col(src, d.span().start())))
+                .collect();
+            assert_eq!(got, want, "row `{row}`");
+            let breaches = crate::on_compiler_stack(|| crate::front_end::safe_fix_breaches(src));
+            assert!(breaches.is_empty(), "row `{row}`: {breaches:?}");
         }
     }
 }

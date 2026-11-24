@@ -1,40 +1,72 @@
 error[E0062]: `?.` cannot write a field of a struct value yet
-  --> E0062-chain-index-struct.sisu:31:6
+  --> E0062-chain-index-struct.sisu:33:6
    |
-31 |     o?.ps[0].x = 2
+33 |     o?.ps[0].x = 2
    |      ^^^^
+   |
+   = help: replace the value: `o = Some(...)`
 
 error[E0062]: `?.` cannot call `set` on a struct value yet
-  --> E0062-chain-index-struct.sisu:35:6
+  --> E0062-chain-index-struct.sisu:37:6
    |
-35 |     o?.ps[0].set()
+37 |     o?.ps[0].set()
    |      ^^^^
+   |
+   = help: replace the value: `o = Some(...)`
 
 error[E0062]: `o?.ps` may be `None`
-  --> E0062-chain-index-struct.sisu:39:5
+  --> E0062-chain-index-struct.sisu:41:5
    |
-39 |     o?.ps[0].show()
+41 |     o?.ps[0].show()
    |     ^^^^^
    |
    = help: unwrap it with `if let`, `let ... else` or `?? return`
 
 error[E0062]: `?.` cannot write a field of a struct value yet
-  --> E0062-chain-index-struct.sisu:43:6
+  --> E0062-chain-index-struct.sisu:45:6
    |
-43 |     o?.qs[0].push(2)
+45 |     o?.qs[0].push(2)
    |      ^^^^
+   |
+   = help: replace the value: `o = Some(...)`
 
 error[E0062]: `?.` cannot call `flip` on an enum value yet
-  --> E0062-chain-index-struct.sisu:47:6
+  --> E0062-chain-index-struct.sisu:49:6
    |
-47 |     o?.ds[0].flip()
+49 |     o?.ds[0].flip()
    |      ^^^^
+   |
+   = help: replace the value: `o = Some(...)`
 
 error[E0062]: `?.` cannot call `set` on a value of type `T` yet
-  --> E0062-chain-index-struct.sisu:51:6
+  --> E0062-chain-index-struct.sisu:53:6
    |
-51 |     o?.ts[0].set()
+53 |     o?.ts[0].set()
    |      ^^^^
+   |
+   = help: replace the value: `o = Some(...)`
 
-sisu: 6 errors
+error[E0062]: `?.` cannot write a field of a struct value yet
+  --> E0062-chain-index-struct.sisu:57:6
+   |
+57 |     o?.pss[0][0].x = 2
+   |      ^^^^^
+   |
+   = help: replace the value: `o = Some(...)`
+
+error[E0062]: `?.` cannot call `set` on a struct value yet
+  --> E0062-chain-index-struct.sisu:61:6
+   |
+61 |     o?.pss[0][0].set()
+   |      ^^^^^
+   |
+   = help: replace the value: `o = Some(...)`
+
+error[E0062]: `?.` cannot write a field of a struct value yet
+  --> E0062-chain-index-struct.sisu:65:6
+   |
+65 |     o?.ops[0].x = 2
+   |      ^^^^^
+
+sisu: 9 errors
 sisu: for more on a code, run `sisu explain <code>`: E0062
