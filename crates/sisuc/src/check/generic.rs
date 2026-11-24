@@ -2907,6 +2907,38 @@ impl Checker<'_> {
                 }
                 let Some(want) = want else { continue };
                 let want = self.table.resolve(want);
+                if nested_join(&args[i].value) && !defaulted {
+                    let at = args[i].value.span;
+                    // `[x; n]` is the one nested join with no form of its own: its value is
+                    // an element.
+                    let (form, head) = self
+                        .own_join(&args[i].value)
+                        .unwrap_or((JoinForm::Array, at));
+                    let heading = Heading {
+                        head,
+                        whole: at,
+                        returns: None,
+                    };
+                    let origin = call.declarer.origin(i);
+                    let slot = call.slots[i]
+                        .as_mut()
+                        .expect("a tied member should have its value");
+                    let mut member = [JoinMember {
+                        value: slot,
+                        at: Place::Whole,
+                        label: at,
+                    }];
+                    if let Err(poisoned) = self.join_form(
+                        form,
+                        heading,
+                        &mut member,
+                        Expectation::Required(want, origin),
+                        None,
+                    ) {
+                        failed.get_or_insert_with(|| poisoned.reported());
+                    }
+                    continue;
+                }
                 let snapshot = self.table.snapshot();
                 let fits = self.unify(want, ty);
                 if defaulted {
@@ -2920,26 +2952,38 @@ impl Checker<'_> {
                 }
             }
         }
-        // An argument that is still to check takes the whole context as its guide: the widest type
-        // that it can meet.
-        let late = call.slots.iter().any(Option::is_none);
-        let mut met = if failed.is_none() && late {
-            self.meet_context(&call, sig, &decided, (expected, true))
-        } else {
-            None
-        };
+        // An argument that is a join of its own, or whose parameter type is an associated type of
+        // a decided parameter. One that does not wait for its context goes first: its type does
+        // not come from the context, and it decides what a later one meets (closed first, Q22).
+        // An associated type decides no parameter, so its argument goes after the guide.
+        // A call at a closed place of an outer call (Q28) takes that place as its context, and its
+        // arguments meet it. So each of them goes after the guide.
+        let closed = self.body.closed_place;
+        let mut order: Vec<(bool, bool, usize)> = (0..args.len())
+            .filter(|&i| call.slots[i].is_none())
+            .map(|i| {
+                let waits = self.sibling_waits(&args[i].value);
+                (closed || waits || !joins(i), waits, i)
+            })
+            .collect();
+        order.sort_unstable();
+        let mut met = None;
+        let mut guided = false;
         for &(i, var) in &decided {
             call.bindings.found[i] = Some(self.table.resolve(var));
         }
-        // An argument that is a join of its own, or whose parameter type is an associated type of
-        // a decided parameter. One whose type comes from its literals goes first: it decides what
-        // one that waits for its context meets.
-        let mut order: Vec<(bool, usize)> = (0..args.len())
-            .filter(|&i| call.slots[i].is_none())
-            .map(|i| (self.sibling_waits(&args[i].value), i))
-            .collect();
-        order.sort_unstable();
-        for (waits, i) in order {
+        for (guide, waits, i) in order {
+            // The arguments that are still to check take the whole context as their guide: the
+            // widest type that they can meet.
+            if guide && !guided {
+                guided = true;
+                if failed.is_none() {
+                    met = self.meet_context(&call, sig, &decided, (expected, true));
+                }
+                for &(i, var) in &decided {
+                    call.bindings.found[i] = Some(self.table.resolve(var));
+                }
+            }
             let arg = &args[i];
             let param =
                 sig.params[i].expect("an argument with no parameter type should be checked");
@@ -3817,6 +3861,17 @@ impl Checker<'_> {
                 let d = self.mismatch(e.span, None, want, got, origin);
                 Err(mismatch_poison(self.diagnostics.error(d)))
             }
+            // A value that met an optional as its payload takes the wrap.
+            Some(ty) => {
+                let want = self.table.resolve(filled);
+                let want = self.normalize(want).unwrap_or(want);
+                match (checked, want.kind()) {
+                    (Ok(value), TypeKind::Optional(_)) if self.table.resolve(ty) != want => {
+                        self.lift(value, want)
+                    }
+                    (checked, _) => checked,
+                }
+            }
             _ => checked,
         }
     }
@@ -3987,16 +4042,25 @@ impl Checker<'_> {
     /// parameter meets the argument once the argument decides that parameter. One that the
     /// decided type cannot give meets it too: the parameter's bound reports.
     fn meets_late(&mut self, filled: Type, ty: Type, at: Span) -> bool {
+        // Unify before wrap: a value that does not meet an optional meets its payload, and the
+        // wrap comes after (`late_argument`).
+        let snapshot = self.table.snapshot();
+        if self.meets_whole(filled, ty, at) {
+            self.keep_snapshot(snapshot);
+            return true;
+        }
+        self.table.rollback(snapshot);
+        match filled.kind() {
+            TypeKind::Optional(inner) => self.meets_whole(inner, ty, at),
+            _ => false,
+        }
+    }
+
+    /// `meets_late` for `filled` as a whole, with no wrap.
+    fn meets_whole(&mut self, filled: Type, ty: Type, at: Span) -> bool {
         if !filled.has_assoc() {
             return self.unify(filled, ty);
         }
-        // A value meets an optional as its payload: the wrap comes after.
-        let (filled, ty) = match (filled.kind(), ty.kind()) {
-            (TypeKind::Optional(inner), kind) if !matches!(kind, TypeKind::Optional(_)) => {
-                (inner, ty)
-            }
-            _ => (filled, ty),
-        };
         let open = self.assoc_open(filled, at);
         if !self.unify(open, ty) {
             return false;
