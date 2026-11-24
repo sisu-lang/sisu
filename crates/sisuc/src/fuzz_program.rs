@@ -3374,12 +3374,12 @@ mod tests {
         let Run { exit, stdout, .. } = o0_run(&g);
         assert_eq!(exit, Exit::Code(0), "{}", g.program);
         // One line from each pass of the innermost loop: every loop ran to its bound. The
-        // seventy-four more lines are these. Two come from `lang_both`. Two print an `any` value.
-        // Eight print what `put` wrote through `any`. Fifty-eight come from `gap_forms`. Three come
+        // seventy-six more lines are these. Two come from `lang_both`. Two print an `any` value.
+        // Eight print what `put` wrote through `any`. Sixty come from `gap_forms`. Three come
         // from `nest`. One prints its result.
         assert_eq!(
             String::from_utf8_lossy(&stdout).lines().count(),
-            8 * 8 * 8 + 74
+            8 * 8 * 8 + 76
         );
     }
 
@@ -3444,11 +3444,11 @@ mod tests {
             stderr.find("==> stdin\n"),
             // Output without a final line break gets one. The empty input's program prints these
             // lines. Two come from `lang_both`. Two come from the `any` values. Eight come from
-            // `put` through `any`. Fifty-eight come from `gap_forms`. Three come from `nest`. One
+            // `put` through `any`. Sixty come from `gap_forms`. Three come from `nest`. One
             // prints its result.
             stderr.find("==> program -O2 stdout\nforced\n==> program -O2 stderr\n"),
             stderr.find(
-                "==> program --rc-checks stdout\nRanked\n[1, 2]\nEye\n[\"s\", 'c', 5, Wide(1)]\n@d0 9\n@d1 4\n@d2 12\n@d3 13\n@d4 15\n@d5 15\n@d6 17\n@d7 17\n4\n5\n6\n1\n1\n2\n6\n4\nb\n[11, 22]\nabc\n1\n[5, 14]\n1\n7\n7\n1\n1\ntrue\n1\n1\n1\n1\n[1]\ntrue\ntrue\n4\n7\n13\n16\n19\n4\n7\n11\n16\n1\n7\n1\n1\n7\n2\n2\n21\n22\n2\nfalse\nfalse\n2\ntrue\n2\nt\n4\nfalse\nfalse\n0\ntrue\n5\n2\nA(A(End))\ntrue\nfalse\n2\n==> program --rc-checks stderr\n",
+                "==> program --rc-checks stdout\nRanked\n[1, 2]\nEye\n[\"s\", 'c', 5, Wide(1)]\n@d0 9\n@d1 4\n@d2 12\n@d3 13\n@d4 15\n@d5 15\n@d6 17\n@d7 17\n4\n5\n6\n1\n1\n2\n6\n4\nb\n[11, 22]\nabc\n1\n[5, 14]\n1\n7\n7\n1\n1\ntrue\n1\n1\n1\n1\n[1]\ntrue\ntrue\n4\n7\n13\n16\n19\n4\n7\n11\n16\n1\n7\n1\n1\n7\n2\n2\n21\n22\n2\nfalse\nfalse\n2\ntrue\n2\nt\n4\nfalse\nfalse\n0\ntrue\n5\n2\n111\n7\nA(A(End))\ntrue\nfalse\n2\n==> program --rc-checks stderr\n",
             ),
             stderr.find("program fuzzer: the exit check failed"),
         ];
