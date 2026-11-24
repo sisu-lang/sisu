@@ -15,8 +15,8 @@ use super::prelude::PRELUDE;
 use super::reports::Reported;
 use super::unused_names::{Owner, Pending};
 use super::{
-    Binding, BindingKind, BreakSlot, Checked, CheckedBlock, Checker, Declared, Expectation,
-    LoopContext, LoopFrame, LoopKind, Origin, Poisoned, SelfType, StashedBreak, block_expr,
+    Binding, BindingKind, BreakNode, BreakSlot, Checked, CheckedBlock, Checker, Declared,
+    Expectation, LoopContext, LoopFrame, LoopKind, Origin, Poisoned, SelfType, block_expr,
     built_in_type, known_type, starts_in, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
@@ -1379,14 +1379,9 @@ impl Checker<'_> {
         });
         if keyword == "break"
             && self.frame(target).kind == LoopKind::Loop
-            && let Some(&entry) = self
-                .body
-                .active_breaks
-                .iter()
-                .rev()
-                .find(|entry| entry.owner < target)
+            && let Some(&node) = self.body.break_stashes.active.last()
         {
-            self.frame(target).stashed.insert(entry);
+            self.frame(target).stashed.push(node);
         }
         let value = value
             .map(|v| {
@@ -1512,7 +1507,7 @@ impl Checker<'_> {
             .into_iter()
             .filter_map(|slot| match slot {
                 BreakSlot::Value(at, value) => Some((at, value)),
-                BreakSlot::Empty | BreakSlot::Inline(_) => None,
+                BreakSlot::Empty | BreakSlot::Inline => None,
             })
             .unzip();
         let heading = Heading {
@@ -1629,45 +1624,70 @@ impl Checker<'_> {
             put_back_breaks(e, 0, frame.crossed, (&mut values, bare));
         });
         let mut visited = FxHashSet::default();
-        for entry in std::mem::take(&mut frame.stashed) {
-            let Some(dest) = self.resolve_stashed(entry, target) else {
+        for node_id in std::mem::take(&mut frame.stashed) {
+            #[cfg(test)]
+            super::join::VALUE_STEPS.set(super::join::VALUE_STEPS.get() + 1);
+            let Some(dest_id) = self.resolve_stashed(node_id, target) else {
                 continue;
             };
+            let dest = self.body.break_stashes.nodes[dest_id];
             if !visited.insert((dest.owner, dest.slot)) {
                 continue;
             }
-            if let BreakSlot::Value(_, Ok(expr)) = &mut self.frame(dest.owner).values[dest.slot] {
-                put_back_breaks(
-                    expr,
-                    dest.depth - inner_depth,
-                    frame.crossed,
-                    (&mut values, bare),
+            let BreakSlot::Value(_, Ok(expr)) = &mut self.frame(dest.owner).values[dest.slot]
+            else {
+                unreachable!(
+                    "`resolve_stashed` should return only a `BreakSlot::Value(_, Ok(_))` slot"
                 );
-            }
+            };
+            put_back_breaks(
+                expr,
+                dest.depth - inner_depth,
+                frame.crossed,
+                (&mut values, bare),
+            );
         }
         debug_assert!(values.is_empty(), "each `break` value should be put back");
     }
 
-    /// Follows `Inline` links from `cur` to a stashed `BreakSlot::Value` above `target`.
-    fn resolve_stashed(&mut self, mut cur: StashedBreak, target: usize) -> Option<StashedBreak> {
-        let mut chain = Vec::new();
+    /// Follows `parent` links from `start` past closed loops and `Inline` slots to an open
+    /// `BreakSlot::Value` above `target`.
+    fn resolve_stashed(&mut self, start: usize, target: usize) -> Option<usize> {
+        let mut cur = Some(start);
+        let mut skipped = Vec::new();
+        let mut stop = None;
         let dest = loop {
-            if cur.owner >= target {
+            let Some(id) = cur else {
                 break None;
+            };
+            #[cfg(test)]
+            super::join::VALUE_STEPS.set(super::join::VALUE_STEPS.get() + 1);
+            let node = self.body.break_stashes.nodes[id];
+            if node.owner >= target {
+                skipped.push(id);
+                cur = node.parent;
+                continue;
             }
-            match &self.frame(cur.owner).values[cur.slot] {
-                BreakSlot::Inline(next) => {
-                    let next = *next;
-                    chain.push((cur.owner, cur.slot));
-                    cur = next;
+            match &self.frame(node.owner).values[node.slot] {
+                BreakSlot::Value(_, Ok(_)) => {
+                    stop = Some(id);
+                    break Some(id);
                 }
-                BreakSlot::Value(_, Ok(_)) => break Some(cur),
-                BreakSlot::Empty | BreakSlot::Value(_, Err(_)) => break None,
+                BreakSlot::Inline => {
+                    skipped.push(id);
+                    cur = node.parent;
+                }
+                BreakSlot::Empty => {
+                    // Still-open enclosing break: keep `parent` pointing at it for outer loops.
+                    stop = Some(id);
+                    break None;
+                }
+                BreakSlot::Value(_, Err(_)) => break None,
             }
         };
-        if let Some(dest) = dest {
-            for (owner, slot) in chain {
-                self.frame(owner).values[slot] = BreakSlot::Inline(dest);
+        if let Some(stop) = stop {
+            for id in skipped {
+                self.body.break_stashes.nodes[id].parent = Some(stop);
             }
         }
         dest
@@ -1723,15 +1743,19 @@ impl Checker<'_> {
         self.body.label_typo = typo.map(|name| (name.span, span.start()));
         if let Some(slot) = slot {
             let depth = body_depth(&self.body.loops);
-            self.body.active_breaks.push(StashedBreak {
+            let id = self.body.break_stashes.nodes.len();
+            let parent = self.body.break_stashes.active.last().copied();
+            self.body.break_stashes.nodes.push(BreakNode {
                 owner: target,
                 slot,
                 depth,
+                parent,
             });
+            self.body.break_stashes.active.push(id);
         }
         let checked = self.expr(v, expected);
         if slot.is_some() {
-            self.body.active_breaks.pop();
+            self.body.break_stashes.active.pop();
         }
         self.body.label_typo = None;
         let checked = self.refuse_unwanted(v, checked, expected, false);
@@ -1744,9 +1768,7 @@ impl Checker<'_> {
         let typed = type_of(&checked).is_some() || self.misfit_type(&checked).is_some();
         match checked {
             Ok(e) if e.ty == Type::NEVER => {
-                if let Some(&parent) = self.body.active_breaks.last() {
-                    self.frame(target).values[slot] = BreakSlot::Inline(parent);
-                }
+                self.frame(target).values[slot] = BreakSlot::Inline;
                 Ok(e)
             }
             Ok(e) => {
