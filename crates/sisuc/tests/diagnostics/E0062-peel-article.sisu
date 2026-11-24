@@ -9,6 +9,14 @@ struct Box {
     v: i64
 }
 
+class User {
+    v: i64
+}
+
+struct Upload {
+    v: i64
+}
+
 fn on_enum(e: E??) -> i64? {
     e?.v()
 }
@@ -29,10 +37,20 @@ fn on_box(b: Box??) -> i64? {
     b?.v
 }
 
+fn on_user(u: User??) -> i64? {
+    u?.v
+}
+
+fn on_upload(u: Upload??) -> i64? {
+    u?.v
+}
+
 fn main() {
     print(on_enum(None) ?? 0)
     print(on_int(None) ?? "")
     print(on_u8(None) ?? "")
     print(on_unit(None) ?? "")
     print(on_box(None) ?? 0)
+    print(on_user(None) ?? 0)
+    print(on_upload(None) ?? 0)
 }

@@ -1,28 +1,12 @@
 error[E0062]: `e?.` leaves an `E?`, which may be `None`
-  --> E0062-peel-article.sisu:13:5
+  --> E0062-peel-article.sisu:21:5
    |
-13 |     e?.v()
+21 |     e?.v()
    |     ^
    |
    = help: peel the other layer first: `(e ?? None)?.v`
 
 error[E0062]: `x?.` leaves an `i64?`, which may be `None`
-  --> E0062-peel-article.sisu:17:5
-   |
-17 |     x?.to_string()
-   |     ^
-   |
-   = help: peel the other layer first: `(x ?? None)?.to_string`
-
-error[E0062]: `x?.` leaves a `u8?`, which may be `None`
-  --> E0062-peel-article.sisu:21:5
-   |
-21 |     x?.to_string()
-   |     ^
-   |
-   = help: peel the other layer first: `(x ?? None)?.to_string`
-
-error[E0062]: `x?.` leaves a `unit?`, which may be `None`
   --> E0062-peel-article.sisu:25:5
    |
 25 |     x?.to_string()
@@ -30,13 +14,45 @@ error[E0062]: `x?.` leaves a `unit?`, which may be `None`
    |
    = help: peel the other layer first: `(x ?? None)?.to_string`
 
-error[E0062]: `b?.` leaves a `Box?`, which may be `None`
+error[E0062]: `x?.` leaves a `u8?`, which may be `None`
   --> E0062-peel-article.sisu:29:5
    |
-29 |     b?.v
+29 |     x?.to_string()
+   |     ^
+   |
+   = help: peel the other layer first: `(x ?? None)?.to_string`
+
+error[E0062]: `x?.` leaves a `unit?`, which may be `None`
+  --> E0062-peel-article.sisu:33:5
+   |
+33 |     x?.to_string()
+   |     ^
+   |
+   = help: peel the other layer first: `(x ?? None)?.to_string`
+
+error[E0062]: `b?.` leaves a `Box?`, which may be `None`
+  --> E0062-peel-article.sisu:37:5
+   |
+37 |     b?.v
    |     ^
    |
    = help: peel the other layer first: `(b ?? None)?.v`
 
-sisu: 5 errors
+error[E0062]: `u?.` leaves a `User?`, which may be `None`
+  --> E0062-peel-article.sisu:41:5
+   |
+41 |     u?.v
+   |     ^
+   |
+   = help: peel the other layer first: `(u ?? None)?.v`
+
+error[E0062]: `u?.` leaves an `Upload?`, which may be `None`
+  --> E0062-peel-article.sisu:45:5
+   |
+45 |     u?.v
+   |     ^
+   |
+   = help: peel the other layer first: `(u ?? None)?.v`
+
+sisu: 7 errors
 sisu: for more on a code, run `sisu explain <code>`: E0062

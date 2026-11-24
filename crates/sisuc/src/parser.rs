@@ -12498,4 +12498,70 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn with_methods_should_keep_lexer_error_inside_broken_method_beside_outer_lexer_error() {
+        let unchanged = [
+            (
+                "outer lexer error before broken method, unchanged",
+                "struct S {\n    x: i64,\n    @\n    fn f(self) { $ }\n    y: i64\n}",
+                vec![
+                    (Code::FieldComma, (2, 11)),
+                    (Code::UnexpectedCharacter, (3, 5)),
+                ],
+            ),
+            (
+                "parse error in method with outer lexer error, unchanged",
+                "struct S {\n    x: i64,\n    fn f(self) { let = 1 }\n    @\n    y: i64\n}",
+                vec![(Code::FieldComma, (2, 11))],
+            ),
+        ];
+        for (row, src, want) in unchanged {
+            let ds = parsed(src).diagnostics;
+            let got: Vec<_> = ds
+                .iter()
+                .map(|d| (d.code(), line_col(src, d.span().start())))
+                .collect();
+            assert_eq!(got, want, "row `{row}`");
+            let breaches = crate::on_compiler_stack(|| crate::front_end::safe_fix_breaches(src));
+            assert!(breaches.is_empty(), "row `{row}`: {breaches:?}");
+        }
+
+        let rows = [
+            (
+                "struct comma before broken method and outer lexer error",
+                "struct S {\n    x: i64,\n    fn f(self) { $ }\n    @\n    y: i64\n}",
+                vec![
+                    (Code::FieldComma, (2, 11)),
+                    (Code::UnexpectedCharacter, (3, 18)),
+                ],
+            ),
+            (
+                "class comma before broken method and outer lexer error",
+                "class C {\n    x: i64,\n    fn f(self) { $ }\n    @\n    y: i64\n}",
+                vec![
+                    (Code::FieldComma, (2, 11)),
+                    (Code::UnexpectedCharacter, (3, 18)),
+                ],
+            ),
+            (
+                "enum comma before broken method and outer lexer error",
+                "enum E {\n    A,\n    fn f(self) { $ }\n    @\n    B\n}",
+                vec![
+                    (Code::FieldComma, (2, 6)),
+                    (Code::UnexpectedCharacter, (3, 18)),
+                ],
+            ),
+        ];
+        for (row, src, want) in rows {
+            let ds = parsed(src).diagnostics;
+            let got: Vec<_> = ds
+                .iter()
+                .map(|d| (d.code(), line_col(src, d.span().start())))
+                .collect();
+            assert_eq!(got, want, "row `{row}`");
+            let breaches = crate::on_compiler_stack(|| crate::front_end::safe_fix_breaches(src));
+            assert!(breaches.is_empty(), "row `{row}`: {breaches:?}");
+        }
+    }
 }

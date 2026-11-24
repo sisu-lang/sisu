@@ -7804,4 +7804,32 @@ mod tests {
             assert!(seen.insert(text), "{text} is used twice");
         }
     }
+
+    #[test]
+    fn indefinite_should_pick_a_before_you_sound_types() {
+        let unchanged = [
+            ("u8?", "a"),
+            ("unit?", "a"),
+            ("Box?", "a"),
+            ("Upload?", "an"),
+            ("Update?", "an"),
+            ("Upper?", "an"),
+            ("Undo?", "an"),
+            ("Uninit?", "an"),
+            ("Unidentified?", "an"),
+            ("U?", "an"),
+            ("E?", "an"),
+            ("i64?", "an"),
+            ("Option<i64>?", "an"),
+        ];
+        for (ty, want) in unchanged {
+            assert_eq!(indefinite(ty), want, "{ty}, unchanged");
+        }
+        for ty in [
+            "User?", "Unit?", "Unique?", "Union?", "Url?", "Uuid?", "Utf8?", "Util?", "Unary?",
+            "Euclid?",
+        ] {
+            assert_eq!(indefinite(ty), "a", "{ty}");
+        }
+    }
 }

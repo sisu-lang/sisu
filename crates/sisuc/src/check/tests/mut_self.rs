@@ -4,7 +4,7 @@
 use super::parity::parity_found;
 use super::*;
 use Code::{
-    AssignToExpression, AssignToImmutable, AssignToSelf, BindingNotFound, CannotBeAny,
+    Ambiguous, AssignToExpression, AssignToImmutable, AssignToSelf, BindingNotFound, CannotBeAny,
     CannotExtend, CannotInfer, ConformanceBody, ConformsTwice, Expected, FunctionNotFound,
     InterfaceAsType, MayBeNone, Mismatch, MutArgumentNotPlace, MutMarkerMissing, MutPlaceTwice,
     MutSelf, NeverReassigned, NoMember, SelfOutsideMethod, TypeArguments, UnchangedLoopCondition,
@@ -2475,4 +2475,216 @@ fn safe_chain_index_forms_should_report_one_consistent_error() {
         "duplicate conformance should have no self_take fix: {e0001:?}"
     );
     assert!(e0001.help().is_some());
+}
+
+/// GIVEN `struct P` with `fn set(mut self)`, `interface Rp` with plain `fn set(self)`,
+/// `interface Rm` with `fn set(mut self)`, and `struct Lg<T> { ts: [T] }`. WHEN a function calls
+/// `o?.ts[0].set()` on `mut o: Lg<T>?` or `Lg<T.Item>?`. THEN plain or missing bounds report
+/// E0062 at `o?.ts` with W0002 on `o`, while `mut self` bounds stay at `?.ts`.
+#[test]
+fn chain_mut_self_call_should_check_required_bounds_on_type_parameters() {
+    judge_unused();
+    let decls = "interface Rp { fn set(self) }\n\
+                 interface Rm { fn set(mut self) }\n\
+                 interface HasP { type Item: Rp }\n\
+                 interface HasM { type Item: Rm }\n\
+                 struct P: Rm { x: i64; fn set(mut self) { self.x = 1 } }\n\
+                 struct Q: Rp { x: i64; fn set(self) { print(self.x) } }\n\
+                 struct Mp: HasP { type Item = Q }\n\
+                 struct Mm: HasM { type Item = P }\n\
+                 struct Lg<T> { ts: [T] }\n";
+    let main_end = "\nfn main() {}";
+    let unchanged = [
+        (
+            "mut self bound `Rm`, unchanged",
+            format!("{decls}fn g<T: Rm>(mut o: Lg<T>?) {{ o?.ts[0].set() }}{main_end}"),
+            vec![MayBeNone],
+            "?.ts",
+        ),
+        (
+            "associated type `T.Item` with `Rm`, unchanged",
+            format!(
+                "{decls}fn g<T: HasM>(mut o: Lg<T.Item>?) {{ o?.ts[0].set() }}\nfn main() {{ let mut o: Lg<P>? = None; g<Mm>(mut o); print(o != None) }}"
+            ),
+            vec![MayBeNone],
+            "?.ts",
+        ),
+    ];
+    for (row, src, want, needle) in unchanged {
+        let (_, ds) = checked(&src);
+        let got: Vec<Code> = ds.iter().map(Diagnostic::code).collect();
+        assert_eq!(got, want, "row `{row}`: {ds:?}");
+        let err = ds
+            .iter()
+            .find(|d| d.code() == MayBeNone)
+            .expect("row should have E0062");
+        let line = src.lines().count() - 1;
+        assert_eq!(at(&src, err.span()), on(&src, line, needle), "row `{row}`");
+    }
+
+    let rows = [
+        (
+            "plain interface bound `Rp`",
+            format!("{decls}fn g<T: Rp>(mut o: Lg<T>?) {{ o?.ts[0].set() }}{main_end}"),
+            vec![NeverReassigned, MayBeNone],
+            "o?.ts",
+        ),
+        (
+            "unbounded type parameter `T`",
+            format!("{decls}fn g<T>(mut o: Lg<T>?) {{ o?.ts[0].set() }}{main_end}"),
+            vec![NeverReassigned, MayBeNone, NoMember],
+            "o?.ts",
+        ),
+        (
+            "mixed bounds `Rp & Rm`",
+            format!("{decls}fn g<T: Rp & Rm>(mut o: Lg<T>?) {{ o?.ts[0].set() }}{main_end}"),
+            vec![NeverReassigned, MayBeNone, Ambiguous],
+            "o?.ts",
+        ),
+        (
+            "associated type `T.Item` with plain `Rp`",
+            format!(
+                "{decls}fn g<T: HasP>(mut o: Lg<T.Item>?) {{ o?.ts[0].set() }}\nfn main() {{ let mut o: Lg<Q>? = None; g<Mp>(mut o); print(o != None) }}"
+            ),
+            vec![NeverReassigned, MayBeNone],
+            "o?.ts",
+        ),
+    ];
+    for (row, src, want, needle) in rows {
+        let (_, ds) = checked(&src);
+        let got: Vec<Code> = ds.iter().map(Diagnostic::code).collect();
+        assert_eq!(got, want, "row `{row}`: {ds:?}");
+        let err = ds
+            .iter()
+            .find(|d| d.code() == MayBeNone)
+            .expect("row should have E0062");
+        let line = src.lines().count() - 1;
+        assert_eq!(at(&src, err.span()), on(&src, line, needle), "row `{row}`");
+    }
+}
+
+/// GIVEN nested arrays of structs, enums, and generic elements on an optional struct. WHEN a
+/// function writes a field or calls a `mut self` method after indexing every layer. THEN `sisu
+/// check` reports E0062 at `?.<field>` with no W0002, while an unindexed array or plain method
+/// keeps `o?.<field>` as the E0062 target.
+#[test]
+fn nested_array_after_safe_chain_should_report_chain_error_on_leaf_element() {
+    judge_unused();
+    let decls = "interface Rm { fn set(mut self) }\n\
+                 struct P: Rm {\n\
+                     x: i64\n\
+                     fn set(mut self) { self.x = 1 }\n\
+                     fn show(self) { print(self.x) }\n\
+                 }\n\
+                 enum D { N; S; fn flip(mut self) { self = D.S } }\n\
+                 struct L<T: Rm> { pss: [[P]]; psss: [[[P]]]; dss: [[D]]; tss: [[T]] }\n";
+    let main_p = "\nfn main() { let mut o: L<P>? = None; f(mut o); print(o != None) }";
+    let unchanged = [
+        (
+            "1D index into 2D struct array, unchanged",
+            format!("{decls}fn f(mut o: L<P>?) {{ o?.pss[0].x = 2 }}{main_p}"),
+            vec![MayBeNone, NoMember],
+            "o?.pss",
+        ),
+        (
+            "2D struct plain self call, unchanged",
+            format!("{decls}fn f(mut o: L<P>?) {{ o?.pss[0][0].show() }}{main_p}"),
+            vec![NeverReassigned, MayBeNone],
+            "o?.pss",
+        ),
+    ];
+    for (row, src, want, needle) in unchanged {
+        let (_, ds) = checked(&src);
+        let got: Vec<Code> = ds.iter().map(Diagnostic::code).collect();
+        assert_eq!(got, want, "row `{row}`: {ds:?}");
+        let err = ds
+            .iter()
+            .find(|d| d.code() == MayBeNone)
+            .expect("row should have E0062");
+        let line = src.lines().count() - 1;
+        assert_eq!(at(&src, err.span()), on(&src, line, needle), "row `{row}`");
+    }
+
+    let rows = [
+        (
+            "2D struct field assign",
+            format!("{decls}fn f(mut o: L<P>?) {{ o?.pss[0][0].x = 2 }}{main_p}"),
+            "?.pss",
+        ),
+        (
+            "2D struct mut self call",
+            format!("{decls}fn f(mut o: L<P>?) {{ o?.pss[0][0].set() }}{main_p}"),
+            "?.pss",
+        ),
+        (
+            "3D struct mut self call",
+            format!("{decls}fn f(mut o: L<P>?) {{ o?.psss[0][0][0].set() }}{main_p}"),
+            "?.psss",
+        ),
+        (
+            "2D enum mut self call",
+            format!("{decls}fn f(mut o: L<P>?) {{ o?.dss[0][0].flip() }}{main_p}"),
+            "?.dss",
+        ),
+        (
+            "2D generic param mut self call",
+            format!(
+                "{decls}fn g<T: Rm>(mut o: L<T>?) {{ o?.tss[0][0].set() }}\nfn main() {{ let mut o: L<P>? = None; g(mut o); print(o != None) }}"
+            ),
+            "?.tss",
+        ),
+    ];
+    for (row, src, needle) in rows {
+        let (_, ds) = checked(&src);
+        let got: Vec<Code> = ds.iter().map(Diagnostic::code).collect();
+        assert_eq!(got, vec![MayBeNone], "row `{row}`: {ds:?}");
+        let line = src.lines().count() - 1;
+        assert_eq!(
+            at(&src, ds[0].span()),
+            on(&src, line, needle),
+            "row `{row}`"
+        );
+    }
+}
+
+/// GIVEN an optional struct with a non-optional array field and an optional array field. WHEN a
+/// function writes or calls `mut self` on an element after `?.`. THEN E0062 offers `replace` help
+/// only when the indexed field is non-optional.
+#[test]
+fn indexed_safe_chain_should_keep_replace_help_only_for_present_array_fields() {
+    judge_unused();
+    let decls = "struct P { x: i64; fn set(mut self) { self.x = 1 } }\n\
+                 struct L { ps: [P]; pss: [[P]]; qs: [[i64]]; ops: [P]?; oqs: [[i64]]? }\n";
+    let main_call = "\nfn main() { let mut o: L? = None; f(mut o); print(o != None) }";
+    let without_help = [
+        (
+            "field assign on optional array, unchanged",
+            "o?.ops[0].x = 2",
+        ),
+        (
+            "mut self call on optional array, unchanged",
+            "o?.ops[0].set()",
+        ),
+        (
+            "push on optional nested array, unchanged",
+            "o?.oqs[0].push(2)",
+        ),
+    ];
+    for (row, stmt) in without_help {
+        let src = format!("{decls}fn f(mut o: L?) {{ {stmt} }}{main_call}");
+        let d = only(&src, MayBeNone);
+        assert!(d.help().is_none(), "row `{row}` should have no help: {d:?}");
+    }
+
+    let with_help = [
+        ("field assign on present array", "o?.ps[0].x = 2"),
+        ("mut self call on present array", "o?.ps[0].set()"),
+        ("push on present nested array", "o?.qs[0].push(2)"),
+        ("mut self call on present 2D array", "o?.pss[0][0].set()"),
+    ];
+    for (row, stmt) in with_help {
+        let src = format!("{decls}fn f(mut o: L?) {{ {stmt} }}{main_call}");
+        let d = only(&src, MayBeNone);
+        assert!(d.help().is_some(), "row `{row}` should have help: {d:?}");
+    }
 }
