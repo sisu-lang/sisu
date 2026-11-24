@@ -10662,7 +10662,7 @@ fn main() {
 /// A method call with arguments can stand in a closed place of an outer call (ADR 0052 Q28). The
 /// place names the decided parameters, and the call takes it as its context. When the call stands
 /// alone, the report is at its wrong argument. When two such calls are the branches of an `if`,
-/// the report is at the `if`. Each row has a struct and an enum of its own.
+/// the report is at the `if`. The rows share the struct and the enum of `TYPES`.
 #[test]
 fn a_method_call_in_a_closed_inner_call_should_report_its_wrong_argument() {
     const TYPES: &str = "enum Two<A, B> {\n    P(A, B)\n}\n\n\
