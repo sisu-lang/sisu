@@ -654,7 +654,7 @@ impl Checker<'_> {
             self.poison_open(&checked);
             return (checked, None, true);
         }
-        let errors = self.diagnostics.errors();
+        let errors = self.errors();
         let joined = self.join_operands(
             operator.join_form(),
             head,
@@ -728,7 +728,7 @@ impl Checker<'_> {
         }
         // A member that the join could not close, as `[300]` beside a `[u8]`, is the first
         // mistake: the operator's is not reported.
-        if self.diagnostics.errors() > errors {
+        if self.errors() > errors {
             return (checked, None, true);
         }
         // The operand of the joined type lacks the operator: `a < Some(a)` gives `T?`.
@@ -1504,7 +1504,7 @@ impl Checker<'_> {
         }
         let lhs_type = type_of(&scrutinee).map(|ty| self.table.resolve(ty));
         let Some(TypeKind::Optional(payload)) = lhs_type.map(Type::kind) else {
-            let before = self.diagnostics.len();
+            let before = self.reports();
             let default = self.fallback(rhs, Expectation::Poisoned);
             let reported = match known_type(&scrutinee) {
                 // The fix deletes the default. So the default needs no report of its own, which
@@ -1516,7 +1516,7 @@ impl Checker<'_> {
                 // they are in text order.
                 Ok(_) => self.diagnostics.error(DiagnosticKind::CoalesceNotOptional {
                     at: lhs.span,
-                    default: (self.diagnostics.len() == before
+                    default: (self.reports() == before
                         && matches!(&default, Ok(e) if !e.exits())
                         && !self.source.text(lhs.span).ends_with('}'))
                     .then(|| Span::new(lhs.span.end(), rhs.span.end())),

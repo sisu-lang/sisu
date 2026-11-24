@@ -438,11 +438,11 @@ impl Checker<'_> {
     /// no error, such as `[]` or `None`. This holds also for a parse error after the use. The
     /// E0032 comes back when the parse error is repaired.
     pub(super) fn checked_alone(&mut self, arg: &ast::Expr) -> (Option<Type>, Option<Reported>) {
-        let errors = self.diagnostics.errors();
+        let errors = self.errors();
         let checked = self.expr(arg, Expectation::Poisoned);
         let ty = type_of(&checked);
         let earlier = errors > 0 || !self.parse_errors.is_empty();
-        let failed = self.diagnostics.errors() > errors || ty.is_none() && earlier;
+        let failed = self.errors() > errors || ty.is_none() && earlier;
         let failed = failed.then(|| match checked {
             Err(poisoned) => poisoned.reported(),
             // An error inside a value that did not fail: the count holds it.

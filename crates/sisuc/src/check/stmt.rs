@@ -434,9 +434,6 @@ impl Checker<'_> {
                     None => self.value(init, Expectation::None),
                 };
                 let uninferred = self.uninferred_of(init_expr);
-                // Only the E0050 of a whole literal writes the binding (see `settle_let`).
-                let literal = whole_literal(init_expr);
-                let binding = literal.and_then(|_| self.let_binding(init_expr.span));
                 self.body.let_init = None;
                 self.body.failed_let = None;
                 // `let _ = e` binds nothing: the value is an expression statement, which
@@ -478,11 +475,15 @@ impl Checker<'_> {
                 if let Some(ty) =
                     ty.filter(|&ty| ty.holds_infer() && !self.table.open_roots(ty).is_empty())
                 {
+                    let errors = self.table.unsettled_roots(ty).len();
                     let open = BridgeLet {
                         value: init_expr.span,
                         ty,
-                        binding,
-                        literal,
+                        name: name.name,
+                        mutable: mutable.is_some(),
+                        literal: whole_literal(init_expr),
+                        errors: u32::try_from(errors)
+                            .expect("a value should hold fewer than 2^32 variables"),
                     };
                     self.bridge.insert(local, open);
                 }
@@ -506,7 +507,7 @@ impl Checker<'_> {
                 // Only the literal: the AST has no parenthesis node, so `(true)` is it too.
                 let endless = matches!(cond_ast.kind, ast::ExprKind::Bool(true));
                 // W0011 reads what changed from here to the end of the body.
-                let before = (self.diagnostics.errors(), self.body.writes, self.body.exits);
+                let before = (self.errors(), self.body.writes, self.body.exits);
                 let nans = self.body.nans;
                 let cond = self.in_header(*keyword, label.clone(), |c| {
                     c.expect(cond_ast, Expectation::Required(Type::BOOL, Origin::None))
@@ -671,7 +672,7 @@ impl Checker<'_> {
         };
         let word = Unwrap::LetElse;
         let (scrutinee, form, _) = self.let_value(word, pattern, value);
-        let before = self.diagnostics.len();
+        let before = self.reports();
         let block = self.block(else_block, Expectation::None);
         if let Ok(block) = &block
             && block.ty != Type::NEVER
@@ -685,7 +686,7 @@ impl Checker<'_> {
         // A `;` anywhere in the removed text, also one in a `';'` literal, makes the fix unsafe.
         let safe = mutable.is_none()
             && is_plain_exit(else_block)
-            && self.diagnostics.len() == before
+            && self.reports() == before
             && !self.comment_in(&[removal.range()])
             && !self.source.text(removal).contains(';');
         let (bound, _) = self.bind_pattern_as(
@@ -1534,12 +1535,12 @@ impl Checker<'_> {
             }))
         } else if let Some(at) = frame.bare {
             // The values join in the loop, in every position: each must be a `unit`.
-            let errors = self.diagnostics.errors();
+            let errors = self.errors();
             let mut members = whole_members(&mut values, &labels);
             let required = Expectation::Required(Type::UNIT, Origin::BareBreak { at });
             let joined = self.join_form(JoinForm::Loop, heading, &mut members, required, None);
             match joined {
-                Err(poisoned) if self.diagnostics.errors() > errors => {
+                Err(poisoned) if self.errors() > errors => {
                     frame.failed = Some(poisoned.reported());
                     None
                 }
@@ -2053,7 +2054,7 @@ impl Checker<'_> {
     /// start of the condition) wrote one, and nothing left the loop or reported an error.
     fn unchanged_condition(&mut self, at: Span, cond: &tir::Expr, before: (u32, u32, u32)) {
         let (errors, writes, exits) = before;
-        if self.diagnostics.errors() != errors || self.body.exits != exits {
+        if self.errors() != errors || self.body.exits != exits {
             return;
         }
         let Some(locals) = self.condition_locals(cond).filter(|l| !l.is_empty()) else {

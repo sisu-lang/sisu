@@ -1016,16 +1016,19 @@ impl Checker<'_> {
     /// `Option.None` or a `[]` that the checker reported as the last diagnostic. Call it before
     /// `let_init` is cleared.
     pub(super) fn uninferred_of(&self, init: &ast::Expr) -> Option<Uninferred> {
-        self.uninferred_at(
-            whole_literal(init)?,
-            init.span,
-            self.let_binding(init.span)?,
-        )
+        self.uninferred_at(whole_literal(init)?, init.span, || {
+            self.let_binding(init.span)
+        })
     }
 
     /// The E0050 of the `literal` at `span`, which a `let` that writes `binding` initializes, if
     /// the checker reported it as the last diagnostic.
-    fn uninferred_at(&self, literal: Literal, span: Span, binding: String) -> Option<Uninferred> {
+    fn uninferred_at(
+        &self,
+        literal: Literal,
+        span: Span,
+        binding: impl FnOnce() -> Option<String>,
+    ) -> Option<Uninferred> {
         let last = self.diagnostics.last()?;
         if last.code() != Code::CannotInfer || last.span() != span {
             return None;
@@ -1034,7 +1037,7 @@ impl Checker<'_> {
             at: self.diagnostics.len() - 1,
             span,
             literal,
-            binding,
+            binding: binding()?,
             settled: None,
         })
     }
@@ -1060,8 +1063,9 @@ impl Checker<'_> {
         }
         self.body.locals[local.0].ty = closed.unwrap_or(Type::UNIT);
         if closed.is_none()
-            && let Some((literal, binding)) = open.literal.zip(open.binding)
-            && let Some(uninferred) = self.uninferred_at(literal, open.value, binding)
+            && let Some(literal) = open.literal
+            && let Some(uninferred) =
+                self.uninferred_at(literal, open.value, || Some(binding_text(&open)))
         {
             self.body.uninferred.insert(local, uninferred);
         }
@@ -1077,10 +1081,8 @@ impl Checker<'_> {
         self.unify(open.ty, ty);
         for unsettled in &unsettled {
             let literal = self.unsettled_literal(unsettled.origin);
-            let binding = open
-                .binding
-                .clone()
-                .filter(|_| unsettled.origin == open.value);
+            let binding = (open.literal.is_some() && unsettled.origin == open.value)
+                .then(|| binding_text(open));
             self.error(DiagnosticKind::CannotInfer {
                 literal,
                 binding,
@@ -1103,8 +1105,7 @@ impl Checker<'_> {
     /// if any: its name, after `mut` when it has it.
     pub(super) fn let_binding(&self, span: Span) -> Option<String> {
         let (init, name, mutable, _) = self.body.let_init?;
-        (init == span && name.as_str() != "_")
-            .then(|| format!("{}{name}", if mutable { "mut " } else { "" }))
+        (init == span && name.as_str() != "_").then(|| written_binding(name, mutable))
     }
 
     /// The name of the `let` whose whole initializer is at `span`, if any: the fix of a join
@@ -1157,6 +1158,16 @@ pub(super) fn literal_type(ty: Option<Type>) -> Type {
 /// Whether `e` is the empty optional, as `None`, `Option.None` or `Option<T>.None`.
 pub(super) fn none_literal(e: &ast::Expr) -> bool {
     matches!(e.kind, ExprKind::NoneLit) || option_none(e).is_some()
+}
+
+/// What a `let` writes before its type: `mut`, then the name.
+fn written_binding(name: Symbol, mutable: bool) -> String {
+    format!("{}{name}", if mutable { "mut " } else { "" })
+}
+
+/// `written_binding` of the `let` of `open`.
+fn binding_text(open: &BridgeLet) -> String {
+    written_binding(open.name, open.mutable)
 }
 
 /// The literal that `init` is, when it is a whole `None`, `Option.None` or `[]`: an E0050 of it
