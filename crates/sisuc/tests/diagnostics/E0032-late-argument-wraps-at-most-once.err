@@ -1,0 +1,14 @@
+error[E0032]: expected `Two<_, bool>?`, found `Two<i64, bool>??`
+  --> E0032-late-argument-wraps-at-most-once.sisu:29:13
+   |
+29 |     payload(if c { m.opt2(1) } else { m.opt2(2) }, true) ?? -1
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0032]: expected `Two<_, bool>??`, found `Two<i64, bool>`
+  --> E0032-late-argument-wraps-at-most-once.sisu:35:11
+   |
+35 |     depth(if c { m.two(1) } else { m.two(2) }, true)
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032
