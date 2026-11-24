@@ -47,12 +47,12 @@ rule with the full path of each `sisu` build in `RUN/bin`:
 Then run it from `RUN`:
 
 ```
-cd RUN && PAGER=cat NEXTEST_PAGER=cat agy -p "Read RUN/brief.md and follow it. Your scratch directory is RUN/outside-scratch. Run only the commands that RUN/agy-settings.json allows, each in its own call, as git -C <repository root> ... for git. Use no pipe, no redirection and no \$(...). A command that the settings do not allow ends your run with no report. Name each check that you could not run under Unverified. Use rg and rg --files, not grep or find. To export a commit, run git -C <repository root> archive -o RUN/outside-scratch/<sha>.tar <sha>, then python3 -m tarfile -e RUN/outside-scratch/<sha>.tar <dir>. Do not run cargo or make, also not through python3. Your final reply is the whole report." --settings RUN/agy-settings.json --sandbox --model <model> > RUN/<stem>.md 2> RUN/<stem>-cli.log
+cd RUN && PAGER=cat agy -p "Read RUN/brief.md and follow it. Your scratch directory is RUN/outside-scratch. Run only the commands that RUN/agy-settings.json allows, each in its own call, as git -C <repository root> ... for git. Use no pipe, no redirection and no \$(...). A command that the settings do not allow ends your run with no report. Name each check that you could not run under Unverified. Use rg and rg --files, not grep or find. To export a commit, run git -C <repository root> archive -o RUN/outside-scratch/<sha>.tar <sha>, then python3 -m tarfile -e RUN/outside-scratch/<sha>.tar <dir>. Do not run cargo or make, also not through python3. Your final reply is the whole report." --settings RUN/agy-settings.json --sandbox --model <model> > RUN/<stem>.md 2> RUN/<stem>-cli.log
 ```
 
-`PAGER=cat NEXTEST_PAGER=cat` stops `git` and `cargo nextest list` from waiting
-for a pager in the sandbox. `agy -p` can print status lines before `Model:`.
-The controller strips them before `review_round.py verify`.
+`PAGER=cat` stops `git` from waiting for a pager in the sandbox. `agy -p` can
+print status lines before `Model:`. Strip them before `review_round.py verify`
+with `sed -i '/^Model:/,$!d' RUN/<stem>.md`.
 
 A rule matches the first words of a command, not a glob, so a rule for a
 directory does not match a binary in it. An `mcp` rule names
@@ -92,8 +92,9 @@ CODEX_MODEL=<model> sol-review <effort> RUN/brief.md RUN/<stem>.md <repository r
 
 ## claude -p
 
-For a Claude model that the Agent tool does not give, such as Fable 5.2: a
-`fable-*` subagent runs Fable 5.1. Run it from the repository root:
+For a Claude model that the Agent tool does not give, or when no Agent tool is
+available. For example, a `fable-*` subagent runs Fable 5.1, not Fable 5.2. Run
+it from the repository root:
 
 ```
 claude -p "Read RUN/brief.md and follow it. Your scratch directory is RUN/outside-scratch. Write your report to RUN/<stem>.md; your final reply is that report." --model <model ID, such as claude-fable-5-2> --effort <effort> --permission-mode dontAsk --allowedTools "Read Grep Glob Bash Edit(/RUN/**)" --add-dir RUN --add-dir <each skill directory in the brief> --no-session-persistence < /dev/null > RUN/<stem>-cli.log 2>&1
@@ -104,6 +105,5 @@ for example `Edit(//tmp/x/run/**)`: a rule with one `/` is relative to the
 project root. An `Edit` rule also lets the reviewer write a new file there;
 `claude -p` warns that a `Write` rule matches no file check.
 
-When the `claude` CLI is installed, `--model opus --effort <effort>` and
-`--model sonnet --effort <effort>` run an Opus seat and a Sonnet seat with the
-same command.
+When no Agent tool is available, the same command runs an Opus or Sonnet seat
+with `--model opus` or `--model sonnet`.
