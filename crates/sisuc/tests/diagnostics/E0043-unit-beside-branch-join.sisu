@@ -1,9 +1,10 @@
 // GIVEN `fn u() {}`, which returns `unit`
 // WHEN a comparison has `u()` on one side and a join on the other side: an `if`, a `match`, a
 //     `loop`, `dbg`, `Some`, or a chain of comparisons
-// THEN `sisu check` reports E0043 at each `u()`, as it does for `1 < u()`, and no other error
-// AND the reports start at 11:39, 17:32, 22:17, 31:10, 40:13, 46:37, 52:43, 57:34, 63:42, 69:53 and
-//     75:43
+// THEN `sisu check` reports E0043 at each `u()` that stands beside a join, as for `1 < u()`
+// AND a `u()` inside a branch reports, and the outer `u()` of that comparison adds no report
+// AND the reports start at 12:39, 18:32, 23:17, 32:10, 41:13, 47:37, 53:43, 58:34, 64:42, 70:53 and
+//     76:43
 fn u() {}
 
 fn if_on_the_left() {

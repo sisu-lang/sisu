@@ -1,6 +1,6 @@
 // GIVEN `payload<A, B>(t: Two<A, B>?, _u: B) -> A?`, which reads the payload `t?.a`
 // AND `depth<A, B>(t: Two<A, B>??, _u: B) -> i64`, which reads the layer of the optional
-// AND a method call `m.two(n)` that returns `Two<i64, bool>` and waits for its context
+// AND a method call `m.two(n)` that returns `Two<i64, bool>` and is a late argument (Q28)
 // WHEN `main` passes a branch join of such calls (`if`, `match` or a block) to a parameter that
 // is an optional
 // AND `main` passes a join of optionals, or an optional call, to `depth`

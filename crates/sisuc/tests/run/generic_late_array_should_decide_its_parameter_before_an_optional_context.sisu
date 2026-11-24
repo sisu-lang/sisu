@@ -1,5 +1,5 @@
 // GIVEN `hs<A, B>(_c: bool, p: [P<A, B>]) -> A` and a method call `C().k(n)` that returns
-// `P<i64, i64>`, so that an array of such calls waits for its context
+// `P<i64, i64>`, so that an array of such calls is a late argument (Q28)
 // AND a context that asks for an optional: `i64?`, `i64??`, `any Display`, a return type, a call
 // argument or a method call
 // WHEN `main` calls `hs` or `hb` with an array of method calls in each of these contexts and

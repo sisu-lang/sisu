@@ -2991,8 +2991,8 @@ impl Checker<'_> {
                 if failed.is_none() {
                     met = self.meet_context(&call, sig, &decided, (expected, true));
                 }
-                for &(i, var) in &decided {
-                    call.bindings.found[i] = Some(self.table.resolve(var));
+                for &(t, var) in &decided {
+                    call.bindings.found[t] = Some(self.table.resolve(var));
                 }
             }
             let arg = &args[i];
@@ -3876,11 +3876,14 @@ impl Checker<'_> {
             Some(ty) => {
                 let want = self.table.resolve(filled);
                 let want = self.normalize(want).unwrap_or(want);
-                match (checked, want.kind()) {
-                    (Ok(value), TypeKind::Optional(_)) if self.table.resolve(ty) != want => {
+                match checked {
+                    Ok(value)
+                        if matches!(want.kind(), TypeKind::Optional(_))
+                            && self.table.resolve(ty) != want =>
+                    {
                         self.lift(value, want)
                     }
-                    (checked, _) => checked,
+                    checked => checked,
                 }
             }
             _ => checked,
@@ -4061,10 +4064,10 @@ impl Checker<'_> {
             return true;
         }
         self.table.rollback(snapshot);
-        match filled.kind() {
-            TypeKind::Optional(inner) => self.meets_whole(inner, ty, at),
-            _ => false,
-        }
+        let TypeKind::Optional(inner) = filled.kind() else {
+            return false;
+        };
+        self.meets_whole(inner, ty, at)
     }
 
     /// `meets_late` for `filled` as a whole, with no wrap.
