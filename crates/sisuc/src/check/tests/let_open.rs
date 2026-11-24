@@ -109,3 +109,63 @@ fn first_write_should_see_the_closed_type() {
         codes_row(row, src, &[(Code::Mismatch, at)]);
     }
 }
+
+#[test]
+fn error_window_before_the_first_use_should_see_the_error_of_main() {
+    // GIVEN an E0050 that main writes at its `let`, before a check that reads the error count
+    let rows = [
+        (
+            "an unread `None` in a `while` body: no W0011",
+            "fn main() {\n    let i = 0\n    while i < 10 {\n        let _x = None\n    }\n}\n",
+            (4, 18),
+        ),
+        (
+            "an unread `[]` in a `while` body: no W0011",
+            "fn main() {\n    let i = 0\n    while i < 10 {\n        let _x = []\n    }\n}\n",
+            (4, 18),
+        ),
+        (
+            "a `None` before the `get` of a string: no E0032",
+            "fn main() {\n    let w = None\n    let s = \"abc\"\n    print(s.get(None))\n}\n",
+            (2, 13),
+        ),
+        (
+            "a `[]` before the `get` of a string: no E0032",
+            "fn main() {\n    let w = []\n    let s = \"abc\"\n    print(s.get([]))\n}\n",
+            (2, 13),
+        ),
+        (
+            "a fill of `None` before the `get` of a string: no E0032",
+            "fn main() {\n    let w = [None; 2]\n    let s = \"abc\"\n    print(s.get(None))\n}\n",
+            (2, 14),
+        ),
+        (
+            "a `None` in the argument of the `get` of a string: no E0032",
+            "fn main() {\n    let s = \"abc\"\n    print(s.get({\n        let _z = None\n        None\n    }))\n}\n",
+            (4, 18),
+        ),
+    ];
+    for (row, src, at) in rows {
+        // WHEN it is checked
+        // THEN the check sees the error, as on `main`: the E0050 is the only diagnostic
+        codes_row(row, src, &[(Code::CannotInfer, at)]);
+    }
+}
+
+#[test]
+fn coalesce_default_with_an_open_let_should_give_no_fix() {
+    // GIVEN a `??` on a value that is not optional, whose default holds a `let` of a `None`
+    let src = "fn main() {\n    let x = 1\n    print(x ?? {\n        let _z = None\n        2\n    })\n}\n";
+    // WHEN it is checked
+    codes_row(
+        "",
+        src,
+        &[
+            (Code::CoalesceNotOptional, (3, 11)),
+            (Code::CannotInfer, (4, 18)),
+        ],
+    );
+    // THEN the E0048 has no fix, as on `main`: an error in the default holds it back
+    let ds = diags(src);
+    assert!(ds[0].fixes().is_empty(), "{:?}", ds[0]);
+}
