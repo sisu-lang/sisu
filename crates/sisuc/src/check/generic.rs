@@ -2952,49 +2952,26 @@ impl Checker<'_> {
                 }
             }
         }
-        // An argument goes before the guide only when its type is its own (rank `Concrete`) and it
-        // is a join of its own: its type does not come from the context, and it decides what a
-        // later one meets (closed first, Q22). That holds only under a context whose top is an
-        // optional or `any`, where the guide meets the whole type and not the payload (Q24). Under
-        // any other context, and at a closed place of an outer call (Q28), every argument goes
-        // after the guide. An associated type decides no parameter, so its argument goes after the
-        // guide.
-        let guide_first = self.body.closed_place
-            || !matches!(
-                expected.ty().map(|t| self.table.resolve(t).kind()),
-                Some(TypeKind::Optional(_) | TypeKind::Any(..))
-            );
-        let mut order: Vec<(bool, bool, usize)> = (0..args.len())
-            .filter(|&i| call.slots[i].is_none())
-            .map(|i| {
-                let mut fit = true;
-                let ranked = self.rank_value(&args[i].value, &mut fit);
-                let waits = fit && ranked.rank == Rank::Waits;
-                (
-                    guide_first || ranked.rank != Rank::Concrete || !joins(i),
-                    waits,
-                    i,
-                )
-            })
-            .collect();
-        order.sort_unstable();
-        let mut met = None;
-        let mut guided = false;
+        // An argument that is still to check takes the whole context as its guide: the widest type
+        // that it can meet.
+        let late = call.slots.iter().any(Option::is_none);
+        let mut met = if failed.is_none() && late {
+            self.meet_context(&call, sig, &decided, (expected, true))
+        } else {
+            None
+        };
         for &(i, var) in &decided {
             call.bindings.found[i] = Some(self.table.resolve(var));
         }
-        for (guide, waits, i) in order {
-            // The arguments that are still to check take the whole context as their guide: the
-            // widest type that they can meet.
-            if guide && !guided {
-                guided = true;
-                if failed.is_none() {
-                    met = self.meet_context(&call, sig, &decided, (expected, true));
-                }
-                for &(t, var) in &decided {
-                    call.bindings.found[t] = Some(self.table.resolve(var));
-                }
-            }
+        // An argument that is a join of its own, or whose parameter type is an associated type of
+        // a decided parameter. One whose type comes from its literals goes first: it decides what
+        // one that waits for its context meets.
+        let mut order: Vec<(bool, usize)> = (0..args.len())
+            .filter(|&i| call.slots[i].is_none())
+            .map(|i| (self.sibling_waits(&args[i].value), i))
+            .collect();
+        order.sort_unstable();
+        for (waits, i) in order {
             let arg = &args[i];
             let param =
                 sig.params[i].expect("an argument with no parameter type should be checked");
