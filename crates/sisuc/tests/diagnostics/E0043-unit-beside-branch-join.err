@@ -1,0 +1,123 @@
+error[E0043]: `u` returns `unit`
+  --> E0043-unit-beside-branch-join.sisu:11:39
+   |
+11 |     let a = (if c { 1 } else { 2 }) < u()
+   |                                       ^^^
+   |
+  ::: E0043-unit-beside-branch-join.sisu:7:4
+   |
+ 7 | fn u() {}
+   |    - `u` declares no return type
+
+error[E0043]: `u` returns `unit`
+  --> E0043-unit-beside-branch-join.sisu:17:32
+   |
+17 |     let a = (if c { 1 } else { u() }) < u()
+   |                                ^^^
+   |
+  ::: E0043-unit-beside-branch-join.sisu:7:4
+   |
+ 7 | fn u() {}
+   |    - `u` declares no return type
+
+error[E0043]: `u` returns `unit`
+  --> E0043-unit-beside-branch-join.sisu:22:17
+   |
+22 |     let a = 1 < u()
+   |                 ^^^
+   |
+  ::: E0043-unit-beside-branch-join.sisu:7:4
+   |
+ 7 | fn u() {}
+   |    - `u` declares no return type
+
+error[E0043]: `u` returns `unit`
+  --> E0043-unit-beside-branch-join.sisu:31:10
+   |
+31 |     }) < u()
+   |          ^^^
+   |
+  ::: E0043-unit-beside-branch-join.sisu:7:4
+   |
+ 7 | fn u() {}
+   |    - `u` declares no return type
+
+error[E0043]: `u` returns `unit`
+  --> E0043-unit-beside-branch-join.sisu:40:13
+   |
+40 |     let a = u() < (if c { 1 } else { 2 })
+   |             ^^^
+   |
+  ::: E0043-unit-beside-branch-join.sisu:7:4
+   |
+ 7 | fn u() {}
+   |    - `u` declares no return type
+
+error[E0043]: `u` returns `unit`
+  --> E0043-unit-beside-branch-join.sisu:46:37
+   |
+46 |     let a = if c { 1 } else { 2 } < u()
+   |                                     ^^^
+   |
+  ::: E0043-unit-beside-branch-join.sisu:7:4
+   |
+ 7 | fn u() {}
+   |    - `u` declares no return type
+
+error[E0043]: `u` returns `unit`
+  --> E0043-unit-beside-branch-join.sisu:52:43
+   |
+52 |     let a = 1 < (if c { 1 } else { 2 }) < u()
+   |                                           ^^^
+   |
+  ::: E0043-unit-beside-branch-join.sisu:7:4
+   |
+ 7 | fn u() {}
+   |    - `u` declares no return type
+
+error[E0043]: `u` returns `unit`
+  --> E0043-unit-beside-branch-join.sisu:57:34
+   |
+57 |     let a = (loop { break 1 }) < u()
+   |                                  ^^^
+   |
+  ::: E0043-unit-beside-branch-join.sisu:7:4
+   |
+ 7 | fn u() {}
+   |    - `u` declares no return type
+
+error[E0043]: `u` returns `unit`
+  --> E0043-unit-beside-branch-join.sisu:63:42
+   |
+63 |     let a = dbg(if c { 1 } else { 2 }) < u()
+   |                                          ^^^
+   |
+  ::: E0043-unit-beside-branch-join.sisu:7:4
+   |
+ 7 | fn u() {}
+   |    - `u` declares no return type
+
+error[E0043]: `u` returns `unit`
+  --> E0043-unit-beside-branch-join.sisu:69:53
+   |
+69 |     let a = (if let Some(v) = o { v } else { 2 }) < u()
+   |                                                     ^^^
+   |
+  ::: E0043-unit-beside-branch-join.sisu:7:4
+   |
+ 7 | fn u() {}
+   |    - `u` declares no return type
+
+error[E0043]: `u` returns `unit`
+  --> E0043-unit-beside-branch-join.sisu:75:43
+   |
+75 |     let a = Some(if c { 1 } else { 2 }) < u()
+   |                                           ^^^
+   |
+  ::: E0043-unit-beside-branch-join.sisu:7:4
+   |
+ 7 | fn u() {}
+   |    - `u` declares no return type
+
+sisu: 11 errors
+sisu: for more on a code, run `sisu explain <code>`: E0043

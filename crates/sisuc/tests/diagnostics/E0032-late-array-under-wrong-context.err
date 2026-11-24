@@ -1,0 +1,18 @@
+error[E0032]: expected `string`, found `i64`
+  --> E0032-late-array-under-wrong-context.sisu:21:21
+   |
+21 |     let y: string = hs(true, [C().k(1)])
+   |            ------   ^^^^^^^^^^^^^^^^^^^^
+   |            |
+   |            declared as `string` here
+
+error[E0032]: the elements of this array have different types
+  --> E0032-late-array-under-wrong-context.sisu:26:28
+   |
+26 |     let y: i64? = hs(true, [C().k(1), C().s()])
+   |                            ^--------  ------- `P<string, i64>`
+   |                             |
+   |                             `P<i64, i64>`
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

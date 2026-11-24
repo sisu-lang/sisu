@@ -10658,3 +10658,34 @@ fn main() {
 ",
     );
 }
+
+/// A method call with arguments can stand in a closed place of an outer call (ADR 0052 Q28). The
+/// place names the decided parameters, and the call takes it as its context. When the call stands
+/// alone, the report is at its wrong argument. When two such calls are the branches of an `if`,
+/// the report is at the `if`. A change to the order of the late arguments in `infer_call` must
+/// keep this: its `closed` condition keeps the guide before each argument. Each row has a struct
+/// and an enum of its own.
+#[test]
+fn a_method_call_in_a_closed_inner_call_should_report_its_wrong_argument() {
+    const TYPES: &str = "enum Two<A, B> {\n    P(A, B)\n}\n\n\
+        struct C {\n    fn m<A, B>(self, a: A, b: B) -> Two<A, B> {\n        Two.P(a, b)\n    }\n}\n\n\
+        fn hn<U, V>(a: U, b: Two<Two<U, V>, i64>) {}\n\n";
+    with_prelude();
+    for (row, call, at) in [
+        (
+            "a method call",
+            "hn(true, Two.P(C().m(\"s\", 1), 2))",
+            "\"s\"",
+        ),
+        (
+            "an if of method calls",
+            "hn(true, Two.P(if true { C().m(\"s\", 1) } else { C().m(\"t\", 2) }, 2))",
+            "if true",
+        ),
+    ] {
+        let src = format!("{TYPES}fn main() {{\n    {call}\n}}");
+        let line = TYPES.lines().count() + 2;
+        let col = 5 + call.find(at).expect("a row should hold its place");
+        codes_row(row, &src, &[(Code::Mismatch, (line, col))]);
+    }
+}

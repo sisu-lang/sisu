@@ -1,0 +1,33 @@
+// GIVEN `hs<A, B>(_c: bool, p: [P<A, B>]) -> A` and an array of method calls that wait for their
+//     context
+// WHEN the context is a `string`, or the elements have different types under `i64?`
+// THEN `sisu check` reports E0032 at the call when the context is wrong, and at the array when its
+//     elements differ
+// AND the reports start at 21:21 and 26:28
+// AND no other error is reported
+struct P<A, B> {
+    a: A
+    b: B
+}
+
+struct C {
+    fn k(self, n: i64) -> P<i64, i64> { P(a: n, b: n) }
+    fn s(self) -> P<string, i64> { P(a: "s", b: 1) }
+}
+
+fn hs<A, B>(_c: bool, p: [P<A, B>]) -> A { p[0].a }
+
+fn context_is_a_string() {
+    let y: string = hs(true, [C().k(1)])
+    print(y)
+}
+
+fn elements_differ() {
+    let y: i64? = hs(true, [C().k(1), C().s()])
+    print(y ?? 0)
+}
+
+fn main() {
+    context_is_a_string()
+    elements_differ()
+}

@@ -1,0 +1,49 @@
+// GIVEN a join whose branches or `break` values have different types
+// WHEN it is the operand of `-`, or the left side of `??`, as a `loop`, `dbg` or `Some`
+// THEN `sisu check` reports E0032 at the head of the join, `loop` or `if`, as it does for `-(if
+//     ..)` and `(if ..) ?? 2`
+// AND the reports start at 9:14, 18:18, 24:18, 30:13 and 39:17
+// AND no other error is reported
+fn minus_of_a_loop() {
+    let c = [1].len() == 1
+    let a = -loop {
+        if c { break 1 }
+        break true
+    }
+    print(a)
+}
+
+fn minus_of_dbg() {
+    let c = [1].len() == 1
+    let a = -dbg(if c { 1 } else { true })
+    print(a)
+}
+
+fn coalesce_of_some() {
+    let c = [1].len() == 1
+    let a = Some(if c { 1 } else { true }) ?? 2
+    print(a)
+}
+
+fn coalesce_of_a_loop() {
+    let c = [1].len() == 1
+    let a = loop {
+        if c { break Some(1) }
+        break true
+    } ?? 2
+    print(a)
+}
+
+fn coalesce_of_dbg() {
+    let c = [1].len() == 1
+    let a = dbg(if c { Some(1) } else { true }) ?? 2
+    print(a)
+}
+
+fn main() {
+    minus_of_a_loop()
+    minus_of_dbg()
+    coalesce_of_some()
+    coalesce_of_a_loop()
+    coalesce_of_dbg()
+}
