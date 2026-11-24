@@ -1633,7 +1633,7 @@ impl<'a> Parser<'a> {
     /// The class or enum that `body` parses, from here to `end`, and the error of each broken
     /// method. A method whose error follows its name is broken alone and leaves the item; any
     /// other error breaks the whole item, whose one error is then the earliest in it. Keeps
-    /// recovered diagnostics strictly before a fatal lexer error outside methods.
+    /// recovered diagnostics strictly before a fatal lexer error anywhere in `end`.
     fn with_methods(
         &mut self,
         end: usize,
@@ -1649,22 +1649,25 @@ impl<'a> Parser<'a> {
         let mut methods = Vec::new();
         let parsed = body(self, &mut errors, &mut methods);
         debug_assert!(rising(&methods), "the method spans should rise");
-        let outside = self
-            .lexer_in(bytes)
+        let mut lexed = self.lexer_in(bytes);
+        let first_lex = lexed.next();
+        let lexed_start = first_lex.map(|d| d.span().start());
+        let outside = first_lex
+            .into_iter()
+            .chain(lexed)
             .find(|d| !holds(&methods, d.span().start()))
             .cloned();
         match (parsed, outside) {
             (Ok(item), None) => Ok((item, errors)),
             (parsed, outside) => {
                 self.pos = end;
-                let outside_start = outside.as_ref().map(|d| d.span().start());
                 let fatal = errors
                     .into_iter()
                     .chain(outside)
                     .chain(parsed.err())
                     .reduce(earlier)
                     .expect("a broken item should hold an error");
-                let error = self.resolve_broken(recovered, fatal, outside_start);
+                let error = self.resolve_broken(recovered, fatal, lexed_start);
                 Err(error)
             }
         }

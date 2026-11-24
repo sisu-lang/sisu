@@ -23,7 +23,7 @@ use super::{array, number, string};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
     BlockBound, Code, Definition, Diagnostic, DiagnosticKind, MethodReceiver, ReceiverArgument,
-    Suggestion, TypeReceiver, ValueKind, alias, suggestion,
+    Suggestion, TypeReceiver, alias, suggestion,
 };
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
@@ -993,14 +993,7 @@ impl Checker<'_> {
             Dot::Plain | Dot::Payload { .. } => first_safe(receiver_expr),
         };
         let reported = if let Some(chain) = chain {
-            let kind = match type_of(&receiver).map(array::innermost) {
-                // A type parameter or an associated type has no kind of its own: name the type.
-                Some(ty) if matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) => {
-                    ValueKind::Type(self.type_name(ty))
-                }
-                Some(ty) if matches!(ty.kind(), TypeKind::Enum(..)) => ValueKind::Enum,
-                _ => ValueKind::Struct,
-            };
+            let kind = self.chain_value_kind(type_of(&receiver));
             let d = self.chain_call(receiver_expr, chain, (method.name, kind));
             // The E0062 of a `.` on the optional that the `?.` gives would repeat it.
             self.body.failed_lookups.insert(method.span);
