@@ -1867,6 +1867,184 @@ fn value_walk_should_stay_linear_in_nested_loops() {
     }
 }
 
+/// An inner `break` inside an outer `break` value must restore for every nesting shape.
+/// It also must not panic when an outer value fails or shares a slot.
+#[test]
+#[expect(clippy::too_many_lines, reason = "a table of programs, one row each")]
+fn break_inside_outer_break_value_should_check_each_nested_shape() {
+    let unchanged_rows = [
+        (
+            "bare inner break alongside valued break, unchanged",
+            "fn u() {}\nfn f(c: bool, d: bool) -> i64 {\n    outer: loop {\n        loop {\n            if c { break u() }\n            break outer (if d { break } else { 5 })\n        }\n        break 9\n    }\n}\nfn main() {}",
+        ),
+        (
+            "never outer break value, unchanged",
+            "fn f(c: bool) -> i64 {\n    outer: loop {\n        let r = loop {\n            if c { break outer (break 2) }\n            break outer 8\n        }\n        break r\n    }\n}\nfn main() {}",
+        ),
+        (
+            "shared inline and direct outer stash, unchanged",
+            "fn f(p: bool, q: bool) -> i64 {\n    a: loop {\n        let rb = b: loop {\n            let rc = c: loop {\n                break a (if p { break b (if q { break c 1 } else { break c 2 }) } else if q { break c 3 } else { 4 })\n            }\n            break rc + 10\n        }\n        break rb + 100\n    }\n}\nfn main() {}",
+        ),
+        (
+            "never outer inside inner break value, unchanged",
+            "fn f(p: bool) -> i64 {\n    outer: loop {\n        let r = inner: loop {\n            break inner (if p { break outer (break inner 1) } else { 2 })\n        }\n        break r\n    }\n}\nfn main() {}",
+        ),
+    ];
+    let valid_rows = [
+        (
+            "basic",
+            "fn f(c: bool) -> i64 {\n    outer: loop {\n        let a = loop { break outer (if c { break 2 } else { 5 }) }\n        break a\n    }\n}\nfn main() {}",
+        ),
+        (
+            "optional widening",
+            "fn f(c: bool, d: bool) -> i64? {\n    outer: loop {\n        let a: i64? = loop { break outer (if c { break 2 } else if d { break None } else { 5 }) }\n        break a\n    }\n}\nfn main() {}",
+        ),
+        (
+            "3-level cross-stash",
+            "fn f(p: bool, q: bool) -> i64 {\n    a: loop {\n        let rb = b: loop {\n            let rc = c: loop {\n                break a (if p { break b (if q { break c 1 } else { 2 }) } else { 3 })\n            }\n            break rc\n        }\n        break rb\n    }\n}\nfn main() {}",
+        ),
+        (
+            "mid-loop break from deeper loop",
+            "fn f(c: bool, d: bool) -> i64 {\n    outer: loop {\n        let rm = mid: loop {\n            let rd = loop {\n                if d { break 3 }\n                break outer (if c { break mid 1 } else { 2 })\n            }\n            break rd\n        }\n        break rm\n    }\n}\nfn main() {}",
+        ),
+        (
+            "nested loop inside outer break value",
+            "fn f(cond: bool) -> i64 {\n    outer: loop {\n        let rc = c: loop {\n            break outer (d: loop { break d (if cond { break c 1 } else { 2 }) })\n        }\n        break rc\n    }\n}\nfn main() {}",
+        ),
+        (
+            "inner outer inner alternation",
+            "fn f(c1: bool, c2: bool) -> i64 {\n    outer: loop {\n        let r = inner: loop {\n            break inner (if c1 { break outer (if c2 { break inner 2 } else { 40 }) } else { 7 })\n        }\n        break r\n    }\n}\nfn main() {}",
+        ),
+        (
+            "two inner breaks in one outer break value",
+            "fn f(c: bool, d: bool) -> i64 {\n    outer: loop {\n        let a = loop { break outer (if c { break 2 } else if d { break 3 } else { 5 }) }\n        break a\n    }\n}\nfn main() {}",
+        ),
+        (
+            "never nested",
+            "fn f(p: bool) -> i64 {\n    a: loop {\n        let rb = b: loop {\n            let rc = c: loop {\n                break a (if p { break b (break c 1) } else { 3 })\n            }\n            break rc + 10\n        }\n        break rb + 100\n    }\n}\nfn main() {}",
+        ),
+        (
+            "never if branches",
+            "fn f(p: bool, q: bool) -> i64 {\n    a: loop {\n        let rb = b: loop {\n            let rc = c: loop {\n                break a (if p { break b (if q { break c 1 } else { break c 4 }) } else { 3 })\n            }\n            break rc + 10\n        }\n        break rb + 100\n    }\n}\nfn main() {}",
+        ),
+        (
+            "chained never",
+            "fn f(p: bool) -> i64 {\n    a: loop {\n        let rb = b: loop {\n            let rc = c: loop {\n                let rd = d: loop {\n                    break a (if p { break b (break c (break d 1)) } else { 3 })\n                }\n                break rd + 1\n            }\n            break rc + 10\n        }\n        break rb + 100\n    }\n}\nfn main() {}",
+        ),
+        (
+            "never stashed break through middle loop, gp",
+            "fn f(c: bool, d: bool) -> i64 {\n    g: loop {\n        let rt = t: loop {\n            let rp = p: loop {\n                break g (if d { break p (if c { break g (break t 1) } else { 5 }) } else { 7 })\n            }\n            break rp + 10\n        }\n        break rt + 100\n    }\n}\nfn main() {}",
+        ),
+        (
+            "never parent of never stashed break through middle loop, gp4",
+            "fn f(c: bool, d: bool) -> i64 {\n    g: loop {\n        let rt = t: loop {\n            let rp = p: loop {\n                if c { break p 5 }\n                break g (if d { break p (break g (break t 1)) } else { 7 })\n            }\n            break rp + 10\n        }\n        break rt + 100\n    }\n}\nfn main() {}",
+        ),
+        (
+            "never stashed break through middle loop with string values, gp5",
+            "fn f(tag: string, c: bool, d: bool) -> string {\n    g: loop {\n        let rt = t: loop {\n            let rp = p: loop {\n                break g (if d { break p (if c { break g (break t (tag + \"-t\")) } else { tag + \"-p\" }) } else { tag + \"-g\" })\n            }\n            break rp + \"-rt\"\n        }\n        break rt + \"-rg\"\n    }\n}\nfn main() {}",
+        ),
+        (
+            "open outer break with inner and outer breaks",
+            "fn h(p: bool) -> i64 {\n    a: loop {\n        let rb = b: loop {\n            break a (d: loop {\n                let rc = c: loop {\n                    break d (break a (if p { break c 1 } else { break b 2 }))\n                }\n                break rc + 10\n            })\n        }\n        break rb + 100\n    }\n}\nfn main() {}",
+        ),
+    ];
+    for (row, src) in unchanged_rows {
+        let (program, ds) = checked(src);
+        assert!(ds.is_empty(), "row `{row}`: {ds:?}");
+        assert!(program.is_some(), "row `{row}`: missing tir");
+    }
+    let mut failures = Vec::new();
+    for (row, src) in valid_rows {
+        match std::panic::catch_unwind(|| checked(src)) {
+            Ok((program, ds)) => {
+                if !ds.is_empty() {
+                    failures.push(format!("row `{row}`: {ds:?}"));
+                } else if program.is_none() {
+                    failures.push(format!("row `{row}`: missing tir"));
+                }
+            }
+            Err(payload) => {
+                let message = (payload.downcast_ref::<String>().map(String::as_str))
+                    .or_else(|| payload.downcast_ref::<&str>().copied())
+                    .unwrap_or("unknown panic");
+                failures.push(format!("row `{row}` panicked: {message}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+
+    let error_src = "fn f(c: bool) -> i64 {\n    outer: loop {\n        let a = loop { break outer (if c { break 2 } else { unknown }) }\n        break a\n    }\n}\nfn main() {}";
+    codes(error_src, &[(Code::BindingNotFound, (3, 61))]);
+    let typed_error_src = "fn g(_x: i64) -> i64 { 0 }\nfn f(c: bool) -> i64 {\n    outer: loop {\n        let a = loop { break outer (if c { break 2 } else { g(unknown) }) }\n        break a\n    }\n}\nfn main() {}";
+    codes(typed_error_src, &[(Code::BindingNotFound, (4, 63))]);
+}
+
+/// Walking stashed outer `break` values stays linear when inner `break`s sit outside `break l1`.
+/// Depth 2 shows the nesting; 20 is ten times that.
+#[test]
+fn outer_break_value_walk_should_stay_linear_in_nested_loops() {
+    let steps = |depth: usize| {
+        let big = vec!["1"; depth].join(", ");
+        let mut inner = "1".to_string();
+        for _ in 0..depth {
+            inner = format!("loop {{ if c {{ break 1 }}; let _v = {inner}; break 1 }}");
+        }
+        let src = format!(
+            "fn f(c: bool) -> [i64] {{\n    l1: loop {{\n        if c {{ break l1 [{big}] }}\n        let _n = {inner}\n        break [1]\n    }}\n}}\nfn main() {{}}"
+        );
+        VALUE_STEPS.set(0);
+        lowered(&src);
+        VALUE_STEPS.get()
+    };
+    assert_near_linear(steps(20), steps(40), steps(60));
+}
+
+/// Putting back `m` stashed `break`s in one loop stays linear in `m`.
+/// Two stashed breaks show the shape; 20 is ten times that.
+/// Without `visited` dedup, `m` inner `break`s in one outer value walk that value `m` times.
+#[test]
+fn many_stashed_breaks_in_one_loop_should_walk_linearly() {
+    let steps = |count: usize| {
+        let arms =
+            vec!["if c { break outer (if d { break inner 1 } else { 0 }) }"; count].join("\n");
+        let branches = vec!["if d { break inner 1 }"; count].join(" else ");
+        let src = format!(
+            "fn f(c: bool, d: bool) -> i64 {{\n    outer: loop {{\n        let r = inner: loop {{\n            {arms}\n            if c {{ break outer ({branches} else {{ 0 }}) }}\n            break 0\n        }}\n        break r\n    }}\n}}\nfn main() {{}}"
+        );
+        VALUE_STEPS.set(0);
+        lowered(&src);
+        VALUE_STEPS.get()
+    };
+    assert_near_linear(steps(20), steps(40), steps(60));
+}
+
+/// Resolving a deep chain of `Inline` stashed breaks stays linear via path compression.
+/// Depth 2 shows the chain; 20 is ten times that.
+#[test]
+fn deep_inline_stashed_chain_should_walk_linearly() {
+    use std::fmt::Write;
+    let steps = |depth: usize| {
+        let mut open = String::new();
+        let mut close = String::new();
+        let mut nested_breaks_open = String::new();
+        let mut nested_breaks_close = String::new();
+        for i in 0..depth {
+            let _ = writeln!(open, "l{i}: loop {{");
+            close.push('}');
+            let _ = write!(nested_breaks_open, "break l{i} (");
+            nested_breaks_close.push(')');
+        }
+        let inner_branches = vec!["if d { break t 1 }"; depth].join("\n");
+        let src = format!(
+            "fn f(c: bool, d: bool) -> i64 {{\n    g: loop {{\n        let rt = t: loop {{\n            {open}\n            break g (if c {{ {nested_breaks_open}break g ({{\n{inner_branches}\nloop {{}}\n}}){nested_breaks_close} }} else {{ 0 }})\n            {close}\n        }}\n        break rt\n    }}\n}}\nfn main() {{}}"
+        );
+        VALUE_STEPS.set(0);
+        lowered(&src);
+        VALUE_STEPS.get()
+    };
+    assert_near_linear(steps(20), steps(40), steps(60));
+}
+
 /// `??` expects a `T` or a `T?` of its right side, so the loop keeps its values' `i64`.
 #[test]
 fn loop_after_coalesce_is_its_values_type() {

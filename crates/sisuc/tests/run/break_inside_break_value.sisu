@@ -1,0 +1,308 @@
+// GIVEN nested loops where an outer `break` value contains `break` expressions for inner loops
+// WHEN each branch runs under every combination of runtime conditions
+// THEN each `break` exits its own target loop with its widened or direct value
+fn basic(c: bool) -> i64 {
+    outer: loop {
+        let a = loop {
+            break outer (if c { break 2 } else { 5 })
+        }
+        break a + 10
+    }
+}
+
+fn widened(c: bool, d: bool) -> i64? {
+    outer: loop {
+        let a: i64? = loop {
+            break outer (if c { break 2 } else if d { break None } else { 5 })
+        }
+        break Some((a ?? -1) + 10)
+    }
+}
+
+fn three_levels(p: bool, q: bool) -> i64 {
+    a: loop {
+        let rb = b: loop {
+            let rc = c: loop {
+                break a (if p {
+                    break b (if q { break c 1 } else { 2 })
+                } else {
+                    3
+                })
+            }
+            break rc + 10
+        }
+        break rb + 100
+    }
+}
+
+fn mid_from_deep(c: bool, d: bool) -> i64 {
+    outer: loop {
+        let rm = mid: loop {
+            let rd = loop {
+                if d { break 3 }
+                break outer (if c { break mid 1 } else { 2 })
+            }
+            break rd + 10
+        }
+        break rm + 100
+    }
+}
+
+fn loop_inside_value(cond: bool) -> i64 {
+    outer: loop {
+        let rc = c: loop {
+            break outer (d: loop {
+                break d (if cond { break c 1 } else { 2 })
+            })
+        }
+        break rc + 100
+    }
+}
+
+fn unit_fn() {}
+
+fn bare_inner(c: bool, d: bool) -> i64 {
+    outer: loop {
+        loop {
+            if c { break unit_fn() }
+            break outer (if d { break } else { 5 })
+        }
+        break 9
+    }
+}
+
+fn flip_flop(c1: bool, c2: bool) -> i64 {
+    outer: loop {
+        let r = inner: loop {
+            break inner (if c1 {
+                break outer (if c2 { break inner 2 } else { 40 })
+            } else {
+                7
+            })
+        }
+        break r + 100
+    }
+}
+
+fn never_inner(c: bool) -> i64 {
+    outer: loop {
+        let r = loop {
+            if c { break outer (break 2) }
+            break outer 8
+        }
+        break r + 10
+    }
+}
+
+fn never_nested(p: bool) -> i64 {
+    a: loop {
+        let rb = b: loop {
+            let rc = c: loop {
+                break a (if p { break b (break c 1) } else { 3 })
+            }
+            break rc + 10
+        }
+        break rb + 100
+    }
+}
+
+fn never_if_branches(p: bool, q: bool) -> i64 {
+    a: loop {
+        let rb = b: loop {
+            let rc = c: loop {
+                break a (if p {
+                    break b (if q { break c 1 } else { break c 4 })
+                } else {
+                    3
+                })
+            }
+            break rc + 10
+        }
+        break rb + 100
+    }
+}
+
+fn chained_never(p: bool) -> i64 {
+    a: loop {
+        let rb = b: loop {
+            let rc = c: loop {
+                let rd = d: loop {
+                    break a (if p { break b (break c (break d 1)) } else { 3 })
+                }
+                break rd + 1
+            }
+            break rc + 10
+        }
+        break rb + 100
+    }
+}
+
+fn gp(c: bool, d: bool) -> i64 {
+    g: loop {
+        let rt = t: loop {
+            let rp = p: loop {
+                break g (if d { break p (if c { break g (break t 1) } else { 5 }) } else { 7 })
+            }
+            break rp + 10
+        }
+        break rt + 100
+    }
+}
+
+fn gp4(c: bool, d: bool) -> i64 {
+    g: loop {
+        let rt = t: loop {
+            let rp = p: loop {
+                if c { break p 5 }
+                break g (if d { break p (break g (break t 1)) } else { 7 })
+            }
+            break rp + 10
+        }
+        break rt + 100
+    }
+}
+
+fn gp5(tag: string, c: bool, d: bool) -> string {
+    g: loop {
+        let rt = t: loop {
+            let rp = p: loop {
+                break g (if d {
+                    break p (if c { break g (break t (tag + "-t")) } else { tag + "-p" })
+                } else {
+                    tag + "-g"
+                })
+            }
+            break rp + "-rt"
+        }
+        break rt + "-rg"
+    }
+}
+
+fn open_outer_with_inner_and_outer_break(p: bool) -> i64 {
+    a: loop {
+        let rb = b: loop {
+            break a (d: loop {
+                let rc = c: loop {
+                    break d (break a (if p { break c 1 } else { break b 2 }))
+                }
+                break rc + 10
+            })
+        }
+        break rb + 100
+    }
+}
+
+fn rc_string(tag: string, p: bool, q: bool, nest: bool) -> string {
+    a: loop {
+        let rb = b: loop {
+            let rc = c: loop {
+                if nest {
+                    break a (if p { break b (break c (tag + "-c")) } else { tag + "-a" })
+                }
+                break a (if p {
+                    break b (if q { break c (tag + "-c") } else { tag + "-b" })
+                } else {
+                    tag + "-a"
+                })
+            }
+            break rc + "-rb"
+        }
+        break rb + "-ra"
+    }
+}
+
+fn rc_array(tag: string, p: bool, q: bool, nest: bool) -> [string] {
+    a: loop {
+        let rb = b: loop {
+            let rc = c: loop {
+                if nest {
+                    break a (if p { break b (break c [tag + "-c"]) } else { [tag + "-a"] })
+                }
+                break a (if p {
+                    break b (if q { break c [tag + "-c"] } else { [tag + "-b"] })
+                } else {
+                    [tag + "-a"]
+                })
+            }
+            let mut out = rc
+            out.push(tag + "-rb")
+            break out
+        }
+        let mut out = rb
+        out.push(tag + "-ra")
+        break out
+    }
+}
+
+fn main() {
+    let t = [1].len() == 1
+    let f = [1].len() == 2
+    let tag = "s" + "1"
+
+    print(basic(t)) // 12
+    print(basic(f)) // 5
+
+    print(widened(t, f) ?? -1) // 12
+    print(widened(f, t) ?? -1) // 9
+    print(widened(f, f) ?? -1) // 5
+
+    print(three_levels(t, t)) // 111
+    print(three_levels(t, f)) // 102
+    print(three_levels(f, f)) // 3
+
+    print(mid_from_deep(t, f)) // 101
+    print(mid_from_deep(f, f)) // 2
+
+    print(loop_inside_value(t)) // 101
+    print(loop_inside_value(f)) // 2
+
+    print(bare_inner(t, f)) // 9
+    print(bare_inner(f, t)) // 9
+    print(bare_inner(f, f)) // 5
+
+    print(flip_flop(t, t)) // 102
+    print(flip_flop(t, f)) // 40
+    print(flip_flop(f, f)) // 107
+
+    print(never_inner(t)) // 12
+    print(never_inner(f)) // 8
+
+    print(never_nested(t)) // 111
+    print(never_nested(f)) // 3
+
+    print(never_if_branches(t, t)) // 111
+    print(never_if_branches(t, f)) // 114
+    print(never_if_branches(f, f)) // 3
+
+    print(chained_never(t)) // 112
+    print(chained_never(f)) // 3
+
+    print(rc_string(tag, t, t, f)) // s1-c-rb-ra
+    print(rc_string(tag, t, f, f)) // s1-b-ra
+    print(rc_string(tag, f, f, f)) // s1-a
+    print(rc_string(tag, t, f, t)) // s1-c-rb-ra
+
+    let a1 = rc_array(tag, t, t, f)
+    print("{a1.len()}:{a1[0]}:{a1[1]}:{a1[2]}") // 3:s1-c:s1-rb:s1-ra
+    let a2 = rc_array(tag, t, f, f)
+    print("{a2.len()}:{a2[0]}:{a2[1]}") // 2:s1-b:s1-ra
+    let a3 = rc_array(tag, f, f, f)
+    print("{a3.len()}:{a3[0]}") // 1:s1-a
+    let a4 = rc_array(tag, t, f, t)
+    print("{a4.len()}:{a4[0]}:{a4[1]}:{a4[2]}") // 3:s1-c:s1-rb:s1-ra
+
+    print(gp(t, t)) // 101
+    print(gp(f, t)) // 115
+    print(gp(f, f)) // 7
+
+    print(gp4(t, f)) // 115
+    print(gp4(f, t)) // 101
+    print(gp4(f, f)) // 7
+
+    print(gp5(tag, t, t)) // s1-t-rg
+    print(gp5(tag, f, t)) // s1-p-rt-rg
+    print(gp5(tag, f, f)) // s1-g
+
+    print(open_outer_with_inner_and_outer_break(t)) // 11
+    print(open_outer_with_inner_and_outer_break(f)) // 102
+}

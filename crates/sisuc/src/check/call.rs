@@ -1043,12 +1043,11 @@ impl Checker<'_> {
     /// class or an interface there, and a failed local can have its name. An argument at a `mut`
     /// parameter of the method, or of the requirement, gets the help of a place. A name that is
     /// none of them, or has no such method, stamps nothing. A local whose value failed has no type
-    /// either, nor does a field or index path that failed. When a `mut self` method has the name,
-    /// the root of such a receiver is stamped as written, as a field write stamps it. The declared
-    /// types can say that the call only reads it: then nothing is stamped. A type name is no
-    /// binding, so it has no root to stamp.
+    /// either, nor does a field or index path that failed. A method call on a receiver whose type
+    /// failed may still write its root, unless its declared types show a read-only method. A type
+    /// name is no binding, so it has no root to stamp.
     fn stamp_type_call(&mut self, receiver: &ast::Expr, method: Symbol, args: &[ast::Arg]) {
-        if self.mut_self_names.contains(&method) && self.receiver_writes(receiver, method) {
+        if self.receiver_writes(receiver, method) {
             self.reassign_chain_root(receiver);
         }
         let ExprKind::Name(name) = receiver.kind else {
