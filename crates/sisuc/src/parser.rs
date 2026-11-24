@@ -1649,14 +1649,14 @@ impl<'a> Parser<'a> {
         let mut methods = Vec::new();
         let parsed = body(self, &mut errors, &mut methods);
         debug_assert!(rising(&methods), "the method spans should rise");
-        let mut lexed = self.lexer_in(bytes);
-        let first_lex = lexed.next();
-        let lexed_start = first_lex.map(|d| d.span().start());
-        let outside = first_lex
-            .into_iter()
-            .chain(lexed)
-            .find(|d| !holds(&methods, d.span().start()))
-            .cloned();
+        let (lexed_start, outside) = {
+            let mut lexed = self.lexer_in(bytes).peekable();
+            let start = lexed.peek().map(|d| d.span().start());
+            (
+                start,
+                lexed.find(|d| !holds(&methods, d.span().start())).cloned(),
+            )
+        };
         match (parsed, outside) {
             (Ok(item), None) => Ok((item, errors)),
             (parsed, outside) => {

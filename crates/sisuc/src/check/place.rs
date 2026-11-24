@@ -1361,7 +1361,6 @@ impl Checker<'_> {
                 // A root that failed or cannot change has no write to help with.
                 let usage = change.index_usage(inner.reported.is_none() && inner.writable);
                 let elem = optional.and_then(optional_element);
-                self.body.indexed = outer;
                 let (element, element_report) = match (optional, elem) {
                     (Some(_), Some(e))
                         if change == Change::Push
@@ -1937,8 +1936,8 @@ impl Checker<'_> {
         }
     }
 
-    /// Strips `replace` from a chain-write report when `base` ends at an optional layer or stops
-    /// `struct_walk`.
+    /// Strips `replace` from a chain-write report when `struct_walk` fails on `base`, or when the
+    /// field or any nested array element layer is optional.
     pub(super) fn keep_chain_replace(&self, d: DiagnosticKind, base: &ast::Expr) -> DiagnosticKind {
         let keep = matches!(self.struct_walk(base), Ok((_, ty)) if !has_optional_layer(ty));
         if keep {

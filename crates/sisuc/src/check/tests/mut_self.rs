@@ -2654,9 +2654,13 @@ fn nested_array_after_safe_chain_should_report_chain_error_on_leaf_element() {
 fn indexed_safe_chain_should_keep_replace_help_only_for_present_array_fields() {
     judge_unused();
     let decls = "struct P { x: i64; fn set(mut self) { self.x = 1 } }\n\
-                 struct L { ps: [P]; pss: [[P]]; qs: [[i64]]; ops: [P]?; oqs: [[i64]]? }\n";
+                 struct L { ps: [P]; pss: [[P]]; qs: [[i64]]; qss: [[P]?]; ops: [P]?; oqs: [[i64]]? }\n";
     let main_call = "\nfn main() { let mut o: L? = None; f(mut o); print(o != None) }";
     let without_help = [
+        (
+            "field assign through optional inner array, unchanged",
+            "o?.qss[0][0].x = 2",
+        ),
         (
             "field assign on optional array, unchanged",
             "o?.ops[0].x = 2",

@@ -7620,7 +7620,7 @@ fn take_self(d: Diagnostic, take: SelfTake) -> Diagnostic {
 /// Whether `ty` starts with a `"you"` sound, so it takes `"a"` instead of `"an"`.
 fn starts_with_you_sound(ty: &str) -> bool {
     const PREFIXES: &[&[u8]] = &[
-        b"use", b"usa", b"uri", b"url", b"uuid", b"utf", b"uti", b"una",
+        b"use", b"usa", b"uri", b"url", b"uuid", b"utf", b"uti", b"unary",
     ];
     let bytes = ty.as_bytes();
     let starts = |prefix: &[u8]| {
@@ -7638,7 +7638,7 @@ fn starts_with_you_sound(ty: &str) -> bool {
         return true;
     }
     if starts(b"uni") {
-        return !starts(b"unid") && !starts(b"unin");
+        return !starts(b"unid") && !starts(b"unim") && !starts(b"unin");
     }
     PREFIXES.iter().any(|prefix| starts(prefix))
 }
@@ -7842,6 +7842,8 @@ mod tests {
             ("Undo?", "an"),
             ("Uninit?", "an"),
             ("Unidentified?", "an"),
+            ("Unimplemented?", "an"),
+            ("Unavailable?", "an"),
             ("U?", "an"),
             ("E?", "an"),
             ("i64?", "an"),
