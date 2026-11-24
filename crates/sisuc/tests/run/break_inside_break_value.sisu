@@ -1,0 +1,128 @@
+// GIVEN nested loops where an outer `break` value contains `break` expressions for inner loops
+// WHEN each branch runs under every combination of runtime conditions
+// THEN each `break` exits its own target loop with its widened or direct value
+fn basic(c: bool) -> i64 {
+    outer: loop {
+        let a = loop {
+            break outer (if c { break 2 } else { 5 })
+        }
+        break a + 10
+    }
+}
+
+fn widened(c: bool, d: bool) -> i64? {
+    outer: loop {
+        let a: i64? = loop {
+            break outer (if c { break 2 } else if d { break None } else { 5 })
+        }
+        break Some((a ?? -1) + 10)
+    }
+}
+
+fn three_levels(p: bool, q: bool) -> i64 {
+    a: loop {
+        let rb = b: loop {
+            let rc = c: loop {
+                break a (if p {
+                    break b (if q { break c 1 } else { 2 })
+                } else {
+                    3
+                })
+            }
+            break rc + 10
+        }
+        break rb + 100
+    }
+}
+
+fn mid_from_deep(c: bool, d: bool) -> i64 {
+    outer: loop {
+        let rm = mid: loop {
+            let rd = loop {
+                if d { break 3 }
+                break outer (if c { break mid 1 } else { 2 })
+            }
+            break rd + 10
+        }
+        break rm + 100
+    }
+}
+
+fn loop_inside_value(cond: bool) -> i64 {
+    outer: loop {
+        let rc = c: loop {
+            break outer (d: loop {
+                break d (if cond { break c 1 } else { 2 })
+            })
+        }
+        break rc + 100
+    }
+}
+
+fn unit_fn() {}
+
+fn bare_inner(c: bool, d: bool) -> i64 {
+    outer: loop {
+        loop {
+            if c { break unit_fn() }
+            break outer (if d { break } else { 5 })
+        }
+        break 9
+    }
+}
+
+fn flip_flop(c1: bool, c2: bool) -> i64 {
+    outer: loop {
+        let r = inner: loop {
+            break inner (if c1 {
+                break outer (if c2 { break inner 2 } else { 40 })
+            } else {
+                7
+            })
+        }
+        break r + 100
+    }
+}
+
+fn never_inner(c: bool) -> i64 {
+    outer: loop {
+        let r = loop {
+            if c { break outer (break 2) }
+            break outer 8
+        }
+        break r + 10
+    }
+}
+
+fn main() {
+    let t = [1].len() == 1
+    let f = [1].len() == 2
+
+    print(basic(t)) // 12
+    print(basic(f)) // 5
+
+    print(widened(t, f) ?? -1) // 12
+    print(widened(f, t) ?? -1) // 9
+    print(widened(f, f) ?? -1) // 5
+
+    print(three_levels(t, t)) // 111
+    print(three_levels(t, f)) // 102
+    print(three_levels(f, f)) // 3
+
+    print(mid_from_deep(t, f)) // 101
+    print(mid_from_deep(f, f)) // 2
+
+    print(loop_inside_value(t)) // 101
+    print(loop_inside_value(f)) // 2
+
+    print(bare_inner(t, f)) // 9
+    print(bare_inner(f, t)) // 9
+    print(bare_inner(f, f)) // 5
+
+    print(flip_flop(t, t)) // 102
+    print(flip_flop(t, f)) // 40
+    print(flip_flop(f, f)) // 107
+
+    print(never_inner(t)) // 12
+    print(never_inner(f)) // 8
+}

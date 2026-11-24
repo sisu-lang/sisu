@@ -1867,6 +1867,78 @@ fn value_walk_should_stay_linear_in_nested_loops() {
     }
 }
 
+/// An inner `break` inside an outer `break` value must restore for every nesting shape.
+/// It also must not panic when an outer value fails or shares a slot.
+#[test]
+fn break_inside_outer_break_value_should_check_each_nested_shape() {
+    let valid_rows = [
+        (
+            "basic",
+            "fn f(c: bool) -> i64 {\n    outer: loop {\n        let a = loop { break outer (if c { break 2 } else { 5 }) }\n        break a\n    }\n}\nfn main() {}",
+        ),
+        (
+            "optional widening",
+            "fn f(c: bool, d: bool) -> i64? {\n    outer: loop {\n        let a: i64? = loop { break outer (if c { break 2 } else if d { break None } else { 5 }) }\n        break a\n    }\n}\nfn main() {}",
+        ),
+        (
+            "3-level cross-stash",
+            "fn f(p: bool, q: bool) -> i64 {\n    a: loop {\n        let rb = b: loop {\n            let rc = c: loop {\n                break a (if p { break b (if q { break c 1 } else { 2 }) } else { 3 })\n            }\n            break rc\n        }\n        break rb\n    }\n}\nfn main() {}",
+        ),
+        (
+            "mid-loop break from deeper loop",
+            "fn f(c: bool, d: bool) -> i64 {\n    outer: loop {\n        let rm = mid: loop {\n            let rd = loop {\n                if d { break 3 }\n                break outer (if c { break mid 1 } else { 2 })\n            }\n            break rd\n        }\n        break rm\n    }\n}\nfn main() {}",
+        ),
+        (
+            "nested loop inside outer break value",
+            "fn f(cond: bool) -> i64 {\n    outer: loop {\n        let rc = c: loop {\n            break outer (d: loop { break d (if cond { break c 1 } else { 2 }) })\n        }\n        break rc\n    }\n}\nfn main() {}",
+        ),
+        (
+            "bare inner break alongside valued break",
+            "fn u() {}\nfn f(c: bool, d: bool) -> i64 {\n    outer: loop {\n        loop {\n            if c { break u() }\n            break outer (if d { break } else { 5 })\n        }\n        break 9\n    }\n}\nfn main() {}",
+        ),
+        (
+            "inner outer inner alternation",
+            "fn f(c1: bool, c2: bool) -> i64 {\n    outer: loop {\n        let r = inner: loop {\n            break inner (if c1 { break outer (if c2 { break inner 2 } else { 40 }) } else { 7 })\n        }\n        break r\n    }\n}\nfn main() {}",
+        ),
+        (
+            "never outer break value",
+            "fn f(c: bool) -> i64 {\n    outer: loop {\n        let r = loop {\n            if c { break outer (break 2) }\n            break outer 8\n        }\n        break r\n    }\n}\nfn main() {}",
+        ),
+        (
+            "two inner breaks in one outer break value",
+            "fn f(c: bool, d: bool) -> i64 {\n    outer: loop {\n        let a = loop { break outer (if c { break 2 } else if d { break 3 } else { 5 }) }\n        break a\n    }\n}\nfn main() {}",
+        ),
+    ];
+    for (row, src) in valid_rows {
+        let (program, ds) = checked(src);
+        assert!(ds.is_empty(), "row `{row}`: {ds:?}");
+        assert!(program.is_some(), "row `{row}`: missing tir");
+    }
+
+    let error_src = "fn f(c: bool) -> i64 {\n    outer: loop {\n        let a = loop { break outer (if c { break 2 } else { unknown }) }\n        break a\n    }\n}\nfn main() {}";
+    codes(error_src, &[(Code::BindingNotFound, (3, 61))]);
+}
+
+/// Walking stashed outer `break` values stays linear when inner `break`s sit outside `break l1`.
+/// Depth 2 shows the nesting; 20 is ten times that.
+#[test]
+fn outer_break_value_walk_should_stay_linear_in_nested_loops() {
+    let steps = |depth: usize| {
+        let big = vec!["1"; depth].join(", ");
+        let mut inner = "1".to_string();
+        for _ in 0..depth {
+            inner = format!("loop {{ if c {{ break 1 }}; let _v = {inner}; break 1 }}");
+        }
+        let src = format!(
+            "fn f(c: bool) -> [i64] {{\n    l1: loop {{\n        if c {{ break l1 [{big}] }}\n        let _n = {inner}\n        break [1]\n    }}\n}}\nfn main() {{}}"
+        );
+        VALUE_STEPS.set(0);
+        lowered(&src);
+        VALUE_STEPS.get()
+    };
+    assert_near_linear(steps(20), steps(40), steps(60));
+}
+
 /// `??` expects a `T` or a `T?` of its right side, so the loop keeps its values' `i64`.
 #[test]
 fn loop_after_coalesce_is_its_values_type() {
