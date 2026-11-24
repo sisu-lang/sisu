@@ -1,0 +1,9 @@
+// A type parameter with no `Eq` has no `!=`. The error is at the operand of that type.
+// It does not hide the error of the other operand, which is a name that does not exist.
+fn f<T>(a: T) -> bool {
+    a != nope
+}
+
+fn main() {
+    print(f(1))
+}

@@ -1,0 +1,10 @@
+error[E0156]: `get` on `T` could come from `Ia` or `Ib`
+  --> E0156-method-of-two-bounds.sisu:14:24
+   |
+14 |     let y: i64? = id(t.get(1) + 2)
+   |                        ^^^
+   |
+   = help: annotate the result: `let x: i64 = t.get(1)`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0156

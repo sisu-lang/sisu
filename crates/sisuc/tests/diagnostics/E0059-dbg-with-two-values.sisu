@@ -1,0 +1,26 @@
+// `dbg` takes one value. A `dbg` with two values as the argument of a generic call is E0059.
+// The call gives no second error, whatever the type of the first value.
+struct P<A, B> {
+    a: A
+    b: B
+}
+
+struct C {
+    fn m<A, B>(self, a: A, b: B) -> P<A, B> { P(a: a, b: b) }
+}
+
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+fn h<A, B>(_c: bool, p: P<A, B>) -> A { p.a }
+fn f2<A, B>(t: Two<A, B>) -> A { t.a }
+
+fn main() {
+    let c = [1].len() == 1
+    let x: i64? = h(true, dbg(C().m(1, 2), 3))
+    let y = f2(dbg(if c { Two(a: 1, b: 2) } else { Two(a: 3, b: 4) }, 1))
+    print(x ?? 0)
+    print(y)
+}

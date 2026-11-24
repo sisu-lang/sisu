@@ -1,0 +1,14 @@
+error[E0059]: `dbg` takes one value
+  --> E0059-dbg-with-two-values.sisu:22:27
+   |
+22 |     let x: i64? = h(true, dbg(C().m(1, 2), 3))
+   |                           ^^^^^^^^^^^^^^^^^^^
+
+error[E0059]: `dbg` takes one value
+  --> E0059-dbg-with-two-values.sisu:23:16
+   |
+23 |     let y = f2(dbg(if c { Two(a: 1, b: 2) } else { Two(a: 3, b: 4) }, 1))
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0059

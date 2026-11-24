@@ -1,0 +1,42 @@
+error[E0032]: expected `Two<X, i64>?`, found `Two<X, bool>?`
+  --> E0032-open-result-of-optional.sisu:27:5
+   |
+26 | fn s_same<X>() -> Two<X, i64>? {
+   |                   ------------ `s_same` returns `Two<X, i64>?`
+27 |     mkp()
+   |     ^^^^^
+
+error[E0032]: expected `Other<X, i64>?`, found `Two<_, bool>?`
+  --> E0032-open-result-of-optional.sisu:31:5
+   |
+30 | fn s_other<X>() -> Other<X, i64>? {
+   |                    -------------- `s_other` returns `Other<X, i64>?`
+31 |     mkp()
+   |     ^^^^^
+
+error[E0032]: expected `Gen<X, i64>?`, found `Gen<X, bool>?`
+  --> E0032-open-result-of-optional.sisu:35:5
+   |
+34 | fn e_same<X>() -> Gen<X, i64>? {
+   |                   ------------ `e_same` returns `Gen<X, i64>?`
+35 |     mkg()
+   |     ^^^^^
+
+error[E0032]: expected `Two<i64, i64>?`, found `Two<i64, bool>?`
+  --> E0032-open-result-of-optional.sisu:39:29
+   |
+39 |     let a: Two<i64, i64>? = mkp()
+   |            --------------   ^^^^^
+   |            |
+   |            declared as `Two<i64, i64>?` here
+
+error[E0032]: the branches of this `if` have different types
+  --> E0032-open-result-of-optional.sisu:40:13
+   |
+40 |     let b = if a == None { mkp() } else { a }
+   |             ^^             -----          - `Two<i64, i64>?`
+   |                            |
+   |                            `Two<i64, bool>?`
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

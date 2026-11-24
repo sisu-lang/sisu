@@ -1,0 +1,10 @@
+error[E0032]: the branches of this `if` have different types
+ --> E0032-branches-of-two-structs.sisu:8:13
+  |
+8 |     let v = if c { A(x: [1]) } else { B(x: []) }
+  |             ^^     ---------          -------- `B<[_]>`
+  |                    |
+  |                    `A<[i64]>`
+
+sisu: 1 error
+sisu: for more on a code, run `sisu explain <code>`: E0032

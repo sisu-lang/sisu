@@ -1,0 +1,66 @@
+error[E0030]: cannot find type `Nope`
+  --> explicit-type-arguments-wrong.sisu:19:12
+   |
+19 | type Bad = Nope
+   |            ^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+
+error[E0053]: `f` takes 2 arguments, found 3
+  --> explicit-type-arguments-wrong.sisu:27:13
+   |
+27 |     let a = f<S>(S(), 2, 3)
+   |             ^^^^^^^^^^^^^^^
+
+error[E0137]: `f` takes 2 type arguments, but 1 was given
+  --> explicit-type-arguments-wrong.sisu:27:14
+   |
+27 |     let a = f<S>(S(), 2, 3)
+   |              ^^^
+
+error[E0053]: `g` takes 2 arguments, found 3
+  --> explicit-type-arguments-wrong.sisu:28:13
+   |
+28 |     let b = g<S>(S(), 2, 3)
+   |             ^^^^^^^^^^^^^^^
+
+error[E0137]: `g` takes 2 type arguments, but 1 was given
+  --> explicit-type-arguments-wrong.sisu:28:14
+   |
+28 |     let b = g<S>(S(), 2, 3)
+   |              ^^^
+
+error[E0053]: `g` takes 2 arguments, found 3
+  --> explicit-type-arguments-wrong.sisu:29:13
+   |
+29 |     let c = g<Nope, i64>(S(), 2, 3)
+   |             ^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0030]: cannot find type `Nope`
+  --> explicit-type-arguments-wrong.sisu:29:15
+   |
+29 |     let c = g<Nope, i64>(S(), 2, 3)
+   |               ^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+
+error[E0053]: `g` takes 2 arguments, found 1
+  --> explicit-type-arguments-wrong.sisu:30:13
+   |
+30 |     let d = g<S, i64>(S())
+   |             ^^^^^^^^^^^^^^
+
+error[E0053]: `k` takes 2 arguments, found 1
+  --> explicit-type-arguments-wrong.sisu:31:13
+   |
+31 |     let e = k<S, i64>(S())
+   |             ^^^^^^^^^^^^^^
+
+error[E0053]: `two` takes 2 arguments, found 3
+  --> explicit-type-arguments-wrong.sisu:32:13
+   |
+32 |     let h = two<A, A>(1, 2, 3)
+   |             ^^^^^^^^^^^^^^^^^^
+
+sisu: 10 errors
+sisu: for more on a code, run `sisu explain <code>`: E0030, E0053, E0137

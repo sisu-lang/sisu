@@ -1,0 +1,26 @@
+error[E0032]: expected `By<i64>`, found `Bx<i64>`
+  --> generic-result-parts.sisu:30:22
+   |
+30 |     let a: By<i64> = mkb(1)
+   |            -------   ^^^^^^
+   |            |
+   |            declared as `By<i64>` here
+
+error[E0032]: expected `Eb<i64>`, found `Ea<i64>`
+  --> generic-result-parts.sisu:31:22
+   |
+31 |     let b: Eb<i64> = mke(1)
+   |            -------   ^^^^^^
+   |            |
+   |            declared as `Eb<i64>` here
+
+error[E0154]: `any Src<i64>` does not conform to `Snk<i64>`
+  --> generic-result-parts.sisu:33:27
+   |
+33 |     let d: any Snk<i64> = mka(1)
+   |            ------------   ^^^^^^
+   |            |
+   |            declared as `any Snk<i64>` here
+
+sisu: 3 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032, E0154

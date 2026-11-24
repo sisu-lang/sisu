@@ -1,0 +1,18 @@
+// A type parameter that has the name of a built-in type is E0026. A call of such a function is
+// still checked. Arguments of one parameter that differ are E0032, and a type that breaks a bound
+// is E0154. A call inside a failed call keeps its own error.
+struct Pt {
+    x: i64
+}
+
+fn ord<T: Ord>(a: T) -> T { a }
+fn brk<T, i64>(x: T, y: T) -> T { x }
+fn brkb<T: Ord, i64>(x: T) -> T { x }
+
+fn main() {
+    let p = Pt(x: 1)
+    let a = brk(1, "s")
+    let b = brkb(p)
+    let c = nope(ord(p))
+    print(p.x)
+}

@@ -94,7 +94,7 @@ jobs:
         env:
           MIN_LINE_COVERAGE: 98.5
           # Product code only (test-only items take `coverage(off)`); raise it as #790 lands tests
-          MIN_BRANCH_COVERAGE: 94.5
+          MIN_BRANCH_COVERAGE: 95.5
         run: |
           file=target/llvm-cov/coverage.json
           pct=$(jq -r '.data[0].totals.lines.percent // "no"' "$file" 2>/dev/null) || pct=no

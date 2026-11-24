@@ -1,0 +1,22 @@
+// GIVEN a method that gives a `P<A, B>`, and a function that takes a `P<A, B>` or a `[P<A, B>]`
+// WHEN the call is the argument of `dbg` and the result goes into an `i64?`
+// THEN `dbg` writes each value to stderr, and the calls print `1`, `1` and `2`
+struct P<A, B> {
+    a: A
+    b: B
+}
+
+struct C {
+    fn m<A, B>(self, a: A, b: B) -> P<A, B> { P(a: a, b: b) }
+}
+
+fn h<A, B>(_c: bool, p: P<A, B>) -> A { p.a }
+fn hs<A, B>(_c: bool, p: [P<A, B>]) -> A { p[0].a }
+
+fn main() {
+    let x: i64? = h(true, dbg(C().m(1, 2)))
+    let y: i64? = hs(true, dbg([C().m(1, 2)]))
+    print(x ?? 0)        // 1
+    print(y ?? 0)        // 1
+    print(C().m(1, 2).b) // 2
+}

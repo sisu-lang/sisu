@@ -1,0 +1,54 @@
+error[E0026]: `i64` is a built-in type
+ --> bad-type-parameter-names.sisu:9:11
+  |
+9 | fn brk<T, i64>(x: T, y: T) -> T { x }
+  |           ^^^
+
+error[E0026]: `i64` is a built-in type
+  --> bad-type-parameter-names.sisu:10:17
+   |
+10 | fn brkb<T: Ord, i64>(x: T) -> T { x }
+   |                 ^^^
+
+error[E0032]: the arguments for `T` of this call have different types
+  --> bad-type-parameter-names.sisu:14:13
+   |
+14 |     let a = brk(1, "s")
+   |             ^^^ -  --- `string`
+   |                 |
+   |                 this argument gives `T` the type `i64`
+
+error[E0154]: `Pt` does not conform to `Ord`
+  --> bad-type-parameter-names.sisu:15:18
+   |
+15 |     let b = brkb(p)
+   |                  ^
+   |
+  ::: bad-type-parameter-names.sisu:10:12
+   |
+10 | fn brkb<T: Ord, i64>(x: T) -> T { x }
+   |            --- required by this bound
+   |
+   = help: make `Pt` conform to `Ord`
+
+error[E0052]: cannot find function `nope`
+  --> bad-type-parameter-names.sisu:16:13
+   |
+16 |     let c = nope(ord(p))
+   |             ^^^^
+
+error[E0154]: `Pt` does not conform to `Ord`
+  --> bad-type-parameter-names.sisu:16:22
+   |
+16 |     let c = nope(ord(p))
+   |                      ^
+   |
+  ::: bad-type-parameter-names.sisu:8:11
+   |
+ 8 | fn ord<T: Ord>(a: T) -> T { a }
+   |           --- required by this bound
+   |
+   = help: make `Pt` conform to `Ord`
+
+sisu: 6 errors
+sisu: for more on a code, run `sisu explain <code>`: E0026, E0032, E0052, E0154

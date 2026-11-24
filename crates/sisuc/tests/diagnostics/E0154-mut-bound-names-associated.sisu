@@ -1,0 +1,48 @@
+// A bound that names an associated type of another type parameter is checked when the `mut`
+// arguments give that parameter its type. A bound that holds is not reported, and an argument
+// that has no `Source` is reported once.
+interface Conv<U> {
+    fn conv(self) -> U
+}
+interface Ia {
+    fn get(self) -> i64
+}
+interface Source {
+    type Item
+    fn next(self) -> Item?
+}
+struct S: Conv<i64> {
+    fn conv(self) -> i64 { 1 }
+}
+fn f<T: Conv<U>, U>(mut a: T, mut b: U) -> U {
+    b = a.conv()
+    a = a
+    b
+}
+fn g<T: Ia & Conv<U>, U>(mut a: T, mut b: U) -> U {
+    b = a.conv()
+    a = a
+    b
+}
+fn k<R: Source, T: Conv<R.Item>>(mut r: R, mut t: T) -> R.Item {
+    r = r
+    t = t
+    t.conv()
+}
+fn k2<R: Source, T: Conv<R.Item>>(mut t: T, mut r: R) -> R.Item {
+    r = r
+    t = t
+    t.conv()
+}
+
+fn main() {
+    let mut s = S()
+    let mut n = 2
+    let mut i = 5
+    let mut j = 6
+    let a = f(mut s, mut n)
+    let b = g(mut s, mut n)
+    let c = k(mut i, mut s)
+    let d = k2(mut s, mut j)
+    print(a)
+}
