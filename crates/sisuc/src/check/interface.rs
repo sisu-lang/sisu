@@ -1,6 +1,7 @@
 //! Interface declarations: their parameters, requirements and inheritance, the bounds that name
 //! them, and the closure of the interfaces a bound inherits.
 
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -117,6 +118,100 @@ pub(super) struct InterfaceInfo {
     pub(super) assoc: Vec<AssocInfo>,
 }
 
+/// Scratch state for Pass 1b (`Checker::interface_signatures`), dropped once interfaces resolve.
+pub(super) struct InterfacePass {
+    pub(super) active: Option<InterfaceId>,
+    pub(super) in_assoc_bound: bool,
+    pub(super) in_on_demand: bool,
+    pub(super) partial_assoc_read: bool,
+    pub(super) assoc_epoch: usize,
+    pub(super) resolving_assocs: usize,
+    pub(super) current_assoc_entry: Option<(InterfaceId, usize, usize)>,
+    pub(super) params: Vec<ParamsState>,
+    pub(super) assocs: Vec<Vec<AssocBoundState>>,
+    pub(super) pending_queued: Vec<Vec<std::ops::Range<usize>>>,
+    pub(super) work_bodies: Vec<Option<Body>>,
+    pub(super) work_body_epochs: Vec<usize>,
+}
+
+impl InterfacePass {
+    fn new(interfaces: usize) -> Self {
+        Self {
+            active: None,
+            in_assoc_bound: false,
+            in_on_demand: false,
+            partial_assoc_read: false,
+            assoc_epoch: 0,
+            resolving_assocs: 0,
+            current_assoc_entry: None,
+            params: (0..interfaces).map(|_| ParamsState::Done).collect(),
+            assocs: (0..interfaces).map(|_| Vec::new()).collect(),
+            pending_queued: vec![Vec::new(); interfaces],
+            work_bodies: (0..interfaces).map(|_| None).collect(),
+            work_body_epochs: vec![0; interfaces],
+        }
+    }
+}
+
+/// Resolution state of an interface's type parameter bounds during Pass 1b.
+#[derive(Default)]
+pub(super) enum ParamsState {
+    #[default]
+    Done,
+    Pending(PendingParams),
+    Resolving(ResolvingParams),
+}
+
+/// Active resolution state for an interface's member-bearing parameter bounds in Pass 1b.
+pub(super) struct ResolvingParams {
+    pending_ifaces: Vec<Vec<(usize, InterfaceId)>>,
+    deferred_self: Vec<Vec<(usize, ast::TypeExpr)>>,
+    pending_non_self: Vec<Vec<(usize, ast::TypeExpr)>>,
+    active_param: Vec<bool>,
+    resolved_on_demand: Vec<(usize, usize, Option<Bound>)>,
+}
+
+/// Deferred parameter-bound inputs for one interface during Pass 1b.
+pub(super) struct PendingParams {
+    params: Vec<ast::TypeParam>,
+    found: Vec<Vec<Option<Bound>>>,
+    members: Vec<(usize, usize)>,
+}
+
+/// Resolution state of one member-bearing associated-type bound in Pass 1b.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AssocEntryState {
+    Pending,
+    Resolving,
+    Done,
+}
+
+/// One member-bearing bound of an associated type during Pass 1b.
+struct AssocEntry {
+    /// Original index in the written bounds, to preserve source order.
+    order: usize,
+    written: ast::TypeExpr,
+    /// Declared interface named by the bound, if any.
+    iface: Option<InterfaceId>,
+    state: AssocEntryState,
+    resolved: Option<Bound>,
+}
+
+/// Per-entry resolution state for an associated type with member-bearing bounds.
+pub(super) struct AssocPending {
+    /// Non-member bounds resolved in Loop 1, with original source indices.
+    non_member: Vec<(usize, Bound)>,
+    entries: Vec<AssocEntry>,
+}
+
+/// Resolution state of an associated type's bounds during Pass 1b.
+#[derive(Default)]
+pub(super) enum AssocBoundState {
+    #[default]
+    Done,
+    Active(AssocPending),
+}
+
 /// An associated type of an interface.
 pub(super) struct AssocInfo {
     pub(super) name: ast::Ident,
@@ -226,6 +321,8 @@ pub(super) enum Slot {
     RequirementRet(InterfaceId, usize),
     /// The body of a type alias, by its place among the aliases.
     Alias(usize),
+    /// A bound check queued during on-demand interface bound resolution.
+    AssocBound,
 }
 
 /// The type parameters in scope where a pending check was queued, and their bounds.
@@ -278,12 +375,7 @@ pub(super) enum LangPath {
 
 /// What the first loop of pass 1b (`Checker::interface_head`) keeps of one interface for the
 /// second (`Checker::interface_signature`).
-struct Head<'a> {
-    /// The associated types that are first of their name.
-    declared: Vec<&'a ast::AssocType>,
-    /// The bounds of each of them, as written. `None` is a bound that failed, and one that names
-    /// a member and waits for the second loop.
-    bounds: Vec<Vec<Option<Bound>>>,
+struct Head {
     /// The bound checks that the first loop queued for the interface.
     queued: std::ops::Range<usize>,
 }
@@ -302,8 +394,9 @@ impl Checker<'_> {
                 _ => None,
             })
             .collect();
-        // First every inheritance list, and then the signatures: a read of an associated type
-        // goes through the lists of the interfaces on the way, whatever their order.
+        // First every inheritance list and non-member bounds, then signatures and on-demand member
+        // bounds: a read of an associated type resolves any target interface bounds it needs.
+        self.pass1b = Some(InterfacePass::new(self.interfaces.len()));
         let mut heads = Vec::with_capacity(interfaces.len());
         for (i, &interface) in interfaces.iter().enumerate() {
             // A fresh body: the parameters of a requirement are bound in it, and so are dropped.
@@ -317,6 +410,25 @@ impl Checker<'_> {
                 checker.interface_signature(interface, InterfaceId(i), head);
             });
         }
+        let pass1b = self
+            .pass1b
+            .take()
+            .expect("pass1b should exist at end of interface_signatures");
+        debug_assert!(
+            pass1b
+                .params
+                .iter()
+                .all(|state| matches!(state, ParamsState::Done)),
+            "every interface parameter state should be Done after interface_signatures"
+        );
+        debug_assert!(
+            pass1b
+                .assocs
+                .iter()
+                .flatten()
+                .all(|state| matches!(state, AssocBoundState::Done)),
+            "every associated type state should be Done after interface_signatures"
+        );
         let edges: Vec<Vec<usize>> = self
             .interfaces
             .iter()
@@ -361,12 +473,10 @@ impl Checker<'_> {
         declared
     }
 
-    /// Puts the associated types of the interface `id`, whose parameters are `own` as arguments,
-    /// in scope as bare names over `Self`. The report of a name declared twice is made once, by
-    /// `declare_assoc`.
-    fn put_assoc_in_scope(&mut self, id: InterfaceId, own: TypeArgs) {
+    /// Builds the bare-name choices for the associated types of `id` over `own`.
+    fn assoc_choices(&self, id: InterfaceId, own: TypeArgs) -> Rc<Choices> {
         let this_type = Type::intern(TypeKind::Param(self.interfaces[id.0].type_params[0], 0));
-        self.body.assoc = Rc::new(Choices::new(
+        Rc::new(Choices::new(
             (self.interfaces[id.0].assoc.iter().enumerate())
                 .map(|(k, assoc)| {
                     let k =
@@ -379,7 +489,14 @@ impl Checker<'_> {
                     }
                 })
                 .collect(),
-        ));
+        ))
+    }
+
+    /// Puts the associated types of the interface `id`, whose parameters are `own` as arguments,
+    /// in scope as bare names over `Self`. The report of a name declared twice is made once, by
+    /// `declare_assoc`.
+    fn put_assoc_in_scope(&mut self, id: InterfaceId, own: TypeArgs) {
+        self.body.assoc = self.assoc_choices(id, own);
     }
 
     /// Puts the type parameters of the interface `id` and its `Self` in scope. Gives the bound
@@ -406,38 +523,110 @@ impl Checker<'_> {
     /// each of them is final before the second loop (`interface_signature`) reads one. The bounds
     /// of the parameters are not in scope yet. The checks that this queues take them in the
     /// second loop.
-    fn interface_head<'a>(&mut self, interface: &'a ast::Interface, id: InterfaceId) -> Head<'a> {
+    fn interface_head(&mut self, interface: &ast::Interface, id: InterfaceId) -> Head {
         let from = self.queued();
         let this = self.enter_interface(interface, id);
         // The associated types come first: a bare name stands for one in the interface.
         let declared = self.declare_assoc(interface, id, this.args);
+        self.body.set_bounds(
+            0,
+            vec![Bounds {
+                list: vec![this],
+                failed: false,
+            }],
+        );
         self.inherit_list(interface, id, &declared);
-        let mut bounds = Vec::with_capacity(declared.len());
+        let mut found: Vec<Vec<Option<Bound>>> = (interface.type_params.iter())
+            .map(|param| vec![None; param.bounds.len()])
+            .collect();
+        let mut members = Vec::new();
+        for (i, param) in interface.type_params.iter().enumerate() {
+            let place =
+                u32::try_from(1 + i).expect("an interface should have fewer than 2^32 parameters");
+            let param_ty = Some(Type::intern(TypeKind::Param(param.name.name, place)));
+            for (j, ty) in param.bounds.iter().enumerate() {
+                if ty.names_member() {
+                    members.push((i, j));
+                } else {
+                    found[i][j] = self.bound(ty, param_ty);
+                }
+            }
+        }
+        let mut param_bounds = Vec::with_capacity(1 + interface.type_params.len());
+        param_bounds.push(Bounds {
+            list: vec![this],
+            failed: false,
+        });
+        for (row, param) in found.iter().zip(&interface.type_params) {
+            let failed = (row.iter().zip(&param.bounds))
+                .any(|(bound, ty)| bound.is_none() && !ty.names_member());
+            let list = row.iter().flatten().copied().collect();
+            param_bounds.push(Bounds { list, failed });
+        }
+        self.interfaces[id.0].bounds.clone_from(&param_bounds);
+        self.body.set_bounds(0, param_bounds);
+        let param_state = if members.is_empty() {
+            ParamsState::Done
+        } else {
+            ParamsState::Pending(PendingParams {
+                params: interface.type_params.clone(),
+                found,
+                members,
+            })
+        };
+        self.pass1b
+            .as_mut()
+            .expect("pass1b should be initialized during interface_head")
+            .params[id.0] = param_state;
+        let mut assoc_states = Vec::with_capacity(declared.len());
         for (k, assoc) in declared.iter().enumerate() {
             let ty = self.body.assoc.at(k).ty;
-            // A bound that names a member waits for the second loop.
-            let row: Vec<Option<Bound>> = (assoc.bounds.iter())
-                .map(|bound| {
-                    if bound.names_member() {
-                        None
-                    } else {
-                        self.bound(bound, ty)
-                    }
+            let (non_member, entries, failed) = self.split_member_bounds(&assoc.bounds, ty);
+            let list = non_member.iter().map(|&(_, bound)| bound).collect();
+            self.interfaces[id.0].assoc[k].bounds = Bounds { list, failed };
+            assoc_states.push(if entries.is_empty() {
+                AssocBoundState::Done
+            } else {
+                AssocBoundState::Active(AssocPending {
+                    non_member,
+                    entries,
                 })
-                .collect();
-            let failed = (row.iter().zip(&assoc.bounds))
-                .any(|(found, written)| found.is_none() && !written.names_member());
-            self.interfaces[id.0].assoc[k].bounds = Bounds {
-                list: row.iter().flatten().copied().collect(),
-                failed,
-            };
-            bounds.push(row);
+            });
         }
+        self.pass1b
+            .as_mut()
+            .expect("pass1b should be initialized during interface_head")
+            .assocs[id.0] = assoc_states;
         Head {
-            declared,
-            bounds,
             queued: from..self.queued(),
         }
+    }
+
+    /// Resolves non-member bounds in `written` for `target` and defers member-bearing entries.
+    fn split_member_bounds(
+        &mut self,
+        written: &[ast::TypeExpr],
+        target: Option<Type>,
+    ) -> (Vec<(usize, Bound)>, Vec<AssocEntry>, bool) {
+        let mut non_member = Vec::new();
+        let mut entries = Vec::new();
+        let mut failed = false;
+        for (order, ty) in written.iter().enumerate() {
+            if ty.names_member() {
+                entries.push(AssocEntry {
+                    order,
+                    written: ty.clone(),
+                    iface: self.written_interface(ty),
+                    state: AssocEntryState::Pending,
+                    resolved: None,
+                });
+            } else if let Some(bound) = self.bound(ty, target) {
+                non_member.push((order, bound));
+            } else {
+                failed = true;
+            }
+        }
+        (non_member, entries, failed)
     }
 
     /// Resolves the inheritance list of `interface`, whose id is `id` and whose associated types
@@ -513,28 +702,25 @@ impl Checker<'_> {
     /// Resolves the bounds, requirements and parameters of `interface`, whose id is `id`: the
     /// second loop of pass 1b, after `interface_head` has run for every interface. `head` is
     /// what the first loop kept for this one.
-    fn interface_signature(
-        &mut self,
-        interface: &ast::Interface,
-        id: InterfaceId,
-        mut head: Head<'_>,
-    ) {
+    fn interface_signature(&mut self, interface: &ast::Interface, id: InterfaceId, head: Head) {
+        self.ensure_interface_params(id);
+        for k in 0..self.interfaces[id.0].assoc.len() {
+            self.ensure_assoc_bounds(id, k, None, false);
+        }
         let this = self.enter_interface(interface, id);
-        self.interfaces[id.0].bounds = self.declare_bounds(
-            0,
-            vec![Bounds {
-                list: vec![this],
-                failed: false,
-            }],
-            &interface.type_params,
-        );
-        // The checks that the first loop queued waited without the bounds of the parameters.
-        self.rescope(head.queued.clone());
+        let bounds = self.interfaces[id.0].bounds.clone();
+        self.body.set_bounds(0, bounds);
+        // Checks queued in Loop 1 or during on-demand resolution waited without final bounds.
+        self.rescope(head.queued);
+        let pending_queued = self
+            .pass1b
+            .as_mut()
+            .map(|pass1b| std::mem::take(&mut pass1b.pending_queued[id.0]))
+            .unwrap_or_default();
+        for range in pending_queued {
+            self.rescope(range);
+        }
         self.put_assoc_in_scope(id, this.args);
-        self.member_bounds(id, &mut head);
-        // A read in these bounds can find the closure of an associated type whose bounds that
-        // name a member were not in yet.
-        self.body.assoc_conforming.clear();
         let mut first = FxHashMap::default();
         // The names of the interface's parameters, and then the requirement's own: the scope of
         // the interface is set up once, and a requirement adds and removes only its own.
@@ -620,24 +806,527 @@ impl Checker<'_> {
         }
     }
 
-    /// Resolves the bounds of the associated types of `id` that name a member, which waited for
-    /// the second loop: they read other lists, which are final now.
-    fn member_bounds(&mut self, id: InterfaceId, head: &mut Head<'_>) {
-        for (k, assoc) in head.declared.iter().enumerate() {
-            if !assoc.bounds.iter().any(ast::TypeExpr::names_member) {
+    /// Builds a fresh `Body` for resolving member-bearing bounds of interface `id`.
+    fn fresh_interface_body(&self, id: InterfaceId) -> Body {
+        let params = &self.interfaces[id.0].type_params;
+        let own: Vec<Type> = (1..)
+            .zip(&params[1..])
+            .map(|(i, &name)| Type::intern(TypeKind::Param(name, i)))
+            .collect();
+        let own = TypeArgs::intern(&own);
+        let mut body = Body::default();
+        body.set_type_params(params);
+        body.self_type = SelfType::Known(Type::intern(TypeKind::Param(params[0], 0)));
+        body.set_bounds(0, self.interfaces[id.0].bounds.clone());
+        body.assoc = self.assoc_choices(id, own);
+        body
+    }
+
+    /// Clears stale associated-type caches in `self.body` for `(id, k)`.
+    fn clear_assoc_caches_for(&mut self, id: InterfaceId, k: usize) {
+        let matches_target = |ty: Type| matches!(ty.kind(), TypeKind::Assoc(_, iface, _, idx) if iface == id && idx as usize == k);
+        self.body
+            .assoc_conforming
+            .retain(|&ty, _| !matches_target(ty));
+        self.body.named.retain(|&ty, _| !matches_target(ty));
+        self.body.unknown_assoc.retain(|&ty| !matches_target(ty));
+        self.body.required.clear();
+        self.body.conformed.clear();
+        self.body.leaves.clear();
+    }
+
+    /// Updates `self.body` parameter bounds and clears caches for any parameter or assoc changed.
+    fn sync_interface_body(&mut self, id: InterfaceId) {
+        let target_bounds = &self.interfaces[id.0].bounds;
+        if self.body.bounds.len() < target_bounds.len() {
+            self.body
+                .bounds
+                .resize(target_bounds.len(), Bounds::default());
+        }
+        let mut changed = false;
+        for (p, target) in target_bounds.iter().enumerate() {
+            let current = &self.body.bounds[p];
+            if current.list.len() != target.list.len() || current.failed != target.failed {
+                self.body.bounds[p] = target.clone();
+                if p < self.body.conforming.len() {
+                    self.body.conforming[p] = None;
+                }
+                let place =
+                    u32::try_from(p).expect("an interface should have fewer than 2^32 parameters");
+                let param_ty = Type::intern(TypeKind::Param(self.body.type_params[p], place));
+                self.body.named.remove(&param_ty);
+                self.body.unknown.retain(|&u| u != p);
+                changed = true;
+            }
+        }
+        let pass1b = self.pass1b_mut();
+        if pass1b.work_body_epochs[id.0] != pass1b.assoc_epoch {
+            pass1b.work_body_epochs[id.0] = pass1b.assoc_epoch;
+            self.body.assoc_conforming.clear();
+            self.body
+                .named
+                .retain(|ty, _| !matches!(ty.kind(), TypeKind::Assoc(..)));
+            self.body.unknown_assoc.clear();
+            changed = true;
+        }
+        if changed {
+            self.body.required.clear();
+            self.body.conformed.clear();
+            self.body.leaves.clear();
+            self.body.scope = None;
+        }
+    }
+
+    /// Returns the active Pass 1b scratch state.
+    fn pass1b_mut(&mut self) -> &mut InterfacePass {
+        self.pass1b
+            .as_mut()
+            .expect("pass1b should exist during Pass 1b")
+    }
+
+    /// Returns the active `ResolvingParams` state of interface `id`.
+    fn resolving_params_mut(&mut self, id: InterfaceId) -> &mut ResolvingParams {
+        match &mut self.pass1b_mut().params[id.0] {
+            ParamsState::Resolving(res) => res,
+            _ => unreachable!("active interface parameter bounds should be Resolving"),
+        }
+    }
+
+    /// Runs `f` inside `id`'s cached working `Body`, preserving alias limits and stack depth.
+    fn with_interface_body<R>(&mut self, id: InterfaceId, f: impl FnOnce(&mut Self) -> R) -> R {
+        let same = self
+            .pass1b
+            .as_ref()
+            .is_some_and(|pass1b| pass1b.active == Some(id));
+        if same {
+            return ensure_stack(|| {
+                self.isolate_written(|checker| {
+                    checker.sync_interface_body(id);
+                    f(checker)
+                })
+            });
+        }
+        ensure_stack(|| {
+            self.isolate_written(|checker| {
+                let (taken, prev_active) = {
+                    let pass1b = checker
+                        .pass1b
+                        .as_mut()
+                        .expect("pass1b should exist during with_interface_body");
+                    (pass1b.work_bodies[id.0].take(), pass1b.active.replace(id))
+                };
+                let body = taken.unwrap_or_else(|| checker.fresh_interface_body(id));
+                let (out, body) = checker.with_body(body, |checker| {
+                    checker.sync_interface_body(id);
+                    f(checker)
+                });
+                let pass1b = checker
+                    .pass1b
+                    .as_mut()
+                    .expect("pass1b should still exist after with_interface_body");
+                pass1b.active = prev_active;
+                if pass1b.work_bodies[id.0].is_none() {
+                    pass1b.work_bodies[id.0] = Some(body);
+                }
+                if let Some(caller_id) = prev_active {
+                    checker.sync_interface_body(caller_id);
+                }
+                out
+            })
+        })
+    }
+
+    /// Claims unclaimed checks queued from `from` onward as `Slot::AssocBound` for `id`.
+    fn claim_assoc_checks(&mut self, id: InterfaceId, from: usize) {
+        let (Some(pending), Some(pass1b)) = (&mut self.pending_bounds, &mut self.pass1b) else {
+            return;
+        };
+        let mut start = None;
+        for (offset, check) in pending[from..].iter_mut().enumerate() {
+            if check.place.is_none() {
+                check.place = Some(Slot::AssocBound);
+                start.get_or_insert(from + offset);
+            } else if let Some(begin) = start.take() {
+                pass1b.pending_queued[id.0].push(begin..from + offset);
+            }
+        }
+        if let Some(begin) = start {
+            pass1b.pending_queued[id.0].push(begin..pending.len());
+        }
+    }
+
+    /// Whether `iface` (or an inherited interface) declares `name`.
+    fn iface_declares_assoc(&self, iface: InterfaceId, name: Symbol) -> bool {
+        let names = self.names_of(iface);
+        names.wide || names.by_name.contains_key(&name)
+    }
+
+    /// Whether associated type `k` of `id` still has unresolved member-bearing bounds.
+    pub(super) fn assoc_is_active(&self, id: InterfaceId, k: usize) -> bool {
+        self.pass1b
+            .as_ref()
+            .is_some_and(|p| matches!(p.assocs[id.0][k], AssocBoundState::Active(_)))
+    }
+
+    /// Whether parameter `place` of `id` has a pending bound whose interface declares `name`.
+    pub(super) fn pending_param_declares(
+        &self,
+        id: InterfaceId,
+        place: usize,
+        name: Symbol,
+    ) -> bool {
+        let Some(pass1b) = &self.pass1b else {
+            return false;
+        };
+        match &pass1b.params[id.0] {
+            ParamsState::Resolving(res) => {
+                res.pending_ifaces.get(place - 1).is_some_and(|entries| {
+                    entries
+                        .iter()
+                        .any(|&(_, iface)| self.iface_declares_assoc(iface, name))
+                })
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether Pass 1b is currently resolving a member-bearing associated-type bound.
+    pub(super) fn in_assoc_bound(&self) -> bool {
+        self.pass1b.as_ref().is_some_and(|p| p.in_assoc_bound)
+    }
+
+    /// Whether Pass 1b is resolving a non-`Self` parameter bound on demand.
+    pub(super) fn in_on_demand(&self) -> bool {
+        self.pass1b.as_ref().is_some_and(|p| p.in_on_demand)
+    }
+
+    /// Records that a partial associated-type closure was read, so completion clears caches.
+    pub(super) fn mark_partial_assoc_read(&mut self) {
+        self.pass1b_mut().partial_assoc_read = true;
+    }
+
+    /// Whether `entry` can supply `wanted`, or any bound when `wanted` is `None`.
+    fn assoc_entry_matches(&self, entry: &AssocEntry, wanted: Option<Symbol>) -> bool {
+        let Some(name) = wanted else {
+            return true;
+        };
+        entry
+            .iface
+            .is_none_or(|iface| self.iface_declares_assoc(iface, name))
+    }
+
+    /// Finds the next pending entry for `(id, k)` that matches `wanted` and skips `skip_entry`.
+    fn next_pending_assoc_entry(
+        &self,
+        id: InterfaceId,
+        k: usize,
+        wanted: Option<Symbol>,
+        skip_entry: Option<usize>,
+    ) -> Option<(usize, ast::TypeExpr)> {
+        let pass1b = self.pass1b.as_ref()?;
+        let AssocBoundState::Active(pending) = &pass1b.assocs[id.0][k] else {
+            return None;
+        };
+        for (idx, entry) in pending.entries.iter().enumerate() {
+            if Some(idx) == skip_entry || entry.state != AssocEntryState::Pending {
                 continue;
             }
-            let ty = self.body.assoc.at(k).ty;
-            for (found, written) in head.bounds[k].iter_mut().zip(&assoc.bounds) {
-                if written.names_member() {
-                    *found = self.bound(written, ty);
+            if self.assoc_entry_matches(entry, wanted) {
+                return Some((idx, entry.written.clone()));
+            }
+        }
+        None
+    }
+
+    /// Rebuilds `Bounds` for `(id, k)` in source order and invalidates partial closure caches.
+    fn rebuild_assoc_bounds(&mut self, id: InterfaceId, k: usize) {
+        let mut failed = self.interfaces[id.0].assoc[k].bounds.failed;
+        let (list, partial_read) = {
+            let pass1b = self.pass1b_mut();
+            let AssocBoundState::Active(pending) = &mut pass1b.assocs[id.0][k] else {
+                unreachable!("rebuild_assoc_bounds should run on Active state");
+            };
+            let mut ordered = Vec::with_capacity(pending.non_member.len() + pending.entries.len());
+            ordered.extend_from_slice(&pending.non_member);
+            let mut all_done = true;
+            for entry in &pending.entries {
+                match entry.state {
+                    AssocEntryState::Done => {
+                        if let Some(bound) = entry.resolved {
+                            ordered.push((entry.order, bound));
+                        } else {
+                            failed = true;
+                        }
+                    }
+                    AssocEntryState::Pending | AssocEntryState::Resolving => {
+                        all_done = false;
+                    }
                 }
             }
-            self.interfaces[id.0].assoc[k].bounds = Bounds {
-                list: head.bounds[k].iter().flatten().copied().collect(),
-                failed: head.bounds[k].iter().any(Option::is_none),
-            };
+            ordered.sort_by_key(|&(order, _)| order);
+            let list = ordered.into_iter().map(|(_, bound)| bound).collect();
+            if all_done {
+                pass1b.assocs[id.0][k] = AssocBoundState::Done;
+            }
+            let partial_read = pass1b.partial_assoc_read;
+            if partial_read {
+                pass1b.assoc_epoch += 1;
+                pass1b.work_body_epochs[id.0] = pass1b.assoc_epoch;
+            }
+            (list, partial_read)
+        };
+        self.interfaces[id.0].assoc[k].bounds = Bounds { list, failed };
+        if partial_read {
+            self.clear_assoc_caches_for(id, k);
         }
+    }
+
+    /// Resolves matching member-bearing bounds of `(id, k)` on demand.
+    /// Returns `true` when another matching interface bound of `(id, k)` is actively resolving.
+    pub(super) fn ensure_assoc_bounds(
+        &mut self,
+        id: InterfaceId,
+        k: usize,
+        wanted: Option<Symbol>,
+        self_read: bool,
+    ) -> bool {
+        let Some(pass1b) = &self.pass1b else {
+            return false;
+        };
+        if matches!(pass1b.assocs[id.0][k], AssocBoundState::Done) {
+            return false;
+        }
+        let skip_entry = if self_read {
+            pass1b
+                .current_assoc_entry
+                .filter(|&(eid, ek, _)| eid == id && ek == k)
+                .map(|(_, _, idx)| idx)
+        } else {
+            None
+        };
+        if self
+            .next_pending_assoc_entry(id, k, wanted, skip_entry)
+            .is_some()
+        {
+            self.with_interface_body(id, |checker| {
+                let ty = checker.body.assoc.at(k).ty;
+                while let Some((entry_idx, written)) =
+                    checker.next_pending_assoc_entry(id, k, wanted, skip_entry)
+                {
+                    let (saved_in_assoc, saved_entry) = {
+                        let pass1b = checker
+                            .pass1b
+                            .as_mut()
+                            .expect("pass1b should exist during ensure_assoc_bounds");
+                        let AssocBoundState::Active(pending) = &mut pass1b.assocs[id.0][k] else {
+                            unreachable!(
+                                "next_pending_assoc_entry should return only from Active state"
+                            );
+                        };
+                        pending.entries[entry_idx].state = AssocEntryState::Resolving;
+                        pass1b.resolving_assocs += 1;
+                        (
+                            std::mem::replace(&mut pass1b.in_assoc_bound, true),
+                            pass1b.current_assoc_entry.replace((id, k, entry_idx)),
+                        )
+                    };
+                    let from = checker.queued();
+                    let bound = checker.bound(&written, ty);
+                    checker.claim_assoc_checks(id, from);
+                    {
+                        let pass1b = checker.pass1b_mut();
+                        pass1b.current_assoc_entry = saved_entry;
+                        pass1b.in_assoc_bound = saved_in_assoc;
+                        pass1b.resolving_assocs -= 1;
+                        let AssocBoundState::Active(pending) = &mut pass1b.assocs[id.0][k] else {
+                            unreachable!("completing entry should find Active state");
+                        };
+                        pending.entries[entry_idx].resolved = bound;
+                        pending.entries[entry_idx].state = AssocEntryState::Done;
+                    }
+                    if bound.is_none() {
+                        checker.interfaces[id.0].assoc[k].bounds.failed = true;
+                    }
+                    checker.rebuild_assoc_bounds(id, k);
+                    let pass1b = checker.pass1b_mut();
+                    if pass1b.resolving_assocs == 0 {
+                        pass1b.partial_assoc_read = false;
+                    }
+                }
+            });
+        }
+        let pass1b = self
+            .pass1b
+            .as_ref()
+            .expect("pass1b should exist after ensure_assoc_bounds");
+        let AssocBoundState::Active(pending) = &pass1b.assocs[id.0][k] else {
+            return false;
+        };
+        pending.entries.iter().enumerate().any(|(idx, entry)| {
+            Some(idx) != skip_entry
+                && entry.state == AssocEntryState::Resolving
+                && entry.iface.is_some()
+                && self.assoc_entry_matches(entry, wanted)
+        })
+    }
+
+    /// Resolves member-bearing parameter bounds on interface `id` via `resolve_member_bounds`.
+    /// Returns `true` when `id`'s parameter bounds are already being resolved on the active stack.
+    pub(super) fn ensure_interface_params(&mut self, id: InterfaceId) -> bool {
+        let Some(pass1b) = self.pass1b.as_mut() else {
+            return false;
+        };
+        match std::mem::take(&mut pass1b.params[id.0]) {
+            ParamsState::Done => false,
+            ParamsState::Resolving(res) => {
+                pass1b.params[id.0] = ParamsState::Resolving(res);
+                true
+            }
+            ParamsState::Pending(mut pending) => {
+                let count = pending.params.len();
+                let mut pending_ifaces = vec![Vec::new(); count];
+                for &(i, j) in &pending.members {
+                    if let Some(iface) = self.written_interface(&pending.params[i].bounds[j]) {
+                        pending_ifaces[i].push((j, iface));
+                    }
+                }
+                let pass1b = self
+                    .pass1b
+                    .as_mut()
+                    .expect("pass1b should exist during ensure_interface_params");
+                pass1b.params[id.0] = ParamsState::Resolving(ResolvingParams {
+                    pending_ifaces,
+                    deferred_self: vec![Vec::new(); count],
+                    pending_non_self: vec![Vec::new(); count],
+                    active_param: vec![false; count],
+                    resolved_on_demand: Vec::new(),
+                });
+                let saved_in_assoc = std::mem::replace(&mut pass1b.in_assoc_bound, false);
+                let saved_on_demand = std::mem::replace(&mut pass1b.in_on_demand, false);
+                self.with_interface_body(id, |checker| {
+                    let from = checker.queued();
+                    checker.resolve_member_bounds(
+                        1,
+                        &pending.params,
+                        &mut pending.found,
+                        &pending.members,
+                    );
+                    checker.claim_assoc_checks(id, from);
+                    for (i, row) in pending.found.into_iter().enumerate() {
+                        let failed = checker.interfaces[id.0].bounds[1 + i].failed
+                            || row.iter().any(Option::is_none);
+                        let list = row.into_iter().flatten().collect();
+                        checker.interfaces[id.0].bounds[1 + i] = Bounds { list, failed };
+                    }
+                    let bounds = checker.interfaces[id.0].bounds.clone();
+                    checker.body.set_bounds(0, bounds);
+                    checker
+                        .pass1b
+                        .as_mut()
+                        .expect("pass1b should exist when finishing ensure_interface_params")
+                        .params[id.0] = ParamsState::Done;
+                });
+                let pass1b = self.pass1b_mut();
+                pass1b.in_assoc_bound = saved_in_assoc;
+                pass1b.in_on_demand = saved_on_demand;
+                false
+            }
+        }
+    }
+
+    /// Records `bound` (or failure) for parameter `place` on interface `id` and drops stale caches.
+    fn push_interface_param_bound(&mut self, id: InterfaceId, place: usize, bound: Option<Bound>) {
+        if let Some(bound) = bound {
+            self.interfaces[id.0].bounds[place].list.push(bound);
+            self.body.bounds[place].list.push(bound);
+        } else {
+            self.interfaces[id.0].bounds[place].failed = true;
+            self.body.bounds[place].failed = true;
+            if !self.body.unknown.contains(&place) {
+                self.body.unknown.push(place);
+            }
+        }
+        if place < self.body.conforming.len() {
+            self.body.conforming[place] = None;
+        }
+        let place32 =
+            u32::try_from(place).expect("an interface should have fewer than 2^32 parameters");
+        let param_ty = Type::intern(TypeKind::Param(self.body.type_params[place], place32));
+        self.body.named.remove(&param_ty);
+        if bound.is_some() && !self.body.bounds[place].failed {
+            self.body.unknown.retain(|&u| u != place);
+        }
+        self.body.required.clear();
+        self.body.conformed.clear();
+        self.body.leaves.clear();
+    }
+
+    /// Resolves deferred or waiting member bounds of parameter `place` on `id` on demand.
+    /// Returns `true` when `place` is already on the active resolution stack.
+    pub(super) fn ensure_deferred_self_param(&mut self, id: InterfaceId, place: usize) -> bool {
+        let Some(idx) = place.checked_sub(1) else {
+            return false;
+        };
+        let (deferred, non_self) = {
+            let Some(pass1b) = &mut self.pass1b else {
+                return false;
+            };
+            let ParamsState::Resolving(res) = &mut pass1b.params[id.0] else {
+                return false;
+            };
+            if res.active_param.get(idx).copied().unwrap_or(false) {
+                return true;
+            }
+            let deferred = res
+                .deferred_self
+                .get_mut(idx)
+                .map(std::mem::take)
+                .unwrap_or_default();
+            let non_self = res
+                .pending_non_self
+                .get_mut(idx)
+                .map(std::mem::take)
+                .unwrap_or_default();
+            if deferred.is_empty() && non_self.is_empty() {
+                return false;
+            }
+            res.active_param[idx] = true;
+            (deferred, non_self)
+        };
+        let saved_in_assoc = self
+            .pass1b
+            .as_mut()
+            .is_some_and(|p| std::mem::replace(&mut p.in_assoc_bound, false));
+        let saved_on_demand = self
+            .pass1b
+            .as_mut()
+            .is_some_and(|p| std::mem::replace(&mut p.in_on_demand, false));
+        self.with_interface_body(id, |checker| {
+            let name = checker.interfaces[id.0].type_params[place];
+            let place32 =
+                u32::try_from(place).expect("an interface should have fewer than 2^32 parameters");
+            let this = Some(Type::intern(TypeKind::Param(name, place32)));
+            for (entries, on_demand) in [(deferred, false), (non_self, true)] {
+                if entries.is_empty() {
+                    continue;
+                }
+                checker.pass1b_mut().in_on_demand = on_demand;
+                for (j, written) in entries {
+                    #[cfg(test)]
+                    super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
+                    let bound = checker.bound(&written, this);
+                    checker.push_interface_param_bound(id, place, bound);
+                    let res = checker.resolving_params_mut(id);
+                    res.pending_ifaces[idx].retain(|&(bj, _)| bj != j);
+                    res.resolved_on_demand.push((idx, j, bound));
+                }
+            }
+        });
+        let pass1b = self.pass1b_mut();
+        pass1b.in_assoc_bound = saved_in_assoc;
+        pass1b.in_on_demand = saved_on_demand;
+        self.resolving_params_mut(id).active_param[idx] = false;
+        false
     }
 
     /// Resolves the bounds of `params`, which are in scope, and puts them in scope after `head`,
@@ -729,25 +1418,168 @@ impl Checker<'_> {
         self.bound(&params[i].bounds[j], this)
     }
 
+    /// Whether `ty` writes an associated type through `Self`, such as `Self.A.Inner`.
+    fn names_self_member(ty: &ast::TypeExpr) -> bool {
+        match &ty.kind {
+            ast::TypeKind::Member { base, .. } => Self::base_is_self(base),
+            ast::TypeKind::Applied(applied) => applied.args.iter().any(Self::names_self_member),
+            ast::TypeKind::Array(element) | ast::TypeKind::Any(element) => {
+                Self::names_self_member(element)
+            }
+            ast::TypeKind::Name(_) | ast::TypeKind::SelfType => false,
+        }
+    }
+
+    fn base_is_self(base: &ast::TypeExpr) -> bool {
+        match &base.kind {
+            ast::TypeKind::SelfType => true,
+            ast::TypeKind::Member { base, .. } => Self::base_is_self(base),
+            ast::TypeKind::Applied(applied) => applied.args.iter().any(Self::names_self_member),
+            ast::TypeKind::Array(element) | ast::TypeKind::Any(element) => {
+                Self::names_self_member(element)
+            }
+            ast::TypeKind::Name(_) => false,
+        }
+    }
+
+    /// Resolves one deferred `Self`-member bound `(i, j)` of active interface `id`.
+    fn resolve_deferred_self_entry(
+        &mut self,
+        id: InterfaceId,
+        at: usize,
+        i: usize,
+        j: usize,
+        name: Symbol,
+        written: &ast::TypeExpr,
+    ) -> Option<Bound> {
+        let res = self.resolving_params_mut(id);
+        res.deferred_self[i].retain(|&(bj, _)| bj != j);
+        res.active_param[i] = true;
+        let pass1b = self.pass1b_mut();
+        let saved_in_assoc = std::mem::replace(&mut pass1b.in_assoc_bound, false);
+        let saved_on_demand = std::mem::replace(&mut pass1b.in_on_demand, false);
+        let place = at + i;
+        let place32 =
+            u32::try_from(place).expect("a declaration should have fewer than 2^32 parameters");
+        let this = Some(Type::intern(TypeKind::Param(name, place32)));
+        let bound = self.bound(written, this);
+        let pass1b = self.pass1b_mut();
+        pass1b.in_assoc_bound = saved_in_assoc;
+        pass1b.in_on_demand = saved_on_demand;
+        let res = self.resolving_params_mut(id);
+        res.active_param[i] = false;
+        res.pending_ifaces[i].retain(|&(bj, _)| bj != j);
+        self.push_interface_param_bound(id, place, bound);
+        bound
+    }
+
+    /// Moves bounds resolved on demand into `found`, marking their indices in `attempted` and
+    /// `done_ms`.
+    fn drain_on_demand(
+        &mut self,
+        id: InterfaceId,
+        found: &mut [Vec<Option<Bound>>],
+        member_index: &FxHashMap<(usize, usize), usize>,
+        attempted: &mut [bool],
+        done_ms: &mut Vec<usize>,
+    ) {
+        let drained = std::mem::take(&mut self.resolving_params_mut(id).resolved_on_demand);
+        for (i, j, bound) in drained {
+            found[i][j] = bound;
+            let m = member_index[&(i, j)];
+            attempted[m] = true;
+            done_ms.push(m);
+        }
+    }
+
+    /// Resolves one wave `now` of non-`Self` member bounds and adds them to scope.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "wave resolution updates found, attempted, caches, and active-interface state"
+    )]
+    fn resolve_now_wave(
+        &mut self,
+        active_id: Option<InterfaceId>,
+        at: usize,
+        params: &[ast::TypeParam],
+        found: &mut [Vec<Option<Bound>>],
+        members: &[(usize, usize)],
+        now: &[usize],
+        attempted: &mut [bool],
+        seen: &mut FxHashMap<usize, FxHashSet<(InterfaceId, TypeArgs)>>,
+    ) {
+        let mut wave = Vec::new();
+        for &m in now {
+            #[cfg(test)]
+            super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
+            attempted[m] = true;
+            let (i, j) = members[m];
+            if let Some(id) = active_id {
+                let res = self.resolving_params_mut(id);
+                res.active_param[i] = true;
+                res.pending_non_self[i].retain(|&(bj, _)| bj != j);
+            }
+            found[i][j] = self.resolve_bound(at, params, i, j);
+            if let Some(id) = active_id {
+                let res = self.resolving_params_mut(id);
+                res.active_param[i] = false;
+                res.pending_ifaces[i].retain(|&(bj, _)| bj != j);
+            }
+            if let Some(bound) = found[i][j] {
+                wave.push((at + i, bound));
+            } else {
+                // At once: a later bound of this wave can read the parameter.
+                self.body.bounds[at + i].failed = true;
+                if let Some(id) = active_id {
+                    self.interfaces[id.0].bounds[at + i].failed = true;
+                }
+            }
+        }
+        self.add_bounds(&wave, seen);
+    }
+
+    /// Initializes per-member `Self` flags, index map, and pending non-`Self` entries for `id`.
+    fn init_member_resolution(
+        &mut self,
+        active_id: Option<InterfaceId>,
+        params: &[ast::TypeParam],
+        members: &[(usize, usize)],
+    ) -> (Vec<bool>, FxHashMap<(usize, usize), usize>) {
+        let is_self_member: Vec<bool> = members
+            .iter()
+            .map(|&(i, j)| active_id.is_some() && Self::names_self_member(&params[i].bounds[j]))
+            .collect();
+        let mut member_index = FxHashMap::default();
+        if let Some(id) = active_id {
+            for (m, &(i, j)) in members.iter().enumerate() {
+                member_index.insert((i, j), m);
+            }
+            let res = self.resolving_params_mut(id);
+            for (m, &(i, j)) in members.iter().enumerate() {
+                if !is_self_member[m] {
+                    res.pending_non_self[i].push((j, params[i].bounds[j].clone()));
+                }
+            }
+        }
+        (is_self_member, member_index)
+    }
+
     /// Resolves into `found` the bounds `members` of `params`, as (parameter, place) pairs, that
     /// name an associated type of a parameter in their arguments. `found` holds the others, and
     /// `at` is the place of the first parameter. The bounds that `found` holds are in scope.
     ///
     /// An associated type `S.Item` holds the arguments of the bound of `S` that declares `Item`,
-    /// so that bound is resolved first. Which bounds declare `Item`, and which declare the same
-    /// one, depends on the names of their interfaces and the text of their arguments and not on
-    /// their types, so the order is known before any bound resolves, and it does not depend on
-    /// the order of the parameters. A bound waits for each declaration of the name it writes that
-    /// another bound gives, so the resolution finds the type ambiguous if two differ (E0156). A
-    /// declaration that only the bound gives is no wait: then no other bound gives the type, and
-    /// the resolution reports it. The bounds resolve in waves. Each wave holds the bounds that
-    /// wait for no one now. Its bounds go into scope together at its end, and the fact that a
-    /// bound failed goes into scope at once. Each bound and each name is read a fixed number of
-    /// times.
+    /// so that bound resolves first. Interface names and argument text decide which bounds declare
+    /// `Item` and which match. The resolution order is known before any bound resolves, and does
+    /// not depend on parameter order. A bound waits for each declaration of its written name on
+    /// other bounds. Thus resolution finds an ambiguity if two differ (E0156). A declaration that
+    /// only the bound gives is no wait: then no other bound gives the type, and resolution
+    /// reports it. The bounds resolve in waves. Each wave holds the bounds that wait for no one
+    /// now. Its bounds enter scope together at its end, while a bound failure enters at once. Each
+    /// bound and each name is read a fixed number of times.
     ///
-    /// The bounds left wait for each other. Each that is on a loop of bounds is reported at the
-    /// associated type it writes (E0030), and the others that wait for it stay unknown, with no
-    /// report of their own.
+    /// The remaining bounds wait for each other. Each bound on a loop reports E0030 at its
+    /// associated type. Other bounds that wait for it stay unknown with no report of their own.
     fn resolve_member_bounds(
         &mut self,
         at: usize,
@@ -773,24 +1605,70 @@ impl Checker<'_> {
             .collect();
         let mut waits = Waits::new(&written, params.len());
         self.find_declarers(params, found, members, &mut waits);
+        let active_id = self.pass1b.as_ref().and_then(|pass1b| {
+            let id = pass1b.active?;
+            matches!(pass1b.params[id.0], ParamsState::Resolving(_)).then_some(id)
+        });
+        let (is_self_member, member_index) =
+            self.init_member_resolution(active_id, params, members);
         let mut ready = waits.start();
+        let mut deferred_indices = VecDeque::new();
+        let mut attempted = vec![false; members.len()];
         let mut seen = FxHashMap::default();
-        while !ready.is_empty() {
-            let mut wave = Vec::new();
-            for &m in &ready {
-                #[cfg(test)]
-                super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
-                let (i, j) = members[m];
-                found[i][j] = self.resolve_bound(at, params, i, j);
-                if let Some(bound) = found[i][j] {
-                    wave.push((at + i, bound));
+        loop {
+            let mut now = Vec::with_capacity(ready.len());
+            for m in ready {
+                if attempted[m] {
+                    continue;
+                }
+                if is_self_member[m] {
+                    let (i, j) = members[m];
+                    let id = active_id.expect("Self member bound should have active interface");
+                    self.resolving_params_mut(id).deferred_self[i]
+                        .push((j, params[i].bounds[j].clone()));
+                    deferred_indices.push_back(m);
                 } else {
-                    // At once: a later bound of this wave can read the parameter.
-                    self.body.bounds[at + i].failed = true;
+                    now.push(m);
                 }
             }
-            self.add_bounds(&wave, &mut seen);
-            ready = waits.resolved(&ready);
+            if !now.is_empty() {
+                self.resolve_now_wave(
+                    active_id,
+                    at,
+                    params,
+                    found,
+                    members,
+                    &now,
+                    &mut attempted,
+                    &mut seen,
+                );
+                ready = waits.resolved(&now);
+                continue;
+            }
+            let (Some(m), Some(id)) = (deferred_indices.pop_front(), active_id) else {
+                break;
+            };
+            let mut done_ms = Vec::new();
+            self.drain_on_demand(id, found, &member_index, &mut attempted, &mut done_ms);
+            if !attempted[m] {
+                #[cfg(test)]
+                super::BOUND_STEPS.set(super::BOUND_STEPS.get() + 1);
+                attempted[m] = true;
+                let (i, j) = members[m];
+                let written = params[i].bounds[j].clone();
+                found[i][j] =
+                    self.resolve_deferred_self_entry(id, at, i, j, params[i].name.name, &written);
+                done_ms.push(m);
+                self.drain_on_demand(id, found, &member_index, &mut attempted, &mut done_ms);
+            }
+            ready = waits.resolved(&done_ms);
+        }
+        if let Some(id) = active_id {
+            let mut done_ms = Vec::new();
+            self.drain_on_demand(id, found, &member_index, &mut attempted, &mut done_ms);
+            if !done_ms.is_empty() {
+                drop(waits.resolved(&done_ms));
+            }
         }
         if waits.blocked.iter().all(|&blocked| blocked == 0) {
             return;
@@ -893,8 +1771,15 @@ impl Checker<'_> {
         self.body.required.clear();
         self.body.conformed.clear();
         self.body.leaves.clear();
+        let active_interface = self.pass1b.as_ref().and_then(|pass1b| {
+            let active_id = pass1b.active?;
+            matches!(pass1b.params[active_id.0], ParamsState::Resolving(_)).then_some(active_id)
+        });
         for &(place, bound) in added {
             self.body.bounds[place].list.push(bound);
+            if let Some(active_id) = active_interface {
+                self.interfaces[active_id.0].bounds[place].list.push(bound);
+            }
             let Some(mut out) = self.body.conforming.get_mut(place).and_then(Option::take) else {
                 continue;
             };
@@ -1348,6 +2233,11 @@ impl Checker<'_> {
     /// F9 (b)): the closure is computed once for each body that has the bound, so a body costs
     /// the closure's size.
     pub(super) fn param_interfaces(&mut self, place: usize) -> &[(InterfaceId, TypeArgs)] {
+        if let Some(id) = self.pass1b.as_ref().and_then(|pass1b| pass1b.active)
+            && (1..self.interfaces[id.0].type_params.len()).contains(&place)
+        {
+            let _ = self.ensure_interface_params(id);
+        }
         let body = &mut self.body;
         if body.conforming.len() <= place {
             body.conforming.resize(place + 1, None);
@@ -2594,6 +3484,7 @@ impl Checker<'_> {
                 self.interfaces[interface.0].requirements[r].ret = None;
             }
             Slot::Alias(id) => self.unknown_alias(id),
+            Slot::AssocBound => {}
         }
     }
 
