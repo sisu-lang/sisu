@@ -94,9 +94,95 @@ fn never_inner(c: bool) -> i64 {
     }
 }
 
+fn never_nested(p: bool) -> i64 {
+    a: loop {
+        let rb = b: loop {
+            let rc = c: loop {
+                break a (if p { break b (break c 1) } else { 3 })
+            }
+            break rc + 10
+        }
+        break rb + 100
+    }
+}
+
+fn never_if_branches(p: bool, q: bool) -> i64 {
+    a: loop {
+        let rb = b: loop {
+            let rc = c: loop {
+                break a (if p {
+                    break b (if q { break c 1 } else { break c 4 })
+                } else {
+                    3
+                })
+            }
+            break rc + 10
+        }
+        break rb + 100
+    }
+}
+
+fn chained_never(p: bool) -> i64 {
+    a: loop {
+        let rb = b: loop {
+            let rc = c: loop {
+                let rd = d: loop {
+                    break a (if p { break b (break c (break d 1)) } else { 3 })
+                }
+                break rd + 1
+            }
+            break rc + 10
+        }
+        break rb + 100
+    }
+}
+
+fn rc_string(tag: string, p: bool, q: bool, nest: bool) -> string {
+    a: loop {
+        let rb = b: loop {
+            let rc = c: loop {
+                if nest {
+                    break a (if p { break b (break c (tag + "-c")) } else { tag + "-a" })
+                }
+                break a (if p {
+                    break b (if q { break c (tag + "-c") } else { tag + "-b" })
+                } else {
+                    tag + "-a"
+                })
+            }
+            break rc + "-rb"
+        }
+        break rb + "-ra"
+    }
+}
+
+fn rc_array(tag: string, p: bool, q: bool, nest: bool) -> [string] {
+    a: loop {
+        let rb = b: loop {
+            let rc = c: loop {
+                if nest {
+                    break a (if p { break b (break c [tag + "-c"]) } else { [tag + "-a"] })
+                }
+                break a (if p {
+                    break b (if q { break c [tag + "-c"] } else { [tag + "-b"] })
+                } else {
+                    [tag + "-a"]
+                })
+            }
+            let mut out = rc
+            out.push(tag + "-rb")
+            break out
+        }
+        let mut out = rb
+        out.push(tag + "-ra")
+        break out
+    }
+}
+
 fn main() {
     let t = [1].len() == 1
     let f = [1].len() == 2
+    let tag = "s" + "1"
 
     print(basic(t)) // 12
     print(basic(f)) // 5
@@ -125,4 +211,28 @@ fn main() {
 
     print(never_inner(t)) // 12
     print(never_inner(f)) // 8
+
+    print(never_nested(t)) // 111
+    print(never_nested(f)) // 3
+
+    print(never_if_branches(t, t)) // 111
+    print(never_if_branches(t, f)) // 114
+    print(never_if_branches(f, f)) // 3
+
+    print(chained_never(t)) // 112
+    print(chained_never(f)) // 3
+
+    print(rc_string(tag, t, t, f)) // s1-c-rb-ra
+    print(rc_string(tag, t, f, f)) // s1-b-ra
+    print(rc_string(tag, f, f, f)) // s1-a
+    print(rc_string(tag, t, f, t)) // s1-c-rb-ra
+
+    let a1 = rc_array(tag, t, t, f)
+    print("{a1.len()}:{a1[0]}:{a1[1]}:{a1[2]}") // 3:s1-c:s1-rb:s1-ra
+    let a2 = rc_array(tag, t, f, f)
+    print("{a2.len()}:{a2[0]}:{a2[1]}") // 2:s1-b:s1-ra
+    let a3 = rc_array(tag, f, f, f)
+    print("{a3.len()}:{a3[0]}") // 1:s1-a
+    let a4 = rc_array(tag, t, f, t)
+    print("{a4.len()}:{a4[0]}:{a4[1]}:{a4[2]}") // 3:s1-c:s1-rb:s1-ra
 }

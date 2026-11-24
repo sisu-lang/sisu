@@ -1871,6 +1871,20 @@ fn value_walk_should_stay_linear_in_nested_loops() {
 /// It also must not panic when an outer value fails or shares a slot.
 #[test]
 fn break_inside_outer_break_value_should_check_each_nested_shape() {
+    let unchanged_rows = [
+        (
+            "bare inner break alongside valued break, unchanged",
+            "fn u() {}\nfn f(c: bool, d: bool) -> i64 {\n    outer: loop {\n        loop {\n            if c { break u() }\n            break outer (if d { break } else { 5 })\n        }\n        break 9\n    }\n}\nfn main() {}",
+        ),
+        (
+            "never outer break value, unchanged",
+            "fn f(c: bool) -> i64 {\n    outer: loop {\n        let r = loop {\n            if c { break outer (break 2) }\n            break outer 8\n        }\n        break r\n    }\n}\nfn main() {}",
+        ),
+        (
+            "shared inline and direct outer stash, unchanged",
+            "fn f(p: bool, q: bool) -> i64 {\n    a: loop {\n        let rb = b: loop {\n            let rc = c: loop {\n                break a (if p { break b (if q { break c 1 } else { break c 2 }) } else { break c 3 })\n            }\n            break rc + 10\n        }\n        break rb + 100\n    }\n}\nfn main() {}",
+        ),
+    ];
     let valid_rows = [
         (
             "basic",
@@ -1893,27 +1907,50 @@ fn break_inside_outer_break_value_should_check_each_nested_shape() {
             "fn f(cond: bool) -> i64 {\n    outer: loop {\n        let rc = c: loop {\n            break outer (d: loop { break d (if cond { break c 1 } else { 2 }) })\n        }\n        break rc\n    }\n}\nfn main() {}",
         ),
         (
-            "bare inner break alongside valued break",
-            "fn u() {}\nfn f(c: bool, d: bool) -> i64 {\n    outer: loop {\n        loop {\n            if c { break u() }\n            break outer (if d { break } else { 5 })\n        }\n        break 9\n    }\n}\nfn main() {}",
-        ),
-        (
             "inner outer inner alternation",
             "fn f(c1: bool, c2: bool) -> i64 {\n    outer: loop {\n        let r = inner: loop {\n            break inner (if c1 { break outer (if c2 { break inner 2 } else { 40 }) } else { 7 })\n        }\n        break r\n    }\n}\nfn main() {}",
-        ),
-        (
-            "never outer break value",
-            "fn f(c: bool) -> i64 {\n    outer: loop {\n        let r = loop {\n            if c { break outer (break 2) }\n            break outer 8\n        }\n        break r\n    }\n}\nfn main() {}",
         ),
         (
             "two inner breaks in one outer break value",
             "fn f(c: bool, d: bool) -> i64 {\n    outer: loop {\n        let a = loop { break outer (if c { break 2 } else if d { break 3 } else { 5 }) }\n        break a\n    }\n}\nfn main() {}",
         ),
+        (
+            "never nested",
+            "fn f(p: bool) -> i64 {\n    a: loop {\n        let rb = b: loop {\n            let rc = c: loop {\n                break a (if p { break b (break c 1) } else { 3 })\n            }\n            break rc + 10\n        }\n        break rb + 100\n    }\n}\nfn main() {}",
+        ),
+        (
+            "never if branches",
+            "fn f(p: bool, q: bool) -> i64 {\n    a: loop {\n        let rb = b: loop {\n            let rc = c: loop {\n                break a (if p { break b (if q { break c 1 } else { break c 4 }) } else { 3 })\n            }\n            break rc + 10\n        }\n        break rb + 100\n    }\n}\nfn main() {}",
+        ),
+        (
+            "chained never",
+            "fn f(p: bool) -> i64 {\n    a: loop {\n        let rb = b: loop {\n            let rc = c: loop {\n                let rd = d: loop {\n                    break a (if p { break b (break c (break d 1)) } else { 3 })\n                }\n                break rd + 1\n            }\n            break rc + 10\n        }\n        break rb + 100\n    }\n}\nfn main() {}",
+        ),
     ];
-    for (row, src) in valid_rows {
+    for (row, src) in unchanged_rows {
         let (program, ds) = checked(src);
         assert!(ds.is_empty(), "row `{row}`: {ds:?}");
         assert!(program.is_some(), "row `{row}`: missing tir");
     }
+    let mut failures = Vec::new();
+    for (row, src) in valid_rows {
+        match std::panic::catch_unwind(|| checked(src)) {
+            Ok((program, ds)) => {
+                if !ds.is_empty() {
+                    failures.push(format!("row `{row}`: {ds:?}"));
+                } else if program.is_none() {
+                    failures.push(format!("row `{row}`: missing tir"));
+                }
+            }
+            Err(payload) => {
+                let message = (payload.downcast_ref::<String>().map(String::as_str))
+                    .or_else(|| payload.downcast_ref::<&str>().copied())
+                    .unwrap_or("unknown panic");
+                failures.push(format!("row `{row}` panicked: {message}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 
     let error_src = "fn f(c: bool) -> i64 {\n    outer: loop {\n        let a = loop { break outer (if c { break 2 } else { unknown }) }\n        break a\n    }\n}\nfn main() {}";
     codes(error_src, &[(Code::BindingNotFound, (3, 61))]);
@@ -1931,6 +1968,23 @@ fn outer_break_value_walk_should_stay_linear_in_nested_loops() {
         }
         let src = format!(
             "fn f(c: bool) -> [i64] {{\n    l1: loop {{\n        if c {{ break l1 [{big}] }}\n        let _n = {inner}\n        break [1]\n    }}\n}}\nfn main() {{}}"
+        );
+        VALUE_STEPS.set(0);
+        lowered(&src);
+        VALUE_STEPS.get()
+    };
+    assert_near_linear(steps(20), steps(40), steps(60));
+}
+
+/// Putting back `m` stashed `break`s in one loop stays linear in `m`.
+/// Two stashed breaks show the shape; 20 is ten times that.
+#[test]
+fn many_stashed_breaks_in_one_loop_should_walk_linearly() {
+    let steps = |count: usize| {
+        let arms =
+            vec!["if c { break outer (if d { break inner 1 } else { 0 }) }"; count].join("\n");
+        let src = format!(
+            "fn f(c: bool, d: bool) -> i64 {{\n    outer: loop {{\n        let r = inner: loop {{\n            {arms}\n            break 0\n        }}\n        break r\n    }}\n}}\nfn main() {{}}"
         );
         VALUE_STEPS.set(0);
         lowered(&src);
