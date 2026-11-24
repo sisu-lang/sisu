@@ -16,6 +16,7 @@ use crate::ast::{self, CompareOp, ExprKind};
 use crate::diagnostic::{Diagnostic, DiagnosticKind, Expected, Literal, PeelIs, PeelLayers};
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
+use crate::symbol::Symbol;
 use crate::tir::{self, Type, TypeArgs, TypeKind};
 
 impl Checker<'_> {
@@ -171,7 +172,9 @@ impl Checker<'_> {
         Ok((want, checked))
     }
 
-    /// The form and the head of the join of branches or of elements that `e` is, at its value.
+    /// The form and the head of the join that `e` is at its value. `e` is an `if` or `if let` with
+    /// an `else`, a `match`, a non-empty array, or a `loop` whose `break`s give a value. It can
+    /// also be a block that ends in one of these, or a `dbg` or `Some` of one.
     pub(super) fn own_join(&self, e: &ast::Expr) -> Option<(JoinForm, Span)> {
         match &e.kind {
             ExprKind::If {
@@ -188,7 +191,21 @@ impl Checker<'_> {
             ExprKind::ArrayLit(elements) if !elements.is_empty() => {
                 Some((JoinForm::Array, self.source.head(e.span, "[".len())))
             }
+            ExprKind::Loop {
+                keyword,
+                breaks: true,
+                ..
+            } => Some((JoinForm::Loop, *keyword)),
             ExprKind::Block(block) => super::tail(block).and_then(|tail| self.own_join(tail)),
+            // `dbg` and `Some` give their argument's join, as `nested_join` takes it.
+            ExprKind::Call { callee, args, .. }
+                if callee.name.as_str() == "dbg" || callee.name == Symbol::SOME =>
+            {
+                match args.as_slice() {
+                    [arg] => self.own_join(&arg.value),
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }
@@ -905,10 +922,11 @@ impl Checker<'_> {
         true
     }
 
-    /// The operands of a comparison, checked as `checked`, one of which is a `unit`. An open
-    /// operand, such as `[]`, is checked against `unit`. Beside an operand of a type that takes
-    /// no `unit`, each `unit` operand has no value to compare: E0043. Otherwise each operand of
-    /// another type, such as `unit?`, is reported against `unit`.
+    /// The operands of a comparison, checked as `checked`, one of which is a `unit`. An operand
+    /// that is a join of its own (`own_join`) and is still open settles first: its leaves meet each
+    /// other, so it has a type. An open operand, such as `[]`, is checked against `unit`. Beside an
+    /// operand of a type that takes no `unit`, each `unit` operand has no value to compare:
+    /// E0043. Otherwise each operand of another type, such as `unit?`, is reported against `unit`.
     fn units_compared(
         &mut self,
         operands: &[&ast::Expr],
@@ -916,6 +934,25 @@ impl Checker<'_> {
     ) -> (Vec<Checked>, Option<Type>, bool) {
         let unit = Expectation::Required(Type::UNIT, Origin::None);
         let mut mismatched = false;
+        let mut checked = checked;
+        for (e, c) in operands.iter().zip(&mut checked) {
+            let open = type_of(c).is_some_and(|ty| self.table.resolve(ty).holds_infer());
+            if open && let Some((form, head)) = self.own_join(e) {
+                let mut one = [std::mem::replace(c, Ok(unit_value(e.span)))];
+                if let Err(reported) =
+                    self.join_operands(form, head, (&[*e], &mut one), None, |_, _, _| None)
+                {
+                    let [value] = one;
+                    *c = value.and_then(|_| Err(Poisoned::untyped(reported)));
+                    continue;
+                }
+                let [value] = one;
+                *c = value.map(|mut value| {
+                    value.ty = self.table.resolve(value.ty);
+                    value
+                });
+            }
+        }
         let mut opened = Vec::with_capacity(checked.len());
         for (e, c) in operands.iter().zip(checked) {
             let open = type_of(&c)

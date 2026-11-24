@@ -1,0 +1,11 @@
+// GIVEN `fn u() {}` and the comparison `(if c { 1 } else { "s" }) < u()`
+// WHEN `sisu check` runs on it
+// THEN it reports E0032 at 9:14, because the branches of the `if` have different types
+// AND no other error is reported
+fn u() {}
+
+fn main() {
+    let c = [1].len() == 1
+    let a = (if c { 1 } else { "s" }) < u()
+    print(a)
+}

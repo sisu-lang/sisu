@@ -1,0 +1,40 @@
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-join-beside-unary-minus-or-coalesce.sisu:9:14
+   |
+ 9 |     let a = -loop {
+   |              ^^^^
+10 |         if c { break 1 }
+   |                      - `i64`
+11 |         break true
+   |               ---- `bool`
+
+error[E0032]: the branches of this `if` have different types
+  --> E0032-join-beside-unary-minus-or-coalesce.sisu:18:18
+   |
+18 |     let a = -dbg(if c { 1 } else { true })
+   |                  ^^     - `i64`    ---- `bool`
+
+error[E0032]: the branches of this `if` have different types
+  --> E0032-join-beside-unary-minus-or-coalesce.sisu:24:18
+   |
+24 |     let a = Some(if c { 1 } else { true }) ?? 2
+   |                  ^^     - `i64?`   ---- `bool?`
+
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-join-beside-unary-minus-or-coalesce.sisu:30:13
+   |
+30 |     let a = loop {
+   |             ^^^^
+31 |         if c { break Some(1) }
+   |                           - `i64?`
+32 |         break true
+   |               ---- `bool`
+
+error[E0032]: the branches of this `if` have different types
+  --> E0032-join-beside-unary-minus-or-coalesce.sisu:39:17
+   |
+39 |     let a = dbg(if c { Some(1) } else { true }) ?? 2
+   |                 ^^          - `i64?`    ---- `bool`
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

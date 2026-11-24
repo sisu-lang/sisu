@@ -1,0 +1,47 @@
+// GIVEN `Source` with the associated type `Item`, `Named: Source` with `Item = string`, and
+// `picko<S: Source>(x: Two<S, S.Item>?) -> S.Item?`
+// WHEN `main` passes `picko` an `if` of two `Two<Named, string>` values, and then the same `if`
+// inside `Some`
+// THEN each call checks and runs, and `main` prints the `b` of the value that the `if` picks
+// AND this case holds before and after the check of the elements of a joined argument: the
+// elements agree on `S.Item`, so a valid program must keep running
+interface Source {
+    type Item
+    fn first(self) -> Item
+}
+
+struct Named: Source {
+    type Item = string
+    v: string
+    fn first(self) -> string { self.v }
+}
+
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+fn picko<S: Source>(x: Two<S, S.Item>?) -> S.Item? {
+    x?.b
+}
+
+// Reads `a`, which `picko` leaves alone.
+fn left(t: Two<Named, string>) -> string { t.a.first() }
+
+fn if_argument() -> string {
+    let n = Named(v: "x")
+    let c = [1].len() == 1
+    picko(if c { Two(a: n, b: "y") } else { Two(a: n, b: "z") }) ?? "-"
+}
+
+fn some_argument() -> string {
+    let n = Named(v: "x")
+    let c = [1].len() == 1
+    picko(Some(if c { Two(a: n, b: "y") } else { Two(a: n, b: "z") })) ?? "-"
+}
+
+fn main() {
+    print(if_argument())      // y
+    print(some_argument())    // y
+    print(left(Two(a: Named(v: "w"), b: "y")))    // w
+}

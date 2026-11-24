@@ -1,0 +1,201 @@
+// GIVEN a generic method call whose result names an integer literal's type, such as
+// `C().g(1, 2)` of type `P<T, i64>`, or `C().k(1, true)` of type `P<X, Y>`
+// AND that call is a late argument of a generic call: a plain parameter, an optional parameter, an
+// array element, or one of two arguments
+// AND a context of type `u8`, `u8?` or `f64`, at a typed `let`, a call argument, a struct field,
+// a `return` or an `if` branch
+// WHEN `main` calls the generic function in each of these places and prints each result
+// THEN the literal takes its type from the context, so the call checks and `main` prints the value
+// AND an argument whose type is its own, such as `C().k8()`, decides the same type in either order
+struct P<A, B> {
+    a: A
+    b: B
+}
+
+struct C {
+    fn g<T>(self, x: T, y: i64) -> P<T, i64> { P(a: x, b: y) }
+    fn k<X, Y>(self, x: X, y: Y) -> P<X, Y> { P(a: x, b: y) }
+    fn k8(self) -> P<u8, i64> { P(a: 8, b: 2) }
+    fn ku(self, n: u8) -> P<u8, bool> { P(a: n, b: true) }
+}
+
+fn hp<A, B>(_c: bool, p: P<A, B>) -> A { p.a }
+
+fn hs<A, B>(_c: bool, p: [P<A, B>]) -> A { p[0].a }
+
+fn h1<A, B>(p: [P<A, B>]) -> A { p[0].a }
+
+fn f<A, B>(p: P<A, B>, _q: P<A, B>) -> A { p.a }
+
+fn h2<A, B>(p: P<A, B>, _q: [B]) -> A { p.a }
+
+fn pair<A, B>(p: P<A, B>, _q: P<A, B>) -> A { p.a }
+
+fn ho<A, B>(_c: bool, p: P<A, B>?) -> A? { if let Some(q) = p { q.a } else { None } }
+
+fn take(x: u8?) -> u8? { x }
+
+struct Q {
+    v: u8?
+}
+
+fn by_param() -> u8 {
+    let y: u8 = hp(true, C().g(1, 2))
+    y
+}
+
+fn by_param_optional() -> u8 {
+    let y: u8? = hp(true, C().g(2, 2))
+    y ?? 0
+}
+
+fn in_array() -> u8 {
+    let y: u8 = hs(true, [C().g(3, 2)])
+    y
+}
+
+fn in_array_of_one_parameter() -> u8 {
+    let y: u8 = h1([C().g(4, 2)])
+    y
+}
+
+fn in_array_optional() -> u8 {
+    let y: u8? = hs(true, [C().g(5, 2)])
+    y ?? 0
+}
+
+fn in_array_float() -> f64 {
+    let y: f64 = hs(true, [C().g(6, 2)])
+    y
+}
+
+fn two_elements() -> u8 {
+    let y: u8 = hs(true, [C().g(7, 2), C().g(9, 4)])
+    y
+}
+
+fn two_arguments() -> u8 {
+    let y: u8 = f(C().g(10, 3), C().g(11, 5))
+    y
+}
+
+fn argument_and_array() -> u8 {
+    let y: u8 = h2(C().g(12, 2), [3])
+    y
+}
+
+fn two_parameters() -> u8 {
+    let y: u8 = hs(true, [C().k(13, 2)])
+    y
+}
+
+fn two_parameters_optional() -> u8 {
+    let y: u8? = hs(true, [C().k(14, 2)])
+    y ?? 0
+}
+
+fn two_parameters_float() -> f64 {
+    let y: f64 = hs(true, [C().k(15, 2)])
+    y
+}
+
+fn two_parameters_at_argument() -> u8 {
+    let y: u8 = hp(true, C().k(16, true))
+    y
+}
+
+fn member_beside_call() -> u8 {
+    let y: u8 = hs(true, [P(a: 17, b: 2)])
+    y
+}
+
+fn concrete_after_literal() -> u8 {
+    let y: u8 = pair(C().k(18, true), C().ku(2))
+    y
+}
+
+fn concrete_before_literal() -> u8 {
+    let y: u8 = pair(C().ku(19), C().k(1, true))
+    y
+}
+
+fn array_literal_first() -> u8 {
+    let y: u8 = hs(true, [C().g(20, 2), C().k8()])
+    y
+}
+
+fn array_concrete_first() -> u8 {
+    let y: u8 = hs(true, [C().k8(), C().g(21, 2)])
+    y
+}
+
+fn literal_and_bool_optional() -> u8 {
+    let y: u8? = hs(true, [C().k(22, true)])
+    y ?? 0
+}
+
+fn literal_and_variable_optional() -> u8 {
+    let c = true
+    let y: u8? = hs(true, [C().k(23, c)])
+    y ?? 0
+}
+
+fn two_literal_and_bool_elements_optional() -> u8 {
+    let y: u8? = hs(true, [C().k(24, true), C().k(2, false)])
+    y ?? 0
+}
+
+fn literal_and_bool_at_optional_parameter() -> u8 {
+    let y: u8? = ho(true, Some(C().k(25, true)))
+    y ?? 0
+}
+
+fn literal_and_bool_at_call_argument() -> u8 {
+    let y = take(hs(true, [C().k(26, true)]))
+    y ?? 0
+}
+
+fn literal_and_bool_at_field() -> u8 {
+    let y = Q(v: hs(true, [C().k(27, true)])).v
+    y ?? 0
+}
+
+fn literal_and_bool_returned() -> u8? {
+    hs(true, [C().k(28, true)])
+}
+
+fn literal_and_bool_in_branch() -> u8 {
+    let c = true
+    let y: u8? = if c { hs(true, [C().k(29, true)]) } else { None }
+    y ?? 0
+}
+
+fn main() {
+    print(by_param())                   // 1
+    print(by_param_optional())          // 2
+    print(in_array())                   // 3
+    print(in_array_of_one_parameter())  // 4
+    print(in_array_optional())          // 5
+    print(in_array_float())             // 6.0
+    print(two_elements())               // 7
+    print(two_arguments())              // 10
+    print(argument_and_array())         // 12
+    print(two_parameters())             // 13
+    print(two_parameters_optional())    // 14
+    print(two_parameters_float())       // 15.0
+    print(two_parameters_at_argument()) // 16
+    print(member_beside_call())         // 17
+    print(concrete_after_literal())     // 18
+    print(concrete_before_literal())    // 19
+    print(array_literal_first())        // 20
+    print(array_concrete_first())       // 8
+    print(literal_and_bool_optional())  // 22
+    print(literal_and_variable_optional()) // 23
+    print(two_literal_and_bool_elements_optional()) // 24
+    print(literal_and_bool_at_optional_parameter()) // 25
+    print(literal_and_bool_at_call_argument()) // 26
+    print(literal_and_bool_at_field())  // 27
+    print(literal_and_bool_returned() ?? 0) // 28
+    print(literal_and_bool_in_branch()) // 29
+    print(C().g(1, 2).b)                // 2
+}
