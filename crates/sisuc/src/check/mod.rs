@@ -497,6 +497,21 @@ impl LoopKind {
     }
 }
 
+/// An open outer `break` value whose slot holds a `break` for a nested loop.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct StashedBreak {
+    owner: usize,
+    slot: usize,
+    depth: usize,
+}
+
+/// One `break` slot in a `LoopFrame` before its value moves back into the loop body.
+enum BreakSlot {
+    Empty,
+    Value(Span, Checked),
+    Inline(StashedBreak),
+}
+
 /// A loop whose body is being checked, and what the `break`s that target it have given.
 struct LoopFrame {
     kind: LoopKind,
@@ -510,9 +525,9 @@ struct LoopFrame {
     expected: Expectation,
     /// The value of each `break` with a value, in the order that the `break`s were reached, with
     /// the `break`'s span: the members of the loop's join. A slot is kept before its value is
-    /// checked, so a `break` inside that value comes after it. A `never` value is no member: its
-    /// slot is `None`, and the value stays in its `break`.
-    values: Vec<Option<(Span, Checked)>>,
+    /// checked, so a `break` inside that value comes after it. A `never` value stays inline in
+    /// its `break`: its slot is `Inline` inside an outer `break` value, else `Empty`.
+    values: Vec<BreakSlot>,
     /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
     crossed: bool,
     /// The first bare `break`.
@@ -520,9 +535,8 @@ struct LoopFrame {
     /// The token of the error that failed the loop: a failed jump, loop label or `break` value
     /// in it. It then has no type.
     failed: Option<Reported>,
-    /// Enclosing `(owner_loop_index, slot, site_body_depth)` entries whose stashed value holds a
-    /// `break` for this loop.
-    stashed: Vec<(usize, usize, usize)>,
+    /// Enclosing `StashedBreak` entries whose stashed value holds a `break` for this loop.
+    stashed: FxHashSet<StashedBreak>,
 }
 
 impl LoopFrame {
@@ -543,7 +557,7 @@ impl LoopFrame {
             crossed: false,
             bare: None,
             failed: None,
-            stashed: Vec::new(),
+            stashed: FxHashSet::default(),
         }
     }
 }
@@ -1101,9 +1115,8 @@ struct Body {
     self_type: SelfType,
     /// Loops open around the code being checked, innermost last: what a `break` would act on.
     loops: Vec<LoopContext>,
-    /// Each outer `break_value` currently being checked:
-    /// `(owner_loop_index, slot, site_body_depth)`.
-    active_breaks: Vec<(usize, usize, usize)>,
+    /// Each outer `break_value` currently being checked.
+    active_breaks: Vec<StashedBreak>,
     /// The E0050 of each generic call whose result cannot meet its context (see `Misfit`). A
     /// report that uses the result takes its entry. Each entry left is pushed when the body ends.
     misfits: Vec<Option<Diagnostic>>,

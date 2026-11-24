@@ -2477,9 +2477,6 @@ fn safe_chain_index_forms_should_report_one_consistent_error() {
     assert!(e0001.help().is_some());
 }
 
-/// GIVEN calls on failed receivers beside a broken or intact `mut self` method elsewhere.
-/// WHEN the front end runs and checks safe fixes.
-/// THEN `safe_fix_breaches` stays empty, and known non-mutating receivers still emit W0002.
 #[test]
 fn failed_receiver_call_should_not_depend_on_other_mut_self_methods() {
     judge_unused();

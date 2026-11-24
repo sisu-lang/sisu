@@ -1882,7 +1882,11 @@ fn break_inside_outer_break_value_should_check_each_nested_shape() {
         ),
         (
             "shared inline and direct outer stash, unchanged",
-            "fn f(p: bool, q: bool) -> i64 {\n    a: loop {\n        let rb = b: loop {\n            let rc = c: loop {\n                break a (if p { break b (if q { break c 1 } else { break c 2 }) } else { break c 3 })\n            }\n            break rc + 10\n        }\n        break rb + 100\n    }\n}\nfn main() {}",
+            "fn f(p: bool, q: bool) -> i64 {\n    a: loop {\n        let rb = b: loop {\n            let rc = c: loop {\n                break a (if p { break b (if q { break c 1 } else { break c 2 }) } else if q { break c 3 } else { 4 })\n            }\n            break rc + 10\n        }\n        break rb + 100\n    }\n}\nfn main() {}",
+        ),
+        (
+            "never outer inside inner break value, unchanged",
+            "fn f(p: bool) -> i64 {\n    outer: loop {\n        let r = inner: loop {\n            break inner (if p { break outer (break inner 1) } else { 2 })\n        }\n        break r\n    }\n}\nfn main() {}",
         ),
     ];
     let valid_rows = [
