@@ -1,6 +1,7 @@
-// GIVEN annotated `let` statements whose initializers are ambiguous `name` calls
+// GIVEN annotated `let` statements whose initializers are ambiguous calls
 // WHEN `sisu check` runs on the file
-// THEN E0156 keeps the user binding name on named bindings and uses `x` on `_`
+// THEN distinct-result calls name each answer with no fix, and shared-result calls keep the user
+// binding name on named bindings and use `x` on `_`
 interface Label {
     fn name(self) -> string
 }
@@ -19,6 +20,24 @@ extend Circle: Code {
     fn name(self) -> i64 { 1 }
 }
 
+interface Pair2<T, U> {
+    fn first(self) -> T
+}
+
+struct Tag {}
+
+extend Tag: Pair2<i64, bool> {
+    fn first(self) -> i64 { 1 }
+}
+
+extend Tag: Pair2<i64, char> {
+    fn first(self) -> i64 { 2 }
+}
+
+extend Tag: Pair2<string, bool> {
+    fn first(self) -> string { "tag" }
+}
+
 fn g<T: Label & Code>(t: T) {
     let k: bool = t.name()
 }
@@ -29,4 +48,8 @@ fn main() {
     let mut m: [i64] = c.name()
     let _: bool = c.name()
     g(c)
+    let t = Tag()
+    let p: bool = t.first()
+    let mut q: [bool] = t.first()
+    let _: bool = t.first()
 }

@@ -5291,7 +5291,13 @@ fn assert_ambiguous_each(
         interfaces: pairs.iter().map(|&(i, _)| i.to_string()).collect(),
         at: ds[0].span(),
         help: Some(crate::diagnostic::AmbiguousHelp::Each {
-            results: pairs.iter().map(|&(_, ty)| ty.to_string()).collect(),
+            results: pairs
+                .iter()
+                .map(|&(_, ty)| crate::diagnostic::AmbiguousResult {
+                    ty: ty.to_string(),
+                    whole: true,
+                })
+                .collect(),
             let_name,
         }),
     }

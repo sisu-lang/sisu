@@ -3327,6 +3327,14 @@ pub(crate) enum PeelLayers {
     Extra,
 }
 
+/// One candidate's formatted result type in [`AmbiguousHelp::Each`]. `whole` is false when
+/// formatting cut the type with `...`, so no `: <T>` fix is offered for it.
+#[derive(Clone)]
+pub(crate) struct AmbiguousResult {
+    pub(crate) ty: String,
+    pub(crate) whole: bool,
+}
+
 /// How [`DiagnosticKind::Ambiguous`] guides the user to pick one answer.
 #[derive(Clone)]
 pub(crate) enum AmbiguousHelp {
@@ -3339,7 +3347,7 @@ pub(crate) enum AmbiguousHelp {
     /// Every answer has its own result type: `results` aligns 1-to-1 with `interfaces`, and
     /// `let_name` adds `: <T>` fixes for an untyped `let`.
     Each {
-        results: Vec<String>,
+        results: Vec<AmbiguousResult>,
         let_name: Option<Span>,
     },
 }
@@ -4192,7 +4200,9 @@ impl From<DiagnosticKind> for Diagnostic {
                         let items: Vec<String> = interfaces
                             .iter()
                             .zip(&results)
-                            .map(|(interface, ty)| format!("`{interface}` gives `{ty}`"))
+                            .map(|(interface, result)| {
+                                format!("`{interface}` gives `{}`", result.ty)
+                            })
                             .collect();
                         let mut d = d.with_help(format!(
                             "{}; write the type of the result to pick one",
@@ -4200,12 +4210,14 @@ impl From<DiagnosticKind> for Diagnostic {
                         ));
                         if let Some(name) = let_name {
                             let at = name.end_point();
-                            for (interface, ty) in interfaces.iter().zip(&results) {
-                                d = d.with_fix(unsafe_fix(
-                                    &format!("write `: {ty}` to pick `{interface}`"),
-                                    at,
-                                    &format!(": {ty}"),
-                                ));
+                            for (interface, result) in interfaces.iter().zip(&results) {
+                                if result.whole {
+                                    d = d.with_fix(unsafe_fix(
+                                        &format!("write `: {}` to pick `{interface}`", result.ty),
+                                        at,
+                                        &format!(": {}", result.ty),
+                                    ));
+                                }
                             }
                         }
                         d

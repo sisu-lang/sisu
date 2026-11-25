@@ -9,10 +9,10 @@ mod render;
 mod suggest;
 
 pub(crate) use registry::{
-    AddBound, AmbiguousHelp, AnyFormKind, ArgumentsForm, BadRange, BlockBound, BlockNeed,
-    BoundLabel, BoundSite, BuiltIn, CannotExtendForm, ChainForm, ChainLabel, ClashForm, ClashKind,
-    Code, ColonBound, ConformanceForm, Conversion, Definition, DiagnosticKind, Earlier, ElseOf,
-    Expected, ForeignPattern, ForeignRange, GetCall, GuardHelp, Hop, Immutable, Implied,
+    AddBound, AmbiguousHelp, AmbiguousResult, AnyFormKind, ArgumentsForm, BadRange, BlockBound,
+    BlockNeed, BoundLabel, BoundSite, BuiltIn, CannotExtendForm, ChainForm, ChainLabel, ClashForm,
+    ClashKind, Code, ColonBound, ConformanceForm, Conversion, Definition, DiagnosticKind, Earlier,
+    ElseOf, Expected, ForeignPattern, ForeignRange, GetCall, GuardHelp, Hop, Immutable, Implied,
     IndexUsage, InterfaceBodyForm, Join, JoinFix, JoinFormName, LetField, Literal, LiteralKind,
     LowerName, MainForm, Make, MatchIdiomForm, MathFix, Member, MethodReceiver, MismatchFix,
     MismatchOrigin, MissingBound, MissingFix, MutDiffers, NanFix, NestingForm, NeverReassignedForm,

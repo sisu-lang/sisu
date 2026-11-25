@@ -21,8 +21,8 @@ pub(super) enum Use {
     Receiver,
     /// A read under `any I` or `(any I)?`, which expects `Expectation`. The value converts there
     /// after the read, unless its type is an open `Any`: that root unifies, so a reader treats it
-    /// as `Required`. A conversion in a join, a generic argument or an `==` is no `ToAny`: the
-    /// lookup sees `Read(Member)` or `Read(None)`, and `conversion` settles the value.
+    /// as `Required`. A conversion in a join, a generic argument or an `==` is no `ToAny`. There
+    /// the lookup sees `Read(Member)` or `Read(None)`, and `conversion` settles the value.
     ToAny(Expectation),
 }
 

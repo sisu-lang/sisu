@@ -15,7 +15,9 @@ use super::{
     type_of, wrap,
 };
 use crate::ast;
-use crate::diagnostic::{AmbiguousHelp, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp};
+use crate::diagnostic::{
+    AmbiguousHelp, AmbiguousResult, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp,
+};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, InterfaceId, Type, TypeArgs, TypeKind};
@@ -961,13 +963,13 @@ impl Checker<'_> {
         }
     }
 
-    /// The place among the candidates of a call of `site` at `span`, on a receiver of type `ty`,
-    /// whose result in `rets` matches the context. It picks the only candidate with the expected
-    /// type, or, if none has it, the only one with an expected optional's payload. A result that
-    /// is `None` cannot be told from the others. Otherwise the call is ambiguous, and `interfaces`
-    /// names the candidates for the report. When every result is known and distinct after optional
-    /// wrapping for `?.`, `AmbiguousHelp::Each` names each answer. It also offers unsafe `: <T>`
-    /// fixes when `site` initializes an untyped `let`. Otherwise `AmbiguousHelp::One` suggests a
+    /// Finds the candidate of `site` at `span`, on a receiver of type `ty`, whose result in `rets`
+    /// matches the context. It picks the only candidate with the expected type, or, if none has it,
+    /// the only one with an expected optional's payload. A result that is `None` cannot be told
+    /// from the others. Otherwise the call is ambiguous, and `interfaces` names the candidates for
+    /// the report. When every result is known and distinct after optional wrapping for `?.`,
+    /// `AmbiguousHelp::Each` names each answer. It also offers unsafe `: <T>` fixes for non-cut
+    /// types when `site` initializes an untyped `let`. Otherwise `AmbiguousHelp::One` suggests a
     /// `let` for the first unique result when one exists.
     pub(super) fn pick_among(
         &mut self,
@@ -1009,7 +1011,16 @@ impl Checker<'_> {
         );
         let help = if !open && counts.len() == rets.len() {
             let results = candidate_results(rets)
-                .filter_map(|(_, ret)| ret.map(|ret| self.type_name(result_of(ret))))
+                .filter_map(|(_, ret)| {
+                    ret.map(|ret| {
+                        let ret = result_of(ret);
+                        let (ty, whole) = match self.whole_type_name(ret) {
+                            Some(name) => (name, true),
+                            None => (self.type_name(ret), false),
+                        };
+                        AmbiguousResult { ty, whole }
+                    })
+                })
                 .collect();
             let let_name = (expected == Expectation::None)
                 .then(|| self.let_name(span))
