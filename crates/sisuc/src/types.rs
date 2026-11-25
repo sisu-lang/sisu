@@ -495,10 +495,9 @@ fn write_steps<'n>(
     let mut cut = false;
     while let Some(step) = steps.pop() {
         #[cfg(test)]
-        {
-            HELD.set(HELD.get().max(steps.len() + 1));
-            WRITE_STEPS.set(WRITE_STEPS.get() + 1);
-        }
+        HELD.set(HELD.get().max(steps.len() + 1));
+        #[cfg(test)]
+        WRITE_STEPS.set(WRITE_STEPS.get() + 1);
         let ty = match step {
             Step::Close(text) => {
                 out.push_str(text);
