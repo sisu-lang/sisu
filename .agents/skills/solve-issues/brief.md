@@ -35,7 +35,7 @@ Neighbours: <the table of neighbouring cases, with today's output and the wanted
 
 The wanted outputs come from this list. Do not change one to fit the code. Keep failing rows and must-pass rows in separate tables or loops so the red-at-base check stays clear; each must-pass row keeps its `, unchanged` label. A task that changes only docs or the text of a diagnostic has no test commit: its fixture diff is the test. When a test in a behaviour task wants new diagnostic text, a bless at the base writes the old text, and the fixture is green. So bless, then edit each wanted line of the `.err` and the `.json` by hand, and check that the fixture fails at the base on those lines only. The test commit of a performance fix can add the `cfg(test)` counter and its ticks.
 
-Unit tests assert diagnostic codes, spans and fix edits, never wording (`test-wording` hook). Pin exact wording in `.err` and `.json` fixtures. Give each contract its own test function (`CODING_STANDARDS.md`, Tests).
+Unit tests assert diagnostic codes, spans and fix edits, never wording (`test-wording` hook). Pin exact wording in `.err` and `.json` fixtures. Keep each rule in its own test function or table (`CODING_STANDARDS.md`, Tests).
 
 ## Your job
 
@@ -49,7 +49,7 @@ Unit tests assert diagnostic codes, spans and fix edits, never wording (`test-wo
    ```
 
    Each patch holds the changes of the earlier commits too, so a test and its fix can be in one file. Leave all the changes in the worktree.
-5. Run no `make coverage` and no `make mutation-test`. The controller runs `make coverage` on a clean `HEAD` after committing.
+5. Run no `make coverage` and no `make mutation-test`. The controller runs `make coverage` on the clean `HEAD` after committing and checks uncovered lines.
 6. Stop every background job you started. Then report once:
    - the status: DONE, DONE_WITH_CONCERNS or BLOCKED;
    - each commit: its message file and its patch;
@@ -69,4 +69,4 @@ A fix-round brief has these parts, in this order:
 3. Each accepted finding: its severity, the cause you checked, the probe that shows it, the fix, and the test list with the wanted outputs, as in "Tests" above.
 4. "Fix the class": the neighbouring cases to list and probe, the probe folder (`review-sisu` names it), and the `scripts/diag_diff.py` command to run. When the fix gives a sentence for a doc, each example in it is one case with its probe; a probe that contradicts the sentence changes the sentence.
 5. "Report, do not add": when a check (a hook, a lint, a test table) seems to need a new exemption or opt-out, the executor reports the hit and the reason, and adds nothing. The controller rules on it.
-6. The job: the tests first, red at the round base, as one commit titled "Add failing tests"; then the fix as a second commit. Steps 1 and 4 of the task brief say how to write each commit, and when a fix has no separate test commit. Then run `make test`. Run no `make coverage` and no `make mutation-test`: the controller runs `make coverage` on the clean `HEAD`. One report, with each test red before and green after. A test that kills a surviving mutant, or that holds the rule of code a ruling kept (`review-sisu`, rule 6), is the exception: it is green at the round base and needs no fix. Write it as its own commit, and name its mutant or its rule in the report. A surviving mutant whose only effect is extra work that stays linear is not pinned. It gets the note `accepted: extra work only: <the work>` (`CODING_STANDARDS.md`, Tests).
+6. The job: the tests first, red at the round base, as one commit titled "Add failing tests"; then the fix as a second commit. Steps 1 and 4 of the task brief say how to write each commit, and when a fix has no separate test commit. Then run `make test`. Run no `make coverage` and no `make mutation-test`: the controller runs `make coverage` on the clean `HEAD` and checks uncovered lines. One report, with each test red before and green after. A test that kills a surviving mutant, or that holds the rule of code a ruling kept (`review-sisu`, rule 6), is the exception: it is green at the round base and needs no fix. Write it as its own commit, and name its mutant or its rule in the report. A surviving mutant whose only effect is extra work that stays linear is not pinned. It gets the note `accepted: extra work only: <the work>` (`CODING_STANDARDS.md`, Tests).

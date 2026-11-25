@@ -2095,8 +2095,8 @@ impl Gen<'_> {
     ///   - `gap_nothing`: a generic method that waits for its type in an argument (`own_params`);
     ///   - `gap_bump`: a call whose bound takes a type argument (`unknown_param`);
     ///   - `gap_put`: an argument at an associated type that the join decides (`put_back`);
-    ///   - `gap_some`: `Some` around a generic method call at a parameter that names two type
-    ///     parameters under an optional context (`Makes::some`).
+    ///   - `gap_some`: `Some`, under an optional context, around a generic method call at a
+    ///     parameter that names two type parameters (`Makes::some`).
     /// - the forms of member-bearing interface bounds, each for the functions of the checker that
     ///   resolve such a bound on demand (`tests/run/assoc_later_bound.sisu` reaches them). Each has
     ///   a point in `GAP_POINTS` (`coverage.rs`):
