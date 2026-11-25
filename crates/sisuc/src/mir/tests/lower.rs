@@ -4,7 +4,8 @@ use rustc_hash::FxHashMap;
 
 use super::*;
 use crate::mir::lower::{ARM_STEPS, LOCAL_OF_READS, MENTION_PROBES, Mentions, PATH_COPIES, WALKED};
-use crate::mir::print::EXAMINED;
+use crate::mir::print::{EXAMINED, PLACE_BYTES};
+use crate::tir::TypeArgs;
 
 /// Calls run in source order, and an `i64` is returned by a read, not moved.
 #[test]
@@ -1714,4 +1715,239 @@ fn dropped_unit_read_should_lower_to_no_statement() {
     let printed = built("fn main() {\n    let u = {}\n    u\n    print(u)\n}");
     let main = function(&printed, "main");
     assert!(!main.lines().any(|line| line.trim() == "()"), "{main}");
+}
+
+/// Builds a boxed struct cycle of depth `k` with `body` inside `main` after `let mut s = ...`.
+fn boxed_cycle_program(k: usize, helpers: &str, body: &str) -> String {
+    let mut structs = String::new();
+    for i in 0..k {
+        writeln!(structs, "struct S{i} {{\n    p: S{}\n}}", i + 1)
+            .expect("writing to a string should not fail");
+    }
+    writeln!(
+        structs,
+        "struct S{k} {{\n    _p: S0?\n    xs: [i64]\n    opt: [i64]?\n    txt: string\n    n: i64\n    fn bump(mut self) {{\n        self.n += 1\n    }}\n}}"
+    )
+    .expect("writing to a string should not fail");
+    let mut value = format!("S{k}(_p: None, xs: [0], opt: Some([0]), txt: \"a\", n: 1)");
+    for i in (0..k).rev() {
+        value = format!("S{i}(p: {value})");
+    }
+    format!("{structs}{helpers}fn main() {{\n    let mut s = {value}\n{body}\n}}")
+}
+
+/// GIVEN a boxed struct chain of depth `k`, plus each write form at depth 3
+/// WHEN lowering runs `Lowering::walk`
+/// THEN a write copies `2 * k` projections and emits one `make_unique`
+#[test]
+fn boxed_struct_write_path_should_copy_linear_projections() {
+    for k in [16, 32, 64] {
+        let path = ".p".repeat(k);
+        let src = boxed_cycle_program(k, "", &format!("    s{path}.n = 2\n    print(s{path}.n)"));
+        let (copies, uniques) = crate::on_compiler_stack(|| {
+            let program = checked(&src);
+            PATH_COPIES.set(0);
+            let mir = lowered_of(&program);
+            let copies = PATH_COPIES.get();
+            let printed = print(&mir, &program);
+            let uniques = function(&printed, "main").matches("make_unique ").count();
+            (copies, uniques)
+        });
+        assert_eq!(copies, 2 * k, "depth {k}");
+        assert_eq!(uniques, 1, "depth {k}");
+    }
+    let helpers = "class Holder {\n    mut s: S0\n}\nfn add(mut x: i64) {\n    x += 1\n}\n";
+    let cases = [
+        ("push", "    s.p.p.p.xs.push(1)"),
+        ("safe push", "    s.p.p.p.opt?.push(1)"),
+        ("append", "    s.p.p.p.txt += \"b\""),
+        (
+            "replace box",
+            "    s.p.p.p = S3(_p: None, xs: [9], opt: None, txt: \"x\", n: 9)",
+        ),
+        (
+            "replace box opt",
+            "    let copy_s = s\n    s.p.p.p._p = Some(copy_s)",
+        ),
+        (
+            "class root",
+            "    let h = Holder(s: s)\n    h.s.p.p.p.n = 2",
+        ),
+        ("mut arg", "    add(mut s.p.p.p.n)"),
+        ("mut self", "    s.p.p.p.bump()"),
+    ];
+    for (name, stmt) in cases {
+        let src = boxed_cycle_program(3, helpers, stmt);
+        let printed = lowered(&src);
+        let main = function(&printed, "main");
+        assert_eq!(
+            main.matches("make_unique ").count(),
+            1,
+            "{name}: expected 1 make_unique in\n{main}"
+        );
+    }
+}
+
+/// GIVEN a nested array of depth `k`
+/// WHEN lowering writes `a[0]...[0] = 2`
+/// THEN it copies `k + 1` projections and emits one `check` and two `make_unique`
+#[test]
+fn nested_array_write_path_should_copy_linear_projections() {
+    for k in [8, 16, 32] {
+        let init = format!("{}1{}", "[".repeat(k), "]".repeat(k));
+        let index = "[0]".repeat(k);
+        let src = format!("fn main() {{\n    let mut a = {init}\n    a{index} = 2\n}}");
+        let (copies, main) = crate::on_compiler_stack(|| {
+            let program = checked(&src);
+            PATH_COPIES.set(0);
+            let mir = lowered_of(&program);
+            let copies = PATH_COPIES.get();
+            let printed = print(&mir, &program);
+            (copies, function(&printed, "main"))
+        });
+        assert_eq!(copies, k + 1, "depth {k}");
+        assert_eq!(main.matches("check ").count(), 1, "depth {k}:\n{main}");
+        assert_eq!(
+            main.matches("make_unique ").count(),
+            2,
+            "depth {k}:\n{main}"
+        );
+        assert!(main.contains(" after root"), "depth {k}:\n{main}");
+    }
+}
+
+/// GIVEN an alternating chain of `k` boxed struct fields and array indexes
+/// WHEN lowering writes `s.p.a[0]...n = 2`
+/// THEN it copies `4 * k` projections and emits zero `check` and one `make_unique`
+#[test]
+fn mixed_boxed_and_array_write_path_should_copy_linear_projections() {
+    for k in [8, 16, 32] {
+        let mut init = String::from("S0(p: S1(a: [], _p: None), n: 1)");
+        for _ in 0..k {
+            init = format!("S0(p: S1(a: [{init}], _p: None), n: 1)");
+        }
+        let path = ".p.a[0]".repeat(k);
+        let src = format!(
+            "struct S0 {{\n    p: S1\n    n: i64\n}}\nstruct S1 {{\n    a: [S0]\n    _p: S0?\n}}\n\
+             fn main() {{\n    let mut s = {init}\n    s{path}.n = 2\n}}"
+        );
+        let (copies, main) = crate::on_compiler_stack(|| {
+            let program = checked(&src);
+            PATH_COPIES.set(0);
+            let mir = lowered_of(&program);
+            let copies = PATH_COPIES.get();
+            let printed = print(&mir, &program);
+            (copies, function(&printed, "main"))
+        });
+        assert_eq!(copies, 4 * k, "depth {k}");
+        assert_eq!(main.matches("check ").count(), 0, "depth {k}:\n{main}");
+        assert_eq!(
+            main.matches("make_unique ").count(),
+            1,
+            "depth {k}:\n{main}"
+        );
+    }
+}
+
+/// GIVEN deep places with `Box`, `Some` and `Payload` wrapping projections
+/// WHEN the mir printer formats each place
+/// THEN the output matches the wrapped format and writes linear bytes
+#[test]
+fn place_printer_should_format_wrapping_projections_linearly() {
+    let program = checked(
+        "class C {\n    mut s: S0\n}\n\
+         struct S0 {\n    p: S1\n}\n\
+         struct S1 {\n    _p: S0?\n    e: E?\n}\n\
+         enum E {\n    Wrap(E)\n    Leaf([i64])\n}",
+    );
+    let c_ty = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+    let e_ty = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
+    let mut b = Builder::new("f");
+    let x = b.local("x", c_ty);
+    let place = Place {
+        local: x,
+        projections: vec![
+            Projection::Field {
+                index: 0,
+                mutable: true,
+            },
+            Projection::StructField { index: 0 },
+            Projection::Box,
+            Projection::StructField { index: 1 },
+            Projection::Some,
+            Projection::Payload {
+                variant: 1,
+                field: 0,
+            },
+            Projection::Index {
+                index: Operand::Const(Const::Int(0, Type::I64)),
+                span: Span::new(0, 0),
+            },
+        ],
+        borrow: false,
+        guard: false,
+    };
+    b.block(
+        vec![Statement::Store {
+            place,
+            value: Operand::Const(Const::Int(1, Type::I64)),
+        }],
+        Terminator::Return(None),
+    );
+    let printed = print(
+        &Program {
+            functions: vec![b.finish()],
+            main: None,
+        },
+        &program,
+    );
+    assert!(
+        printed.contains("(((x#0.0.p as box).e as some) as 1).0[0] = 1"),
+        "{printed}"
+    );
+
+    let measure = |ty: Type, projections: Vec<Projection>| {
+        let mut b = Builder::new("f");
+        let p = b.local("p", ty);
+        b.block(
+            vec![Statement::Store {
+                place: Place {
+                    local: p,
+                    projections,
+                    borrow: false,
+                    guard: false,
+                },
+                value: Operand::Const(Const::Unit),
+            }],
+            Terminator::Return(None),
+        );
+        let mir = Program {
+            functions: vec![b.finish()],
+            main: None,
+        };
+        PLACE_BYTES.set(0);
+        drop(print(&mir, &program));
+        PLACE_BYTES.get()
+    };
+
+    assert_near_linear(
+        measure(Type::I64, vec![Projection::Box; 16]),
+        measure(Type::I64, vec![Projection::Box; 32]),
+        measure(Type::I64, vec![Projection::Box; 48]),
+    );
+    let opt = |n: usize| (0..n).fold(Type::I64, |ty, _| Type::optional(ty));
+    assert_near_linear(
+        measure(opt(16), vec![Projection::Some; 16]),
+        measure(opt(32), vec![Projection::Some; 32]),
+        measure(opt(48), vec![Projection::Some; 48]),
+    );
+    let payload = Projection::Payload {
+        variant: 0,
+        field: 0,
+    };
+    assert_near_linear(
+        measure(e_ty, vec![payload.clone(); 16]),
+        measure(e_ty, vec![payload.clone(); 32]),
+        measure(e_ty, vec![payload; 48]),
+    );
 }

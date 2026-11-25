@@ -32,6 +32,8 @@ pub(crate) fn print(mir: &Program, tir: &tir::Program) -> String {
 thread_local! {
     /// How many format entries the printer has examined on this thread.
     pub(super) static EXAMINED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many bytes `Printer::place` has written on this thread.
+    pub(super) static PLACE_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `x#0` for a named local, `_7` for a temporary or a local the checker made up.
@@ -92,27 +94,51 @@ impl Printer<'_> {
     /// `o#2.1`, `a#1[i#2]`, `(e#3 as 1).0`, `(p#4 as some)`, `t#5.name`, `(t#5.next as box)`.
     fn place(&self, place: &Place) -> String {
         let mut text = self.local(place.local);
+        #[cfg(test)]
+        PLACE_BYTES.set(PLACE_BYTES.get() + text.len());
         let mut ty = self.function.locals[place.local.0].ty;
         for projection in &place.projections {
             let base = ty;
             ty = projection.projected(self.tir, ty);
             match projection {
                 Projection::StructField { index } => {
+                    #[cfg(test)]
+                    let before = text.len();
                     let name = self.tir.struct_field(base, *index);
                     write!(text, ".{name}").expect("writing to a string should not fail");
+                    #[cfg(test)]
+                    PLACE_BYTES.set(PLACE_BYTES.get() + text.len() - before);
                 }
                 Projection::Field { index, .. } => {
+                    #[cfg(test)]
+                    let before = text.len();
                     write!(text, ".{index}").expect("writing to a string should not fail");
+                    #[cfg(test)]
+                    PLACE_BYTES.set(PLACE_BYTES.get() + text.len() - before);
                 }
                 Projection::Payload { variant, field } => {
                     text = format!("({text} as {variant}).{field}");
+                    #[cfg(test)]
+                    PLACE_BYTES.set(PLACE_BYTES.get() + text.len());
                 }
                 Projection::Index { index, .. } => {
+                    #[cfg(test)]
+                    let before = text.len();
                     let index = self.operand(index);
                     write!(text, "[{index}]").expect("writing to a string should not fail");
+                    #[cfg(test)]
+                    PLACE_BYTES.set(PLACE_BYTES.get() + text.len() - before);
                 }
-                Projection::Some => text = format!("({text} as some)"),
-                Projection::Box => text = format!("({text} as box)"),
+                Projection::Some => {
+                    text = format!("({text} as some)");
+                    #[cfg(test)]
+                    PLACE_BYTES.set(PLACE_BYTES.get() + text.len());
+                }
+                Projection::Box => {
+                    text = format!("({text} as box)");
+                    #[cfg(test)]
+                    PLACE_BYTES.set(PLACE_BYTES.get() + text.len());
+                }
             }
         }
         text

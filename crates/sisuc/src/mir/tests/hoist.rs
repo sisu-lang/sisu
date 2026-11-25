@@ -694,6 +694,41 @@ fn labeled_break_keeps_outer_exit_out_of_inner_loop() {
     );
 }
 
+/// GIVEN a loop that writes `a[i].p.p.n = i` on an array of boxed structs
+/// WHEN the hoist runs on the function
+/// THEN `make_unique a#` moves to the pre-header and the loop keeps one `check` and one
+/// `make_unique ((a#...` `after root`
+#[test]
+fn loop_over_array_of_boxed_structs_should_hoist_root_and_keep_one_path_make_unique() {
+    let src = "struct S0 {\n    p: S1\n}\nstruct S1 {\n    p: S2\n}\nstruct S2 {\n    _p: S0?\n    n: i64\n}\n\
+               fn f(xs: [S0]) -> [S0] {\n    let mut a = xs\n    for i in 0..2 {\n        a[i].p.p.n = i\n    }\n    a\n}";
+    assert_eq!(loops(src), [vec!["a".to_owned()]]);
+    let program = checked(src);
+    let mir = build(&program);
+    let f = mir
+        .functions
+        .iter()
+        .find(|function| function.name == "f")
+        .expect("the case should define `f`");
+    let pre = f.loops[0].pre_header.0;
+    let printed = print(&mir, &program);
+    let body = function(&printed, "f");
+    assert!(
+        body.contains(&format!("  bb{pre}:\n")) && body.contains("make_unique a#"),
+        "{body}"
+    );
+    let loop_uniques: usize = f.loops[0]
+        .blocks
+        .iter()
+        .flat_map(|b| &f.blocks[b.0].stmts)
+        .filter(|s| matches!(s, Statement::MakeUnique(_)))
+        .count();
+    assert_eq!(loop_uniques, 1, "{body}");
+    assert_eq!(body.matches("check a#").count(), 1, "{body}");
+    assert!(body.contains("make_unique ((a#"), "{body}");
+    assert!(body.contains(" after root"), "{body}");
+}
+
 /// GIVEN a loop that writes `a` after it takes `let u = a[..2]`, which shares `a`'s block
 /// WHEN the hoist reads the loop
 /// THEN `a` is not hoisted, where the same loop with `let u = a[0]` hoists it: the copy of the
