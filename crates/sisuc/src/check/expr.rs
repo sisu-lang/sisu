@@ -1014,16 +1014,16 @@ impl Checker<'_> {
         })
     }
 
-    /// What the `let` whose whole initializer is the literal at `span` writes before its type,
-    /// if any: its name, after `mut` when it has it.
+    /// What a `let` without a type annotation writes before its type when its initializer is at
+    /// `span`. Returns `mut` followed by the name, or `None`.
     pub(super) fn let_binding(&self, span: Span) -> Option<String> {
         let (init, name, mutable, _) = self.body.let_init?;
         (init == span && name.as_str() != "_")
             .then(|| format!("{}{name}", if mutable { "mut " } else { "" }))
     }
 
-    /// The name of the `let` whose whole initializer is at `span`, if any: the fix of a join
-    /// writes its type after it.
+    /// The name of a `let` without a type annotation whose whole initializer is at `span`, if any.
+    /// A join fix writes its type after this span.
     pub(super) fn let_name(&self, span: Span) -> Option<Span> {
         let (init, name, _, at) = self.body.let_init?;
         (init == span && name.as_str() != "_").then_some(at)
