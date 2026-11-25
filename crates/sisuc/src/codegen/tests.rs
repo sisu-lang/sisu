@@ -2738,11 +2738,14 @@ fn store_to_a_moved_root_faults() {
 }
 
 #[test]
-fn make_unique_of_a_moved_array_faults() {
+fn make_unique_of_a_moved_array_should_fault() {
     let array = Type::intern(TypeKind::Array(Type::I64));
     assert_root_read_faults(array, ("make_array", "take_array"), |r| {
         (
-            vec![Statement::MakeUnique(whole_place(r))],
+            vec![Statement::MakeUnique {
+                place: whole_place(r),
+                start: mir::UniqueStart::Root,
+            }],
             Terminator::Goto(BlockId(1)),
         )
     });

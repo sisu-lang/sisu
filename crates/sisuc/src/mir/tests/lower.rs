@@ -95,7 +95,7 @@ fn dbg_should_read_the_temporary_that_holds_the_value() {
 
 /// The value first, then per level the bounds check and `make_unique`, then the store.
 #[test]
-fn element_write_order() {
+fn element_write_should_follow_value_check_unique_store_order() {
     let printed = lowered(
         "fn v() -> string { \"v\" }\nfn f() {\n    let mut a = [[\"x\"]]\n    let i = 0\n    let j = 0\n    a[i][j] = v()\n}",
     );
@@ -106,8 +106,7 @@ fn element_write_order() {
             "_ = call v()",
             "check a#0[i#1]",
             "make_unique a#0",
-            "check a#0[i#1][j#2]",
-            "make_unique a#0[i#1]",
+            "make_unique a#0[i#1][j#2] after root",
             "_ = take a#0[i#1][j#2]",
             "a#0[i#1][j#2] = move _",
             "release _",
@@ -119,7 +118,12 @@ fn element_write_order() {
     has(
         &printed,
         "f",
-        &["make_unique a#0[i#1]", "a#0[i#1][j#2] = _"],
+        &[
+            "check a#0[i#1]",
+            "make_unique a#0",
+            "make_unique a#0[i#1][j#2] after root",
+            "a#0[i#1][j#2] = _",
+        ],
     );
     assert!(!function(&printed, "f").contains("take"), "{printed}");
 }
@@ -143,15 +147,14 @@ fn field_store_base_borrowed_or_copied() {
 /// The base of an element write's field root is read into a temporary, never borrowed, even
 /// when the value is a constant.
 #[test]
-fn field_root_of_element_write_is_not_borrowed() {
+fn field_root_of_element_write_should_not_be_borrowed() {
     let printed = lowered("class O {\n    mut xs: [i64]\n}\nfn f(o: O) {\n    o.xs[0] = 5\n}");
     has(
         &printed,
         "f",
         &[
             "_ = use o#0",
-            "check _.0[0]",
-            "make_unique _.0",
+            "make_unique _.0[0]",
             "_.0[0] = 5",
             "release _",
         ],
@@ -412,7 +415,7 @@ fn interpolation_parts_should_lower_in_linear_steps() {
 /// WHEN `main` writes an element of an array through all the fields, for `k` of 16, 32 and 64
 /// AND `main` writes an element of an array of arrays, and a field of the last struct
 /// THEN a write copies the place at each element level only, and a copy costs its projections
-/// AND the copies of one element level are `2k + 3` projections, of two levels `4k + 8`, and of
+/// AND the copies of one element level are `k + 2` projections, of two levels `k + 3`, and of
 /// a field none
 #[test]
 fn write_path_should_copy_its_place_at_each_element_level_only() {
@@ -446,16 +449,12 @@ fn write_path_should_copy_its_place_at_each_element_level_only() {
         })
     };
     for k in [16, 32, 64] {
-        // The array's place before the index has `k + 1` projections (`k` links and the field),
-        // and the checked place `k + 2`. A second level copies a place of `k + 2` and `k + 3`.
-        assert_eq!(
-            copies(chain(k, ".xs[0] = 3")),
-            2 * k + 3,
-            "element, k = {k}"
-        );
+        // One `MakeUnique` covers the path up to the last index (`k + 2` for `.xs[0]`, `k + 3` for
+        // `.ys[0][0]`).
+        assert_eq!(copies(chain(k, ".xs[0] = 3")), k + 2, "element, k = {k}");
         assert_eq!(
             copies(chain(k, ".ys[0][0] = 3")),
-            4 * k + 8,
+            k + 3,
             "two levels, k = {k}"
         );
         assert_eq!(copies(chain(k, ".n = 3")), 0, "field, k = {k}");
@@ -592,7 +591,7 @@ fn store_order_index_then_value_then_check() {
 /// Store order: a field root's base, and a field store's base, run before the value, so a value
 /// that replaces `o` writes into the old object.
 #[test]
-fn store_order_field_base_before_the_value() {
+fn store_order_field_base_should_run_before_the_value() {
     let printed = lowered(
         "class Box {\n    mut xs: [i64]\n}\nclass Holder {\n    mut v: i64\n}\n\
          fn noisy(n: i64) -> i64 {\n    print(n)\n    n\n}\n\
@@ -606,8 +605,7 @@ fn store_order_field_base_before_the_value() {
         &[
             "_ = use o#0",
             "o#0 = move _",
-            "check _.0[0]",
-            "make_unique _.0",
+            "make_unique _.0[0]",
             "_.0[0] = _",
             "release _",
         ],

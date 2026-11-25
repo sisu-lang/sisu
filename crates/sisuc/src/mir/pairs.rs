@@ -326,7 +326,7 @@ fn kind<'a>(function: &Function, stmt: &'a Statement) -> Kind<'a> {
         },
         Statement::Take { dest, .. } if function.locals[dest.0].counted => Kind::Clobber,
         Statement::Store { value, .. } if certify::counted_value(function, value) => Kind::Clobber,
-        Statement::MakeUnique(_) | Statement::Push { .. } => Kind::Clobber,
+        Statement::MakeUnique { .. } | Statement::Push { .. } => Kind::Clobber,
         Statement::Release(local) | Statement::Free(local) => Kind::Release(*local),
         Statement::Take { .. }
         | Statement::Store { .. }
@@ -426,7 +426,7 @@ fn borrowed(stmt: Statement) -> Statement {
         | Statement::Push { .. }
         | Statement::Release(_)
         | Statement::ScopeRelease(_)
-        | Statement::MakeUnique(_)
+        | Statement::MakeUnique { .. }
         | Statement::Check(_)
         | Statement::End(_)
         | Statement::TakeApart { .. }

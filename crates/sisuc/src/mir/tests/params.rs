@@ -844,7 +844,12 @@ fn quiet_should_visit_each_statement_once() {
 /// in a component with one, is not either.
 #[test]
 fn quiet_should_mark_only_prelude_functions_without_a_clobber() {
-    let clobber = || vec![Statement::MakeUnique(whole(LocalId(0)))];
+    let clobber = || {
+        vec![Statement::MakeUnique {
+            place: whole(LocalId(0)),
+            start: UniqueStart::Root,
+        }]
+    };
     // (rows, expected quiet flags of the functions, in order)
     let rows: Vec<(&str, Vec<Function>, Vec<bool>)> = vec![
         (
@@ -1038,7 +1043,10 @@ fn quiet_check_should_reject_a_call_that_disagrees_with_its_callee() {
 #[test]
 #[should_panic(expected = "should hold no clobber but a call of a quiet function")]
 fn quiet_check_should_reject_a_quiet_function_with_a_clobber() {
-    let clobber = vec![Statement::MakeUnique(whole(LocalId(0)))];
+    let clobber = vec![Statement::MakeUnique {
+        place: whole(LocalId(0)),
+        start: UniqueStart::Root,
+    }];
     let mut functions = [quiet_candidate("a", true, &[], clobber)];
     functions[0].quiet = true;
     quiet_checked(&functions);

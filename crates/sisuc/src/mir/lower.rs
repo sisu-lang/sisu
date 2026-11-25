@@ -41,7 +41,7 @@ use rustc_hash::FxHashMap;
 
 use super::{
     Block as MirBlock, BlockId, Const, Function, Local, Loop, Operand, Place as MirPlace,
-    Projection, Rvalue, Side, Statement, Terminator,
+    Projection, Rvalue, Side, Statement, Terminator, UniqueStart,
 };
 use crate::conformance::{Written, calls_written, prints_by_helper};
 use crate::source::Span;
@@ -1628,27 +1628,41 @@ impl<'a> Lowering<'a> {
         place
     }
 
-    /// Per level of a write, after its value: for an element, the bounds check of its index,
-    /// then `make_unique` of the array it indexes; for a boxed struct field, `make_unique` of its
-    /// box. Each is outermost first. Gives the written place.
+    /// Walks a written place's `steps` from `root`. Emits a level-0 `Check` and `MakeUnique` when
+    /// `root` is a whole local indexed first (ADR 0021). Emits one `MakeUnique` for the remaining
+    /// indexes and boxed struct fields up to the last active step. Gives the written place.
     fn walk(&mut self, root: MirPlace, steps: &[Step<'_>]) -> MirPlace {
         let mut place = root;
-        for step in steps {
-            match step {
-                Step::Index(..) => {
-                    let array = copy_place(&place);
-                    place.projections.push(Self::projection(step));
-                    self.push(Statement::Check(copy_place(&place)));
-                    self.push(Statement::MakeUnique(array));
-                }
-                Step::Field(_, boxed) => {
-                    place.projections.push(Self::projection(step));
-                    if *boxed {
-                        self.push(Statement::MakeUnique(copy_place(&place)));
-                        place.projections.push(Projection::Box);
-                    }
-                }
+        let (start, rest) = match steps.split_first() {
+            Some((first @ Step::Index(..), rest)) if place.projections.is_empty() => {
+                let array = copy_place(&place);
+                place.projections.push(Self::projection(first));
+                self.push(Statement::Check(copy_place(&place)));
+                self.push(Statement::MakeUnique {
+                    place: array,
+                    start: UniqueStart::Root,
+                });
+                (UniqueStart::AfterRootIndex, rest)
             }
+            _ => (UniqueStart::Root, steps),
+        };
+        let mut last_active = None;
+        for step in rest {
+            place.projections.push(Self::projection(step));
+            match step {
+                Step::Index(..) => last_active = Some(place.projections.len()),
+                Step::Field(_, true) => {
+                    place.projections.push(Projection::Box);
+                    last_active = Some(place.projections.len());
+                }
+                Step::Field(_, false) => {}
+            }
+        }
+        if let Some(len) = last_active {
+            self.push(Statement::MakeUnique {
+                place: copy_place_prefix(&place, len),
+                start,
+            });
         }
         place
     }
@@ -1948,12 +1962,25 @@ thread_local! {
 }
 
 /// A copy of `place`, which a statement of a write path holds. In a test it counts the projections
-/// that it copies (`PATH_COPIES`). Each copy in `Lowering::walk` goes through here, and a copy that
-/// does not is the only way around that count.
+/// that it copies (`PATH_COPIES`). Each copy in `Lowering::walk` goes through here or
+/// `copy_place_prefix`, and a copy that does not is the only way around that count.
 fn copy_place(place: &MirPlace) -> MirPlace {
     #[cfg(test)]
     PATH_COPIES.set(PATH_COPIES.get() + place.projections.len());
     place.clone()
+}
+
+/// A copy of the first `len` projections of `place`, for a write path's `MakeUnique`. In a test
+/// it counts the projections that it copies (`PATH_COPIES`).
+fn copy_place_prefix(place: &MirPlace, len: usize) -> MirPlace {
+    #[cfg(test)]
+    PATH_COPIES.set(PATH_COPIES.get() + len);
+    MirPlace {
+        local: place.local,
+        projections: place.projections[..len].to_vec(),
+        borrow: place.borrow,
+        guard: place.guard,
+    }
 }
 
 /// `mentions` of `e`'s own node and its children.

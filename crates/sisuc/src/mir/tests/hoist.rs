@@ -332,7 +332,10 @@ fn hand_built(stmts: Vec<Statement>, exit: Terminator) -> Function {
     };
     b.block(Vec::new(), Terminator::Goto(BlockId(1)));
     b.block(
-        vec![Statement::MakeUnique(whole(s))],
+        vec![Statement::MakeUnique {
+            place: whole(s),
+            start: UniqueStart::Root,
+        }],
         Terminator::Branch {
             cond: Operand::Read(whole(c)),
             then: BlockId(1),
@@ -443,7 +446,7 @@ fn level_0_uniques(f: &Function) -> Vec<usize> {
                 .stmts
                 .iter()
                 .filter(|stmt| {
-                    matches!(stmt, Statement::MakeUnique(place) if place.projections.is_empty())
+                    matches!(stmt, Statement::MakeUnique { place, .. } if place.projections.is_empty())
                 })
                 .count()
         })
@@ -637,7 +640,7 @@ const TREE: &str = "fn f(xs: [i64]) {
 /// Each root stops at the pre-header of the outermost loop around its write that does not bar
 /// it, whether the bar is in a loop around the write or in a sibling's subtree.
 #[test]
-fn roots_stop_at_different_ancestors_of_a_tree() {
+fn roots_should_stop_at_different_ancestors_of_a_tree() {
     let (f, _, _, _) = hoisted_with_work(TREE);
     // Every `make_unique` in the pre-header, as its local's name and its projection count.
     let at = |lp: usize| -> Vec<(Option<String>, usize)> {
@@ -645,7 +648,7 @@ fn roots_stop_at_different_ancestors_of_a_tree() {
             .stmts
             .iter()
             .filter_map(|stmt| {
-                let Statement::MakeUnique(place) = stmt else {
+                let Statement::MakeUnique { place, .. } = stmt else {
                     return None;
                 };
                 Some((
@@ -721,7 +724,7 @@ fn loop_over_array_of_boxed_structs_should_hoist_root_and_keep_one_path_make_uni
         .blocks
         .iter()
         .flat_map(|b| &f.blocks[b.0].stmts)
-        .filter(|s| matches!(s, Statement::MakeUnique(_)))
+        .filter(|s| matches!(s, Statement::MakeUnique { .. }))
         .count();
     assert_eq!(loop_uniques, 1, "{body}");
     assert_eq!(body.matches("check a#").count(), 1, "{body}");

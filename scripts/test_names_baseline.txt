@@ -568,7 +568,6 @@ crates/sisuc/src/codegen/tests.rs::hypot_is_declared_on_first_use
 crates/sisuc/src/codegen/tests.rs::len_and_field_of_a_value_release_the_base
 crates/sisuc/src/codegen/tests.rs::len_of_words_only_counts
 crates/sisuc/src/codegen/tests.rs::main_flushes_stdout_before_the_exit_check_and_the_return
-crates/sisuc/src/codegen/tests.rs::make_unique_of_a_moved_array_faults
 crates/sisuc/src/codegen/tests.rs::method_symbols
 crates/sisuc/src/codegen/tests.rs::methods_lower_to_intrinsics_and_libm
 crates/sisuc/src/codegen/tests.rs::nested_array_helpers_are_defined
@@ -878,15 +877,12 @@ crates/sisuc/src/mir/tests/certify.rs::assignment_to_an_owned_local
 crates/sisuc/src/mir/tests/certify.rs::borrow_chain_root_live
 crates/sisuc/src/mir/tests/certify.rs::borrow_chain_root_released
 crates/sisuc/src/mir/tests/certify.rs::borrow_into_an_owned_binding
-crates/sisuc/src/mir/tests/certify.rs::borrow_is_ended_by_a_write_before_its_first_mention_in_a_block
-crates/sisuc/src/mir/tests/certify.rs::borrow_is_ended_by_a_write_to_its_root
 crates/sisuc/src/mir/tests/certify.rs::borrow_leaves_its_scope
 crates/sisuc/src/mir/tests/certify.rs::borrow_not_ended_across_blocks
 crates/sisuc/src/mir/tests/certify.rs::borrow_of_a_whole_local_survives_a_call
 crates/sisuc/src/mir/tests/certify.rs::borrow_reaches_a_return
 crates/sisuc/src/mir/tests/certify.rs::borrow_through_a_field_is_ended_by_a_counted_store
 crates/sisuc/src/mir/tests/certify.rs::borrow_through_a_field_is_ended_by_a_counted_take
-crates/sisuc/src/mir/tests/certify.rs::borrow_through_a_field_is_ended_by_make_unique
 crates/sisuc/src/mir/tests/certify.rs::borrow_through_a_field_survives_an_uncounted_store
 crates/sisuc/src/mir/tests/certify.rs::borrow_through_a_fixed_field_survives_a_call
 crates/sisuc/src/mir/tests/certify.rs::borrow_through_a_fixed_field_survives_a_counted_store
@@ -968,7 +964,6 @@ crates/sisuc/src/mir/tests/certify.rs::released_local_comes_back_to_a_scope_rele
 crates/sisuc/src/mir/tests/certify.rs::repeated_borrows_into_one_local_read_linearly
 crates/sisuc/src/mir/tests/certify.rs::return_on_a_branch_that_skips_the_release
 crates/sisuc/src/mir/tests/certify.rs::reuse_of_a_token_twice_is_rejected
-crates/sisuc/src/mir/tests/certify.rs::root_writes_before_many_borrows_read_linearly
 crates/sisuc/src/mir/tests/certify.rs::scalar_store_needs_no_take
 crates/sisuc/src/mir/tests/certify.rs::scope_release_after_a_release
 crates/sisuc/src/mir/tests/certify.rs::scope_release_gap_is_sparse
@@ -992,7 +987,6 @@ crates/sisuc/src/mir/tests/certify.rs::unmentioned_local_is_ignored
 crates/sisuc/src/mir/tests/certify.rs::unmentioned_parameter_reaches_a_return
 crates/sisuc/src/mir/tests/certify.rs::unreachable_code_certifies
 crates/sisuc/src/mir/tests/certify.rs::use_after_the_ownership_pass_panics
-crates/sisuc/src/mir/tests/certify.rs::write_into_a_borrowed_array_is_rejected
 crates/sisuc/src/mir/tests/elaborate.rs::each_exit_edge_is_elaborated_on_its_own
 crates/sisuc/src/mir/tests/elaborate.rs::free_after_reuse_is_removed
 crates/sisuc/src/mir/tests/elaborate.rs::release_after_a_move_on_one_path_stays_conditional
@@ -1006,7 +1000,6 @@ crates/sisuc/src/mir/tests/hoist.rs::hoisted_unique_sits_in_the_pre_header
 crates/sisuc/src/mir/tests/hoist.rs::labeled_break_keeps_outer_exit_out_of_inner_loop
 crates/sisuc/src/mir/tests/hoist.rs::many_roots_probe_linearly
 crates/sisuc/src/mir/tests/hoist.rs::nested_loops_step_through_each_statement_a_bounded_number_of_times
-crates/sisuc/src/mir/tests/hoist.rs::roots_stop_at_different_ancestors_of_a_tree
 crates/sisuc/src/mir/tests/hoist.rs::sibling_loops_merge_into_the_largest
 crates/sisuc/src/mir/tests/hoist.rs::unique_roots_of_each_loop
 crates/sisuc/src/mir/tests/lower.rs::append_to_an_element
@@ -1016,9 +1009,7 @@ crates/sisuc/src/mir/tests/lower.rs::borrow_sites_are_marked
 crates/sisuc/src/mir/tests/lower.rs::break_without_a_value_edge_makes_no_exit
 crates/sisuc/src/mir/tests/lower.rs::code_after_an_exit_is_not_lowered
 crates/sisuc/src/mir/tests/lower.rs::early_exit_releases_spilled_locals
-crates/sisuc/src/mir/tests/lower.rs::element_write_order
 crates/sisuc/src/mir/tests/lower.rs::every_block_is_reachable
-crates/sisuc/src/mir/tests/lower.rs::field_root_of_element_write_is_not_borrowed
 crates/sisuc/src/mir/tests/lower.rs::field_store_base_borrowed_or_copied
 crates/sisuc/src/mir/tests/lower.rs::interpolation_examines_each_format_once
 crates/sisuc/src/mir/tests/lower.rs::interpolation_prints_each_format_with_its_part
@@ -1028,7 +1019,6 @@ crates/sisuc/src/mir/tests/lower.rs::loops_record_their_blocks
 crates/sisuc/src/mir/tests/lower.rs::lowers_chains_and_exits
 crates/sisuc/src/mir/tests/lower.rs::nested_read_copies_the_middle_level
 crates/sisuc/src/mir/tests/lower.rs::operand_read_before_a_later_sibling_assigns
-crates/sisuc/src/mir/tests/lower.rs::store_order_field_base_before_the_value
 crates/sisuc/src/mir/tests/lower.rs::store_order_index_then_value_then_check
 crates/sisuc/src/mir/tests/lower.rs::store_order_value_before_the_root_array
 crates/sisuc/src/mir/tests/lower.rs::straight_line_call_order
@@ -1056,7 +1046,6 @@ crates/sisuc/src/mir/tests/ownership.rs::nested_loops
 crates/sisuc/src/mir/tests/ownership.rs::objects_self_and_if_let
 crates/sisuc/src/mir/tests/ownership.rs::panic_reads_its_message
 crates/sisuc/src/mir/tests/ownership.rs::pass_leaves_no_use_or_mark
-crates/sisuc/src/mir/tests/ownership.rs::place_operands
 crates/sisuc/src/mir/tests/ownership.rs::projection_write_is_a_use
 crates/sisuc/src/mir/tests/ownership.rs::read_after_break
 crates/sisuc/src/mir/tests/ownership.rs::read_after_continue
