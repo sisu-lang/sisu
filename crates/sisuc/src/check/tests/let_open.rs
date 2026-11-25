@@ -169,3 +169,79 @@ fn coalesce_default_with_an_open_let_should_give_no_fix() {
     let ds = diags(src);
     assert!(ds[0].fixes().is_empty(), "{:?}", ds[0]);
 }
+
+#[test]
+fn is_none_on_an_uninferred_local_should_keep_later_use_help() {
+    // GIVEN an uninferred `None` local first read in an `is None` test, then assigned `Some(n)`
+    let src = "fn main() {\n    let mut best = None\n    for n in [3, 1, 2] {\n        if best is None {\n            best = Some(n)\n        }\n    }\n    print(best)\n}\n";
+    // WHEN it is checked
+    codes_row(
+        "is6",
+        src,
+        &[(Code::CannotInfer, (2, 20)), (Code::IsTestsNone, (4, 12))],
+    );
+    // THEN the E0050 keeps the `i64?` type that the later write gives
+    let ds = diags(src);
+    let expected: Diagnostic = DiagnosticKind::CannotInfer {
+        literal: Literal::None,
+        binding: Some("mut best".to_string()),
+        ty: Some("i64?".to_string()),
+        at: ds[0].span(),
+        regroup: None,
+    }
+    .into();
+    assert_eq!(ds[0], expected);
+}
+
+#[test]
+fn generic_call_with_uninferred_let_in_branch_should_report_once() {
+    // GIVEN a generic call whose branch argument holds `let acc = []`
+    let src = "fn first<T>(xs: [T], d: T) -> T { d }\nfn main() {\n    let c = true\n    print(first(if c {\n        let acc = []\n        acc\n    } else {\n        []\n    }, \"x\"))\n}\n";
+    // WHEN it is checked
+    // THEN it reports one E0050 at the `[]`, not two
+    codes_row("d2", src, &[(Code::CannotInfer, (5, 19))]);
+}
+
+#[test]
+fn unread_uninferred_let_in_some_branch_should_suppress_print_warning() {
+    // GIVEN `Some` around a branch that holds an unread `let z = []`
+    let src = "fn main() {\n    let c = true\n    let v = Some(if c {\n        let z = []\n        1\n    } else {\n        2\n    })\n    print(v)\n}\n";
+    // WHEN it is checked
+    // THEN the failed `let` poisons the branch, so `print(v)` gives no W0015
+    codes_row("a3", src, &[(Code::CannotInfer, (4, 17))]);
+}
+
+#[test]
+fn unread_uninferred_let_in_branch_should_poison_generic_call() {
+    // GIVEN a generic call whose branch holds an unread `let z = None`
+    let src = "fn pick<T>(a: T, b: T) -> T { a }\nfn main() {\n    let r: i64 = pick(if true { let z = None\n        1 } else { \"b\" }, 1)\n}\n";
+    // WHEN it is checked
+    // THEN the failed `let` poisons the branch, so the call gives no E0032
+    codes_row("s6", src, &[(Code::CannotInfer, (3, 41))]);
+}
+
+#[test]
+fn array_fill_of_none_with_bad_count_should_report_none_first() {
+    // GIVEN an array fill of `None` whose count is a string
+    let src = "fn main() {\n    let w = [None; \"a\"]\n    print(1)\n}\n";
+    // WHEN it is checked
+    // THEN it reports E0050 at `None` before E0032 at the count
+    codes_row(
+        "f1",
+        src,
+        &[(Code::CannotInfer, (2, 14)), (Code::Mismatch, (2, 20))],
+    );
+}
+
+#[test]
+fn array_fill_of_empty_array_with_bad_count_should_report_array_first() {
+    // GIVEN an array fill of `[]` whose count is a boolean
+    let src = "fn main() {\n    let w = [[]; true]\n}\n";
+    // WHEN it is checked
+    // THEN it reports E0050 at `[]` before E0032 at the count
+    codes_row(
+        "f2",
+        src,
+        &[(Code::CannotInfer, (2, 14)), (Code::Mismatch, (2, 18))],
+    );
+}
