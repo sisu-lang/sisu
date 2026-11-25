@@ -1,0 +1,34 @@
+// GIVEN annotated `let` statements whose initializers are joins of `A` and `B` (`Filler`)
+// WHEN `sisu check` runs on the file
+// THEN each E0032 reports the `any Filler` help and offers no fix
+interface Filler {
+    fn f(self) -> i64
+}
+
+struct A: Filler {
+    fn f(self) -> i64 { 1 }
+}
+
+struct B: Filler {
+    fn f(self) -> i64 { 2 }
+}
+
+fn main() {
+    let c = true
+    let f: any Niller = if c { A() } else { B() }
+    let mut fm: any Niller = if c { B() } else { A() }
+    let fl: any Niller = if let Some(_) = Some(1) { A() } else { B() }
+    let fmatch: any Niller = match c { true => A(); false => B() }
+    let floop: any Niller = loop { if c { break A() }; break B() }
+    let fa: [any Niller] = [A(), B()]
+    let fv: i64 = [A(), B()]
+    let fp: i64 = ([B(), A()])
+    print(f.f())
+    print(fm.f())
+    print(fl.f())
+    print(fmatch.f())
+    print(floop.f())
+    print(fa.len())
+    print(fv)
+    print(fp)
+}

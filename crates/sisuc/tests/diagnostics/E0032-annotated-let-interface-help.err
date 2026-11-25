@@ -1,0 +1,150 @@
+error[E0030]: cannot find type `Niller`
+  --> E0032-annotated-let-interface-help.sisu:18:16
+   |
+18 |     let f: any Niller = if c { A() } else { B() }
+   |                ^^^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+help: an interface with a similar name exists: `Filler`
+   |
+18 -     let f: any Niller = if c { A() } else { B() }
+18 +     let f: any Filler = if c { A() } else { B() }
+   |
+
+error[E0032]: the branches of this `if` have different types
+  --> E0032-annotated-let-interface-help.sisu:18:25
+   |
+18 |     let f: any Niller = if c { A() } else { B() }
+   |                         ^^     --- `A`      --- `B`
+   |
+   = help: the values have no shared type; `any Filler` holds each of them
+
+error[E0030]: cannot find type `Niller`
+  --> E0032-annotated-let-interface-help.sisu:19:21
+   |
+19 |     let mut fm: any Niller = if c { B() } else { A() }
+   |                     ^^^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+help: an interface with a similar name exists: `Filler`
+   |
+19 -     let mut fm: any Niller = if c { B() } else { A() }
+19 +     let mut fm: any Filler = if c { B() } else { A() }
+   |
+
+error[E0032]: the branches of this `if` have different types
+  --> E0032-annotated-let-interface-help.sisu:19:30
+   |
+19 |     let mut fm: any Niller = if c { B() } else { A() }
+   |                              ^^     --- `B`      --- `A`
+   |
+   = help: the values have no shared type; `any Filler` holds each of them
+
+error[E0030]: cannot find type `Niller`
+  --> E0032-annotated-let-interface-help.sisu:20:17
+   |
+20 |     let fl: any Niller = if let Some(_) = Some(1) { A() } else { B() }
+   |                 ^^^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+help: an interface with a similar name exists: `Filler`
+   |
+20 -     let fl: any Niller = if let Some(_) = Some(1) { A() } else { B() }
+20 +     let fl: any Filler = if let Some(_) = Some(1) { A() } else { B() }
+   |
+
+error[E0032]: the branches of this `if` have different types
+  --> E0032-annotated-let-interface-help.sisu:20:26
+   |
+20 |     let fl: any Niller = if let Some(_) = Some(1) { A() } else { B() }
+   |                          ^^                         --- `A`      --- `B`
+   |
+   = help: the values have no shared type; `any Filler` holds each of them
+
+error[E0030]: cannot find type `Niller`
+  --> E0032-annotated-let-interface-help.sisu:21:21
+   |
+21 |     let fmatch: any Niller = match c { true => A(); false => B() }
+   |                     ^^^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+help: an interface with a similar name exists: `Filler`
+   |
+21 -     let fmatch: any Niller = match c { true => A(); false => B() }
+21 +     let fmatch: any Filler = match c { true => A(); false => B() }
+   |
+
+error[E0032]: the arms of this `match` have different types
+  --> E0032-annotated-let-interface-help.sisu:21:30
+   |
+21 |     let fmatch: any Niller = match c { true => A(); false => B() }
+   |                              ^^^^^             --- `A`       --- `B`
+   |
+   = help: the values have no shared type; `any Filler` holds each of them
+
+error[E0030]: cannot find type `Niller`
+  --> E0032-annotated-let-interface-help.sisu:22:20
+   |
+22 |     let floop: any Niller = loop { if c { break A() }; break B() }
+   |                    ^^^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+help: an interface with a similar name exists: `Filler`
+   |
+22 -     let floop: any Niller = loop { if c { break A() }; break B() }
+22 +     let floop: any Filler = loop { if c { break A() }; break B() }
+   |
+
+error[E0032]: the `break` values of this loop have different types
+  --> E0032-annotated-let-interface-help.sisu:22:29
+   |
+22 |     let floop: any Niller = loop { if c { break A() }; break B() }
+   |                             ^^^^                --- `A`      --- `B`
+   |
+   = help: the values have no shared type; `any Filler` holds each of them
+
+error[E0030]: cannot find type `Niller`
+  --> E0032-annotated-let-interface-help.sisu:23:18
+   |
+23 |     let fa: [any Niller] = [A(), B()]
+   |                  ^^^^^^
+   |
+   = help: the types are `i64`, `u8`, `f64`, `bool`, `char`, `string`, `unit`, classes, enums, structs and arrays such as `[i64]`
+help: an interface with a similar name exists: `Filler`
+   |
+23 -     let fa: [any Niller] = [A(), B()]
+23 +     let fa: [any Filler] = [A(), B()]
+   |
+
+error[E0032]: the elements of this array have different types
+  --> E0032-annotated-let-interface-help.sisu:23:28
+   |
+23 |     let fa: [any Niller] = [A(), B()]
+   |                            ^---  --- `B`
+   |                             |
+   |                             `A`
+   |
+   = help: the values have no shared type; `any Filler` holds each of them
+
+error[E0032]: the elements of this array have different types
+  --> E0032-annotated-let-interface-help.sisu:24:19
+   |
+24 |     let fv: i64 = [A(), B()]
+   |                   ^---  --- `B`
+   |                    |
+   |                    `A`
+   |
+   = help: the values have no shared type; `any Filler` holds each of them
+
+error[E0032]: the elements of this array have different types
+  --> E0032-annotated-let-interface-help.sisu:25:20
+   |
+25 |     let fp: i64 = ([B(), A()])
+   |                    ^---  --- `A`
+   |                     |
+   |                     `B`
+   |
+   = help: the values have no shared type; `any Filler` holds each of them
+
+sisu: 14 errors
+sisu: for more on a code, run `sisu explain <code>`: E0030, E0032

@@ -3129,3 +3129,155 @@ fn failed_part_of_an_optional_argument_should_offer_no_conversion() {
     // THEN the one E0032 has no fix: `Some(f64(n))` would not make the call valid
     assert_eq!(fixes_of("let x: f64 = g(Some(n), 1)").len(), 0);
 }
+
+/// Annotated `let` forms whose initializers join `A` and `B` (`Filler`) for
+/// `annotated_let_join_conflict_should_offer_no_declare_fix`.
+const ANNOTATED_LET_JOIN_ROWS: &[(&str, &str)] = &[
+    (
+        "if, failed annotation (A, B)",
+        "let f: any Niller = if c { A() } else { B() }",
+    ),
+    (
+        "if, failed annotation (B, A)",
+        "let f: any Niller = if c { B() } else { A() }",
+    ),
+    (
+        "mut if, failed annotation (A, B)",
+        "let mut f: any Niller = if c { A() } else { B() }",
+    ),
+    (
+        "mut if, failed annotation (B, A)",
+        "let mut f: any Niller = if c { B() } else { A() }",
+    ),
+    (
+        "if let, failed annotation (A, B)",
+        "let f: any Niller = if let Some(_) = Some(1) { A() } else { B() }",
+    ),
+    (
+        "if let, failed annotation (B, A)",
+        "let f: any Niller = if let Some(_) = Some(1) { B() } else { A() }",
+    ),
+    (
+        "match, failed annotation (A, B)",
+        "let f: any Niller = match c { true => A(); false => B() }",
+    ),
+    (
+        "match, failed annotation (B, A)",
+        "let f: any Niller = match c { true => B(); false => A() }",
+    ),
+    (
+        "loop, failed annotation (A, B)",
+        "let f: any Niller = loop { if c { break A() }; break B() }",
+    ),
+    (
+        "loop, failed annotation (B, A)",
+        "let f: any Niller = loop { if c { break B() }; break A() }",
+    ),
+    (
+        "array, failed annotation (A, B)",
+        "let f: [any Niller] = [A(), B()]",
+    ),
+    (
+        "array, failed annotation (B, A)",
+        "let f: [any Niller] = [B(), A()]",
+    ),
+    ("array, i64 annotation (A, B)", "let f: i64 = [A(), B()]"),
+    ("array, i64 annotation (B, A)", "let f: i64 = [B(), A()]"),
+    (
+        "mut array, i64 annotation (A, B)",
+        "let mut f: i64 = [A(), B()]",
+    ),
+    (
+        "mut array, i64 annotation (B, A)",
+        "let mut f: i64 = [B(), A()]",
+    ),
+    (
+        "parenthesized array, i64 annotation (A, B)",
+        "let f: i64 = ([A(), B()])",
+    ),
+    (
+        "parenthesized array, i64 annotation (B, A)",
+        "let f: i64 = ([B(), A()])",
+    ),
+];
+
+/// Unannotated `let` forms that still receive a `Declare` fix in
+/// `annotated_let_join_conflict_should_offer_no_declare_fix`.
+const UNANNOTATED_LET_JOIN_ROWS: &[(&str, &str, &str)] = &[
+    (
+        "if, unchanged",
+        "let f = if c { A() } else { B() }",
+        ": any Filler",
+    ),
+    (
+        "mut if, unchanged",
+        "let mut f = if c { A() } else { B() }",
+        ": any Filler",
+    ),
+    (
+        "if let, unchanged",
+        "let f = if let Some(_) = Some(1) { A() } else { B() }",
+        ": any Filler",
+    ),
+    (
+        "match, unchanged",
+        "let f = match c { true => A(); false => B() }",
+        ": any Filler",
+    ),
+    (
+        "loop, unchanged",
+        "let f = loop { if c { break A() }; break B() }",
+        ": any Filler",
+    ),
+    ("array, unchanged", "let f = [A(), B()]", ": [any Filler]"),
+    (
+        "mut array, unchanged",
+        "let mut f = [A(), B()]",
+        ": [any Filler]",
+    ),
+];
+
+#[test]
+fn annotated_let_join_conflict_should_offer_no_declare_fix() {
+    // GIVEN annotated `let` statements whose initializers join `A` and `B` (`Filler`)
+    // WHEN each is checked
+    // THEN E0032 offers no fix and keeps the interface help, while unannotated `let` forms keep
+    //      the `Declare` fix
+    let program_with = |line: &str| {
+        format!(
+            "interface Filler {{\n    fn f(self) -> i64\n}}\nstruct A: Filler {{\n    fn f(self) -> i64 {{ 1 }}\n}}\nstruct B: Filler {{\n    fn f(self) -> i64 {{ 2 }}\n}}\nfn main() {{\n    let c = [1].len() == 1\n    {line}\n}}\n"
+        )
+    };
+    let mut red = Vec::new();
+    for &(row, line) in ANNOTATED_LET_JOIN_ROWS {
+        let src = program_with(line);
+        let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+        let e0032: Vec<_> = (ds.iter()).filter(|d| d.code() == Code::Mismatch).collect();
+        if e0032.len() != 1 || !e0032[0].fixes().is_empty() || e0032[0].help().is_none() {
+            red.push(format!(
+                "row `{row}`: e0032={:?}",
+                e0032
+                    .iter()
+                    .map(|d| (d.fixes().len(), d.help().is_some()))
+                    .collect::<Vec<_>>()
+            ));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+
+    for &(row, line, want) in UNANNOTATED_LET_JOIN_ROWS {
+        let src = program_with(line);
+        let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+        let e0032: Vec<_> = (ds.iter()).filter(|d| d.code() == Code::Mismatch).collect();
+        assert_eq!(e0032.len(), 1, "row `{row}`: {e0032:?}");
+        let found = fixes(&src, e0032[0]);
+        assert_eq!(found.len(), 1, "row `{row}`: {found:?}");
+        assert_eq!(found[0].1.len(), 1, "row `{row}`: {found:?}");
+        assert_eq!(found[0].1[0].3, want, "row `{row}`");
+    }
+}
