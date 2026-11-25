@@ -6056,3 +6056,56 @@ fn missing_associated_type_in_interface_bounds_should_report_without_loop_help()
         );
     }
 }
+
+#[test]
+fn truncated_result_type_should_omit_broken_e0156_fix() {
+    // GIVEN an ambiguous call in an untyped `let` where a candidate's return type exceeds the
+    // 256-byte display limit and is cut with `...`
+    let long_a = "VeryLongStructNameForTestingTypeTruncationBeyondLimit<\
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<\
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<\
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<i64, i64>, i64>, i64>, \
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<i64, i64>>";
+    let long_b = "VeryLongStructNameForTestingTypeTruncationBeyondLimit<\
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<\
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<\
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<string, string>, string>, string>, \
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<string, string>>";
+    let one_cut = format!(
+        "struct VeryLongStructNameForTestingTypeTruncationBeyondLimit<A, B> {{\n    a: A\n    b: B\n}}\ninterface I1 {{\n    fn f(self) -> {long_a}\n}}\ninterface I2 {{\n    fn f(self) -> i64\n}}\nstruct S {{}}\nextend S: I1 {{\n    fn f(self) -> {long_a} {{\n        panic(\"x\")\n    }}\n}}\nextend S: I2 {{\n    fn f(self) -> i64 {{\n        2\n    }}\n}}\nfn main() {{\n    let s = S()\n    let x = s.f()\n    print(x)\n}}"
+    );
+    let safe_cut = format!(
+        "struct VeryLongStructNameForTestingTypeTruncationBeyondLimit<A, B> {{\n    a: A\n    b: B\n}}\ninterface I1 {{\n    fn f(self) -> {long_a}\n}}\ninterface I2 {{\n    fn f(self) -> i64\n}}\nstruct S {{}}\nextend S: I1 {{\n    fn f(self) -> {long_a} {{\n        panic(\"x\")\n    }}\n}}\nextend S: I2 {{\n    fn f(self) -> i64 {{\n        2\n    }}\n}}\nfn main() {{\n    let s: S? = Some(S())\n    let x = s?.f()\n    print(x == None)\n}}"
+    );
+    let both_cut = format!(
+        "struct VeryLongStructNameForTestingTypeTruncationBeyondLimit<A, B> {{\n    a: A\n    b: B\n}}\ninterface I1 {{\n    fn f(self) -> {long_a}\n}}\ninterface I2 {{\n    fn f(self) -> {long_b}\n}}\nstruct S {{}}\nextend S: I1 {{\n    fn f(self) -> {long_a} {{\n        panic(\"x\")\n    }}\n}}\nextend S: I2 {{\n    fn f(self) -> {long_b} {{\n        panic(\"y\")\n    }}\n}}\nfn main() {{\n    let s = S()\n    let x = s.f()\n    print(x)\n}}"
+    );
+
+    // WHEN `sisu check` runs on each program
+    // THEN only candidates with whole, non-truncated type names get unsafe `: <T>` fixes
+    fix_rows(&[
+        FixRow {
+            id: "one truncated candidate omits its fix and keeps the other",
+            src: one_cut,
+            reports: vec![Report::new(Code::Ambiguous, ("s.", "f")).help(true).fix(
+                false,
+                1,
+                ("let x = ", "let x: i64 = "),
+            )],
+        },
+        FixRow {
+            id: "safe call with one truncated candidate keeps the optional fix for the other",
+            src: safe_cut,
+            reports: vec![Report::new(Code::Ambiguous, ("s?.", "f")).help(true).fix(
+                false,
+                1,
+                ("let x = ", "let x: i64? = "),
+            )],
+        },
+        FixRow {
+            id: "two truncated candidates keep the help and emit no fixes",
+            src: both_cut,
+            reports: vec![Report::new(Code::Ambiguous, ("s.", "f")).help(true)],
+        },
+    ]);
+}
