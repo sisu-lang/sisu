@@ -1014,8 +1014,8 @@ impl Checker<'_> {
         })
     }
 
-    /// What a `let` without a type annotation writes before its type when its initializer is at
-    /// `span`. Returns `mut` followed by the name, or `None`.
+    /// What the `let` whose whole initializer is at `span` writes before its type, if any.
+    /// Returns the name, after `mut ` when mutable, or `None`.
     pub(super) fn let_binding(&self, span: Span) -> Option<String> {
         let (init, name, mutable, _) = self.body.let_init?;
         (init == span && name.as_str() != "_")
@@ -1026,7 +1026,7 @@ impl Checker<'_> {
     /// A join fix writes its type after this span.
     pub(super) fn let_name(&self, span: Span) -> Option<Span> {
         let (init, name, _, at) = self.body.let_init?;
-        (init == span && name.as_str() != "_").then_some(at)
+        at.filter(|_| init == span && name.as_str() != "_")
     }
 
     /// Whether a comment starts in one of the byte ranges `deleted`. The comment starts are in
