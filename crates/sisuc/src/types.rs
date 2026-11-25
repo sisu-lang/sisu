@@ -508,7 +508,19 @@ fn write_steps<'n>(
                 // The cut elides only what has not begun: a type or the rest of a list. A type
                 // that has begun gets its end, each closer and each associated type name, so a
                 // name that ends in `.Item` or `]` still names what it began to name.
-                finish_cut(out, &steps, &head);
+                out.push_str("...");
+                for step in steps.iter().rev() {
+                    #[cfg(test)]
+                    WRITE_STEPS.set(WRITE_STEPS.get() + 1);
+                    match step {
+                        Step::Close(text) => out.push_str(text),
+                        Step::Assoc(interface, k) => {
+                            out.push('.');
+                            out.push_str(head(Head::Assoc(*interface, *k)));
+                        }
+                        Step::Type(_) | Step::Rest(_) => {}
+                    }
+                }
                 return true;
             }
             Step::Assoc(interface, k) => {
@@ -585,23 +597,6 @@ fn write_steps<'n>(
         push_args(out, &mut steps, args.get());
     }
     cut
-}
-
-/// Finishes a cut name with `...` and closes any delimiters or associated types on `steps`.
-fn finish_cut<'n>(out: &mut String, steps: &[Step<'_>], head: &impl Fn(Head) -> &'n str) {
-    out.push_str("...");
-    for step in steps.iter().rev() {
-        #[cfg(test)]
-        WRITE_STEPS.set(WRITE_STEPS.get() + 1);
-        match step {
-            Step::Close(text) => out.push_str(text),
-            Step::Assoc(interface, k) => {
-                out.push('.');
-                out.push_str(head(Head::Assoc(*interface, *k)));
-            }
-            Step::Type(_) | Step::Rest(_) => {}
-        }
-    }
 }
 
 /// Writes the `<` of a nonempty `args` to `out`, and pushes the rest of `<a, b>` onto `steps`
