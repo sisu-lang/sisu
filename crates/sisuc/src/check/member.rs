@@ -15,7 +15,7 @@ use super::{
     type_of, wrap,
 };
 use crate::ast;
-use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp};
+use crate::diagnostic::{AmbiguousHelp, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, InterfaceId, Type, TypeArgs, TypeKind};
@@ -993,24 +993,34 @@ impl Checker<'_> {
                 return Ok(only);
             }
         }
-        // The first result that exactly one candidate has tells the `let` what to write.
         let mut counts: FxHashMap<Type, usize> = FxHashMap::default();
         for ret in candidate_results(rets).filter_map(|(_, ret)| ret) {
             *counts.entry(ret).or_default() += 1;
         }
-        let unique =
-            candidate_results(rets).find_map(|(_, ret)| ret.filter(|ret| counts[ret] == 1));
-        let annotate = unique.filter(|_| !open).map(|ret| Annotate {
-            call: self.source.text(span).to_string(),
-            binding: self.let_binding(span).unwrap_or_else(|| "x".to_string()),
-            ty: self.type_name(ret),
-        });
+        let help = if !open && rets.len() == interfaces.len() && counts.len() == interfaces.len() {
+            let results = candidate_results(rets)
+                .filter_map(|(_, ret)| ret.map(|ret| self.type_name(ret)))
+                .collect();
+            let let_name = (expected == Expectation::None)
+                .then(|| self.let_name(span))
+                .flatten();
+            Some(AmbiguousHelp::Each { results, let_name })
+        } else {
+            // The first result that exactly one candidate has tells the `let` what to write.
+            let unique =
+                candidate_results(rets).find_map(|(_, ret)| ret.filter(|ret| counts[ret] == 1));
+            unique.filter(|_| !open).map(|ret| AmbiguousHelp::One {
+                call: self.source.text(span).to_string(),
+                binding: self.let_binding(span).unwrap_or_else(|| "x".to_string()),
+                ty: self.type_name(ret),
+            })
+        };
         Err(self.error(DiagnosticKind::Ambiguous {
             method: site.name.name.to_string(),
             receiver: self.type_name(ty),
             interfaces,
             at: site.name.span,
-            annotate,
+            help,
         }))
     }
 

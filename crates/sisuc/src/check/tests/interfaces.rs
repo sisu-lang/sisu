@@ -5276,6 +5276,32 @@ fn pick_should_read_a_closed_int_as_i64() {
     }
 }
 
+/// Asserts that `src` gives one `Ambiguous` diagnostic matching `(method, receiver, pairs)` and
+/// `let_name`.
+fn assert_ambiguous_each(
+    src: &str,
+    method: &str,
+    receiver: &str,
+    pairs: &[(&str, &str)],
+    name_pos: Option<usize>,
+) -> Vec<Diagnostic> {
+    let (_, ds) = checked(src);
+    let let_name = name_pos.map(|start| Span::new(start, start + 1));
+    let expected: Diagnostic = DiagnosticKind::Ambiguous {
+        method: method.to_string(),
+        receiver: receiver.to_string(),
+        interfaces: pairs.iter().map(|&(i, _)| i.to_string()).collect(),
+        at: ds[0].span(),
+        help: Some(crate::diagnostic::AmbiguousHelp::Each {
+            results: pairs.iter().map(|&(_, ty)| ty.to_string()).collect(),
+            let_name,
+        }),
+    }
+    .into();
+    assert_eq!(ds, vec![expected]);
+    ds
+}
+
 #[test]
 fn different_results_should_name_each_answer() {
     // GIVEN ambiguous calls whose answers each have a distinct result type
@@ -5299,7 +5325,7 @@ fn different_results_should_name_each_answer() {
         },
         FixRow {
             id: "a join member under no required type does not pick",
-            src: row_19,
+            src: row_19.clone(),
             reports: vec![Report::new(Code::Ambiguous, ("s.", "name")).help(true)],
         },
         FixRow {
@@ -5320,7 +5346,17 @@ fn different_results_should_name_each_answer() {
         },
     ]);
 
-    let (_, ds_18) = checked(&row_18);
+    let x_start = row_18
+        .find("let x = ")
+        .expect("`let x = ` should be in row_18")
+        + "let ".len();
+    let ds_18 = assert_ambiguous_each(
+        &row_18,
+        "name",
+        "S",
+        &[("Label", "string"), ("Code", "i64")],
+        Some(x_start),
+    );
     assert_eq!(
         fixes(&row_18, &ds_18[0]),
         vec![
@@ -5328,13 +5364,35 @@ fn different_results_should_name_each_answer() {
             (false, vec![(28, 10, "", ": i64".to_string())]),
         ]
     );
-    let (_, ds_three) = checked(three);
+    assert_ambiguous_each(
+        &row_19,
+        "name",
+        "S",
+        &[("Label", "string"), ("Code", "i64")],
+        None,
+    );
+
+    let three_x = three
+        .find("let x = ")
+        .expect("`let x = ` should be in three")
+        + "let ".len();
+    let ds_three = assert_ambiguous_each(
+        three,
+        "convert",
+        "Celsius",
+        &[
+            ("Convert<Fahrenheit>", "Fahrenheit"),
+            ("Convert<Kelvin>", "Kelvin"),
+            ("Convert<Rankine>", "Rankine"),
+        ],
+        Some(three_x),
+    );
     assert_eq!(
         fixes(three, &ds_three[0]),
         vec![
-            (false, vec![(24, 10, "", ": Fahrenheit".to_string())]),
-            (false, vec![(24, 10, "", ": Kelvin".to_string())]),
-            (false, vec![(24, 10, "", ": Rankine".to_string())]),
+            (false, vec![(27, 10, "", ": Fahrenheit".to_string())]),
+            (false, vec![(27, 10, "", ": Kelvin".to_string())]),
+            (false, vec![(27, 10, "", ": Rankine".to_string())]),
         ]
     );
 }

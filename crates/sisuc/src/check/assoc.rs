@@ -342,7 +342,7 @@ impl Checker<'_> {
                         .map(|&(interface, args, _)| self.bound_text(interface, args))
                         .collect(),
                     at: name.span,
-                    annotate: None,
+                    help: None,
                 });
                 None
             }
