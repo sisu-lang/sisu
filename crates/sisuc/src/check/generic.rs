@@ -539,7 +539,9 @@ impl Makes {
     }
 
     /// `Some(x)`: its return type is `T?`, and `x` is at the place of `T`.
-    const fn some() -> Makes {
+    fn some() -> Makes {
+        #[cfg(test)]
+        super::reached("Makes::some");
         Makes::Through {
             bare: 1,
             inside: 0,

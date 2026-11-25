@@ -376,6 +376,7 @@ const GAP_POINTS: &[&str] = &[
     "put_back",
     "assoc_entry_matches",
     "resolve_deferred_self_entry",
+    "Makes::some",
 ];
 
 /// The joins that `Gen::gap_forms` writes in both orders of their members, each with how to find
@@ -7420,6 +7421,59 @@ struct Scorer: Scored<Out> {
 }
 fn scored<U: Convert<Boxed>, P: Scored<U>>(p: P, u: U) -> i64 { p.combine(u).k }
 fn main() { print(scored(Scorer(), Out(k: 7))) }",
+            &[],
+        ),
+        (
+            "Some wraps a generic method call at a closed parameter",
+            r"struct Val<A, B> { a: A; b: B }
+struct Sw { fn val<A, B>(self, a: A, b: B) -> Val<A, B> { Val(a: a, b: b) } }
+fn some_opt<A, B>(p: Val<A, B>?) -> A? {
+    if let Some(q) = p {
+        let _ = q.b
+        Some(q.a)
+    } else {
+        None
+    }
+}
+fn main() {
+    let x: u8? = some_opt(Some(Sw().val(5, true)))
+    print(x ?? 0)
+}",
+            &["Makes::some", "own_params"],
+        ),
+        (
+            "Option.Some wraps a generic method call at a closed parameter",
+            r"struct Val<A, B> { a: A; b: B }
+struct Sw { fn val<A, B>(self, a: A, b: B) -> Val<A, B> { Val(a: a, b: b) } }
+fn some_opt<A, B>(p: Val<A, B>?) -> A? {
+    if let Some(q) = p {
+        let _ = q.b
+        Some(q.a)
+    } else {
+        None
+    }
+}
+fn main() {
+    let x: u8? = some_opt(Option.Some(Sw().val(5, true)))
+    print(x ?? 0)
+}",
+            &["Makes::some", "own_params"],
+        ),
+        (
+            "Some wraps a struct constructor at a closed parameter",
+            r"struct Val<A, B> { a: A; b: B }
+fn some_opt<A, B>(p: Val<A, B>?) -> A? {
+    if let Some(q) = p {
+        let _ = q.b
+        Some(q.a)
+    } else {
+        None
+    }
+}
+fn main() {
+    let x: u8? = some_opt(Some(Val(a: 5, b: true)))
+    print(x ?? 0)
+}",
             &[],
         ),
     ];
