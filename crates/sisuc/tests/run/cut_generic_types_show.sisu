@@ -1,0 +1,76 @@
+// GIVEN chains `A0`..`A6` for generic class `P<A, B>`, struct `S<A, B>`, and enum `E<A, B>`
+// WHEN `main` runs `print` and `dbg` on `A6` of each
+// THEN the class shows `P<P<...>, P<...>>#<id>`, the struct shows `S(...)`, and the enum shows its variant name
+class P<A, B> {
+    a: A
+    b: B
+}
+
+struct S<A, B> {
+    a: A
+    b: B
+}
+
+enum E<A, B> {
+    Leaf
+    Pair(A, B)
+}
+
+type P0 = P<i64, i64>
+type P1 = P<P0, P0>
+type P2 = P<P1, P1>
+type P3 = P<P2, P2>
+type P4 = P<P3, P3>
+type P5 = P<P4, P4>
+type P6 = P<P5, P5>
+
+type S0 = S<i64, i64>
+type S1 = S<S0, S0>
+type S2 = S<S1, S1>
+type S3 = S<S2, S2>
+type S4 = S<S3, S3>
+type S5 = S<S4, S4>
+type S6 = S<S5, S5>
+
+type E0 = E<i64, i64>
+type E1 = E<E0, E0>
+type E2 = E<E1, E1>
+type E3 = E<E2, E2>
+type E4 = E<E3, E3>
+type E5 = E<E4, E4>
+type E6 = E<E5, E5>
+
+fn main() {
+    let p0: P0 = P(a: 1, b: 2)
+    let p1: P1 = P(a: p0, b: p0)
+    let p2: P2 = P(a: p1, b: p1)
+    let p3: P3 = P(a: p2, b: p2)
+    let p4: P4 = P(a: p3, b: p3)
+    let p5: P5 = P(a: p4, b: p4)
+    let p6: P6 = P(a: p5, b: p5)
+    let _ = p6.a
+    let _ = p6.b
+    print(p6) // P<P<...>, P<...>>#6
+    let _ = dbg(p6)
+
+    let s0: S0 = S(a: 1, b: 2)
+    let s1: S1 = S(a: s0, b: s0)
+    let s2: S2 = S(a: s1, b: s1)
+    let s3: S3 = S(a: s2, b: s2)
+    let s4: S4 = S(a: s3, b: s3)
+    let s5: S5 = S(a: s4, b: s4)
+    let s6: S6 = S(a: s5, b: s5)
+    print(s6) // S(...)
+    let _ = dbg(s6) // S(...)
+
+    let e0: E0 = E.Leaf
+    let e1: E1 = E.Pair(e0, e0)
+    let e2: E2 = E.Pair(e1, e1)
+    let e3: E3 = E.Pair(e2, e2)
+    let e4: E4 = E.Pair(e3, e3)
+    let e5: E5 = E.Pair(e4, e4)
+    let _e_pair: E6 = E.Pair(e5, e5)
+    let e6: E6 = E.Leaf
+    print(e6) // Leaf
+    let _ = dbg(e6) // Leaf
+}
