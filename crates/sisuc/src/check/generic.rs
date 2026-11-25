@@ -23,6 +23,7 @@ use super::pattern::{LetPattern, LetValue, arm_key, matchable};
 use super::prelude::PRELUDE;
 use super::reports::{Held, Reported};
 use super::stmt::BlockSoFar;
+use super::use_kind::Use;
 use super::{
     Binding, Checked, Checker, Declared, Definition, DiagnosticKind, Expectation, Origin, Poisoned,
     block_value, built_in_type, is_kept, own_args, payload, tail, type_of,
@@ -5208,7 +5209,7 @@ impl Checker<'_> {
 
     /// The failed `call`, whose result could not meet its known context and left its parameter
     /// `param` open. The code that uses the value reports the mismatch with the result type, as
-    /// for a callee that is not generic; the call's E0050 waits in `Body::misfits` until that
+    /// for a callee that is not generic; the call's E0050 waits in `Checker::misfits` until that
     /// report cancels it (see `Misfit`). An open parameter shows as a hole.
     fn misfit(&mut self, call: &Inference<'_>, sig: &GenericSig<'_>, param: usize) -> Poisoned {
         let with: Vec<Type> = (call.bindings.found.iter())
@@ -5224,10 +5225,10 @@ impl Checker<'_> {
         } else {
             ret
         };
-        let entry = self.body.misfits.len();
+        let entry = self.misfits.len();
         let in_result = sig.ret.is_some_and(|ret| names_outside_assoc(ret, param));
         let d = OpenParam::of(sig, param).kind(in_result).into();
-        self.body.misfits.push(Some(d));
+        self.misfits.push(Some(d));
         let reported = self.proof(call.at); // proof: held misfit
         Poisoned {
             found: Some(super::Misfit { ty, entry }),
@@ -5400,7 +5401,7 @@ impl Checker<'_> {
             K::Match {
                 scrutinee, arms, ..
             } => {
-                let ty = self.value_ahead(scrutinee);
+                let ty = self.value_ahead(scrutinee, Use::Scrutinee);
                 let form = LetValue::Match {
                     ty: ty.filter(|&ty| matchable(ty)),
                 };
@@ -5986,20 +5987,20 @@ impl Checker<'_> {
             ast::ExprKind::Applied { .. } => return None,
             _ => {}
         }
-        self.value_ahead(receiver)
+        self.value_ahead(receiver, Use::Receiver)
     }
 
     /// `e` checked as a value: as ranking checked it ahead, a method's receiver or a `match`'s
     /// scrutinee (see `value_ahead`), else now.
-    pub(super) fn value_kept(&mut self, e: &ast::Expr) -> Checked {
+    pub(super) fn value_kept(&mut self, e: &ast::Expr, use_: Use) -> Checked {
         match self.kept(e.span, false) {
             Some((_, Ahead::Receiver(checked))) => checked,
-            _ => self.value(e, Expectation::None),
+            _ => self.value_as(e, use_),
         }
     }
 
     /// The type of `e`, checked ahead of its turn and kept for it as `Ahead::Receiver`.
-    fn value_ahead(&mut self, e: &ast::Expr) -> Option<Type> {
+    fn value_ahead(&mut self, e: &ast::Expr, use_: Use) -> Option<Type> {
         let kept = self.body.ahead_at.get(&(e.span, false)).and_then(|&index| {
             #[cfg(test)]
             INSPECTED.set(INSPECTED.get() + 1);
@@ -6010,7 +6011,7 @@ impl Checker<'_> {
         }
         // An argument is not part of the chain that an index ends.
         let indexed = std::mem::take(&mut self.body.indexed);
-        let (checked, jumped) = self.jumps(|c| c.value(e, Expectation::None));
+        let (checked, jumped) = self.jumps(|c| c.value_as(e, use_));
         self.body.indexed = indexed;
         let ty = type_of(&checked);
         self.keep((e.span, false), Some(Ahead::Receiver(checked)), jumped);

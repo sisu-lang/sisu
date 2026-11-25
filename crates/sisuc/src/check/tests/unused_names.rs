@@ -1633,3 +1633,65 @@ fn an_unbuilt_type_that_a_type_names_should_point_at_the_name() {
         ]
     );
 }
+
+/// The W0013 of `src`.
+fn unread_fields(src: &str) -> Vec<Found> {
+    found(src).into_iter().filter(|f| f.0 == W0013).collect()
+}
+
+/// A struct that generated code shows has each field read, through `print` and through a generic
+/// call with a `Display` bound. `dbg` shows a field too, and that is not a read: its warning names
+/// the `dbg`.
+#[test]
+fn shown_type_should_count_a_field_as_read() {
+    judge_unused();
+    // GIVEN a struct whose field no code reads by name
+    let decl = "struct Point {\n    x: i64\n}\nfn show<T: Display>(t: T) {\n    print(t)\n}\n";
+    for body in ["print(p)", "show(p)"] {
+        // WHEN the value is shown by generated code
+        let src = format!("{decl}fn main() {{\n    let p = Point(x: 1)\n    {body}\n}}");
+        // THEN the field is read
+        assert_eq!(unread_fields(&src), [], "{body}");
+    }
+    let src = format!("{decl}fn main() {{\n    let p = Point(x: 1)\n    dbg(p)\n}}");
+    assert_eq!(unread_fields(&src), [(W0013, (2, 5), vec![(9, 5)])]);
+}
+
+/// A call may show its type argument, so each field of a struct that is the type argument is
+/// read. This holds when a join decides the type after the call, whether the argument is an
+/// optional of the variable or the bare variable.
+#[test]
+fn field_should_count_as_read_through_an_inferred_type_argument() {
+    judge_unused();
+    // GIVEN a call whose type argument is an open variable until the array's join gives it `Point`
+    let decl = "struct Point {\n    x: i64\n}\n";
+    for (calls, body) in [
+        (
+            "fn id<T>(v: T) -> T { v }\n\
+            fn first<T>(_xs: [T]) -> T? { None }\n\
+            fn make<T>(_c: bool) -> [T] { [] }\n",
+            "let _a = [id(first(make(true))), Point(x: 1)]",
+        ),
+        (
+            "fn mk<T>(_c: bool) -> T { panic(\"x\") }\n",
+            "let a = [mk(true), Point(x: 1)]\n    print(a.len())",
+        ),
+    ] {
+        // WHEN the program is checked
+        let src = format!("{decl}{calls}fn main() {{\n    {body}\n}}");
+        // THEN the field `x` is read
+        assert_eq!(unread_fields(&src), [], "{body}");
+    }
+}
+
+/// `dbg` shows a field that a join types after the call, and that is not a read: the warning
+/// names the `dbg`, as it does for a type that is known at the call.
+#[test]
+fn dbg_should_label_a_field_when_a_join_decides_its_type() {
+    judge_unused();
+    // GIVEN a `dbg` of an empty array whose element type the array's join decides
+    let src = "struct Point {\n    x: i64\n}\nfn main() {\n    let a = [dbg([]), [Point(x: 1)]]\n    print(a.len())\n}";
+    // WHEN the program is checked
+    // THEN the field `x` is not read, and the warning names the `dbg`
+    assert_eq!(unread_fields(src), [(W0013, (2, 5), vec![(5, 14)])]);
+}

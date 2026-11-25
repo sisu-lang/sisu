@@ -66,6 +66,18 @@ enum ReasonKind {
     MutSelf(usize),
 }
 
+/// The `any` type that a value converts to under `want`, which is `any I` or `(any I)?`, and the
+/// layers of optional that the conversion wraps. `None` for any other `want`.
+pub(super) fn any_target(want: Type) -> Option<(Type, usize)> {
+    match want.kind() {
+        TypeKind::Any(..) => Some((want, 0)),
+        TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Any(..)) => {
+            Some((payload, 1))
+        }
+        _ => None,
+    }
+}
+
 impl Checker<'_> {
     /// The type `any I` that `interface`, written as `written`, makes. The interface and its
     /// arguments resolve as a bound does. The check that the interface can be `any` waits for
@@ -361,12 +373,8 @@ impl Checker<'_> {
         got: Type,
         origin: Origin,
     ) -> Result<(Checked, bool), Checked> {
-        let (target, layers) = match want.kind() {
-            TypeKind::Any(..) => (want, 0),
-            TypeKind::Optional(payload) if matches!(payload.kind(), TypeKind::Any(..)) => {
-                (payload, 1)
-            }
-            _ => return Err(checked),
+        let Some((target, layers)) = any_target(want) else {
+            return Err(checked);
         };
         let TypeKind::Any(interface, args) = target.kind() else {
             unreachable!("the target should be an `any` type");

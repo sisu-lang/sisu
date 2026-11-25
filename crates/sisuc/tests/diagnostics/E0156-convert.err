@@ -4,7 +4,15 @@ error[E0156]: `convert` on `Celsius` could come from `Convert<Fahrenheit>` or `C
 31 |     let x = c.convert()
    |               ^^^^^^^
    |
-   = help: annotate the result: `let x: Fahrenheit = c.convert()`
+   = help: `Convert<Fahrenheit>` gives `Fahrenheit` and `Convert<Kelvin>` gives `Kelvin`; write the type of the result to pick one
+help: write `: Fahrenheit` to pick `Convert<Fahrenheit>`
+   |
+31 |     let x: Fahrenheit = c.convert()
+   |          ++++++++++++
+help: write `: Kelvin` to pick `Convert<Kelvin>`
+   |
+31 |     let x: Kelvin = c.convert()
+   |          ++++++++
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0156

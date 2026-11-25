@@ -27,6 +27,7 @@ mod generics;
 pub(crate) mod interfaces;
 pub(super) mod joins;
 mod let_else;
+mod let_open;
 mod loop_condition;
 mod mut_args;
 mod mut_self;

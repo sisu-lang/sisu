@@ -15,7 +15,9 @@ use super::{
     type_of, wrap,
 };
 use crate::ast;
-use crate::diagnostic::{Annotate, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp};
+use crate::diagnostic::{
+    AmbiguousHelp, AmbiguousResult, Definition, Diagnostic, DiagnosticKind, Peel, UnwrapHelp,
+};
 use crate::source::Span;
 use crate::symbol::Symbol;
 use crate::tir::{self, InterfaceId, Type, TypeArgs, TypeKind};
@@ -88,7 +90,7 @@ impl Checker<'_> {
         name: &ast::Ident,
         member: impl FnOnce(&mut Self, Checked) -> Checked,
     ) -> Checked {
-        let scrutinee = self.value_kept(receiver);
+        let scrutinee = self.value_kept(receiver, self.chain_use());
         self.member_of(span, safe, scrutinee, receiver, name, member)
     }
 
@@ -961,11 +963,14 @@ impl Checker<'_> {
         }
     }
 
-    /// The place among the candidates of a call of `site` at `span`, on a receiver of type `ty`,
-    /// of the only one whose result `rets` is the type its context expects, or, when none is, the
-    /// only one whose result is the payload of an expected optional. A result that is `None`
-    /// cannot be told from the others. Otherwise the call is ambiguous, reported with the `let`
-    /// that picks one answer; `interfaces` name the candidates for the report.
+    /// Finds the candidate of `site` at `span`, on a receiver of type `ty`, whose result in `rets`
+    /// matches the context. It picks the only candidate with the expected type, or, if none has it,
+    /// the only one with an expected optional's payload. A result that is `None` cannot be told
+    /// from the others. Otherwise the call is ambiguous, and `interfaces` names the candidates for
+    /// the report. When every result is known and distinct after optional wrapping for `?.`,
+    /// `AmbiguousHelp::Each` names each answer. It also offers unsafe `: <T>` fixes for non-cut
+    /// types when `site` initializes an untyped `let`. Otherwise `AmbiguousHelp::One` suggests a
+    /// `let` for the first unique result when one exists.
     pub(super) fn pick_among(
         &mut self,
         ty: Type,
@@ -993,24 +998,51 @@ impl Checker<'_> {
                 return Ok(only);
             }
         }
-        // The first result that exactly one candidate has tells the `let` what to write.
+        let safe = self.body.safe_call == Some(span);
+        let result_of = |ret: Type| if safe { as_optional(ret) } else { ret };
         let mut counts: FxHashMap<Type, usize> = FxHashMap::default();
         for ret in candidate_results(rets).filter_map(|(_, ret)| ret) {
-            *counts.entry(ret).or_default() += 1;
+            *counts.entry(result_of(ret)).or_default() += 1;
         }
-        let unique =
-            candidate_results(rets).find_map(|(_, ret)| ret.filter(|ret| counts[ret] == 1));
-        let annotate = unique.filter(|_| !open).map(|ret| Annotate {
-            call: self.source.text(span).to_string(),
-            binding: self.let_binding(span).unwrap_or_else(|| "x".to_string()),
-            ty: self.type_name(ret),
-        });
+        debug_assert_eq!(
+            rets.len(),
+            interfaces.len(),
+            "each candidate should have one interface name and one return slot"
+        );
+        let help = if !open && counts.len() == rets.len() {
+            let results = candidate_results(rets)
+                .filter_map(|(_, ret)| {
+                    ret.map(|ret| {
+                        let ret = result_of(ret);
+                        let (ty, whole) = match self.whole_type_name(ret) {
+                            Some(name) => (name, true),
+                            None => (self.type_name(ret), false),
+                        };
+                        AmbiguousResult { ty, whole }
+                    })
+                })
+                .collect();
+            let let_name = (expected == Expectation::None)
+                .then(|| self.let_name(span))
+                .flatten();
+            Some(AmbiguousHelp::Each { results, let_name })
+        } else {
+            // The first result that exactly one candidate has tells the `let` what to write.
+            let unique = candidate_results(rets)
+                .filter_map(|(_, ret)| ret.map(result_of))
+                .find(|ret| counts[ret] == 1);
+            unique.filter(|_| !open).map(|ret| AmbiguousHelp::One {
+                call: self.source.text(span).to_string(),
+                binding: self.let_binding(span).unwrap_or_else(|| "x".to_string()),
+                ty: self.type_name(ret),
+            })
+        };
         Err(self.error(DiagnosticKind::Ambiguous {
             method: site.name.name.to_string(),
             receiver: self.type_name(ty),
             interfaces,
             at: site.name.span,
-            annotate,
+            help,
         }))
     }
 
