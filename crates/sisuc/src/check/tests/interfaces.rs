@@ -5302,13 +5302,24 @@ fn assert_ambiguous_each(
     ds
 }
 
+/// Byte offset of `name` in `let <name> = ` inside `src`.
+fn let_name_pos(src: &str, needle: &str) -> usize {
+    src.find(needle)
+        .unwrap_or_else(|| panic!("`{needle}` should be in the program"))
+        + "let ".len()
+}
+
+/// A program with three distinct `Convert<T>` answers on `Celsius` and an untyped `let x`.
+const CONVERT_THREE: &str = "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Fahrenheit {\n    d: f64\n}\nclass Kelvin {\n    d: f64\n}\nclass Rankine {\n    d: f64\n}\nclass Celsius {\n    d: f64\n}\nextend Celsius: Convert<Fahrenheit> {\n    fn convert(self) -> Fahrenheit { Fahrenheit(d: self.d) }\n}\nextend Celsius: Convert<Kelvin> {\n    fn convert(self) -> Kelvin { Kelvin(d: self.d) }\n}\nextend Celsius: Convert<Rankine> {\n    fn convert(self) -> Rankine { Rankine(d: self.d) }\n}\nfn main() {\n    let c = Celsius(d: 100.0)\n    let x = c.convert()\n    print(c.d)\n}";
+
 #[test]
 fn different_results_should_name_each_answer() {
     // GIVEN ambiguous calls whose answers each have a distinct result type
     let row_18 = s27_program("", "let x = s.name()\n    let y: i64 = x\n    print(y)");
     let row_19 = s27_program("", "print(s.name() == k)");
     let typed_let = s27_program("", "let b: bool = s.name()");
-    let three = "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Fahrenheit {\n    d: f64\n}\nclass Kelvin {\n    d: f64\n}\nclass Rankine {\n    d: f64\n}\nclass Celsius {\n    d: f64\n}\nextend Celsius: Convert<Fahrenheit> {\n    fn convert(self) -> Fahrenheit { Fahrenheit(d: self.d) }\n}\nextend Celsius: Convert<Kelvin> {\n    fn convert(self) -> Kelvin { Kelvin(d: self.d) }\n}\nextend Celsius: Convert<Rankine> {\n    fn convert(self) -> Rankine { Rankine(d: self.d) }\n}\nfn main() {\n    let c = Celsius(d: 100.0)\n    let x = c.convert()\n    print(c.d)\n}";
+    let wildcard_let = s27_program("", "let _ = s.name()");
+    let mut_let = s27_program("", "let mut m = s.name()\n    print(m)");
 
     // WHEN `sisu check` runs on them
     // THEN each gets E0156 with help and unsafe `: <T>` fixes only for an untyped `let`
@@ -5334,8 +5345,23 @@ fn different_results_should_name_each_answer() {
             reports: vec![Report::new(Code::Ambiguous, ("s.", "name")).help(true)],
         },
         FixRow {
+            id: "a wildcard let gets no fix",
+            src: wildcard_let,
+            reports: vec![Report::new(Code::Ambiguous, ("s.", "name")).help(true)],
+        },
+        FixRow {
+            id: "a mutable untyped let gets unsafe fixes after the name",
+            src: mut_let,
+            reports: vec![
+                Report::new(Code::Ambiguous, ("s.", "name"))
+                    .help(true)
+                    .fix(false, 1, ("let mut m =", "let mut m: string ="))
+                    .fix(false, 1, ("let mut m =", "let mut m: i64 =")),
+            ],
+        },
+        FixRow {
             id: "three distinct answers get three unsafe fixes after the let name",
-            src: three.to_string(),
+            src: CONVERT_THREE.to_string(),
             reports: vec![
                 Report::new(Code::Ambiguous, ("c.", "convert"))
                     .help(true)
@@ -5346,10 +5372,7 @@ fn different_results_should_name_each_answer() {
         },
     ]);
 
-    let x_start = row_18
-        .find("let x = ")
-        .expect("`let x = ` should be in row_18")
-        + "let ".len();
+    let x_start = let_name_pos(&row_18, "let x = ");
     let ds_18 = assert_ambiguous_each(
         &row_18,
         "name",
@@ -5372,12 +5395,9 @@ fn different_results_should_name_each_answer() {
         None,
     );
 
-    let three_x = three
-        .find("let x = ")
-        .expect("`let x = ` should be in three")
-        + "let ".len();
+    let three_x = let_name_pos(CONVERT_THREE, "let x = ");
     let ds_three = assert_ambiguous_each(
-        three,
+        CONVERT_THREE,
         "convert",
         "Celsius",
         &[
@@ -5388,7 +5408,7 @@ fn different_results_should_name_each_answer() {
         Some(three_x),
     );
     assert_eq!(
-        fixes(three, &ds_three[0]),
+        fixes(CONVERT_THREE, &ds_three[0]),
         vec![
             (false, vec![(27, 10, "", ": Fahrenheit".to_string())]),
             (false, vec![(27, 10, "", ": Kelvin".to_string())]),
@@ -5430,4 +5450,142 @@ fn shared_result_should_keep_the_help_of_main() {
             reports: vec![Report::new(Code::Ambiguous, ("c.", "name"))],
         },
     ]);
+}
+
+#[test]
+fn safe_call_should_wrap_ambiguous_results_as_optional() {
+    // GIVEN ambiguous safe calls whose answers return plain, optional, or shared result types
+    let plain_and_plain = s27_with_returns(
+        ("string", "\"a\""),
+        ("i64", "2"),
+        "let c: S? = Some(s)\n    let n = c?.name()\n    print(n == None)",
+    );
+    let optional_and_plain = s27_with_returns(
+        ("string?", "None"),
+        ("i64", "2"),
+        "let c: S? = Some(s)\n    let n = c?.name()\n    print(n == None)",
+    );
+    let optional_and_same_payload = s27_with_returns(
+        ("string?", "None"),
+        ("string", "\"b\""),
+        "let c: S? = Some(s)\n    let n = c?.name()\n    print(n == None)",
+    );
+    let typed_optional_let = s27_with_returns(
+        ("string", "\"a\""),
+        ("i64", "2"),
+        "let c: S? = Some(s)\n    let b: bool? = c?.name()\n    print(b == None)",
+    );
+    let bound_safe = s27_program(
+        "fn pick<T: Label & Code>(c: T?) {\n    let n = c?.name()\n    print(n == None)\n}\n",
+        "",
+    );
+
+    // WHEN `sisu check` runs on each safe call
+    // THEN each answer type becomes optional before comparing results and emitting help or fixes
+    fix_rows(&[
+        FixRow {
+            id: "two plain results wrap as optionals with unsafe fixes",
+            src: plain_and_plain.clone(),
+            reports: vec![
+                Report::new(Code::Ambiguous, ("c?.", "name"))
+                    .help(true)
+                    .fix(false, 1, ("let n =", "let n: string? ="))
+                    .fix(false, 1, ("let n =", "let n: i64? =")),
+            ],
+        },
+        FixRow {
+            id: "one optional and one plain distinct result keep both optional fixes",
+            src: optional_and_plain.clone(),
+            reports: vec![
+                Report::new(Code::Ambiguous, ("c?.", "name"))
+                    .help(true)
+                    .fix(false, 1, ("let n =", "let n: string? ="))
+                    .fix(false, 1, ("let n =", "let n: i64? =")),
+            ],
+        },
+        FixRow {
+            id: "optional and plain of the same payload match and give no help",
+            src: optional_and_same_payload,
+            reports: vec![Report::new(Code::Ambiguous, ("c?.", "name"))],
+        },
+        FixRow {
+            id: "a typed let on a safe call keeps optional help without fixes",
+            src: typed_optional_let.clone(),
+            reports: vec![Report::new(Code::Ambiguous, ("c?.", "name")).help(true)],
+        },
+        FixRow {
+            id: "a safe call on a bounded type parameter wraps both optional fixes",
+            src: bound_safe.clone(),
+            reports: vec![
+                Report::new(Code::Ambiguous, ("c?.", "name"))
+                    .help(true)
+                    .fix(false, 1, ("let n =", "let n: string? ="))
+                    .fix(false, 1, ("let n =", "let n: i64? =")),
+            ],
+        },
+    ]);
+
+    for (src, receiver, let_name) in [
+        (
+            &plain_and_plain,
+            "S",
+            Some(let_name_pos(&plain_and_plain, "let n = ")),
+        ),
+        (
+            &optional_and_plain,
+            "S",
+            Some(let_name_pos(&optional_and_plain, "let n = ")),
+        ),
+        (&typed_optional_let, "S", None),
+        (
+            &bound_safe,
+            "T",
+            Some(let_name_pos(&bound_safe, "let n = ")),
+        ),
+    ] {
+        assert_ambiguous_each(
+            src,
+            "name",
+            receiver,
+            &[("Label", "string?"), ("Code", "i64?")],
+            let_name,
+        );
+    }
+}
+
+#[test]
+fn safe_call_should_suggest_optional_when_one_answer_is_unique() {
+    // GIVEN an ambiguous safe call where two answers share a result type and one is unique
+    let pairs_safe = "interface Pair2<T, U> {\n    fn first(self) -> T\n}\nclass Tag {\n    n: i64\n}\nextend Tag: Pair2<i64, bool> {\n    fn first(self) -> i64 { self.n }\n}\nextend Tag: Pair2<i64, char> {\n    fn first(self) -> i64 { self.n + 1 }\n}\nextend Tag: Pair2<string, bool> {\n    fn first(self) -> string { \"tag\" }\n}\nfn main() {\n    let t: Tag? = Some(Tag(n: 1))\n    let n = t?.first()\n    print(n == None)\n}";
+
+    // WHEN `sisu check` runs on it
+    // THEN the single-let help suggests the optional type of the unique answer
+    fix_rows(&[FixRow {
+        id: "a shared payload with one unique answer suggests an optional let",
+        src: pairs_safe.to_string(),
+        reports: vec![Report::new(Code::Ambiguous, ("t?.", "first")).help(true)],
+    }]);
+
+    let (_, ds) = checked(pairs_safe);
+    assert_eq!(
+        ds,
+        vec![
+            DiagnosticKind::Ambiguous {
+                method: "first".to_string(),
+                receiver: "Tag".to_string(),
+                interfaces: vec![
+                    "Pair2<i64, bool>".to_string(),
+                    "Pair2<i64, char>".to_string(),
+                    "Pair2<string, bool>".to_string(),
+                ],
+                at: ds[0].span(),
+                help: Some(crate::diagnostic::AmbiguousHelp::One {
+                    call: "t?.first()".to_string(),
+                    binding: "n".to_string(),
+                    ty: "string?".to_string(),
+                }),
+            }
+            .into()
+        ]
+    );
 }
