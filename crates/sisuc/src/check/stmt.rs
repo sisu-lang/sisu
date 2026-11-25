@@ -415,7 +415,12 @@ impl Checker<'_> {
                 let declared = ty.as_ref().map(|ty| self.resolve(ty));
                 let shown = ty.as_ref().and_then(|ty| self.shown_text(ty, uses));
                 let init_expr = init;
-                self.body.let_init = Some((init.span, name.name, mutable.is_some(), name.span));
+                self.body.let_init = Some((
+                    init.span,
+                    name.name,
+                    mutable.is_some(),
+                    ty.is_none().then_some(name.span),
+                ));
                 self.body.failed_let = matches!(declared, Some(None)).then_some(init.span);
                 let init = match ty.as_ref().zip(declared) {
                     Some((ty, declared)) => {

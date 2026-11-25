@@ -356,6 +356,8 @@ mod tests {
             "struct P {\n    x: f64\n    fn set(mut self) {\n        self.x = .1\n    }\n}\nstruct L<T%> {}\nfn f(mut o: L<P>) {\n    o.set()\n}\nfn main() {}\n",
             "struct P {\n    x: f64\n    fn set(mut self) {\n        self.x = .1\n    }\n}\nstruct L<T%> {\n    ps: [P]\n}\nfn f(mut o: L<P>?) {\n    o?.ps[0].set()\n}\nfn main() {}\n",
             "struct P {\n    x: f64\n    fn set(mut self) {\n        self.x = .1\n    }\n}\nfn main() {\n    let mut x = Missing()\n    x.set()\n    print(x)\n}\n",
+            "interface Filler {\n    fn f(self) -> i64\n}\nstruct A: Filler {\n    fn f(self) -> i64 { 1 }\n}\nstruct B: Filler {\n    fn f(self) -> i64 { 2 }\n}\nfn main() {\n    let c = true\n    let f: any Niller = if c { A() } else { B() }\n    print(f.f())\n}\n",
+            "interface Filler {\n    fn f(self) -> i64\n}\nstruct A: Filler {\n    fn f(self) -> i64 { 1 }\n}\nstruct B: Filler {\n    fn f(self) -> i64 { 2 }\n}\nfn main() {\n    let f: i64 = [A(), B()]\n    print(f)\n}\n",
         ];
         let failures: Vec<String> = crate::on_compiler_stack(|| {
             rows.iter()

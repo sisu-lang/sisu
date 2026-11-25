@@ -1187,9 +1187,9 @@ struct Body {
     /// leads to a write that part 1 cannot make.
     write_chain: Option<(Span, place::Change)>,
     /// The initializer of the `let` being checked, and what that `let` writes before its type
-    /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
-    /// `None` or `[]`. Last, the span of the name, after which the fix of a join writes a type.
-    let_init: Option<(Span, Symbol, bool, Span)>,
+    /// (`mut`, then the name): E0050 and E0156 use this in their help. Last, the span of the
+    /// name when the `let` has no type annotation, after which a join fix writes a type.
+    let_init: Option<(Span, Symbol, bool, Option<Span>)>,
     /// The E0050 of each local whose initializer is such a literal, until a later use gives the
     /// local a type (see `Checker::inferred_by_use`).
     uninferred: FxHashMap<tir::LocalId, Uninferred>,
