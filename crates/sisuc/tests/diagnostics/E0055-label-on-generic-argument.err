@@ -1,0 +1,26 @@
+error[E0055]: `Some` takes no labels
+ --> E0055-label-on-generic-argument.sisu:6:21
+  |
+6 |     let a = id(Some(v: 1))
+  |                     ^
+  |
+help: remove the labels
+  |
+6 -     let a = id(Some(v: 1))
+6 +     let a = id(Some(1))
+  |
+
+error[E0055]: `Result.Ok` takes no labels
+ --> E0055-label-on-generic-argument.sisu:7:19
+  |
+7 |     let b = id(Ok(v: 1))
+  |                   ^
+  |
+help: remove the labels
+  |
+7 -     let b = id(Ok(v: 1))
+7 +     let b = id(Ok(1))
+  |
+
+sisu: 2 errors
+sisu: for more on a code, run `sisu explain <code>`: E0055

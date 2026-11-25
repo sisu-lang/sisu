@@ -1,0 +1,24 @@
+// A bound that fails is reported at its argument, also when another type parameter of the same
+// call stays open. The open parameter has its own E0050.
+interface K {
+    fn k(self) -> i64
+}
+
+fn none<X>() -> X? {
+    None
+}
+
+fn f<T: K, U>(t: T, a: U) -> U {
+    a
+}
+
+fn g<T: K, U>(t: T, a: [U]) -> U {
+    panic("no")
+}
+
+fn main() {
+    let c = [1].len() == 1
+    let a = f(1, if c { none() } else { none() })
+    let b = g(1, [none(), none()])
+    let d = f(1, none())
+}

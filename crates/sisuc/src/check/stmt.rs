@@ -16,9 +16,9 @@ use super::reports::Reported;
 use super::unused_names::{Owner, Pending};
 use super::use_kind::Use;
 use super::{
-    Binding, BindingKind, BridgeLet, Checked, CheckedBlock, Checker, Declared, Expectation,
-    LoopContext, LoopFrame, LoopKind, Origin, Poisoned, SelfType, block_expr, built_in_type,
-    known_type, starts_in, tail, type_of,
+    Binding, BindingKind, BreakNode, BreakSlot, BridgeLet, Checked, CheckedBlock, Checker,
+    Declared, Expectation, LoopContext, LoopFrame, LoopKind, Origin, Poisoned, SelfType,
+    block_expr, built_in_type, known_type, starts_in, tail, type_of,
 };
 use crate::ast::{self, StmtKind};
 use crate::conformance::ensure_stack;
@@ -416,7 +416,12 @@ impl Checker<'_> {
                 let declared = ty.as_ref().map(|ty| self.resolve(ty));
                 let shown = ty.as_ref().and_then(|ty| self.shown_text(ty, uses));
                 let init_expr = init;
-                self.body.let_init = Some((init.span, name.name, mutable.is_some(), name.span));
+                self.body.let_init = Some((
+                    init.span,
+                    name.name,
+                    mutable.is_some(),
+                    ty.is_none().then_some(name.span),
+                ));
                 self.body.failed_let = matches!(declared, Some(None)).then_some(init.span);
                 let init = match ty.as_ref().zip(declared) {
                     Some((ty, declared)) => {
@@ -1388,6 +1393,12 @@ impl Checker<'_> {
             }
             _ => None,
         });
+        if keyword == "break"
+            && self.frame(target).kind == LoopKind::Loop
+            && let Some(&node) = self.body.break_stashes.active.last()
+        {
+            self.frame(target).stashed.push(node);
+        }
         let value = value
             .map(|v| {
                 let start = label.is_none().then(|| v.span.start());
@@ -1510,7 +1521,10 @@ impl Checker<'_> {
         }
         let (labels, mut values): (Vec<Span>, Vec<Checked>) = std::mem::take(&mut frame.values)
             .into_iter()
-            .flatten()
+            .filter_map(|slot| match slot {
+                BreakSlot::Value(at, value) => Some((at, value)),
+                BreakSlot::Empty | BreakSlot::Inline => None,
+            })
             .unzip();
         let heading = Heading {
             head: keyword,
@@ -1562,16 +1576,7 @@ impl Checker<'_> {
             self.body.loop_unlifted.insert(span, found);
         }
         if let (Ok(body), Some(_)) = (&mut checked, &ty) {
-            let mut values: FxHashMap<Span, tir::Expr> = (labels.into_iter().zip(values))
-                .filter_map(|(at, value)| Some((at, value.ok()?)))
-                .collect();
-            let bare = frame.bare.is_some();
-            if !values.is_empty() {
-                body.each_expr_mut(&mut |e| {
-                    put_back_breaks(e, 0, frame.crossed, (&mut values, bare));
-                });
-                debug_assert!(values.is_empty(), "each `break` value should be put back");
-            }
+            self.restore_loop_breaks(body, &mut frame, labels, values);
         }
         let body = match checked {
             Ok(body) => body,
@@ -1611,6 +1616,97 @@ impl Checker<'_> {
             LoopContext::Body(frame) => frame,
             LoopContext::Header { .. } => unreachable!("a jump's target should be a loop body"),
         }
+    }
+
+    /// Puts `values` back into `body` and into any stashed outer `break` values in `frame`.
+    fn restore_loop_breaks(
+        &mut self,
+        body: &mut tir::Block,
+        frame: &mut LoopFrame,
+        labels: Vec<Span>,
+        values: Vec<Checked>,
+    ) {
+        let mut values: FxHashMap<Span, tir::Expr> = (labels.into_iter().zip(values))
+            .filter_map(|(at, value)| Some((at, value.ok()?)))
+            .collect();
+        if values.is_empty() {
+            return;
+        }
+        let bare = frame.bare.is_some();
+        let inner_depth = 1 + body_depth(&self.body.loops);
+        // `frame` was popped from `self.body.loops`, so open outer loops have index `< target`.
+        let target = self.body.loops.len();
+        body.each_expr_mut(&mut |e| {
+            put_back_breaks(e, 0, frame.crossed, (&mut values, bare));
+        });
+        let mut visited = FxHashSet::default();
+        for node_id in std::mem::take(&mut frame.stashed) {
+            #[cfg(test)]
+            super::join::VALUE_STEPS.set(super::join::VALUE_STEPS.get() + 1);
+            let Some(dest_id) = self.resolve_stashed(node_id, target) else {
+                continue;
+            };
+            let dest = self.body.break_stashes.nodes[dest_id];
+            if !visited.insert((dest.owner, dest.slot)) {
+                continue;
+            }
+            let BreakSlot::Value(_, Ok(expr)) = &mut self.frame(dest.owner).values[dest.slot]
+            else {
+                unreachable!(
+                    "`resolve_stashed` should return only a `BreakSlot::Value(_, Ok(_))` slot"
+                );
+            };
+            put_back_breaks(
+                expr,
+                dest.depth - inner_depth,
+                frame.crossed,
+                (&mut values, bare),
+            );
+        }
+        debug_assert!(values.is_empty(), "each `break` value should be put back");
+    }
+
+    /// Follows `parent` links from `start` past closed loops and `Inline` slots to an open
+    /// `BreakSlot::Value` above `target`.
+    fn resolve_stashed(&mut self, start: usize, target: usize) -> Option<usize> {
+        let mut cur = Some(start);
+        let mut skipped = Vec::new();
+        let mut stop = None;
+        let dest = loop {
+            let Some(id) = cur else {
+                break None;
+            };
+            #[cfg(test)]
+            super::join::VALUE_STEPS.set(super::join::VALUE_STEPS.get() + 1);
+            let node = self.body.break_stashes.nodes[id];
+            if node.owner >= target {
+                skipped.push(id);
+                cur = node.parent;
+                continue;
+            }
+            match &self.frame(node.owner).values[node.slot] {
+                BreakSlot::Value(_, Ok(_)) => {
+                    stop = Some(id);
+                    break Some(id);
+                }
+                BreakSlot::Inline => {
+                    skipped.push(id);
+                    cur = node.parent;
+                }
+                BreakSlot::Empty => {
+                    // Still-open enclosing break: keep `parent` pointing at it for outer loops.
+                    stop = Some(id);
+                    break None;
+                }
+                BreakSlot::Value(_, Err(_)) => break None,
+            }
+        };
+        if let Some(stop) = stop {
+            for id in skipped {
+                self.body.break_stashes.nodes[id].parent = Some(stop);
+            }
+        }
+        dest
     }
 
     /// `v` is the value of the `break` at `span` that ends the loop body at `target`. It is
@@ -1653,7 +1749,7 @@ impl Checker<'_> {
         // A failed loop has no type, so its values give it none: their mistakes wait for the
         // next run. Else the slot is kept first, so a `break` of this loop inside `v` comes after.
         let slot = frame.failed.is_none().then(|| {
-            frame.values.push(None);
+            frame.values.push(BreakSlot::Empty);
             frame.values.len() - 1
         });
         let expected = match (slot, frame.expected) {
@@ -1661,7 +1757,22 @@ impl Checker<'_> {
             (_, expected) => branch_expectation(expected),
         };
         self.body.label_typo = typo.map(|name| (name.span, span.start()));
+        if let Some(slot) = slot {
+            let depth = body_depth(&self.body.loops);
+            let id = self.body.break_stashes.nodes.len();
+            let parent = self.body.break_stashes.active.last().copied();
+            self.body.break_stashes.nodes.push(BreakNode {
+                owner: target,
+                slot,
+                depth,
+                parent,
+            });
+            self.body.break_stashes.active.push(id);
+        }
         let checked = self.expr(v, expected);
+        if slot.is_some() {
+            self.body.break_stashes.active.pop();
+        }
         self.body.label_typo = None;
         let checked = self.refuse_unwanted(v, checked, expected, false);
         let Some(slot) = slot else {
@@ -1672,15 +1783,18 @@ impl Checker<'_> {
         // the type that it found, as a concrete call is of its type.
         let typed = type_of(&checked).is_some() || self.misfit_type(&checked).is_some();
         match checked {
-            Ok(e) if e.ty == Type::NEVER => Ok(e),
+            Ok(e) if e.ty == Type::NEVER => {
+                self.frame(target).values[slot] = BreakSlot::Inline;
+                Ok(e)
+            }
             Ok(e) => {
                 let placeholder = tir::Expr::new(ExprKind::None, Type::NEVER, e.span);
-                self.frame(target).values[slot] = Some((span, Ok(e)));
+                self.frame(target).values[slot] = BreakSlot::Value(span, Ok(e));
                 Ok(placeholder)
             }
             Err(poisoned) if typed => {
                 let reported = poisoned.reported();
-                self.frame(target).values[slot] = Some((span, Err(poisoned)));
+                self.frame(target).values[slot] = BreakSlot::Value(span, Err(poisoned));
                 Err(Poisoned::untyped(reported))
             }
             Err(poisoned) => {
@@ -2213,6 +2327,14 @@ fn reread(e: &tir::Expr) -> tir::Expr {
         _ => unreachable!("a fixed place should be a local or a field of one"),
     };
     tir::Expr::new(kind, e.ty, e.span)
+}
+
+/// How many open loop bodies lie in `loops`.
+fn body_depth(loops: &[LoopContext]) -> usize {
+    loops
+        .iter()
+        .filter(|entry| matches!(entry, LoopContext::Body(_)))
+        .count()
 }
 
 /// Puts each value of `values` back in its `break` in `e`, by the span of that `break`. Each such

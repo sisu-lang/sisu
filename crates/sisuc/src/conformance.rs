@@ -34,19 +34,7 @@ thread_local! {
     pub(crate) static RESOLVE_ALL_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// The free stack that a walk over the depth of a type keeps. rustc's `ensure_sufficient_stack`
-/// uses the same value.
-const STACK_RED_ZONE: usize = 100 * 1024;
-
-/// The size of each new piece of stack. rustc's `ensure_sufficient_stack` uses the same value.
-const STACK_SEGMENT: usize = 1024 * 1024;
-
-/// Runs `f` on a new piece of stack when the stack that is left is less than `STACK_RED_ZONE`. A
-/// type can nest deeper than the call stack allows, and the walks that follow its depth (the
-/// queries for a conformance, here and in the checker) call themselves once for each level.
-pub(crate) fn ensure_stack<R>(f: impl FnOnce() -> R) -> R {
-    stacker::maybe_grow(STACK_RED_ZONE, STACK_SEGMENT, f)
-}
+pub(crate) use crate::types::ensure_stack;
 
 /// The conformance of `interface` to `ty` with the interface arguments `args`, as its index
 /// among those of `interface` and the types that its block's parameters stand for. The bounds of

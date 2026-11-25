@@ -1,0 +1,95 @@
+// GIVEN `payload<A, B>(t: Two<A, B>?, _u: B) -> A?`, which reads the payload `t?.a`
+// AND `depth<A, B>(t: Two<A, B>??, _u: B) -> i64`, which reads the layer of the optional
+// AND a method call `m.two(n)` that returns `Two<i64, bool>` and is a late argument (Q28)
+// WHEN `main` passes a branch join of such calls (`if`, `match` or a block) to a parameter that
+// is an optional
+// AND `main` passes a join of optionals, or an optional call, to `depth`
+// THEN a value that meets an optional as its payload takes the wrap, so `payload` reads the value
+// AND `depth` reads the layer
+// AND a value that is already an optional is not wrapped again
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+struct M {
+    fn two(self, n: i64) -> Two<i64, bool> { Two(a: n, b: true) }
+    fn opt(self, n: i64) -> Two<i64, bool>? { Some(Two(a: n, b: true)) }
+    fn none(self) -> Two<i64, bool>? { None }
+}
+
+fn payload<A, B>(t: Two<A, B>?, _u: B) -> A? { t?.a }
+
+fn depth<A, B>(t: Two<A, B>??, _u: B) -> i64 {
+    match t {
+        None => 0
+        Some(None) => 1
+        Some(Some(_)) => 2
+    }
+}
+
+// Reads `b`, which the generic functions leave alone.
+fn flag(t: Two<i64, bool>) -> bool { t.b }
+
+fn if_join() -> i64 {
+    let m = M()
+    let c = [1].len() == 1
+    payload(if c { m.two(7) } else { m.two(70) }, true) ?? -1
+}
+
+fn match_join() -> i64 {
+    let m = M()
+    let c = [1].len() == 1
+    payload(match c {
+        true => m.two(8)
+        false => m.two(80)
+    }, true) ?? -1
+}
+
+fn block_join() -> i64 {
+    let m = M()
+    payload({ m.two(9) }, true) ?? -1
+}
+
+// The branches are optionals already: the whole type meets first, and nothing wraps.
+fn optional_branches() -> i64 {
+    let m = M()
+    let c = [1].len() == 1
+    payload(if c { m.opt(6) } else { m.opt(60) }, true) ?? -1
+}
+
+fn none_branches() -> i64 {
+    let m = M()
+    let c = [1].len() == 1
+    payload(if c { m.none() } else { m.none() }, true) ?? -1
+}
+
+// An optional at `Two<A, B>??` meets its payload `Two<A, B>?`, and the wrap makes `Some(Some(_))`.
+fn call_layer() -> i64 {
+    let m = M()
+    depth(m.opt(1), true)
+}
+
+fn optional_branches_layer() -> i64 {
+    let m = M()
+    let c = [1].len() == 1
+    depth(if c { m.opt(1) } else { m.opt(2) }, true)
+}
+
+fn none_branches_layer() -> i64 {
+    let m = M()
+    let c = [1].len() == 1
+    depth(if c { m.none() } else { m.none() }, true)
+}
+
+fn main() {
+    print(flag(M().two(0)))             // true
+    print(if_join())                    // 7
+    print(match_join())                 // 8
+    print(block_join())                 // 9
+    print(optional_branches())          // 6
+    print(none_branches())              // -1
+    print(call_layer())                 // 2
+    print(optional_branches_layer())    // 2
+    print(none_branches_layer())        // 1
+}

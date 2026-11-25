@@ -1,0 +1,125 @@
+// GIVEN interfaces whose associated-type bounds name members across and within interfaces
+// WHEN structs conform to them and `main` calls functions through those bounds
+// THEN each call normalizes its associated types and prints the expected integers
+interface Has2<X> {
+    type Inner
+    fn inner(self) -> Inner
+}
+
+interface Conv<X> {
+    fn conv(self) -> i64
+}
+
+interface I<T: J> {
+    fn pick(self, x: T.A.Inner) -> i64
+}
+
+interface J {
+    type B: Has2<i64>
+    type A: Has2<Self.B>
+}
+
+interface One {
+    type C: Conv<Self.A.Inner>
+    type B: Has2<i64>
+    type A: Has2<Self.B>
+    fn get_a(self) -> Self.A.Inner
+    fn take(self, x: Self.A.Inner) -> i64
+    fn read_c(self, c: Self.C) -> i64
+}
+
+interface ParamBound<U: Conv<Self.A.Inner>> {
+    type B: Has2<i64>
+    type A: Has2<Self.B>
+    fn combine(self, u: U) -> Self.A.Inner
+    fn score(self, x: Self.A.Inner) -> i64
+}
+
+struct Boxed: Has2<i64> {
+    type Inner = i64
+    val: i64
+
+    fn inner(self) -> Inner {
+        self.val
+    }
+}
+
+struct WrapB: Has2<Boxed> {
+    type Inner = Boxed
+    b: Boxed
+
+    fn inner(self) -> Inner {
+        self.b
+    }
+}
+
+struct ImplJ: J {
+    type B = Boxed
+    type A = WrapB
+}
+
+struct ImplI: I<ImplJ> {
+    fn pick(self, x: Boxed) -> i64 {
+        x.inner()
+    }
+}
+
+struct OutConv: Conv<Boxed> {
+    val: i64
+
+    fn conv(self) -> i64 {
+        self.val
+    }
+}
+
+struct ImplOne: One {
+    type C = OutConv
+    type B = Boxed
+    type A = WrapB
+
+    fn get_a(self) -> Boxed {
+        Boxed(val: 12)
+    }
+
+    fn take(self, x: Boxed) -> i64 {
+        x.inner()
+    }
+
+    fn read_c(self, c: OutConv) -> i64 {
+        c.conv()
+    }
+}
+
+struct ImplParam: ParamBound<OutConv> {
+    type B = Boxed
+    type A = WrapB
+
+    fn combine(self, u: OutConv) -> Boxed {
+        Boxed(val: u.conv())
+    }
+
+    fn score(self, x: Boxed) -> i64 {
+        x.inner()
+    }
+}
+
+fn use_i<T: J, X: I<T>>(_t: T, x: X, a: T.A.Inner) -> i64 {
+    x.pick(a)
+}
+
+fn use_one<T: One>(o: T, c: T.C) -> i64 {
+    o.take(o.get_a()) + o.read_c(c)
+}
+
+fn use_param<U: Conv<P.A.Inner>, P: ParamBound<U>>(p: P, u: U) -> i64 {
+    p.score(p.combine(u))
+}
+
+fn main() {
+    let b = Boxed(val: 42)
+    let w = WrapB(b: b)
+    print(w.inner().inner()) // 42
+    print(use_i(ImplJ(), ImplI(), b)) // 42
+    print(use_one(ImplOne(), OutConv(val: 99))) // 111
+    print(use_param(ImplParam(), OutConv(val: 7))) // 7
+}

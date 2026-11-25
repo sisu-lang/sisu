@@ -24,7 +24,7 @@ use super::{array, number, string};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
     BlockBound, Code, Definition, Diagnostic, DiagnosticKind, MethodReceiver, ReceiverArgument,
-    Suggestion, TypeReceiver, ValueKind, alias, suggestion,
+    Suggestion, TypeReceiver, alias, suggestion,
 };
 use crate::lang::{self, Dispatch};
 use crate::source::Span;
@@ -994,14 +994,7 @@ impl Checker<'_> {
             Dot::Plain | Dot::Payload { .. } => first_safe(receiver_expr),
         };
         let reported = if let Some(chain) = chain {
-            let kind = match type_of(&receiver).map(array::innermost) {
-                // A type parameter or an associated type has no kind of its own: name the type.
-                Some(ty) if matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) => {
-                    ValueKind::Type(self.type_name(ty))
-                }
-                Some(ty) if matches!(ty.kind(), TypeKind::Enum(..)) => ValueKind::Enum,
-                _ => ValueKind::Struct,
-            };
+            let kind = self.chain_value_kind(type_of(&receiver));
             let d = self.chain_call(receiver_expr, chain, (method.name, kind));
             // The E0062 of a `.` on the optional that the `?.` gives would repeat it.
             self.body.failed_lookups.insert(method.span);
@@ -1044,12 +1037,11 @@ impl Checker<'_> {
     /// class or an interface there, and a failed local can have its name. An argument at a `mut`
     /// parameter of the method, or of the requirement, gets the help of a place. A name that is
     /// none of them, or has no such method, stamps nothing. A local whose value failed has no type
-    /// either, nor does a field or index path that failed. When a `mut self` method has the name,
-    /// the root of such a receiver is stamped as written, as a field write stamps it. The declared
-    /// types can say that the call only reads it: then nothing is stamped. A type name is no
-    /// binding, so it has no root to stamp.
+    /// either, nor does a field or index path that failed. A method call on a receiver whose type
+    /// failed may still write its root, unless its declared types show a read-only method. A type
+    /// name is no binding, so it has no root to stamp.
     fn stamp_type_call(&mut self, receiver: &ast::Expr, method: Symbol, args: &[ast::Arg]) {
-        if self.mut_self_names.contains(&method) && self.receiver_writes(receiver, method) {
+        if self.receiver_writes(receiver, method) {
             self.reassign_chain_root(receiver);
         }
         let ExprKind::Name(name) = receiver.kind else {

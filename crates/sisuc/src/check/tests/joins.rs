@@ -3129,3 +3129,125 @@ fn failed_part_of_an_optional_argument_should_offer_no_conversion() {
     // THEN the one E0032 has no fix: `Some(f64(n))` would not make the call valid
     assert_eq!(fixes_of("let x: f64 = g(Some(n), 1)").len(), 0);
 }
+
+/// Annotated `let` forms whose initializers join `A` and `B` (`Filler`) for
+/// `annotated_let_join_conflict_should_offer_no_declare_fix`.
+const ANNOTATED_LET_JOIN_ROWS: &[(&str, &str)] = &[
+    (
+        "if, failed annotation (A, B)",
+        "let f: any Niller = if c { A() } else { B() }",
+    ),
+    (
+        "if, failed annotation (B, A)",
+        "let f: any Niller = if c { B() } else { A() }",
+    ),
+    (
+        "if let, failed annotation",
+        "let f: any Niller = if let Some(_) = Some(1) { A() } else { B() }",
+    ),
+    (
+        "match, failed annotation",
+        "let f: any Niller = match c { true => A(); false => B() }",
+    ),
+    (
+        "loop, failed annotation",
+        "let f: any Niller = loop { if c { break A() }; break B() }",
+    ),
+    (
+        "array, failed annotation",
+        "let f: [any Niller] = [A(), B()]",
+    ),
+    ("array, i64 annotation", "let f: i64 = [A(), B()]"),
+    ("mut array, i64 annotation", "let mut f: i64 = [A(), B()]"),
+    (
+        "parenthesized array, i64 annotation",
+        "let f: i64 = ([B(), A()])",
+    ),
+];
+
+/// Unannotated `let` forms that still receive a `Declare` fix in
+/// `unannotated_let_join_conflict_should_offer_the_declare_fix`.
+const UNANNOTATED_LET_JOIN_ROWS: &[(&str, &str, &str)] = &[
+    (
+        "if, unchanged",
+        "let f = if c { A() } else { B() }",
+        ": any Filler",
+    ),
+    (
+        "mut if, unchanged",
+        "let mut f = if c { A() } else { B() }",
+        ": any Filler",
+    ),
+    (
+        "if let, unchanged",
+        "let f = if let Some(_) = Some(1) { A() } else { B() }",
+        ": any Filler",
+    ),
+    (
+        "match, unchanged",
+        "let f = match c { true => A(); false => B() }",
+        ": any Filler",
+    ),
+    (
+        "loop, unchanged",
+        "let f = loop { if c { break A() }; break B() }",
+        ": any Filler",
+    ),
+    ("array, unchanged", "let f = [A(), B()]", ": [any Filler]"),
+    (
+        "mut array, unchanged",
+        "let mut f = [A(), B()]",
+        ": [any Filler]",
+    ),
+];
+
+fn let_join_conflict_program(line: &str) -> String {
+    format!(
+        "interface Filler {{\n    fn f(self) -> i64\n}}\nstruct A: Filler {{\n    fn f(self) -> i64 {{ 1 }}\n}}\nstruct B: Filler {{\n    fn f(self) -> i64 {{ 2 }}\n}}\nfn main() {{\n    let c = [1].len() == 1\n    {line}\n}}\n"
+    )
+}
+
+#[test]
+fn annotated_let_join_conflict_should_offer_no_declare_fix() {
+    // GIVEN annotated `let` statements whose initializers join `A` and `B` (`Filler`)
+    // WHEN each is checked
+    // THEN E0032 offers no fix and keeps the interface help
+    let mut red = Vec::new();
+    for &(row, line) in ANNOTATED_LET_JOIN_ROWS {
+        let src = let_join_conflict_program(line);
+        let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+        let e0032: Vec<_> = (ds.iter()).filter(|d| d.code() == Code::Mismatch).collect();
+        if e0032.len() != 1 || !e0032[0].fixes().is_empty() || e0032[0].help().is_none() {
+            red.push(format!(
+                "row `{row}`: e0032={:?}",
+                e0032
+                    .iter()
+                    .map(|d| (d.fixes().len(), d.help().is_some()))
+                    .collect::<Vec<_>>()
+            ));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}
+
+#[test]
+fn unannotated_let_join_conflict_should_offer_the_declare_fix() {
+    // GIVEN unannotated `let` statements whose initializers join `A` and `B` (`Filler`)
+    // WHEN each is checked
+    // THEN E0032 offers the `Declare` fix
+    for &(row, line, want) in UNANNOTATED_LET_JOIN_ROWS {
+        let src = let_join_conflict_program(line);
+        let (_, ds) = checked_with(PRELUDE_SOURCE, &src);
+        let e0032: Vec<_> = (ds.iter()).filter(|d| d.code() == Code::Mismatch).collect();
+        assert_eq!(e0032.len(), 1, "row `{row}`: {e0032:?}");
+        let found = fixes(&src, e0032[0]);
+        assert_eq!(found.len(), 1, "row `{row}`: {found:?}");
+        assert_eq!(found[0].1.len(), 1, "row `{row}`: {found:?}");
+        assert_eq!(found[0].1[0].3, want, "row `{row}`");
+    }
+}

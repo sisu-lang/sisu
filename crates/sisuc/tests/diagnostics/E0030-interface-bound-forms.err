@@ -1,0 +1,64 @@
+error[E0030]: `U` has no associated type `Inner`
+  --> E0030-interface-bound-forms.sisu:26:24
+   |
+26 | interface K1<U: Conv<U.Inner>> {}
+   |                        ^^^^^
+
+error[E0030]: `U` has no associated type `Inner`
+  --> E0030-interface-bound-forms.sisu:27:24
+   |
+27 | interface K2<U: Has2<U.Inner>> {}
+   |                        ^^^^^
+
+error[E0030]: `S.Q` is not known here: a bound of `S` waits for this bound
+  --> E0030-interface-bound-forms.sisu:29:21
+   |
+29 | interface J1<T: A<S.Q>, S: B<T.P>> {}
+   |                     ^
+   |
+   = help: write one of the bounds that wait for each other without an associated type
+
+error[E0030]: `T.P` is not known here: a bound of `T` waits for this bound
+  --> E0030-interface-bound-forms.sisu:29:32
+   |
+29 | interface J1<T: A<S.Q>, S: B<T.P>> {}
+   |                                ^
+   |
+   = help: write one of the bounds that wait for each other without an associated type
+
+error[E0030]: `S.Item` is not known here: a bound of `S` waits for this bound
+  --> E0030-interface-bound-forms.sisu:30:25
+   |
+30 | interface J2<S: First<S.Item> & Second<S.Item>> {}
+   |                         ^^^^
+   |
+   = help: write one of the bounds that wait for each other without an associated type
+
+error[E0030]: `S.Item` is not known here: a bound of `S` waits for this bound
+  --> E0030-interface-bound-forms.sisu:30:42
+   |
+30 | interface J2<S: First<S.Item> & Second<S.Item>> {}
+   |                                          ^^^^
+   |
+   = help: write one of the bounds that wait for each other without an associated type
+
+error[E0030]: `Self.A` has no associated type `Inner`
+  --> E0030-interface-bound-forms.sisu:33:25
+   |
+33 |     type A: Conv<Self.A.Inner>
+   |                         ^^^^^
+
+error[E0030]: `Self.A` has no associated type `Inner`
+  --> E0030-interface-bound-forms.sisu:37:25
+   |
+37 |     type A: Has2<Self.A.Inner>
+   |                         ^^^^^
+
+error[E0030]: `U` has no associated type `Inner`
+  --> E0030-interface-bound-forms.sisu:41:20
+   |
+41 |     type A: Has2<U.Inner>
+   |                    ^^^^^
+
+sisu: 9 errors
+sisu: for more on a code, run `sisu explain <code>`: E0030

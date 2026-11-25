@@ -22,6 +22,8 @@ enum D {
 
 struct L<T: Rm> {
     ps: [P]
+    pss: [[P]]
+    ops: [P]?
     qs: [[i64]]
     ds: [D]
     ts: [T]
@@ -51,6 +53,18 @@ fn call_param<T: Rm>(mut o: L<T>?) {
     o?.ts[0].set()
 }
 
+fn write_nested(mut o: L<P>?) {
+    o?.pss[0][0].x = 2
+}
+
+fn call_nested(mut o: L<P>?) {
+    o?.pss[0][0].set()
+}
+
+fn write_optional_field(mut o: L<P>?) {
+    o?.ops[0].x = 2
+}
+
 fn main() {
     let mut o: L<P>? = None
     write_field(mut o)
@@ -59,4 +73,7 @@ fn main() {
     push_elem(mut o)
     call_enum(mut o)
     call_param(mut o)
+    write_nested(mut o)
+    call_nested(mut o)
+    write_optional_field(mut o)
 }

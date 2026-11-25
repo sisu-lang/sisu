@@ -7654,13 +7654,38 @@ fn take_self(d: Diagnostic, take: SelfTake) -> Diagnostic {
     }
 }
 
-/// The indefinite article before the type `ty`: "an" before a vowel letter, except the types
-/// `u8` and the like, and `unit`, which say "you".
+/// Whether `ty` starts with a `"you"` sound, so it takes `"a"` instead of `"an"`.
+fn starts_with_you_sound(ty: &str) -> bool {
+    const PREFIXES: &[&[u8]] = &[
+        b"use", b"usa", b"uri", b"url", b"uuid", b"utf", b"uti", b"unary",
+    ];
+    let bytes = ty.as_bytes();
+    let starts = |prefix: &[u8]| {
+        bytes
+            .get(..prefix.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+    };
+    if starts(b"eu") {
+        return true;
+    }
+    if !starts(b"u") {
+        return false;
+    }
+    if bytes.get(1).is_some_and(u8::is_ascii_digit) {
+        return true;
+    }
+    if starts(b"uni") {
+        return !starts(b"unid") && !starts(b"unim") && !starts(b"unin");
+    }
+    PREFIXES.iter().any(|prefix| starts(prefix))
+}
+
+/// The indefinite article before the type `ty`: "an" before a vowel letter, except `"you"`-sound
+/// types such as `u8`, `unit`, `User`, and `Euclid`.
 fn indefinite(ty: &str) -> &'static str {
-    let you = ty.strip_prefix('u').is_some_and(|rest| {
-        rest.starts_with(|c: char| c.is_ascii_digit()) || rest.starts_with("nit")
-    });
-    if !you && ty.starts_with(['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U']) {
+    if !starts_with_you_sound(ty)
+        && ty.starts_with(['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U'])
+    {
         "an"
     } else {
         "a"
@@ -7839,6 +7864,36 @@ mod tests {
             );
             assert_eq!(Code::parse(text), Some(code));
             assert!(seen.insert(text), "{text} is used twice");
+        }
+    }
+
+    #[test]
+    fn indefinite_should_pick_a_before_you_sound_types() {
+        let unchanged = [
+            ("u8?", "a"),
+            ("unit?", "a"),
+            ("Box?", "a"),
+            ("Upload?", "an"),
+            ("Update?", "an"),
+            ("Upper?", "an"),
+            ("Undo?", "an"),
+            ("Uninit?", "an"),
+            ("Unidentified?", "an"),
+            ("Unimplemented?", "an"),
+            ("Unavailable?", "an"),
+            ("U?", "an"),
+            ("E?", "an"),
+            ("i64?", "an"),
+            ("Option<i64>?", "an"),
+        ];
+        for (ty, want) in unchanged {
+            assert_eq!(indefinite(ty), want, "{ty}, unchanged");
+        }
+        for ty in [
+            "User?", "Unit?", "Unique?", "Union?", "Url?", "Uuid?", "Utf8?", "Util?", "Unary?",
+            "Euclid?",
+        ] {
+            assert_eq!(indefinite(ty), "a", "{ty}");
         }
     }
 }

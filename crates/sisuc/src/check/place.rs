@@ -422,7 +422,15 @@ impl Checker<'_> {
         let inner = innermost(ty);
         match inner.kind() {
             TypeKind::Struct(..) | TypeKind::Enum(..) => self.finds_mut_self(inner, method),
-            TypeKind::Param(..) | TypeKind::Assoc(..) => true,
+            TypeKind::Param(..) | TypeKind::Assoc(..) => {
+                let reqs = self.required(inner, method);
+                !reqs.is_empty()
+                    && reqs.iter().all(|r| {
+                        self.interfaces[r.interface.0].requirements[r.method]
+                            .self_mut
+                            .is_some()
+                    })
+            }
             _ => false,
         }
     }
@@ -1363,12 +1371,8 @@ impl Checker<'_> {
                             && (matches!(payload(e).kind(), TypeKind::Array(_))
                                 || self.finds_mut_self(innermost(e), Symbol::intern("push"))) =>
                     {
-                        let d = match inner.held.take().expect("the guard should hold a report") {
-                            DiagnosticKind::ChainWriteOnStruct { at, .. } => {
-                                DiagnosticKind::ChainWriteOnStruct { at, replace: None }
-                            }
-                            d => d,
-                        };
+                        let d = inner.held.take().expect("the guard should hold a report");
+                        let d = self.keep_chain_replace(d, base);
                         let reported = self.error(d);
                         (Some(e), Some(reported))
                     }
@@ -1919,6 +1923,41 @@ impl Checker<'_> {
                     if matches!(payload.kind(), TypeKind::Struct(..) | TypeKind::Enum(..)))
             })
             .map(|_| self.source.text(object.span).to_string())
+    }
+
+    /// The kind wording for `ChainCallOnValue` from the innermost receiver type `ty`.
+    pub(super) fn chain_value_kind(&self, ty: Option<Type>) -> ValueKind {
+        match ty.map(innermost) {
+            // A type parameter or an associated type has no kind of its own: name the type.
+            Some(ty) if matches!(ty.kind(), TypeKind::Param(..) | TypeKind::Assoc(..)) => {
+                ValueKind::Type(self.type_name(ty))
+            }
+            Some(ty) if matches!(ty.kind(), TypeKind::Enum(..)) => ValueKind::Enum,
+            _ => ValueKind::Struct,
+        }
+    }
+
+    /// Strips `replace` from a chain-write report when `struct_walk` fails on `base`, or when the
+    /// field or any nested array element layer is optional.
+    pub(super) fn keep_chain_replace(&self, d: DiagnosticKind, base: &ast::Expr) -> DiagnosticKind {
+        let keep = matches!(self.struct_walk(base), Ok((_, ty)) if !has_optional_layer(ty));
+        if keep {
+            return d;
+        }
+        match d {
+            DiagnosticKind::ChainCallOnValue {
+                at, method, kind, ..
+            } => DiagnosticKind::ChainCallOnValue {
+                at,
+                method,
+                kind,
+                replace: None,
+            },
+            DiagnosticKind::ChainWriteOnStruct { at, .. } => {
+                DiagnosticKind::ChainWriteOnStruct { at, replace: None }
+            }
+            d => d,
+        }
     }
 
     /// The report of the call of the `mut self` method `method` on `receiver`, a value of `kind`
@@ -2484,6 +2523,17 @@ fn binding_cause(b: &Binding) -> Option<Immutable> {
         }),
         BindingKind::Param => Some(Immutable::Param { declared }),
         BindingKind::Unwrapped(keyword) => Some(Immutable::Unwrapped { keyword, declared }),
+    }
+}
+
+/// Whether `ty` or any nested array element layer inside `ty` is optional.
+fn has_optional_layer(mut ty: Type) -> bool {
+    loop {
+        match ty.kind() {
+            TypeKind::Optional(_) => return true,
+            TypeKind::Array(inner) => ty = inner,
+            _ => return false,
+        }
     }
 }
 

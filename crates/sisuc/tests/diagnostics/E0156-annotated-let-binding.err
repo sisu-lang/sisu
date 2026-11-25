@@ -1,0 +1,46 @@
+error[E0156]: `name` on `T` could come from `Label` or `Code`
+  --> E0156-annotated-let-binding.sisu:23:21
+   |
+23 |     let k: bool = t.name()
+   |                     ^^^^
+   |
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
+
+error[E0156]: `name` on `Circle` could come from `Label` or `Code`
+  --> E0156-annotated-let-binding.sisu:28:21
+   |
+28 |     let n: bool = c.name()
+   |                     ^^^^
+   |
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
+
+warning[W0002]: `m` is never reassigned
+  --> E0156-annotated-let-binding.sisu:29:13
+   |
+29 |     let mut m: [i64] = c.name()
+   |             ^
+   |
+help: declare it with `let`
+   |
+29 -     let mut m: [i64] = c.name()
+29 +     let m: [i64] = c.name()
+   |
+
+error[E0156]: `name` on `Circle` could come from `Label` or `Code`
+  --> E0156-annotated-let-binding.sisu:29:26
+   |
+29 |     let mut m: [i64] = c.name()
+   |                          ^^^^
+   |
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
+
+error[E0156]: `name` on `Circle` could come from `Label` or `Code`
+  --> E0156-annotated-let-binding.sisu:30:21
+   |
+30 |     let _: bool = c.name()
+   |                     ^^^^
+   |
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
+
+sisu: 4 errors, 1 warning
+sisu: for more on a code, run `sisu explain <code>`: E0156, W0002

@@ -9,6 +9,20 @@ use std::sync::{LazyLock, Mutex, MutexGuard, OnceLock, PoisonError};
 use crate::symbol::Symbol;
 use crate::tir::{ClassId, EnumId, InterfaceId, StructId};
 
+/// The free stack that a walk over the depth of a type keeps. rustc's `ensure_sufficient_stack`
+/// uses the same value.
+const STACK_RED_ZONE: usize = 100 * 1024;
+
+/// The size of each new piece of stack. rustc's `ensure_sufficient_stack` uses the same value.
+const STACK_SEGMENT: usize = 1024 * 1024;
+
+/// Runs `f` on a new piece of stack when the stack that is left is less than `STACK_RED_ZONE`. A
+/// type can nest deeper than the call stack allows, and walks over its depth call themselves once
+/// for each level.
+pub(crate) fn ensure_stack<R>(f: impl FnOnce() -> R) -> R {
+    stacker::maybe_grow(STACK_RED_ZONE, STACK_SEGMENT, f)
+}
+
 /// A type, interned: two types are equal exactly when their structures are. `kind` reads the
 /// structure.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -806,7 +820,7 @@ impl Type {
                 SUBSTITUTED_BUDGET.get()
             );
         }
-        let done = match self.kind() {
+        let done = ensure_stack(|| match self.kind() {
             TypeKind::Param(_, i) => args[i as usize],
             TypeKind::Array(element) => Type::array(element.subst_in(args, memo)),
             TypeKind::Optional(payload) => Type::optional(payload.subst_in(args, memo)),
@@ -835,7 +849,7 @@ impl Type {
             | TypeKind::Infer(_) => {
                 unreachable!("only a kind with a child can name a parameter")
             }
-        };
+        });
         if !memo.over() {
             memo.put(self, done);
         }
@@ -1374,5 +1388,30 @@ mod tests {
             text.rsplit('.').next() == Some("Item") && text.len() == 1 + 201 * ".Item".len(),
             "{text}"
         );
+    }
+
+    /// A deeply nested type substitutes on a 64 KiB stack without stack overflow.
+    #[test]
+    fn subst_walk_should_follow_a_deep_type_on_a_small_stack() {
+        const STACK: usize = 64 * 1024;
+        // Without `ensure_stack` in `subst_walk`, 449 levels abort on this stack and 448 pass:
+        // 4,500 levels give about ten times the abort depth.
+        let levels = 4_500;
+        let result = std::thread::Builder::new()
+            .stack_size(STACK)
+            .spawn(move || {
+                let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+                let mut ty = param;
+                let mut want = Type::I64;
+                for _ in 0..levels {
+                    ty = Type::array(ty);
+                    want = Type::array(want);
+                }
+                (ty.subst(&[Type::I64]), want)
+            })
+            .expect("the thread should start")
+            .join()
+            .expect("the walk should not panic");
+        assert_eq!(result.0, result.1);
     }
 }

@@ -1024,3 +1024,7 @@ let mut _q = $; match _q { _ => {} }
 let mut _c = $; print(_c.len())
 let mut _a = $; let _d: any Display = _a
 let mut _g = $; take(mut _g)
+# A `break` inside a stashed outer `break` value, through a `never` break and an inner loop break.
+o: loop { let _a = loop { break o (if c { break $ } else { $ }) } }
+la: loop { let _b = lb: loop { let _c = lc: loop { break la (if c { break lb (break lc $) } else { $ }) } } }
+lg: loop { let _t = lt: loop { let _p = lp: loop { break lg (if c { break lp (if c { break lg (break lt $) } else { $ }) } else { $ }) } } }

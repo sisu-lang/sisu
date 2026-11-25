@@ -1071,22 +1071,22 @@ impl Checker<'_> {
     /// integer literal keeps its variable open, as a join member does, until the first use of the
     /// local (see `BridgeLet`).
     pub(super) fn open_let_value(&self, span: Span) -> bool {
-        matches!(self.body.let_init, Some((init, name, ..)) if init == span && name.as_str() != "_")
+        matches!(self.body.let_init, Some((init, name, _, Some(_))) if init == span && name.as_str() != "_")
     }
 
-    /// What the `let` whose whole initializer is the literal at `span` writes before its type,
-    /// if any: its name, after `mut` when it has it.
+    /// What the `let` whose whole initializer is at `span` writes before its type, if any.
+    /// Returns the name, after `mut ` when mutable, or `None`.
     pub(super) fn let_binding(&self, span: Span) -> Option<String> {
         let (init, name, mutable, _) = self.body.let_init?;
         (init == span && name.as_str() != "_")
             .then(|| format!("{}{name}", if mutable { "mut " } else { "" }))
     }
 
-    /// The name of the `let` whose whole initializer is at `span`, if any: the fix of a join
-    /// writes its type after it.
+    /// The name of a `let` without a type annotation whose whole initializer is at `span`, if any.
+    /// A join fix writes its type after this span.
     pub(super) fn let_name(&self, span: Span) -> Option<Span> {
         let (init, name, _, at) = self.body.let_init?;
-        (init == span && name.as_str() != "_").then_some(at)
+        at.filter(|_| init == span && name.as_str() != "_")
     }
 
     /// Whether a comment starts in one of the byte ranges `deleted`. The comment starts are in

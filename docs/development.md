@@ -481,7 +481,7 @@ whose next line is such a panic; the lines of an inline `#[cfg(test)] mod` in th
 file. The region lists keep their own rules for these. It says `(none)` when no
 line qualifies. A run with lines only has no third list. The nightly `Coverage` job
 of CI measures branches too and prints `Branch coverage (exact)`. It fails when
-line coverage is below 98.5%, when branch coverage is below 94.5%, or when the
+line coverage is below 98.5%, when branch coverage is below 95.5%, or when the
 branch figure is missing. The figures are of product code. Each `#[cfg(test)]`
 module and function also has `#[cfg_attr(coverage_nightly, coverage(off))]`,
 so the nightly toolchain does not instrument it. A test module holds branches

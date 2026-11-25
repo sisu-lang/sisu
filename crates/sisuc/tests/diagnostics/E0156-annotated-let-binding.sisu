@@ -1,0 +1,32 @@
+// GIVEN annotated `let` statements whose initializers are ambiguous `name` calls
+// WHEN `sisu check` runs on the file
+// THEN E0156 keeps the user binding name on named bindings and uses `x` on `_`
+interface Label {
+    fn name(self) -> string
+}
+
+interface Code {
+    fn name(self) -> i64
+}
+
+struct Circle {}
+
+extend Circle: Label {
+    fn name(self) -> string { "circle" }
+}
+
+extend Circle: Code {
+    fn name(self) -> i64 { 1 }
+}
+
+fn g<T: Label & Code>(t: T) {
+    let k: bool = t.name()
+}
+
+fn main() {
+    let c = Circle()
+    let n: bool = c.name()
+    let mut m: [i64] = c.name()
+    let _: bool = c.name()
+    g(c)
+}

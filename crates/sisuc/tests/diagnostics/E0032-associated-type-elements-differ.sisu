@@ -1,0 +1,172 @@
+// GIVEN `Source` has the associated type `Item`, `Named` has `Item = string` and `Counted` has
+//     `Item = i64`
+// AND generic functions take `Two<S, S.Item>` as a value, as an array element or under an optional
+// AND `S.Item` is one type in each call
+// WHEN a call joins elements with an `if`, a `match`, a `loop`, a block, `dbg`, `Some`, an array of
+//     arrays or an array fill
+// AND one element gives `S.Item` another type
+// THEN `sisu check` reports one E0032 in each function, at the element that is wrong, and no other
+//     error
+// AND the reports start at 54:36, 59:17, 64:36, 69:34, 75:50, 83:14, 90:64, 98:15, 106:29, 112:40,
+//     118:53, 123:38, 128:38, 134:51, 140:56, 145:40 and 151:17
+interface Source {
+    type Item
+    fn first(self) -> Item
+}
+
+struct Named: Source {
+    type Item = string
+    v: string
+    fn first(self) -> string { self.v }
+}
+
+struct Counted: Source {
+    type Item = i64
+    fn first(self) -> i64 { 0 }
+}
+
+struct Two<A, B> {
+    a: A
+    b: B
+}
+
+struct H {
+    fn last<S: Source>(self, xs: [Two<S, S.Item>]) -> S.Item { xs[1].b }
+}
+
+fn last<S: Source>(xs: [Two<S, S.Item>]) -> S.Item { xs[1].b }
+
+fn last2<S: Source>(xs: [[Two<S, S.Item>]]) -> S.Item { xs[0][1].b }
+
+fn pick<S: Source>(x: Two<S, S.Item>) -> S.Item { x.b }
+
+fn picko<S: Source>(x: Two<S, S.Item>?) -> S.Item? { x?.b }
+
+fn last_o<S: Source>(xs: [Two<S, S.Item>]?) -> S.Item {
+    match xs {
+        Some(a) => a[1].b
+        None => panic("none")
+    }
+}
+
+fn the_second_is_a_number() {
+    let n = Named(v: "x")
+    print(last([Two(a: n, b: "y"), Two(a: n, b: 1)]))
+}
+
+fn the_first_is_a_number() {
+    let n = Named(v: "x")
+    print(last([Two(a: n, b: 1), Two(a: n, b: "y")]))
+}
+
+fn the_second_is_a_bool() {
+    let n = Named(v: "x")
+    print(last([Two(a: n, b: "y"), Two(a: n, b: true)]))
+}
+
+fn the_item_is_a_number() {
+    let m = Counted()
+    print(last([Two(a: m, b: 1), Two(a: m, b: "s")]))
+}
+
+fn branches_of_an_if() {
+    let n = Named(v: "x")
+    let c = [1].len() == 1
+    print(pick(if c { Two(a: n, b: "y") } else { Two(a: n, b: 1) }))
+}
+
+fn arms_of_a_match() {
+    let n = Named(v: "x")
+    let k = [1].len()
+    print(pick(match k {
+        1 => Two(a: n, b: "y")
+        _ => Two(a: n, b: 1)
+    }))
+}
+
+fn branches_of_an_if_let() {
+    let n = Named(v: "x")
+    let o: i64? = Some(1)
+    print(pick(if let Some(_) = o { Two(a: n, b: "y") } else { Two(a: n, b: 2) }))
+}
+
+fn breaks_of_a_loop() {
+    let n = Named(v: "x")
+    let c = [1].len() == 1
+    print(pick(loop {
+        if c { break Two(a: n, b: "y") }
+        break Two(a: n, b: 1)
+    }))
+}
+
+fn tail_of_a_block() {
+    let n = Named(v: "x")
+    print(last({
+        let j = 1
+        [Two(a: n, b: "y"), Two(a: n, b: j)]
+    }))
+}
+
+fn inside_dbg() {
+    let n = Named(v: "x")
+    print(last(dbg([Two(a: n, b: "y"), Two(a: n, b: 1)])))
+}
+
+fn arrays_in_branches() {
+    let n = Named(v: "x")
+    let c = [1].len() == 1
+    print(last(if c { [Two(a: n, b: "y")] } else { [Two(a: n, b: 1)] }))
+}
+
+fn array_in_array() {
+    let n = Named(v: "x")
+    print(last2([[Two(a: n, b: "y"), Two(a: n, b: 1)]]))
+}
+
+fn array_under_an_optional() {
+    let n = Named(v: "x")
+    print(last_o([Two(a: n, b: "y"), Two(a: n, b: 1)]))
+}
+
+fn branches_under_an_optional() {
+    let n = Named(v: "x")
+    let c = [1].len() == 1
+    print(picko(if c { Two(a: n, b: "y") } else { Two(a: n, b: 1) }) ?? "-")
+}
+
+fn branches_under_some() {
+    let n = Named(v: "x")
+    let c = [1].len() == 1
+    print(picko(Some(if c { Two(a: n, b: "y") } else { Two(a: n, b: 1) })) ?? "-")
+}
+
+fn in_a_method_call() {
+    let n = Named(v: "x")
+    print(H().last([Two(a: n, b: "y"), Two(a: n, b: 1)]))
+}
+
+// The fill `[x; n]` is the one join that has no form of its own: its value is the element.
+fn in_a_fill() {
+    let n = Named(v: "x")
+    print(last([Two(a: n, b: 1); 2]))
+}
+
+fn main() {
+    the_second_is_a_number()
+    the_first_is_a_number()
+    the_second_is_a_bool()
+    the_item_is_a_number()
+    branches_of_an_if()
+    arms_of_a_match()
+    branches_of_an_if_let()
+    breaks_of_a_loop()
+    tail_of_a_block()
+    inside_dbg()
+    arrays_in_branches()
+    array_in_array()
+    array_under_an_optional()
+    branches_under_an_optional()
+    branches_under_some()
+    in_a_method_call()
+    in_a_fill()
+}

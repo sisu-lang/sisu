@@ -498,6 +498,29 @@ impl LoopKind {
     }
 }
 
+/// One open `break` slot in an outer loop, linked to the enclosing open `break` around it.
+#[derive(Clone, Copy)]
+struct BreakNode {
+    owner: usize,
+    slot: usize,
+    depth: usize,
+    parent: Option<usize>,
+}
+
+/// The open `break` values being checked, and every `BreakNode` created in this body.
+#[derive(Default)]
+struct BreakStashes {
+    active: Vec<usize>,
+    nodes: Vec<BreakNode>,
+}
+
+/// One `break` slot in a `LoopFrame` before its value moves back into the loop body.
+enum BreakSlot {
+    Empty,
+    Value(Span, Checked),
+    Inline,
+}
+
 /// A loop whose body is being checked, and what the `break`s that target it have given.
 struct LoopFrame {
     kind: LoopKind,
@@ -511,9 +534,9 @@ struct LoopFrame {
     expected: Expectation,
     /// The value of each `break` with a value, in the order that the `break`s were reached, with
     /// the `break`'s span: the members of the loop's join. A slot is kept before its value is
-    /// checked, so a `break` inside that value comes after it. A `never` value is no member: its
-    /// slot is `None`, and the value stays in its `break`.
-    values: Vec<Option<(Span, Checked)>>,
+    /// checked, so a `break` inside that value comes after it. A `never` value stays inline in
+    /// its `break`: its slot becomes `Inline`.
+    values: Vec<BreakSlot>,
     /// Whether a `break` inside a nested loop has targeted it, so its values lie in one.
     crossed: bool,
     /// The first bare `break`.
@@ -521,6 +544,8 @@ struct LoopFrame {
     /// The token of the error that failed the loop: a failed jump, loop label or `break` value
     /// in it. It then has no type.
     failed: Option<Reported>,
+    /// Node IDs in `Body::break_stashes.nodes` whose stashed value holds a `break` for this loop.
+    stashed: Vec<usize>,
 }
 
 impl LoopFrame {
@@ -541,6 +566,7 @@ impl LoopFrame {
             crossed: false,
             bare: None,
             failed: None,
+            stashed: Vec::new(),
         }
     }
 }
@@ -848,6 +874,8 @@ struct Checker<'src> {
     /// Whether pass 1b is done: every interface has its inheritance, so what an interface
     /// declares will not change.
     interfaces_resolved: bool,
+    /// Scratch state for Pass 1b (`interface_signatures`), dropped once every interface resolves.
+    pass1b: Option<interface::InterfacePass>,
     /// The types that `probe_associated` has probed for a bound, by interface and arguments: a
     /// type is probed once for a bound, however many calls ask.
     probed_types: FxHashSet<(Type, tir::InterfaceId, TypeArgs)>,
@@ -1111,6 +1139,8 @@ struct Body {
     self_type: SelfType,
     /// Loops open around the code being checked, innermost last: what a `break` would act on.
     loops: Vec<LoopContext>,
+    /// Open outer `break` values and the `BreakNode` table that links them.
+    break_stashes: BreakStashes,
     /// The E0050 of each generic call that a join took as a member with a parameter left open,
     /// by the call's span: each such parameter's variable and what its report reads (see
     /// `OpenParam`). The call around it makes and gives the report when it settles no type for
@@ -1170,9 +1200,9 @@ struct Body {
     /// leads to a write that part 1 cannot make.
     write_chain: Option<(Span, place::Change)>,
     /// The initializer of the `let` being checked, and what that `let` writes before its type
-    /// (`mut`, then the name): E0050 uses it in its example when the initializer is the whole
-    /// `None` or `[]`. Last, the span of the name, after which the fix of a join writes a type.
-    let_init: Option<(Span, Symbol, bool, Span)>,
+    /// (`mut`, then the name): E0050 and E0156 use this in their help. Last, the span of the
+    /// name when the `let` has no type annotation, after which a join fix writes a type.
+    let_init: Option<(Span, Symbol, bool, Option<Span>)>,
     /// The E0050 of each local whose initializer is such a literal, until a later use gives the
     /// local a type (see `Checker::inferred_by_use`).
     uninferred: FxHashMap<tir::LocalId, Uninferred>,
@@ -1608,6 +1638,7 @@ impl<'src> Checker<'src> {
             loops: std::cell::RefCell::default(),
             declared: std::cell::RefCell::default(),
             interfaces_resolved: false,
+            pass1b: None,
             probed_types: FxHashSet::default(),
             probed_assoc: FxHashSet::default(),
             probe_budget: 0,
