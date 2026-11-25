@@ -7424,12 +7424,11 @@ fn main() { print(scored(Scorer(), Out(k: 7))) }",
             &[],
         ),
         (
-            "Some wraps a generic method call at a closed parameter",
-            r"struct Val<A, B> { a: A; b: B }
-struct Sw { fn val<A, B>(self, a: A, b: B) -> Val<A, B> { Val(a: a, b: b) } }
+            "Some wraps a generic method call at a parameter that names two type parameters",
+            r"struct Val<A, B> { a: A; _b: B }
+struct Sw { fn val<A, B>(self, a: A, b: B) -> Val<A, B> { Val(a: a, _b: b) } }
 fn some_opt<A, B>(p: Val<A, B>?) -> A? {
     if let Some(q) = p {
-        let _ = q.b
         Some(q.a)
     } else {
         None
@@ -7442,12 +7441,11 @@ fn main() {
             &["Makes::some", "own_params"],
         ),
         (
-            "Option.Some wraps a generic method call at a closed parameter",
-            r"struct Val<A, B> { a: A; b: B }
-struct Sw { fn val<A, B>(self, a: A, b: B) -> Val<A, B> { Val(a: a, b: b) } }
+            "Option.Some wraps a generic method call at a parameter that names two type parameters",
+            r"struct Val<A, B> { a: A; _b: B }
+struct Sw { fn val<A, B>(self, a: A, b: B) -> Val<A, B> { Val(a: a, _b: b) } }
 fn some_opt<A, B>(p: Val<A, B>?) -> A? {
     if let Some(q) = p {
-        let _ = q.b
         Some(q.a)
     } else {
         None
@@ -7460,18 +7458,17 @@ fn main() {
             &["Makes::some", "own_params"],
         ),
         (
-            "Some wraps a struct constructor at a closed parameter",
-            r"struct Val<A, B> { a: A; b: B }
+            "Some wraps a struct constructor at a parameter that names two type parameters",
+            r"struct Val<A, B> { a: A; _b: B }
 fn some_opt<A, B>(p: Val<A, B>?) -> A? {
     if let Some(q) = p {
-        let _ = q.b
         Some(q.a)
     } else {
         None
     }
 }
 fn main() {
-    let x: u8? = some_opt(Some(Val(a: 5, b: true)))
+    let x: u8? = some_opt(Some(Val(a: 5, _b: true)))
     print(x ?? 0)
 }",
             &[],

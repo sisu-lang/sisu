@@ -740,14 +740,13 @@ class GapName: GapNamed {
 type GapItem<S> = [S.Named]
 fn gap_fnone<T>() -> T? { None }
 fn gap_unit() {}
-struct GapVal<A, B> { a: A; b: B }
+struct GapVal<A, B> { a: A; _b: B }
 struct GapSw {
     fn nothing<T>(self) -> T? { None }
-    fn val<A, B>(self, a: A, b: B) -> GapVal<A, B> { GapVal(a: a, b: b) }
+    fn val<A, B>(self, a: A, b: B) -> GapVal<A, B> { GapVal(a: a, _b: b) }
 }
 fn gap_some<A, B>(p: GapVal<A, B>?) -> A? {
     if let Some(q) = p {
-        let _ = q.b
         Some(q.a)
     } else {
         None
@@ -2096,8 +2095,8 @@ impl Gen<'_> {
     ///   - `gap_nothing`: a generic method that waits for its type in an argument (`own_params`);
     ///   - `gap_bump`: a call whose bound takes a type argument (`unknown_param`);
     ///   - `gap_put`: an argument at an associated type that the join decides (`put_back`);
-    ///   - `gap_some`: `Some` around a generic method call at a closed parameter under an
-    ///     optional context (`Makes::some`).
+    ///   - `gap_some`: `Some`, under an optional context, around a generic method call at a
+    ///     parameter that names two type parameters (`Makes::some`).
     /// - the forms of member-bearing interface bounds, each for the functions of the checker that
     ///   resolve such a bound on demand (`tests/run/assoc_later_bound.sisu` reaches them). Each has
     ///   a point in `GAP_POINTS` (`coverage.rs`):

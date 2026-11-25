@@ -4,9 +4,6 @@ Copy this file to `.scratch/<batch>/<group>-task-<N>-brief.md`. Fill every
 `<slot>`. Keep each section, even when it is short. Write
 `<ledger folder>` as an absolute path: `<repo>/.scratch/<batch>`.
 
-For a group on the light flow, delete step 6 of "Your job", and the mutation
-line of step 7.
-
 ```markdown
 # Group <group>, task <N>: <what the task fixes> (<#issues>)
 
@@ -38,11 +35,13 @@ Neighbours: <the table of neighbouring cases, with today's output and the wanted
 
 The wanted outputs come from this list. Do not change one to fit the code. Keep failing rows and must-pass rows in separate tables or loops so the red-at-base check stays clear; each must-pass row keeps its `, unchanged` label. A task that changes only docs or the text of a diagnostic has no test commit: its fixture diff is the test. When a test in a behaviour task wants new diagnostic text, a bless at the base writes the old text, and the fixture is green. So bless, then edit each wanted line of the `.err` and the `.json` by hand, and check that the fixture fails at the base on those lines only. The test commit of a performance fix can add the `cfg(test)` counter and its ticks.
 
+Unit tests assert diagnostic codes, spans and fix edits, never wording (`test-wording` hook). Pin exact wording in `.err` and `.json` fixtures. Keep each rule in its own test function or table (`CODING_STANDARDS.md`, Tests).
+
 ## Your job
 
 1. Write the tests of the "Tests" list first. Run only these tests at the task base (`cargo nextest run -E 'test(<name>)'`; for a `memory::` test, add `--profile memory`, see `docs/development.md`, Build and test). List each test that is red, and why. Write the tests as their own commit (step 4 says how). Its title starts with "Add failing tests", and its body gives the red list. `make test` fails at this commit. A task whose tests are in `scripts/test_*.py` has no separate test commit, because the `python-tests` pre-commit hook rejects a red test. Its tests go into the fix commit, and that message gives the red list. A task with no test commit ("Tests" above) skips this step.
 2. Implement the fixes. Make each red test green with the smallest change at the cause. When the fix does not make a test green, that is a finding: report it. Do not change the test or its wanted output.
-3. Run `(cd <worktree> && nice -n 19 make test)`. It must pass. Clippy and fmt must be clean. After a change to the front end or the form matrix files (`docs/development.md`, Build and test), also run `(cd <worktree> && nice -n 19 make form-matrix)`: `make test` leaves it out. When it prints `heavy-run: waiting for this run to end: make mutation-test ...`, stop it and run `(cd <worktree> && SISU_HEAVY_LOCK=skip nice -n 19 make test)`, and the same for `make coverage`. Say so in the report.
+3. Run `(cd <worktree> && nice -n 19 make test)`. It must pass. Clippy and fmt must be clean. After a change to the front end or the form matrix files (`docs/development.md`, Build and test), also run `(cd <worktree> && nice -n 19 make form-matrix)`: `make test` leaves it out. When it prints `heavy-run: waiting for this run to end: make mutation-test ...`, stop it and run `(cd <worktree> && SISU_HEAVY_LOCK=skip nice -n 19 make test)`. Say so in the report.
 4. Write the fix as a commit, after the test commit when there is one. Before you save the patch of commit 1, run `(cd <worktree> && make lint && git ls-files -z --others --exclude-standard | xargs -0 -r prek run --files)`. `text-limits` and `test-names` see a new file only when the controller commits it. Your sandbox cannot write the git index, so the controller commits. For commit `<n>`, write the message in STE to `<ledger folder>/<group>-task-<N>-commit-<n>.txt`. Add no `Claude-Session` or session-URL line. When the changes of the commit are complete, write a patch of all the changes since `HEAD`, new files included:
 
    ```
@@ -50,13 +49,11 @@ The wanted outputs come from this list. Do not change one to fit the code. Keep 
    ```
 
    Each patch holds the changes of the earlier commits too, so a test and its fix can be in one file. Leave all the changes in the worktree.
-5. Run `(cd <worktree> && nice -n 19 make coverage BASE=<BASE> > <ledger folder>/<group>-task-<N>-coverage.txt 2>&1)`. Cover or explain each uncovered changed region.
-6. Run no mutation test: the controller runs one for the whole group, after the reviews.
-7. Stop every background job you started. Then report once:
+5. Run no `make coverage` and no `make mutation-test`. The controller runs `make coverage` on the clean `HEAD` after committing and checks uncovered lines.
+6. Stop every background job you started. Then report once:
    - the status: DONE, DONE_WITH_CONCERNS or BLOCKED;
    - each commit: its message file and its patch;
    - each test: red at the base, green at the head;
-   - the coverage result for the changed lines;
    - the neighbour outputs before and after;
    - anything you could not do.
 
@@ -72,4 +69,4 @@ A fix-round brief has these parts, in this order:
 3. Each accepted finding: its severity, the cause you checked, the probe that shows it, the fix, and the test list with the wanted outputs, as in "Tests" above.
 4. "Fix the class": the neighbouring cases to list and probe, the probe folder (`review-sisu` names it), and the `scripts/diag_diff.py` command to run. When the fix gives a sentence for a doc, each example in it is one case with its probe; a probe that contradicts the sentence changes the sentence.
 5. "Report, do not add": when a check (a hook, a lint, a test table) seems to need a new exemption or opt-out, the executor reports the hit and the reason, and adds nothing. The controller rules on it.
-6. The job: the tests first, red at the round base, as one commit titled "Add failing tests"; then the fix as a second commit. Steps 1 and 4 of the task brief say how to write each commit, and when a fix has no separate test commit. Then `make test`; `make coverage BASE=<round base>` into `<ledger folder>/<group>-task-<N>-fix<round>-coverage.txt`. No mutation test. One report, with each test red before and green after. A test that kills a surviving mutant, or that holds the rule of code a ruling kept (`review-sisu`, rule 6), is the exception: it is green at the round base and needs no fix. Write it as its own commit, and name its mutant or its rule in the report. A surviving mutant whose only effect is extra work that stays linear is not pinned. It gets the note `accepted: extra work only: <the work>` (`CODING_STANDARDS.md`, Tests).
+6. The job: the tests first, red at the round base, as one commit titled "Add failing tests"; then the fix as a second commit. Steps 1 and 4 of the task brief say how to write each commit, and when a fix has no separate test commit. Then run `make test`. Run no `make coverage` and no `make mutation-test`: the controller runs `make coverage` on the clean `HEAD` and checks uncovered lines. One report, with each test red before and green after. A test that kills a surviving mutant, or that holds the rule of code a ruling kept (`review-sisu`, rule 6), is the exception: it is green at the round base and needs no fix. Write it as its own commit, and name its mutant or its rule in the report. A surviving mutant whose only effect is extra work that stays linear is not pinned. It gets the note `accepted: extra work only: <the work>` (`CODING_STANDARDS.md`, Tests).
