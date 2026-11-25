@@ -716,10 +716,13 @@ fn loop_over_array_of_boxed_structs_should_hoist_root_and_keep_one_path_make_uni
     let pre = f.loops[0].pre_header.0;
     let printed = print(&mir, &program);
     let body = function(&printed, "f");
-    assert!(
-        body.contains(&format!("  bb{pre}:\n")) && body.contains("make_unique a#"),
-        "{body}"
-    );
+    let pre_has_root_unique = f.blocks[pre].stmts.iter().any(|s| {
+        matches!(
+            s,
+            Statement::MakeUnique { place, .. } if place.projections.is_empty()
+        )
+    });
+    assert!(pre_has_root_unique, "{body}");
     let loop_uniques: usize = f.loops[0]
         .blocks
         .iter()

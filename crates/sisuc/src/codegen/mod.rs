@@ -257,6 +257,15 @@ const _: () = {
     assert_sync::<mir::Program>();
 };
 
+/// Position of a place walk in codegen: storage address, value type, optional TBAA tag, and
+/// whether `address` holds a boxed optional field's storage slot rather than its value.
+struct PlaceCursor<'ctx> {
+    address: PointerValue<'ctx>,
+    ty: Type,
+    tag: Option<MetadataValue<'ctx>>,
+    boxed: bool,
+}
+
 impl Analyses {
     /// The analyses of `program`, whose text is `source`.
     pub(crate) fn new(program: &Program, source: &str) -> Analyses {
@@ -1408,30 +1417,29 @@ impl<'ctx> Codegen<'ctx, '_> {
     ) -> (PointerValue<'ctx>, Type, Option<MetadataValue<'ctx>>, bool) {
         self.check_not_moved(local);
         let (address, _) = self.slot(local);
-        let mut cursor = (address, self.types[local.0], None, false);
+        let mut cursor = PlaceCursor {
+            address,
+            ty: self.types[local.0],
+            tag: None,
+            boxed: false,
+        };
         for projection in projections {
             cursor = self.step_located(cursor, projection, checked);
         }
-        cursor
+        (cursor.address, cursor.ty, cursor.tag, cursor.boxed)
     }
 
-    /// Advances `(address, ty, tag, boxed)` across one `projection`, checking bounds when
-    /// `checked`.
+    /// Advances `cursor` across one `projection`, checking bounds when `checked`.
     fn step_located(
         &self,
-        (address, mut ty, tag, mut boxed): (
-            PointerValue<'ctx>,
-            Type,
-            Option<MetadataValue<'ctx>>,
-            bool,
-        ),
+        mut cursor: PlaceCursor<'ctx>,
         projection: &Projection,
         checked: bool,
-    ) -> (PointerValue<'ctx>, Type, Option<MetadataValue<'ctx>>, bool) {
+    ) -> PlaceCursor<'ctx> {
         let (address, ty, tag) = match projection {
             Projection::Field { index, .. } => {
-                let class = class_of(ty);
-                let object = self.load_pointer(address);
+                let class = class_of(cursor.ty);
+                let object = self.load_pointer(cursor.address);
                 (
                     self.field_ptr(class, object, *index),
                     self.program.classes[class.0].fields[*index].ty,
@@ -1439,9 +1447,10 @@ impl<'ctx> Codegen<'ctx, '_> {
                 )
             }
             Projection::Payload { variant, field } => {
-                let id = enum_of(ty);
+                let id = enum_of(cursor.ty);
                 let place;
-                (place, boxed) = self.field_place(address, Inline::Enum(id), *variant, *field);
+                (place, cursor.boxed) =
+                    self.field_place(cursor.address, Inline::Enum(id), *variant, *field);
                 (
                     place,
                     self.program.enums[id.0].variants[*variant].fields[*field].ty,
@@ -1450,12 +1459,12 @@ impl<'ctx> Codegen<'ctx, '_> {
             }
             Projection::Index { index, span } => {
                 // `tag` is the tag of the array's own place, the step before this one.
-                let data = self.load_data(address, tag);
+                let data = self.load_data(cursor.address, cursor.tag);
                 let index = self.operand(index).0.into_int_value();
                 if checked {
-                    self.check_bounds(self.load_len(address, tag), index, *span);
+                    self.check_bounds(self.load_len(cursor.address, cursor.tag), index, *span);
                 }
-                let element = element_of(ty);
+                let element = element_of(cursor.ty);
                 (
                     self.element_ptr(element, data, index),
                     element,
@@ -1464,24 +1473,38 @@ impl<'ctx> Codegen<'ctx, '_> {
             }
             Projection::Some => {
                 let place;
-                (place, ty, boxed) = self.some_place(address, ty, boxed);
-                (place, ty, None)
+                (place, cursor.ty, cursor.boxed) =
+                    self.some_place(cursor.address, cursor.ty, cursor.boxed);
+                (place, cursor.ty, None)
             }
             // A struct field has no TBAA tag: an access with no tag may alias any other. A
             // boxed field gives its storage, as `boxed` says, and a `Box` after it the value.
             &Projection::StructField { index } => {
-                let id = struct_of(ty);
+                let id = struct_of(cursor.ty);
                 let field = &self.program.structs[id.0].fields[index];
-                boxed = field.boxed;
-                (self.struct_field_ptr(id, address, index), field.ty, None)
+                cursor.boxed = field.boxed;
+                (
+                    self.struct_field_ptr(id, cursor.address, index),
+                    field.ty,
+                    None,
+                )
             }
             Projection::Box => {
-                let pointer = self.load_pointer(address);
-                boxed = false;
-                (self.box_value(boxed_type(ty), pointer), ty, None)
+                let pointer = self.load_pointer(cursor.address);
+                cursor.boxed = false;
+                (
+                    self.box_value(boxed_type(cursor.ty), pointer),
+                    cursor.ty,
+                    None,
+                )
             }
         };
-        (address, ty, tag, boxed)
+        PlaceCursor {
+            address,
+            ty,
+            tag,
+            boxed: cursor.boxed,
+        }
     }
 
     /// Walks `place` from `start` once, checking each active index and making each box or array
@@ -1493,53 +1516,35 @@ impl<'ctx> Codegen<'ctx, '_> {
             "AfterRootIndex should start with an Index projection"
         );
         self.check_not_moved(place.local);
-        let (mut address, _) = self.slot(place.local);
-        let mut ty = self.types[place.local.0];
-        let mut tag = None;
-        let mut boxed = false;
+        let (address, _) = self.slot(place.local);
+        let mut cursor = PlaceCursor {
+            address,
+            ty: self.types[place.local.0],
+            tag: None,
+            boxed: false,
+        };
         let skip = match start {
             mir::UniqueStart::Root => 0,
             mir::UniqueStart::AfterRootIndex => 1,
         };
         for (i, projection) in place.projections.iter().enumerate() {
-            let last = i + 1 == place.projections.len();
             match projection {
                 Projection::Index { index, span } if i >= skip => {
                     let index = self.operand(index).0.into_int_value();
-                    self.check_bounds(self.load_len(address, tag), index, *span);
-                    self.unique(address, ty);
-                    if !last {
-                        let data = self.load_data(address, tag);
-                        let element = element_of(ty);
-                        address = self.element_ptr(element, data, index);
-                        ty = element;
-                        tag = Some(self.element_tag);
-                    }
+                    self.check_bounds(self.load_len(cursor.address, cursor.tag), index, *span);
+                    self.unique(cursor.address, cursor.ty);
                 }
-                Projection::Box => {
-                    self.box_unique(address, ty);
-                    boxed = false;
-                    if !last {
-                        let pointer = self.load_pointer(address);
-                        address = self.box_value(boxed_type(ty), pointer);
-                        tag = None;
-                    }
-                }
-                _ => {
-                    (address, ty, tag, boxed) =
-                        self.step_located((address, ty, tag, boxed), projection, false);
-                }
+                Projection::Box => self.box_unique(cursor.address, cursor.ty),
+                Projection::Index { .. }
+                | Projection::Field { .. }
+                | Projection::Payload { .. }
+                | Projection::Some
+                | Projection::StructField { .. } => {}
             }
+            cursor = self.step_located(cursor, projection, false);
         }
-        if !matches!(
-            place.projections.last(),
-            Some(Projection::Index { .. } | Projection::Box)
-        ) {
-            debug_assert!(
-                !boxed,
-                "a boxed field in `MakeUnique` should end with `Projection::Box`"
-            );
-            self.unique(address, ty);
+        if place.projections.is_empty() {
+            self.unique(cursor.address, cursor.ty);
         }
     }
 

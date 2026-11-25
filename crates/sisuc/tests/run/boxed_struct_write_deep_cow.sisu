@@ -77,7 +77,7 @@ fn main() {
     print(keep4.p.p.n)                // 30
 
     // 5. Class-field root.
-    let mut keep5 = make_s(40)
+    let keep5 = make_s(40)
     let h = Holder(s: keep5)
     h.s.p.p.n = 41
     print(h.s.p.p.n)                  // 41
@@ -130,4 +130,13 @@ fn main() {
     print(arr[1].p.p.n)               // 91
     print(keep_arr[0].p.p.n)          // 80
     print(keep_arr[1].p.p.n)          // 81
+
+    // 11. Shared inner box alongside a root copy (guards box-pointer reload after `box_unique`).
+    let mut s_inner = make_s(100)
+    let other_inner = s_inner.p
+    let keep_inner = s_inner
+    s_inner.p.p.n = 101
+    print(s_inner.p.p.n)              // 101
+    print(keep_inner.p.p.n)           // 100
+    print(other_inner.p.n)            // 100
 }

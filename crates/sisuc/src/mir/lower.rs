@@ -1668,7 +1668,7 @@ impl<'a> Lowering<'a> {
     }
 
     /// `p[i]... = value` or `p.f... = value`: a field root's base, the indexes, the value, then
-    /// per element level the check and `make_unique`, then the store, then the release of the
+    /// the write-path `walk` (`check` and `make_unique`), then the store, then the release of the
     /// base.
     fn element_write(&mut self, place: &Place, value: &Expr) -> Option<()> {
         let (root, indexes, temp) = self.written_root(place, value)?;
@@ -1680,8 +1680,8 @@ impl<'a> Lowering<'a> {
     }
 
     /// `p.push(value)`, in the order of an element write. The order is a field root's base, the
-    /// indexes and the value. Then come the check and `make_unique` of each level, the push, and
-    /// the release of the base. The push decides on the count of the array `p` holds.
+    /// indexes and the value. Then come the write-path `walk` (`check` and `make_unique`), the
+    /// push, and the release of the base. The push decides on the count of the array `p` holds.
     ///
     /// A place that ends in `Some` holds an optional array. The push tests it before the value,
     /// so an absent array runs nothing, and again after the value, which may have cleared it. The

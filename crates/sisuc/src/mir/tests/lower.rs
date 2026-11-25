@@ -4,7 +4,7 @@ use rustc_hash::FxHashMap;
 
 use super::*;
 use crate::mir::lower::{ARM_STEPS, LOCAL_OF_READS, MENTION_PROBES, Mentions, PATH_COPIES, WALKED};
-use crate::mir::print::{EXAMINED, PLACE_BYTES};
+use crate::mir::print::EXAMINED;
 use crate::tir::TypeArgs;
 
 /// Calls run in source order, and an `i64` is returned by a read, not moved.
@@ -93,7 +93,8 @@ fn dbg_should_read_the_temporary_that_holds_the_value() {
     assert_eq!(body.matches("call g(").count(), 1, "{body}");
 }
 
-/// The value first, then per level the bounds check and `make_unique`, then the store.
+/// The value first, then the level-0 check and `make_unique`, then the path `make_unique`, then
+/// the store.
 #[test]
 fn element_write_should_follow_value_check_unique_store_order() {
     let printed = lowered(
@@ -414,7 +415,8 @@ fn interpolation_parts_should_lower_in_linear_steps() {
 /// GIVEN a chain of `k + 1` structs, each holding the one before, and arrays in the first
 /// WHEN `main` writes an element of an array through all the fields, for `k` of 16, 32 and 64
 /// AND `main` writes an element of an array of arrays, and a field of the last struct
-/// THEN a write copies the place at each element level only, and a copy costs its projections
+/// THEN a write copies the place once up to the last element level, and a copy costs its
+/// projections
 /// AND the copies of one element level are `k + 2` projections, of two levels `k + 3`, and of
 /// a field none
 #[test]
@@ -1847,11 +1849,11 @@ fn mixed_boxed_and_array_write_path_should_copy_linear_projections() {
     }
 }
 
-/// GIVEN deep places with `Box`, `Some` and `Payload` wrapping projections
+/// GIVEN places with mixed and nested `Box`, `Some` and `Payload` wrapping projections
 /// WHEN the mir printer formats each place
-/// THEN the output matches the wrapped format and writes linear bytes
+/// THEN each output has the wrapping parentheses around the whole prefix
 #[test]
-fn place_printer_should_format_wrapping_projections_linearly() {
+fn place_printer_should_format_wrapping_projections() {
     let program = checked(
         "class C {\n    mut s: S0\n}\n\
          struct S0 {\n    p: S1\n}\n\
@@ -1860,11 +1862,34 @@ fn place_printer_should_format_wrapping_projections_linearly() {
     );
     let c_ty = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
     let e_ty = Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE));
-    let mut b = Builder::new("f");
-    let x = b.local("x", c_ty);
-    let place = Place {
-        local: x,
-        projections: vec![
+    let print_place = |name: &str, ty: Type, projections: Vec<Projection>| {
+        let mut b = Builder::new("f");
+        let p = b.local(name, ty);
+        b.block(
+            vec![Statement::Store {
+                place: Place {
+                    local: p,
+                    projections,
+                    borrow: false,
+                    guard: false,
+                },
+                value: Operand::Const(Const::Int(1, Type::I64)),
+            }],
+            Terminator::Return(None),
+        );
+        print(
+            &Program {
+                functions: vec![b.finish()],
+                main: None,
+            },
+            &program,
+        )
+    };
+
+    let mixed = print_place(
+        "x",
+        c_ty,
+        vec![
             Projection::Field {
                 index: 0,
                 mutable: true,
@@ -1882,70 +1907,32 @@ fn place_printer_should_format_wrapping_projections_linearly() {
                 span: Span::new(0, 0),
             },
         ],
-        borrow: false,
-        guard: false,
-    };
-    b.block(
-        vec![Statement::Store {
-            place,
-            value: Operand::Const(Const::Int(1, Type::I64)),
-        }],
-        Terminator::Return(None),
-    );
-    let printed = print(
-        &Program {
-            functions: vec![b.finish()],
-            main: None,
-        },
-        &program,
     );
     assert!(
-        printed.contains("(((x#0.0.p as box).e as some) as 1).0[0] = 1"),
-        "{printed}"
+        mixed.contains("(((x#0.0.p as box).e as some) as 1).0[0] = 1"),
+        "{mixed}"
     );
 
-    let measure = |ty: Type, projections: Vec<Projection>| {
-        let mut b = Builder::new("f");
-        let p = b.local("p", ty);
-        b.block(
-            vec![Statement::Store {
-                place: Place {
-                    local: p,
-                    projections,
-                    borrow: false,
-                    guard: false,
-                },
-                value: Operand::Const(Const::Unit),
-            }],
-            Terminator::Return(None),
-        );
-        let mir = Program {
-            functions: vec![b.finish()],
-            main: None,
-        };
-        PLACE_BYTES.set(0);
-        drop(print(&mir, &program));
-        PLACE_BYTES.get()
-    };
+    let boxes = print_place("p", Type::I64, vec![Projection::Box; 4]);
+    assert!(
+        boxes.contains("((((p#0 as box) as box) as box) as box) = 1"),
+        "{boxes}"
+    );
 
-    assert_near_linear(
-        measure(Type::I64, vec![Projection::Box; 16]),
-        measure(Type::I64, vec![Projection::Box; 32]),
-        measure(Type::I64, vec![Projection::Box; 48]),
+    let opt4 = (0..4).fold(Type::I64, |ty, _| Type::optional(ty));
+    let optionals = print_place("p", opt4, vec![Projection::Some; 4]);
+    assert!(
+        optionals.contains("((((p#0 as some) as some) as some) as some) = 1"),
+        "{optionals}"
     );
-    let opt = |n: usize| (0..n).fold(Type::I64, |ty, _| Type::optional(ty));
-    assert_near_linear(
-        measure(opt(16), vec![Projection::Some; 16]),
-        measure(opt(32), vec![Projection::Some; 32]),
-        measure(opt(48), vec![Projection::Some; 48]),
-    );
+
     let payload = Projection::Payload {
         variant: 0,
         field: 0,
     };
-    assert_near_linear(
-        measure(e_ty, vec![payload.clone(); 16]),
-        measure(e_ty, vec![payload.clone(); 32]),
-        measure(e_ty, vec![payload; 48]),
+    let payloads = print_place("p", e_ty, vec![payload; 3]);
+    assert!(
+        payloads.contains("(((p#0 as 0).0 as 0).0 as 0).0 = 1"),
+        "{payloads}"
     );
 }

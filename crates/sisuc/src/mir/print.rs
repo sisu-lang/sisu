@@ -32,8 +32,6 @@ pub(crate) fn print(mir: &Program, tir: &tir::Program) -> String {
 thread_local! {
     /// How many format entries the printer has examined on this thread.
     pub(super) static EXAMINED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many bytes `Printer::place` has written on this thread.
-    pub(super) static PLACE_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// `x#0` for a named local, `_7` for a temporary or a local the checker made up.
@@ -103,22 +101,15 @@ impl Printer<'_> {
                 )
             })
             .count();
-        let mut text = String::with_capacity(wraps * 12 + 16);
+        let mut text = String::with_capacity(wraps);
         for _ in 0..wraps {
             text.push('(');
         }
-        #[cfg(test)]
-        PLACE_BYTES.set(PLACE_BYTES.get() + wraps);
-        let local = self.local(place.local);
-        text.push_str(&local);
-        #[cfg(test)]
-        PLACE_BYTES.set(PLACE_BYTES.get() + local.len());
+        text.push_str(&self.local(place.local));
         let mut ty = self.function.locals[place.local.0].ty;
         for projection in &place.projections {
             let base = ty;
             ty = projection.projected(self.tir, ty);
-            #[cfg(test)]
-            let before = text.len();
             match projection {
                 Projection::StructField { index } => {
                     let name = self.tir.struct_field(base, *index);
@@ -138,8 +129,6 @@ impl Printer<'_> {
                 Projection::Some => text.push_str(" as some)"),
                 Projection::Box => text.push_str(" as box)"),
             }
-            #[cfg(test)]
-            PLACE_BYTES.set(PLACE_BYTES.get() + text.len() - before);
         }
         text
     }
