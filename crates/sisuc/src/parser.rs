@@ -651,7 +651,7 @@ struct Parser<'a> {
     /// Where each line break is.
     breaks: &'a [usize],
     /// Recovered errors (format specs, `:` ranges, `E0015`, `E0122`, and `E0175`) that no broken
-    /// item took. When a lexer error breaks an item, `resolve_broken` keeps those before it.
+    /// item took. When a fatal error breaks an item, `resolve_broken` keeps those before it.
     recovered: Vec<Diagnostic>,
     /// Whether the parser reads the head of a `for`, `if`, `while` or `match`, outside any
     /// bracket or block in it. There, a `{` after `..` opens the body, not the end of the range.
@@ -1319,14 +1319,11 @@ impl<'a> Parser<'a> {
                 end > start,
                 "an item should hold a token, or the loop would not end"
             );
-            // An unnamed item starts where its line does, so text skipped before its first
+            // A broken unnamed item starts where its line does, so text skipped before its first
             // token is its own.
             let line = previous.map_or(0, |t| t.span.end());
             let mut bytes = self.bytes(start, end);
-            if header.is_none() {
-                bytes.start = line;
-            }
-            covered.push(bytes);
+            let recovered = self.recovered.len();
             let parsed = self.item(end);
             match parsed {
                 Ok((item, errors)) => {
@@ -1342,17 +1339,25 @@ impl<'a> Parser<'a> {
                         diagnostics.push(error);
                         broken.push(header);
                     } else {
-                        let skipped = self.lexer_in(line..error.span().start()).next().cloned();
-                        diagnostics.push(skipped.unwrap_or(error));
+                        bytes.start = line;
+                        let fatal = self
+                            .lexer_in(line..error.span().start())
+                            .next()
+                            .cloned()
+                            .unwrap_or(error);
+                        let fatal = self.resolve_broken(recovered, fatal);
+                        diagnostics.push(fatal);
                         checkable = false;
                     }
                 }
             }
+            covered.push(bytes);
             self.skip_newlines();
         }
         diagnostics.append(&mut self.recovered);
         diagnostics.append(&mut self.warnings);
-        // An unnamed item starts where its line does, inside the item before, so items may overlap.
+        // A broken unnamed item starts where its line does, inside the item before, so items may
+        // overlap.
         debug_assert!(rising(&covered), "the covered spans should rise");
         diagnostics.extend(
             self.lexer
@@ -1578,30 +1583,20 @@ impl<'a> Parser<'a> {
         self.lexer[start..at(bytes.end).max(start)].iter()
     }
 
-    /// Resolves a broken item's error from `fatal` and `self.recovered[recovered..]`: when a
-    /// lexer error at `lexed_start` caused `fatal`, keeps recovered diagnostics strictly before
-    /// `fatal`; otherwise folds them into `fatal`.
-    fn resolve_broken(
-        &mut self,
-        recovered: usize,
-        fatal: Diagnostic,
-        lexed_start: Option<usize>,
-    ) -> Diagnostic {
-        if lexed_start == Some(fatal.span().start()) {
-            let limit = fatal.span().start();
-            let tail = self.recovered.split_off(recovered);
-            self.recovered
-                .extend(tail.into_iter().filter(|d| d.span().start() < limit));
-            fatal
-        } else {
-            self.recovered.drain(recovered..).fold(fatal, earlier)
-        }
+    /// Keeps recovered diagnostics in `self.recovered[recovered..]` strictly before `fatal` and
+    /// returns `fatal`.
+    fn resolve_broken(&mut self, recovered: usize, fatal: Diagnostic) -> Diagnostic {
+        let limit = fatal.span().start();
+        let tail = self.recovered.split_off(recovered);
+        self.recovered
+            .extend(tail.into_iter().filter(|d| d.span().start() < limit));
+        fatal
     }
 
     /// Parses with `parse` the item or member that starts here and runs to `end`. Its error is
     /// the earlier of its first lexer diagnostic and its parse error, which a skip may have
-    /// caused. Keeps recovered diagnostics strictly before a fatal lexer error. After an error, the
-    /// parser resumes at `end`.
+    /// caused. Keeps recovered diagnostics strictly before that error. After an error, the parser
+    /// resumes at `end`.
     fn checked<T>(
         &mut self,
         end: usize,
@@ -1619,13 +1614,12 @@ impl<'a> Parser<'a> {
         if let (Ok(_), None) = (&parsed, &lexed) {
             return parsed;
         }
-        let lexed_start = lexed.as_ref().map(|d| d.span().start());
         let fatal = lexed
             .into_iter()
             .chain(parsed.err())
             .reduce(earlier)
             .expect("a broken item should hold an error");
-        let error = self.resolve_broken(recovered, fatal, lexed_start);
+        let error = self.resolve_broken(recovered, fatal);
         self.pos = end;
         Err(error)
     }
@@ -1633,7 +1627,7 @@ impl<'a> Parser<'a> {
     /// The class or enum that `body` parses, from here to `end`, and the error of each broken
     /// method. A method whose error follows its name is broken alone and leaves the item; any
     /// other error breaks the whole item, whose one error is then the earliest in it. Keeps
-    /// recovered diagnostics strictly before a fatal lexer error anywhere in `end`.
+    /// recovered diagnostics strictly before that error.
     fn with_methods(
         &mut self,
         end: usize,
@@ -1649,14 +1643,10 @@ impl<'a> Parser<'a> {
         let mut methods = Vec::new();
         let parsed = body(self, &mut errors, &mut methods);
         debug_assert!(rising(&methods), "the method spans should rise");
-        let (lexed_start, outside) = {
-            let mut lexed = self.lexer_in(bytes).peekable();
-            let start = lexed.peek().map(|d| d.span().start());
-            (
-                start,
-                lexed.find(|d| !holds(&methods, d.span().start())).cloned(),
-            )
-        };
+        let outside = self
+            .lexer_in(bytes)
+            .find(|d| !holds(&methods, d.span().start()))
+            .cloned();
         match (parsed, outside) {
             (Ok(item), None) => Ok((item, errors)),
             (parsed, outside) => {
@@ -1667,7 +1657,7 @@ impl<'a> Parser<'a> {
                     .chain(parsed.err())
                     .reduce(earlier)
                     .expect("a broken item should hold an error");
-                let error = self.resolve_broken(recovered, fatal, lexed_start);
+                let error = self.resolve_broken(recovered, fatal);
                 Err(error)
             }
         }

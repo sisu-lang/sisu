@@ -147,8 +147,9 @@ fn internal_error(d: &Diagnostic) -> ! {
 }
 
 /// Filters and demotes fixes in `diagnostics`. Drops each syntax fix that makes `source` lex or
-/// parse worse. Marks a fix unsafe when it edits over a comment or another lexer error, or adds a
-/// syntax diagnostic. A shown fix never breaks syntax, and a safe fix never takes unrelated text.
+/// parse worse. Marks a fix unsafe when it edits over a comment or another lexer error, adds a
+/// syntax diagnostic, or removes another syntax diagnostic. A shown fix never breaks syntax, and a
+/// safe fix never takes unrelated text.
 /// A checker fix is not judged: the checker runs only on items that parse, and the fuzz target
 /// asserts that every fix shown keeps the syntax, the checker's included. Two cases are judged.
 /// One is a fix at the end of a line (`ends_a_line`), which can change where a statement ends. The
@@ -198,6 +199,11 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
         for d in sound.iter_mut().filter(|d| syntax_fix(d)) {
             let own = d.span().start();
             let reported = reported.contains(&(d.code(), d.span()));
+            let own_code = (reported
+                || before_syntax
+                    .as_ref()
+                    .is_err_and(|e| (e.code(), e.span()) == (d.code(), d.span())))
+            .then_some(d.code());
             // A fix beside one that spans a `;` is judged too: that costs work and no result.
             let unsure = |fix: &Fix| around(fix, own) || ends_a_line(source, fix);
             if reported || d.fixes().iter().any(unsure) {
@@ -209,7 +215,7 @@ pub(crate) fn sound_fixes(source: &str, diagnostics: &[Diagnostic]) -> Vec<Diagn
                     let after = syntax(&fix.apply(source));
                     if badness(&after) > before {
                         FixVerdict::Drop
-                    } else if adds_syntax_code(&before_counts, &after) {
+                    } else if changes_other_syntax_code(&before_counts, own_code, &after) {
                         FixVerdict::Demote
                     } else {
                         FixVerdict::Keep
@@ -332,21 +338,21 @@ fn code_counts(syntax: &Result<Vec<Diagnostic>, Diagnostic>) -> FxHashMap<Code, 
     counts
 }
 
-/// Whether `after` reports any diagnostic code more times than `before`.
-fn adds_syntax_code(
+/// Whether `after` reports any diagnostic code more times than `before`, or fewer times than
+/// `before` minus one for `own_code`.
+fn changes_other_syntax_code(
     before: &FxHashMap<Code, usize>,
+    own_code: Option<Code>,
     after: &Result<Vec<Diagnostic>, Diagnostic>,
 ) -> bool {
-    let ds = syntax_diagnostics(after);
-    if ds.is_empty() {
-        return false;
-    }
-    let mut seen: FxHashMap<Code, usize> = FxHashMap::default();
-    ds.iter().any(|d| {
-        let count = seen.entry(d.code()).or_insert(0);
-        *count += 1;
-        *count > before.get(&d.code()).copied().unwrap_or(0)
-    })
+    let after_counts = code_counts(after);
+    after_counts
+        .iter()
+        .any(|(&code, &count)| count > before.get(&code).copied().unwrap_or(0))
+        || before.iter().any(|(&code, &count)| {
+            let min_expected = count.saturating_sub(usize::from(own_code == Some(code)));
+            after_counts.get(&code).copied().unwrap_or(0) < min_expected
+        })
 }
 
 /// How badly a source fails to lex or to parse, given its `syntax`: a lexer error, which stops
