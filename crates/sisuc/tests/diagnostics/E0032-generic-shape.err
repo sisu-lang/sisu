@@ -15,13 +15,13 @@ error[E0032]: expected an array, found `bool`
 26 |     print(h(5, id(true)))
    |                ^^^^^^^^
 
-error[E0032]: expected a `Box`, found `bool`
+error[E0032]: expected `Box<i64>`, found `bool`
   --> E0032-generic-shape.sisu:27:16
    |
 27 |     print(k(5, id(true)))
    |                ^^^^^^^^
 
-error[E0032]: expected a `Result`, found `bool`
+error[E0032]: expected `Result<i64, string>`, found `bool`
   --> E0032-generic-shape.sisu:28:16
    |
 28 |     print(e(5, id(true)))

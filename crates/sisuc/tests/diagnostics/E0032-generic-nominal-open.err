@@ -1,0 +1,32 @@
+error[E0032]: expected an array, found `i64`
+  --> E0032-generic-nominal-open.sisu:22:16
+   |
+22 |     print(take(5))
+   |                ^
+
+error[E0032]: expected `Box<_>`, found `i64`
+  --> E0032-generic-nominal-open.sisu:23:20
+   |
+23 |     print(t_struct(5))
+   |                    ^
+
+error[E0032]: expected `CBox<_>`, found `i64`
+  --> E0032-generic-nominal-open.sisu:24:19
+   |
+24 |     print(t_class(5))
+   |                   ^
+
+error[E0032]: expected `EBox<_>`, found `i64`
+  --> E0032-generic-nominal-open.sisu:25:18
+   |
+25 |     print(t_enum(5))
+   |                  ^
+
+error[E0032]: expected `Result<_, string>`, found `i64`
+  --> E0032-generic-nominal-open.sisu:26:20
+   |
+26 |     print(t_result(5))
+   |                    ^
+
+sisu: 5 errors
+sisu: for more on a code, run `sisu explain <code>`: E0032

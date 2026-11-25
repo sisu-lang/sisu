@@ -1,0 +1,27 @@
+// An open nominal parameter reports its type with `_` for each open type parameter.
+// An open array parameter reports "an array".
+struct Box<U> {
+    v: U
+}
+
+class CBox<U> {
+    v: U
+}
+
+enum EBox<U> {
+    One(U)
+}
+
+fn take<T>(xs: [T]) -> i64 { 0 }
+fn t_struct<U>(b: Box<U>) -> i64 { 0 }
+fn t_class<U>(b: CBox<U>) -> i64 { 0 }
+fn t_enum<U>(b: EBox<U>) -> i64 { 0 }
+fn t_result<U>(r: Result<U, string>) -> i64 { 0 }
+
+fn main() {
+    print(take(5))
+    print(t_struct(5))
+    print(t_class(5))
+    print(t_enum(5))
+    print(t_result(5))
+}
