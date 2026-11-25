@@ -4,7 +4,15 @@ error[E0156]: `name` on `T` could come from `Label` or `Code`
 10 |     let n = x.name()
    |               ^^^^
    |
-   = help: annotate the result: `let n: string = x.name()`
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
+help: write `: string` to pick `Label`
+   |
+10 |     let n: string = x.name()
+   |          ++++++++
+help: write `: i64` to pick `Code`
+   |
+10 |     let n: i64 = x.name()
+   |          +++++
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0156

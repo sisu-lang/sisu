@@ -809,12 +809,17 @@ impl Checker<'_> {
     }
 
     /// Records that code of unknown reach, in the body being checked, may show a value of type
-    /// `ty` through `Display` or `Eq`. A type that cannot hold a struct is left out.
+    /// `ty` through `Display` or `Eq`. A type that cannot hold a struct is left out. A type with an
+    /// inference variable may hold one; `with_table` writes its type back.
     pub(super) fn record_both(&mut self, ty: Type) {
-        let holds = matches!(
-            ty.kind(),
-            TypeKind::Array(_) | TypeKind::Optional(_) | TypeKind::Enum(..) | TypeKind::Struct(..)
-        );
+        let holds = ty.holds_infer()
+            || matches!(
+                ty.kind(),
+                TypeKind::Array(_)
+                    | TypeKind::Optional(_)
+                    | TypeKind::Enum(..)
+                    | TypeKind::Struct(..)
+            );
         if holds {
             self.record_shown(ty, self.lang.display);
             self.record_shown(ty, self.lang.eq);

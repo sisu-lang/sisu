@@ -4,7 +4,7 @@ error[E0156]: `name` on `S` could come from `Label` or `Code`
 45 |     let a = [wrap([s.name()])]
    |                      ^^^^
    |
-   = help: annotate the result: `let x: string = s.name()`
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
 
 error[E0156]: `name` on `S` could come from `Label` or `Code`
   --> late-method-with-two-answers.sisu:46:20
@@ -12,7 +12,7 @@ error[E0156]: `name` on `S` could come from `Label` or `Code`
 46 |     let b = [opt(s.name())]
    |                    ^^^^
    |
-   = help: annotate the result: `let x: string = s.name()`
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
 
 error[E0050]: cannot infer `T` for `h`
   --> late-method-with-two-answers.sisu:47:14

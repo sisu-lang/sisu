@@ -9,9 +9,10 @@ use super::infer::{Kind, LiteralCheck};
 use super::names::{self, Resolved};
 use super::reports::Reported;
 use super::stmt::optional_unit;
+use super::use_kind::Use;
 use super::{
-    Checked, CheckedBlock, Checker, Expectation, Origin, Poisoned, SelfType, Uninferred, payload,
-    type_of, wrap, wrap_block,
+    BridgeLet, Checked, CheckedBlock, Checker, Expectation, Origin, Poisoned, SelfType, Uninferred,
+    payload, type_of, wrap, wrap_block,
 };
 use crate::ast::{self, ExprKind, UnaryOp};
 use crate::conformance::ensure_stack;
@@ -106,6 +107,13 @@ impl Checker<'_> {
     /// types a `None`, a `[]` and an integer literal. It flows into `if` and `if let` branches, a
     /// block's value, array elements, arithmetic and unary `-`; it never wraps.
     pub(super) fn expr(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
+        self.expr_as(e, Use::Read(expected))
+    }
+
+    /// `expr` for `e` in the position `use_`. Only a bare name reads its position: any other
+    /// expression takes the expectation of `use_`.
+    pub(super) fn expr_as(&mut self, e: &ast::Expr, use_: Use) -> Checked {
+        let expected = use_.expectation();
         #[cfg(test)]
         super::EXPR_CHECKS.set(super::EXPR_CHECKS.get() + 1);
         // The chain that an index ends runs only through field bases, method receivers and
@@ -122,7 +130,8 @@ impl Checker<'_> {
         if !matches!(e.kind, ExprKind::Field { .. } | ExprKind::Index { .. }) {
             self.body.write_chain = None;
         }
-        let checked = self.expr_kind(e, expected);
+        // Deep expressions nest up to the parser's limit, so grow the stack before the dispatch.
+        let checked = ensure_stack(|| self.expr_kind(e, expected, use_));
         self.body.indexed = outer;
         self.body.write_chain = chain;
         checked
@@ -157,7 +166,10 @@ impl Checker<'_> {
     /// `f64` must hold it exactly.
     fn integer(&mut self, at: Span, value: i64, literal: Span, expected: Expectation) -> Checked {
         // A member's literal is an `Int` variable: its fit waits for the type that the join gives.
-        if matches!(expected, Expectation::Member) {
+        // So is the whole value of a `let` without a type, until the first use of the local.
+        if matches!(expected, Expectation::Member)
+            || (expected == Expectation::None && self.open_let_value(at))
+        {
             let ty = self.int_variable(LiteralCheck {
                 span: at,
                 literal,
@@ -215,12 +227,12 @@ impl Checker<'_> {
         ty
     }
 
-    /// `expr` for each kind of expression.
+    /// `expr` for each kind of expression. `expected` is `use_.expectation()`.
     #[expect(
         clippy::too_many_lines,
         reason = "one arm per node kind, so the dispatch reads in one place"
     )]
-    fn expr_kind(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
+    fn expr_kind(&mut self, e: &ast::Expr, expected: Expectation, use_: Use) -> Checked {
         let node = |kind, ty| Ok(tir::Expr::new(kind, ty, e.span));
         match &e.kind {
             ExprKind::Int { value, literal } => self.integer(e.span, *value, *literal, expected),
@@ -243,7 +255,7 @@ impl Checker<'_> {
                 Err(Poisoned::untyped(reported))
             }
             ExprKind::NoneLit => self.none(e.span, expected),
-            ExprKind::Name(name) => self.name(e.span, *name, expected),
+            ExprKind::Name(name) => self.name(e.span, *name, use_),
             ExprKind::Call {
                 callee,
                 types,
@@ -275,7 +287,7 @@ impl Checker<'_> {
                     return Err(value);
                 }
                 let reported = self.diagnostics.mark();
-                let checked = self.name(name.span, name.name, Expectation::None);
+                let checked = self.name(name.span, name.name, Use::Read(Expectation::None));
                 // The type arguments follow the name, so `Holder.W<i64>` followed by `.` does not
                 // parse: the fix of a bare variant would break the syntax.
                 self.diagnostics
@@ -437,11 +449,13 @@ impl Checker<'_> {
         }
     }
 
-    /// A read of `name`: a local, a constant, or an unknown name, which is reported. The `expected`
-    /// type of a local with no type may give the type that the help of its E0050 writes.
-    fn name(&mut self, span: Span, name: Symbol, expected: Expectation) -> Checked {
+    /// A read of `name`: a local, a constant, or an unknown name, which is reported. The expected
+    /// type of `use_` for a local with no type may give the type that the help of its E0050
+    /// writes.
+    fn name(&mut self, span: Span, name: Symbol, use_: Use) -> Checked {
         let quiet = self.body.quiet == Some(span);
-        match self.resolve_name(name, names::Site::value(quiet)) {
+        let expected = use_.expectation();
+        match self.resolve_name(name, names::Site::value(quiet), use_.converted()) {
             Resolved::Local { local, ty, .. } => {
                 if let Some(ty) = ty {
                     return Ok(tir::Expr::new(tir::ExprKind::Local(local), ty, span));
@@ -499,6 +513,12 @@ impl Checker<'_> {
     /// type is expected, nor an `if` without an `else` whose branch has a value.
     pub(super) fn value(&mut self, e: &ast::Expr, expected: Expectation) -> Checked {
         self.value_in(e, expected, false)
+    }
+
+    /// `value` of `e` in the position `use_`, which a bare name reads.
+    pub(super) fn value_as(&mut self, e: &ast::Expr, use_: Use) -> Checked {
+        let checked = read_jump(self.expr_as(e, use_));
+        self.value_of(e, checked, use_.expectation(), false)
     }
 
     /// `value`; `returning` says that `e` is the value of a `return` in a function with no
@@ -1012,6 +1032,47 @@ impl Checker<'_> {
             binding: self.let_binding(init.span)?,
             settled: None,
         })
+    }
+
+    /// The open `let` of `local`, if it has one, closed at this first read or write: the type of
+    /// the local after it, which `ty` is when it has none.
+    pub(super) fn close_let(
+        &mut self,
+        name: Symbol,
+        local: tir::LocalId,
+        ty: Option<Type>,
+    ) -> Option<Type> {
+        if self.bridge.is_empty() {
+            return ty;
+        }
+        let Some(open) = self.bridge.remove(&local) else {
+            return ty;
+        };
+        let closed = self.settle_let(open);
+        if let Some(b) = self.lookup(name) {
+            b.ty = Some(closed);
+        }
+        self.body.locals[local.0].ty = closed;
+        Some(closed)
+    }
+
+    /// Closes the value of `open` as `close_open` closes the value of a `let` on `main`: each
+    /// open `Int` is `i64`.
+    pub(super) fn settle_let(&mut self, open: BridgeLet) -> Type {
+        debug_assert!(
+            self.table.unsettled_roots(open.ty).is_empty(),
+            "a PR 1 bridge entry should hold only Int roots"
+        );
+        let ty = self.table.default_open(open.ty);
+        self.unify(open.ty, ty);
+        ty
+    }
+
+    /// Whether `span` is the whole value of a `let` without a type that binds a name. There an
+    /// integer literal keeps its variable open, as a join member does, until the first use of the
+    /// local (see `BridgeLet`).
+    pub(super) fn open_let_value(&self, span: Span) -> bool {
+        matches!(self.body.let_init, Some((init, name, _, Some(_))) if init == span && name.as_str() != "_")
     }
 
     /// What the `let` whose whole initializer is at `span` writes before its type, if any.

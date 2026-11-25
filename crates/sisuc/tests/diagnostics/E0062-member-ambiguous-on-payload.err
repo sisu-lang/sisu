@@ -16,7 +16,15 @@ error[E0156]: `name` on `Circle` could come from `Label` or `Code`
 27 |         let n = self.o.name()
    |                        ^^^^
    |
-   = help: annotate the result: `let n: string = self.o.name()`
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
+help: write `: string` to pick `Label`
+   |
+27 |         let n: string = self.o.name()
+   |              ++++++++
+help: write `: i64` to pick `Code`
+   |
+27 |         let n: i64 = self.o.name()
+   |              +++++
 
 error[E0155]: `i64` is a built-in type; only the prelude extends it
   --> E0062-member-ambiguous-on-payload.sisu:34:8
@@ -60,7 +68,15 @@ error[E0156]: `name` on `Circle` could come from `Label` or `Code`
 51 |     let n = c.name()
    |               ^^^^
    |
-   = help: annotate the result: `let n: string = c.name()`
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
+help: write `: string` to pick `Label`
+   |
+51 |     let n: string = c.name()
+   |          ++++++++
+help: write `: i64` to pick `Code`
+   |
+51 |     let n: i64 = c.name()
+   |          +++++
 
 error[E0062]: `c` may be `None`
   --> E0062-member-ambiguous-on-payload.sisu:56:13
@@ -80,7 +96,15 @@ error[E0156]: `name` on `Circle` could come from `Label` or `Code`
 56 |     let n = c.name(1)
    |               ^^^^
    |
-   = help: annotate the result: `let n: string = c.name(1)`
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
+help: write `: string` to pick `Label`
+   |
+56 |     let n: string = c.name(1)
+   |          ++++++++
+help: write `: i64` to pick `Code`
+   |
+56 |     let n: i64 = c.name(1)
+   |          +++++
 
 error[E0062]: `c` may be `None`
   --> E0062-member-ambiguous-on-payload.sisu:61:13
@@ -96,7 +120,15 @@ error[E0156]: `name` on `Circle` could come from `Label` or `Code`
 61 |     let n = c.name()
    |               ^^^^
    |
-   = help: annotate the result: `let n: string = c.name()`
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
+help: write `: string` to pick `Label`
+   |
+61 |     let n: string = c.name()
+   |          ++++++++
+help: write `: i64` to pick `Code`
+   |
+61 |     let n: i64 = c.name()
+   |          +++++
 
 error[E0062]: `c` may be `None`
   --> E0062-member-ambiguous-on-payload.sisu:66:13
@@ -116,7 +148,15 @@ error[E0156]: `name` on `Circle` could come from `Label` or `Code`
 66 |     let n = c.name()
    |               ^^^^
    |
-   = help: annotate the result: `let n: string = c.name()`
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
+help: write `: string` to pick `Label`
+   |
+66 |     let n: string = c.name()
+   |          ++++++++
+help: write `: i64` to pick `Code`
+   |
+66 |     let n: i64 = c.name()
+   |          +++++
 
 error[E0062]: `c` may be `None`
   --> E0062-member-ambiguous-on-payload.sisu:71:13
@@ -136,7 +176,15 @@ error[E0156]: `name` on `T` could come from `Label` or `Code`
 71 |     let n = c.name()
    |               ^^^^
    |
-   = help: annotate the result: `let n: string = c.name()`
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
+help: write `: string` to pick `Label`
+   |
+71 |     let n: string = c.name()
+   |          ++++++++
+help: write `: i64` to pick `Code`
+   |
+71 |     let n: i64 = c.name()
+   |          +++++
 
 error[E0062]: `g` may be `None`
   --> E0062-member-ambiguous-on-payload.sisu:76:13

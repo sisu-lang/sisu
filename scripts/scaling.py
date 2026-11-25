@@ -110,6 +110,9 @@ KNOWN: list[tuple[str, str, int | str]] = [
     # grow the same way. Locally `object` gives 2.29 at 8n; the CI runners give 2.38.
     ("struct paths", "codegen", 686),
     ("struct paths", "object", 686),
+    # The same cost in a struct nested in itself: `StructLayout` and `StructType::checkBody`. The
+    # build before the open `let` gives the same ratio (2.92 at 8n).
+    ("open pair nest", "codegen", 686),
     # The cost is LLVM's: `getUnderlyingObjects` and a pointer set, in a function of hundreds of
     # calls of the helpers that make an array or a box unique.
     ("struct writes -O2", "optimize", 687),
@@ -261,6 +264,29 @@ def open_call_chain(k: int) -> str:
         "fn main() {\n    let c = [1].len() > 0\n    let m: [u8]? = None\n"
         f"    let x = if c {{ m }} else {{ {call} }}\n"
         '    print("{x?.len() ?? 0}")\n}\n'
+    )
+
+
+def open_let_chain(k: int) -> str:
+    """Return a program whose `main` has a `let` of an integer, then `k` `let`s of the one before.
+
+    The first `let` keeps its integer open until the second one reads it.
+    """
+    lets = "".join(f"    let x{tag(i)} = x{tag(i - 1)}\n" for i in range(1, k + 1))
+    return f"fn main() {{\n    let x{tag(0)} = 1\n{lets}    print(x{tag(k)})\n}}\n"
+
+
+def open_pair_nest(k: int) -> str:
+    """Return a program with a generic struct nested in itself `k + 1` times around an open `let`.
+
+    The innermost leaf is the local of a `let` of an integer, older than the other leaves (the
+    shape of the comment at `Table::occurs`).
+    """
+    pair = nest(k + 1, lambda s: f"Pair(a: {s}, b: 1)", "x")
+    return (
+        "struct Pair<A, B> {\n    a: A\n    b: B\n}\n\n"
+        f"fn main() {{\n    let x = 1\n    let v = {pair}\n    let _first = v.a\n"
+        '    print("{v.b}")\n}\n'
     )
 
 
@@ -802,6 +828,8 @@ SHAPES = {
     "coalesce depth to an optional": (15, coalesce_depth_to_optional),
     "open call chain": (24, open_call_chain),
     "unannotated array with None": (1000, unannotated_array_with_none),
+    "open let chain": (250, open_let_chain),
+    "open pair nest": (24, open_pair_nest),
 }
 
 

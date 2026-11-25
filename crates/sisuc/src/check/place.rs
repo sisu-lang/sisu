@@ -8,6 +8,7 @@ use super::member::{Access, FieldOwner, FoundField, safe_value};
 use super::names::{Resolved, Site};
 use super::reports::Reported;
 use super::unused_names::{Copied, Owner, Used};
+use super::use_kind::Use;
 use super::{
     Binding, BindingKind, Checked, Checker, Declared, Expectation, Origin, Poisoned, as_optional,
     block_expr, known_type, payload, type_of,
@@ -275,14 +276,6 @@ impl CheckedPlace {
         }
     }
 
-    /// Whether the `?.` of the place takes a class object out of its optional. `locals` are the
-    /// locals of the body.
-    pub(super) fn guards_class(&self, locals: &[tir::Local]) -> bool {
-        self.guard
-            .as_ref()
-            .is_some_and(|guard| matches!(locals[guard.bind.0].ty.kind(), TypeKind::Class(..)))
-    }
-
     /// The type of the place as a value: a `?.` of its root field makes it an optional.
     pub(super) fn value_ty(&self) -> Option<Type> {
         self.ty.map(|ty| {
@@ -296,6 +289,12 @@ impl CheckedPlace {
 }
 
 impl Checker<'_> {
+    /// Whether the `?.` of `place` takes a class object out of its optional.
+    pub(super) fn guards_class(&self, place: &CheckedPlace) -> bool {
+        (place.guard.as_ref())
+            .is_some_and(|guard| matches!(self.local_type(guard.bind).kind(), TypeKind::Class(..)))
+    }
+
     /// `target = value`; a root that cannot be written is reported, and `value` still checked.
     pub(super) fn assign(
         &mut self,
@@ -615,10 +614,7 @@ impl Checker<'_> {
             let reported = self.error(d);
             // A `?.` on a struct value held the report of its write, which is the only one.
             if let Some(guard) = &place.guard
-                && matches!(
-                    self.body.locals[guard.bind.0].ty.kind(),
-                    TypeKind::Struct(..)
-                )
+                && matches!(self.local_type(guard.bind).kind(), TypeKind::Struct(..))
             {
                 return Err(Poisoned::new(type_of(&read), reported));
             }
@@ -949,7 +945,8 @@ impl Checker<'_> {
         }
         // A `char` has no arithmetic, and a rewrite of the statement would break the
         // assignment: `target` stands for the value, which `assign` accepts.
-        if self.lookup(name).is_some_and(|b| b.ty == Some(Type::CHAR)) {
+        let local_ty = self.lookup(name).and_then(|b| b.ty);
+        if local_ty.map(|ty| self.resolve_local(ty)) == Some(Type::CHAR) {
             self.char_compound(op_span, value);
             return self.assign(span, target, target);
         }
@@ -1159,6 +1156,11 @@ impl Checker<'_> {
         name: Symbol,
         change: Change,
     ) -> CheckedPlace {
+        #[expect(
+            unused_variables,
+            reason = "a use settles an open `let` in the second part of body inference stage 2"
+        )]
+        let use_ = Use::of_change(change);
         // A `push` stamps by the rule of `push_receiver`.
         let stamp = (!change.holds()).then(|| self.write_stamp());
         let Some(b) = self.lookup(name) else {
@@ -1196,6 +1198,8 @@ impl Checker<'_> {
         let (local, ty) = (b.local, b.ty);
         let shown = b.shown.clone();
         let cause = binding_cause(b);
+        let ty = self.close_let(name, local, ty);
+        let ty = ty.map(|ty| self.resolve_local(ty));
         let ((held, forbidden), refused) = match cause {
             Some(cause) if change == Change::MutArg => ((None, None), Some(cause)),
             Some(cause) => (self.forbid(change, name.to_string(), span, cause), None),
@@ -1328,10 +1332,7 @@ impl Checker<'_> {
                 Some(guard),
                 Some(TypeKind::Array(_)),
             ) if self.one_line(object.span)
-                && matches!(
-                    self.body.locals[guard.bind.0].ty.kind(),
-                    TypeKind::Class(..)
-                ) =>
+                && matches!(self.local_type(guard.bind).kind(), TypeKind::Class(..)) =>
             {
                 UnwrapHelp::Object(self.source.text(object.span).to_string())
             }
@@ -1366,7 +1367,7 @@ impl Checker<'_> {
                         if change == Change::Push
                             && inner.held.is_some()
                             && inner.guard.is_some()
-                            && !inner.guards_class(&self.body.locals)
+                            && !self.guards_class(&inner)
                             && (matches!(payload(e).kind(), TypeKind::Array(_))
                                 || self.finds_mut_self(innermost(e), Symbol::intern("push"))) =>
                     {
@@ -1467,7 +1468,7 @@ impl Checker<'_> {
             std::mem::replace(&mut self.body.quiet, quiet),
             std::mem::replace(&mut self.body.write_chain, chain),
         );
-        let checked = self.value(base, Expectation::None);
+        let checked = self.value_as(base, Use::of_change(change));
         (self.body.indexed, self.body.quiet, self.body.write_chain) = outer;
         // A `?.` on a base that failed, such as the `?.` of a write before it, reports nothing
         // more.
@@ -1821,7 +1822,7 @@ impl Checker<'_> {
         else {
             return None;
         };
-        if !matches!(self.body.locals[bind.0].ty.kind(), TypeKind::Class(..)) {
+        if !matches!(self.local_type(*bind).kind(), TypeKind::Class(..)) {
             return None;
         }
         Some(match &base.kind {
@@ -2155,7 +2156,7 @@ impl Checker<'_> {
                 }
             }
             &ast::ExprKind::Name(name) => (self.binding(name).and_then(|b| b.ty))
-                .map(|ty| (StructRoot::Binding(name), ty))
+                .map(|ty| (StructRoot::Binding(name), self.resolve_local(ty)))
                 .ok_or(WalkStop::Undecided),
             ast::ExprKind::SelfValue => match self.body.self_type.known() {
                 Some(ty) if is_struct(ty) => Ok((StructRoot::SelfValue, ty)),
@@ -2196,7 +2197,7 @@ impl Checker<'_> {
             }
             &ast::ExprKind::Name(name) => {
                 let b = self.binding(name)?;
-                Some((b.kind == BindingKind::Var, b.ty?))
+                Some((b.kind == BindingKind::Var, self.resolve_local(b.ty?)))
             }
             _ => None,
         }
@@ -2233,7 +2234,7 @@ impl Checker<'_> {
     /// The value `place` holds, read at `span`.
     pub(super) fn read(&self, place: tir::Place, span: Span) -> tir::Expr {
         let (kind, ty) = match place {
-            tir::Place::Local(id) => (ExprKind::Local(id), self.body.locals[id.0].ty),
+            tir::Place::Local(id) => (ExprKind::Local(id), self.local_type(id)),
             tir::Place::Field { base, index } => {
                 let ty = self.field_type(base.ty, index).expect(
                     "a place whose type is known should not be a field whose type is `Error`",

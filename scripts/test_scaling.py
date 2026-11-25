@@ -698,6 +698,8 @@ class ScalingTest(unittest.TestCase):
             ("coalesce depth to an optional", 15),
             ("open call chain", 24),
             ("unannotated array with None", 1000),
+            ("open let chain", 250),
+            ("open pair nest", 24),
         ]
         self.assertEqual([(name, n) for name, (n, _) in sc.SHAPES.items()], sizes)
 
@@ -778,6 +780,8 @@ class ScalingTest(unittest.TestCase):
             "coalesce depth to an optional": (lambda t: t.count("Some(1) ??"), 0),
             "open call chain": (lambda t: line(t, "let x").count("id("), 1),
             "unannotated array with None": (lambda t: line(t, "let a").count("x, "), 1),
+            "open let chain": (lambda t: t.count("let "), 1),
+            "open pair nest": (lambda t: depth(line(t, "let v"), "(", ")"), 1),
         }
         self.assertEqual(list(parts), list(sc.SHAPES))
         for name, (_, make) in sc.SHAPES.items():
