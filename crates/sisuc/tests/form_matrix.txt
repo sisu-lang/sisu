@@ -547,6 +547,12 @@ self
 olp()
 # An optional of a type parameter bound by `Km`, which requires `mut self`.
 w
+# Two classes that share `Named`, in an `if` and in an array: their join fails without a type
+# annotation.
+if c { Cat() } else { Fox() }
+[Cat(), Fox()]
+# A bare call of a method that two interfaces answer (`Tw` conforms to `Lb` and `Cd`).
+Tw().name()
 # Values that end in an open range, which can end an expression but not a line: a line break after
 # `..` or `..=` does not end the statement (`can_end_statement`, `lexer/mod.rs`), so the next line
 # can become the end of the range.
