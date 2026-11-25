@@ -180,7 +180,7 @@ fn main() {
 The examples use `fn pick<T>(a: T, b: T) -> T`, `fn h<T>(a: T, b: T?) -> T` and `fn opt<T>(x: T) -> T?`.
 
 - The arguments at the places of one type parameter are a [join](expressions.md#joins). A call decides each type parameter from its own arguments first. Its result then converts to the type that the context asks for at its top only, and wraps at most once ([ADR 0052](../adr/0052-a-join-takes-the-type-of-one-of-its-members.md)).
-- When the result does not convert, the call can take the part of the context type at the place of `T` in its return type. This applies to a call that is a member of a join, or a value under an expected type. Each argument at a place of `T` must then convert to that part. Else the call is an error. [E0032](../diagnostics/E0032.md)
+- When the result does not convert, the call can take the part of the context type at the place of `T` in its return type. This applies to a call that is a member of a join, or a value under an expected type. Each argument at a place of `T` must then convert to that part, or have that exact type for a `mut` argument. Else the call is an error ([E0032](../diagnostics/E0032.md), or [E0170](../diagnostics/E0170.md) for a `mut` argument).
 - Take a generic call that is an argument at a place that names two or more type parameters of the outer call. It does not take a part of the context type. Its result must convert as it is. [E0032](../diagnostics/E0032.md)
 
 ```sisu
@@ -231,7 +231,7 @@ fn main() {
 - When an argument does not agree with the expected type, the error is at the argument. `let r: Result<i64, string> = Ok("x")` reports `"x"`: expected `i64`, found `string`. [E0032](../diagnostics/E0032.md)
 - With written type arguments, as in `id<i64>(n)`, the error is at the call.
 - When the arguments of one type parameter do not agree, the error is at the call, and it names each argument and its type. For `f<A, B>(a: A, p: Two<A, B>)`, `f("s", Two(a: 1, b: true))` reports `f`: the arguments for `A` of this call have different types, with `"s"` and `Two(a: 1, b: true)` as the two arguments.
-- When the argument has the wrong shape, the error is at the whole argument. While the parameter type names a type parameter that the call has not fixed, the error gives the shape in words. For `take<T>(xs: [T])`, `take(5)` reports `5`: expected an array, found `i64`. For a `Box<U>` parameter, it reports expected a `Box`.
+- When the argument has the wrong shape, the error is at the whole argument. For an array parameter `[T]` whose `T` the call has not fixed, `take(5)` reports `5`: expected an array, found `i64`. For a `Box<U>` parameter, it writes `_` for each open type parameter and reports expected `Box<_>`, found `i64`.
 - An optional parameter type keeps the type in the message. For `fn topt<T>(xs: [T]?)`, `topt(5)` reports expected `[_]?`, found `i64`.
 - A call that waits also keeps the type. `take(Ok(1))` reports `Ok(1)`: expected `[_]`, found `Result<i64, _>`.
 - A call that waited is an argument of the join too. For `fn mks<E>() -> Result<string, E>`, `fn mkr<X>() -> Two<i64, Two<X, bool>>` and `gn<T>(c: Two<T, Two<T, bool>>, d: Result<T, string>)`, `gn(mkr(), mks())` reports `gn`: the arguments for `T` of this call have different types.
