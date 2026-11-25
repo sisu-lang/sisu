@@ -966,6 +966,133 @@ mod tests {
         }
     }
 
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "one row of the table for each case")]
+    fn sound_fixes_should_demote_a_syntax_fix_that_removes_another_syntax_diagnostic() {
+        for (name, src, code) in [
+            (
+                "#816 fuzzer input",
+                "fn main() {\n    let xs = [1, 2, 3]\n    print(xs[:-1])\n    print(xs[-2:])\n    print(xs[1.[].:-1])\n}\n",
+                Code::FloatNeedsDigits,
+            ),
+            (
+                "two match arm commas before float missing digits",
+                "fn main() {\n    match 1 {\n        0 => 1,\n        1 => 2,\n        _ => 1.[]\n    }\n}\n",
+                Code::FloatNeedsDigits,
+            ),
+            (
+                "two struct mut fields before broken method with float missing digits",
+                "struct S {\n    mut x: i64\n    mut y: i64\n    fn f(self) { let _ = 1.[] }\n    @\n}\n",
+                Code::FloatNeedsDigits,
+            ),
+            (
+                "two format specs before float missing digits",
+                "fn main() {\n    print(\"{x:+}\")\n    print(\"{y:+}\")\n    let _ = 1.[]\n}\n",
+                Code::FloatNeedsDigits,
+            ),
+            (
+                "mixed colon slice and format spec before float missing digits",
+                "fn main() {\n    let xs = [1, 2, 3]\n    print(xs[:-1])\n    print(\"{xs:+}\")\n    let _ = 1.[]\n}\n",
+                Code::FloatNeedsDigits,
+            ),
+            (
+                "colon slice joining identifiers",
+                "fn main() {\n    let ab = 1\n    print(a[:]b)\n}",
+                Code::ForeignRange,
+            ),
+            (
+                "colon slice before call arguments",
+                "fn f(x: i64) -> i64 { x }\nfn main() {\n    print(f[:](1))\n}",
+                Code::ForeignRange,
+            ),
+            (
+                "match arm comma before leading dot call",
+                "fn main() {\n    match 1 {\n        0 => 1,\n        .to_string()\n        _ => \"3\"\n    }\n}",
+                Code::FieldComma,
+            ),
+        ] {
+            let shown = sound_fixes(src, &front_end(src).1);
+            let d = (shown.iter())
+                .find(|d| d.code() == code)
+                .unwrap_or_else(|| panic!("row `{name}`: missing {code:?}"));
+            assert_eq!(
+                fix_edits(d).map(|(safe, _)| safe),
+                Some(false),
+                "row `{name}`"
+            );
+            assert_eq!(safe_fix_breaches(src), Vec::<String>::new(), "row `{name}`");
+        }
+
+        // Removing both commas drops a second `FieldComma` beside the carrier's own.
+        let both_commas_src = "struct S {\n    x: i64,\n    y: i64,\n}\nfn main() {}";
+        let d = (front_end(both_commas_src).1.into_iter())
+            .find(|d| d.code() == Code::FieldComma)
+            .expect("row `remove both commas`: missing FieldComma")
+            .with_safe_fix_for_test(&[(Span::new(21, 34), "")]);
+        let sound = sound_fixes(both_commas_src, std::slice::from_ref(&d));
+        assert_eq!(
+            fix_edits(&sound[0]).map(|(safe, _)| safe),
+            Some(false),
+            "row `remove both commas`"
+        );
+
+        for (name, src, code) in [
+            (
+                "two struct commas before 123 keep both fixes safe",
+                "struct S {\n    x: i64,\n    y: i64,\n    123\n}\nfn main() {}",
+                Code::FieldComma,
+            ),
+            (
+                "two struct mut fields before 123 keep both fixes safe",
+                "struct S {\n    mut x: i64\n    mut y: i64\n    123\n}\nfn main() {}",
+                Code::StructFieldMut,
+            ),
+        ] {
+            let shown = sound_fixes(src, &front_end(src).1);
+            let matching: Vec<_> = shown.iter().filter(|d| d.code() == code).collect();
+            assert_eq!(matching.len(), 2, "row `{name}`");
+            for (idx, d) in matching.iter().enumerate() {
+                assert_eq!(
+                    fix_edits(d).map(|(safe, _)| safe),
+                    Some(true),
+                    "row `{name}` fix {idx}"
+                );
+            }
+            assert_eq!(safe_fix_breaches(src), Vec::<String>::new(), "row `{name}`");
+        }
+
+        let unchanged_src = "fn main() {\n    let xs = [1, 2, 3]\n    print(xs[:])\n    print(xs[:-1])\n    let = 2\n}";
+        let shown = sound_fixes(unchanged_src, &front_end(unchanged_src).1);
+        let d = (shown.iter())
+            .find(|d| {
+                d.code() == Code::ForeignRange
+                    && line_col(unchanged_src, d.span().start()) == (3, 14)
+            })
+            .expect("row `whole colon slice stays safe, unchanged`: missing ForeignRange at 3:14");
+        assert_eq!(
+            fix_edits(d).map(|(safe, _)| safe),
+            Some(true),
+            "row `whole colon slice stays safe, unchanged`"
+        );
+        assert_eq!(
+            safe_fix_breaches(unchanged_src),
+            Vec::<String>::new(),
+            "row `whole colon slice stays safe, unchanged`"
+        );
+
+        let bracket_src = "fn main() {\n    (\n}\n";
+        let d = (front_end(bracket_src).1.into_iter())
+            .find(|d| d.code() == Code::UnexpectedClosingBracket)
+            .expect("row `bracket fix resolves bracket error, unchanged`: missing bracket error")
+            .with_safe_fix_for_test(&[(Span::new(16, 17), "")]);
+        let sound = sound_fixes(bracket_src, std::slice::from_ref(&d));
+        assert_eq!(
+            fix_edits(&sound[0]).map(|(safe, _)| safe),
+            Some(true),
+            "row `bracket fix resolves bracket error, unchanged`"
+        );
+    }
+
     /// The W0007 diagnostics among `ds`.
     fn semicolons(ds: &[Diagnostic]) -> Vec<&Diagnostic> {
         (ds.iter())
@@ -1858,9 +1985,10 @@ fn main() {
     /// A bad spec is reported once and breaks nothing around it; a spec that a `"` cuts off is
     /// not read, and the unclosed literal is its function's one error.
     #[test]
-    fn format_spec_recovery() {
+    fn format_spec_recovery_should_report_bad_specs_and_later_errors() {
         use Code::{
-            EmptyInterpolation, Expected, LiteralNotClosed, Mismatch, UnsupportedFormatSpec,
+            EmptyInterpolation, Expected, FieldLet, LiteralNotClosed, Mismatch,
+            UnsupportedFormatSpec,
         };
         for (src, expected) in [
             (
@@ -1887,10 +2015,10 @@ fn main() {
                     (UnsupportedFormatSpec, (4, 21)),
                 ],
             ),
-            // An item that another error breaks reports its earliest error, a spec's included.
+            // An item that a later parse error breaks keeps the spec error as well.
             (
                 "fn main() {\n    let x = 1\n    print(\"{x:+}\")\n    let = 2\n}\n",
-                vec![(UnsupportedFormatSpec, (3, 14))],
+                vec![(UnsupportedFormatSpec, (3, 14)), (Expected, (4, 9))],
             ),
             (
                 "fn main() {\n    let = 2\n    print(\"{2:+}\")\n}\n",
@@ -1898,7 +2026,7 @@ fn main() {
             ),
             (
                 "class A {\n    fn m(self) {\n        print(\"{1:+}\")\n    }\n    let n = 1\n}\nfn main() {}\n",
-                vec![(UnsupportedFormatSpec, (3, 18))],
+                vec![(UnsupportedFormatSpec, (3, 18)), (FieldLet, (5, 5))],
             ),
         ] {
             assert_eq!(codes(src), expected, "{src}");

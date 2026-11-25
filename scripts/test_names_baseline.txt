@@ -638,7 +638,6 @@ crates/sisuc/src/front_end.rs::damaged_name_stops_the_checker
 crates/sisuc/src/front_end.rs::error_before_method_name_breaks_the_class
 crates/sisuc/src/front_end.rs::field_list_error_skips_methods
 crates/sisuc/src/front_end.rs::foreign_function_is_one_error
-crates/sisuc/src/front_end.rs::format_spec_recovery
 crates/sisuc/src/front_end.rs::lexer_error_after_a_nested_block
 crates/sisuc/src/front_end.rs::lexer_error_between_members_breaks_the_class
 crates/sisuc/src/front_end.rs::lexer_error_breaks_only_its_method
