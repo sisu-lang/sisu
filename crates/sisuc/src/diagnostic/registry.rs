@@ -3336,8 +3336,8 @@ pub(crate) enum AmbiguousHelp {
         binding: String,
         ty: String,
     },
-    /// Every answer has its own result type: name each result, and offer `: <T>` fixes after
-    /// `let_name` when the call is the whole value of a `let` without a type.
+    /// Every answer has its own result type: `results` aligns 1-to-1 with `interfaces`, and
+    /// `let_name` adds `: <T>` fixes for an untyped `let`.
     Each {
         results: Vec<String>,
         let_name: Option<Span>,

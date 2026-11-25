@@ -5134,17 +5134,17 @@ fn a_read_through_an_associated_type_whose_bound_names_a_member_should_not_panic
     check_rows(&MEMBER_BOUND_ROWS);
 }
 
-/// `body` inside `main` after the S27 declarations (`Label` returning `string` and `Code`
-/// returning `i64`), with optional `extra` top-level items before `fn main`.
-fn s27_program(extra: &str, body: &str) -> String {
+/// `body` inside `main` after the ambiguous `Label` and `Code` declarations (`Label` returning
+/// `string` and `Code` returning `i64`), with optional `extra` top-level items before `fn main`.
+fn ambiguous_pick_program(extra: &str, body: &str) -> String {
     format!(
         "interface Label {{\n    fn name(self) -> string\n}}\ninterface Code {{\n    fn name(self) -> i64\n}}\nstruct S {{}}\nextend S: Label {{\n    fn name(self) -> string {{\n        \"a\"\n    }}\n}}\nextend S: Code {{\n    fn name(self) -> i64 {{\n        2\n    }}\n}}\nfn id<T>(x: T) -> T {{ x }}\nfn take(n: i64) {{}}\nfn pair<T>(a: T, b: T) {{}}\nstruct P {{\n    n: i64\n}}\n{extra}fn main() {{\n    let s = S()\n    let k: i64 = 7\n    let o: i64? = None\n    {body}\n}}"
     )
 }
 
-/// S27 declarations with custom return types (`label_ret`, `label_body`) and (`code_ret`,
-/// `code_body`) for `Label.name` and `Code.name`.
-fn s27_with_returns(
+/// Ambiguous `Label` and `Code` declarations with custom return types (`label_ret`, `label_body`)
+/// and (`code_ret`, `code_body`) for `Label.name` and `Code.name`.
+fn ambiguous_pick_with_returns(
     (label_ret, label_body): (&str, &str),
     (code_ret, code_body): (&str, &str),
     body: &str,
@@ -5158,8 +5158,8 @@ fn s27_with_returns(
 fn required_type_should_pick_as_on_main() {
     with_prelude();
     // GIVEN `Label`, `Code`, `S`, `id`, `take`, `pair`, `P`, `s`, `k`, and `o`
-    // WHEN `sisu check` runs on each S27 row with a required type or `#769` form
-    // THEN rows 1 to 12 and 20 check clean, and row 21 reports E0050 at `id`
+    // WHEN `sisu check` runs on each call with a required type or an open-argument form
+    // THEN each inferred call checks clean, and the open integer argument reports E0050 at `id`
     let valid_rows = [
         (
             "a typed let picks",
@@ -5215,17 +5215,17 @@ fn required_type_should_pick_as_on_main() {
         ("pair with k first picks", "", "pair(k, s.name())"),
         ("pair with s.name() first picks", "", "pair(s.name(), k)"),
         (
-            "the string literal form of #769 keeps main",
+            "the string literal form keeps main",
             "",
             "print(id(s.name()) == \"a\")",
         ),
     ];
     for (row, extra, body) in valid_rows {
-        clean_row(row, &s27_program(extra, body));
+        clean_row(row, &ambiguous_pick_program(extra, body));
     }
     codes_row(
-        "the integer literal form of #769 keeps E0050",
-        &s27_program("", "print(id(s.name()) == 7)"),
+        "the integer literal form keeps E0050",
+        &ambiguous_pick_program("", "print(id(s.name()) == 7)"),
         &[(Code::CannotInfer, (28, 11))],
     );
 }
@@ -5233,17 +5233,17 @@ fn required_type_should_pick_as_on_main() {
 #[test]
 fn pick_should_read_a_closed_int_as_i64() {
     // GIVEN an open `Int` local closed before a pick, or an optional beside its payload
-    // WHEN `sisu check` runs on each of S27 rows 13 to 17
+    // WHEN `sisu check` runs on each closed-integer and optional-payload call
     // THEN each row is valid and picks the matching `i64` or exact optional answer
     let rows = [
         (
             "an open Int fits only the integer answer",
-            s27_program("", "let mut q = 0\n    q = s.name()\n    print(q)"),
+            ambiguous_pick_program("", "let mut q = 0\n    q = s.name()\n    print(q)"),
             "(call S.Code.name",
         ),
         (
             "an open Int reads as i64 for the pick",
-            s27_with_returns(
+            ambiguous_pick_with_returns(
                 ("u8", "1"),
                 ("i64", "2"),
                 "let mut q = 0\n    q = s.name()\n    print(q)",
@@ -5252,7 +5252,7 @@ fn pick_should_read_a_closed_int_as_i64() {
         ),
         (
             "the exact answer picks before the payload",
-            s27_with_returns(
+            ambiguous_pick_with_returns(
                 ("i64?", "None"),
                 ("i64", "2"),
                 "let z: i64? = s.name()\n    print(z ?? 0)",
@@ -5261,12 +5261,12 @@ fn pick_should_read_a_closed_int_as_i64() {
         ),
         (
             "an open Int from a sibling argument reads as i64",
-            s27_program("", "let j = 7\n    pair(j, s.name())"),
+            ambiguous_pick_program("", "let j = 7\n    pair(j, s.name())"),
             "(call S.Code.name",
         ),
         (
             "beside_side reads an open Int as i64",
-            s27_program("", "let j = 7\n    print(id(s.name()) == j)"),
+            ambiguous_pick_program("", "let j = 7\n    print(id(s.name()) == j)"),
             "(call S.Code.name",
         ),
     ];
@@ -5315,18 +5315,19 @@ const CONVERT_THREE: &str = "interface Convert<T> {\n    fn convert(self) -> T\n
 #[test]
 fn different_results_should_name_each_answer() {
     // GIVEN ambiguous calls whose answers each have a distinct result type
-    let row_18 = s27_program("", "let x = s.name()\n    let y: i64 = x\n    print(y)");
-    let row_19 = s27_program("", "print(s.name() == k)");
-    let typed_let = s27_program("", "let b: bool = s.name()");
-    let wildcard_let = s27_program("", "let _ = s.name()");
-    let mut_let = s27_program("", "let mut m = s.name()\n    print(m)");
+    let later_use =
+        ambiguous_pick_program("", "let x = s.name()\n    let y: i64 = x\n    print(y)");
+    let join_member = ambiguous_pick_program("", "print(s.name() == k)");
+    let typed_let = ambiguous_pick_program("", "let b: bool = s.name()");
+    let wildcard_let = ambiguous_pick_program("", "let _ = s.name()");
+    let mut_let = ambiguous_pick_program("", "let mut m = s.name()\n    print(m)");
 
     // WHEN `sisu check` runs on them
     // THEN each gets E0156 with help and unsafe `: <T>` fixes only for an untyped `let`
     fix_rows(&[
         FixRow {
             id: "a later use does not pick",
-            src: row_18.clone(),
+            src: later_use.clone(),
             reports: vec![
                 Report::new(Code::Ambiguous, ("s.", "name"))
                     .help(true)
@@ -5336,7 +5337,7 @@ fn different_results_should_name_each_answer() {
         },
         FixRow {
             id: "a join member under no required type does not pick",
-            src: row_19.clone(),
+            src: join_member.clone(),
             reports: vec![Report::new(Code::Ambiguous, ("s.", "name")).help(true)],
         },
         FixRow {
@@ -5372,23 +5373,23 @@ fn different_results_should_name_each_answer() {
         },
     ]);
 
-    let x_start = let_name_pos(&row_18, "let x = ");
-    let ds_18 = assert_ambiguous_each(
-        &row_18,
+    let x_start = let_name_pos(&later_use, "let x = ");
+    let ds_later = assert_ambiguous_each(
+        &later_use,
         "name",
         "S",
         &[("Label", "string"), ("Code", "i64")],
         Some(x_start),
     );
     assert_eq!(
-        fixes(&row_18, &ds_18[0]),
+        fixes(&later_use, &ds_later[0]),
         vec![
             (false, vec![(28, 10, "", ": string".to_string())]),
             (false, vec![(28, 10, "", ": i64".to_string())]),
         ]
     );
     assert_ambiguous_each(
-        &row_19,
+        &join_member,
         "name",
         "S",
         &[("Label", "string"), ("Code", "i64")],
@@ -5455,27 +5456,27 @@ fn shared_result_should_keep_the_help_of_main() {
 #[test]
 fn safe_call_should_wrap_ambiguous_results_as_optional() {
     // GIVEN ambiguous safe calls whose answers return plain, optional, or shared result types
-    let plain_and_plain = s27_with_returns(
+    let plain_and_plain = ambiguous_pick_with_returns(
         ("string", "\"a\""),
         ("i64", "2"),
         "let c: S? = Some(s)\n    let n = c?.name()\n    print(n == None)",
     );
-    let optional_and_plain = s27_with_returns(
+    let optional_and_plain = ambiguous_pick_with_returns(
         ("string?", "None"),
         ("i64", "2"),
         "let c: S? = Some(s)\n    let n = c?.name()\n    print(n == None)",
     );
-    let optional_and_same_payload = s27_with_returns(
+    let optional_and_same_payload = ambiguous_pick_with_returns(
         ("string?", "None"),
         ("string", "\"b\""),
         "let c: S? = Some(s)\n    let n = c?.name()\n    print(n == None)",
     );
-    let typed_optional_let = s27_with_returns(
+    let typed_optional_let = ambiguous_pick_with_returns(
         ("string", "\"a\""),
         ("i64", "2"),
         "let c: S? = Some(s)\n    let b: bool? = c?.name()\n    print(b == None)",
     );
-    let bound_safe = s27_program(
+    let bound_safe = ambiguous_pick_program(
         "fn pick<T: Label & Code>(c: T?) {\n    let n = c?.name()\n    print(n == None)\n}\n",
         "",
     );
