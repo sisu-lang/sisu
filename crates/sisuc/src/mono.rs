@@ -3390,4 +3390,196 @@ mod tests {
         mono.expand();
         assert_eq!(mono.instances, 0);
     }
+
+    fn alias_chain_source(n: usize) -> String {
+        let mut src = String::from("enum P<A, B> {\n    X(A)\n    Y(B)\n}\n\n");
+        src.push_str("type A0000 = P<i64, i64>\n");
+        for i in 1..=n {
+            writeln!(src, "type A{i:04} = P<A{:04}, A{:04}>", i - 1, i - 1)
+                .expect("writing to a `String` should succeed");
+        }
+        src.push_str("type B0000<T> = P<T, T>\n");
+        for i in 1..=n {
+            writeln!(
+                src,
+                "type B{i:04}<T> = P<B{:04}<T>, B{:04}<T>>",
+                i - 1,
+                i - 1
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        writeln!(
+            src,
+            "\nclass C {{\n    v: A{n:04}\n    o: A{n:04}?\n}}\n\nenum E {{\n    V(A{n:04})\n    W([A{n:04}])\n}}\n\nenum G<T> {{\n    V(B{n:04}<T>)\n    W\n}}\n\nfn main() {{"
+        )
+        .expect("writing to a `String` should succeed");
+        src.push_str("    let a0000: A0000 = P.Y(2)\n");
+        for i in 1..=n {
+            writeln!(src, "    let a{i:04}: A{i:04} = P.X(a{:04})", i - 1)
+                .expect("writing to a `String` should succeed");
+        }
+        src.push_str("    let b0000: B0000<i64> = P.X(1)\n");
+        for i in 1..=n {
+            writeln!(src, "    let b{i:04}: B{i:04}<i64> = P.X(b{:04})", i - 1)
+                .expect("writing to a `String` should succeed");
+        }
+        writeln!(
+            src,
+            "    let c = C(v: a{n:04}, o: a{n:04})\n    let es = [E.V(a{n:04}), E.W([a{n:04}])]\n    let gs = [G.V(b{n:04}), G.W]\n    print(c.o == None)\n    print(shape(c.v))\n    for e in es {{\n        match e {{\n            E.V(x) => print(shape(x))\n            E.W(xs) => print(xs.len())\n        }}\n    }}\n    for g in gs {{\n        match g {{\n            G.V(q) => print(shape(q))\n            G.W => print(0)\n        }}\n    }}\n}}\n\nfn shape<A, B>(p: P<A, B>) -> i64 {{\n    match p {{\n        P.X(_) => 1\n        P.Y(_) => 2\n    }}\n}}"
+        )
+        .expect("writing to a `String` should succeed");
+        src
+    }
+
+    fn delimiters_balanced(name: &str) -> bool {
+        let mut stack = Vec::new();
+        for ch in name.chars() {
+            match ch {
+                '<' | '[' | '(' => stack.push(ch),
+                '>' if stack.pop() != Some('<') => return false,
+                ']' if stack.pop() != Some('[') => return false,
+                ')' if stack.pop() != Some('(') => return false,
+                _ => {}
+            }
+        }
+        stack.is_empty()
+    }
+
+    #[test]
+    fn mono_should_name_an_alias_chain_in_linear_steps() {
+        let steps = |n| {
+            let src = alias_chain_source(n);
+            let (program, diagnostics) = crate::front_end::checked(&src);
+            let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+            crate::types::WRITE_STEPS.set(0);
+            Mono::new(program)
+                .run()
+                .unwrap_or_else(|found| panic!("{found:?}"));
+            crate::types::WRITE_STEPS.get()
+        };
+        let (a, b, c) = (steps(20), steps(40), steps(60));
+        crate::mir::tests::assert_near_linear(a, b, c);
+    }
+
+    #[test]
+    fn cut_instance_names_should_reuse_cut_children_with_balanced_delimiters() {
+        let src = "enum P<A, B> {\n    X(A)\n    Y(B)\n}\nclass C<A, B> {\n    a: A\n    b: B\n}\nstruct S<A, B> {\n    a: A\n    b: B\n}\ninterface I<T> {\n    fn tag(self) -> i64\n}\nclass Box<T>: I<T> {\n    v: T\n    fn tag(self) -> i64 { 1 }\n}\ntype A0 = P<i64, i64>\ntype A1 = P<A0, A0>\ntype A2 = P<A1, A1>\ntype A3 = P<A2, A2>\ntype A4 = P<A3, A3>\ntype A5 = P<A4, A4>\ntype A6 = P<A5, A5>\nfn f<T>(x: T) -> i64 { 1 }\nfn main() {\n    let a0: A0 = P.X(1)\n    let a1: A1 = P.X(a0)\n    let a2: A2 = P.X(a1)\n    let a3: A3 = P.X(a2)\n    let a4: A4 = P.X(a3)\n    let a5: A5 = P.X(a4)\n    let a6: A6 = P.X(a5)\n    let c = C(a: a5, b: a5)\n    let s = S(a: a5, b: a5)\n    let opt: A6? = a6\n    let iface: any I<A6> = Box(v: a6)\n    let opt_iface: (any I<A6>)? = iface\n    print(f(a6) + f([a6]) + f(opt) + f(iface) + f(opt_iface) + f(c) + f(s))\n}\n";
+        let program = instantiated(src);
+        let names: Vec<&str> = program
+            .functions
+            .iter()
+            .map(|f| f.name.as_str())
+            .chain(program.classes.iter().map(|c| c.name.as_str()))
+            .chain(program.enums.iter().map(|e| e.name.as_str()))
+            .chain(program.structs.iter().map(|s| s.name.as_str()))
+            .collect();
+        for prefix in [
+            "P<P<...>, P<...>>#",
+            "C<P<...>, P<...>>#",
+            "S<P<...>, P<...>>#",
+            "f<P<...>>#",
+            "f<[P<...>]>#",
+            "f<P<...>?>#",
+            "f<any I<P<...>>>#",
+            "f<(any I<P<...>>)?>#",
+        ] {
+            assert!(
+                names.iter().any(|name| name.starts_with(prefix)),
+                "missing `{prefix}` in {names:?}"
+            );
+        }
+        let distinct: FxHashSet<&str> = names.iter().copied().collect();
+        assert_eq!(distinct.len(), names.len(), "{names:?}");
+        for name in &names {
+            assert!(delimiters_balanced(name), "unbalanced `{name}`");
+            assert_eq!(name.contains('#'), name.contains("..."), "{name}");
+        }
+    }
+
+    #[test]
+    fn method_names_should_reach_owner_and_conformance_arguments_before_naming() {
+        let conformance_steps = |n| {
+            let mut src =
+                String::from("enum P<A, B> {\n    X(A)\n    Y(B)\n}\ntype A0 = P<i64, i64>\n");
+            for i in 1..=n {
+                writeln!(src, "type A{i} = P<A{}, A{}>", i - 1, i - 1)
+                    .expect("writing to a `String` should succeed");
+            }
+            writeln!(
+                src,
+                "interface Conv<T> {{\n    fn f<U>(self, u: U) -> U\n}}\nclass C {{}}\nextend C: Conv<A{n}> {{\n    fn f<U>(self, u: U) -> U {{ u }}\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+            for i in 0..n {
+                writeln!(src, "class T{i} {{}}").expect("writing to a `String` should succeed");
+            }
+            src.push_str("fn main() {\n    let c = C()\n");
+            for i in 0..n {
+                writeln!(src, "    let _ = c.f(T{i}())")
+                    .expect("writing to a `String` should succeed");
+            }
+            src.push_str("}\n");
+            let (program, diagnostics) = crate::front_end::checked(&src);
+            let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+            crate::types::WRITE_STEPS.set(0);
+            Mono::new(program)
+                .run()
+                .unwrap_or_else(|found| panic!("{found:?}"));
+            crate::types::WRITE_STEPS.get()
+        };
+        crate::mir::tests::assert_near_linear(
+            conformance_steps(20),
+            conformance_steps(40),
+            conformance_steps(60),
+        );
+
+        let prefix = "enum P<A, B> {\n    X(A)\n    Y(B)\n}\nclass Stack<T> {\n    items: [T]\n}\nextend<T> Stack<[T]> {\n    fn flat(self) -> i64 { self.items.len() }\n}\ntype A0 = P<i64, i64>\ntype A1 = P<A0, A0>\ntype A2 = P<A1, A1>\ntype A3 = P<A2, A2>\ntype A4 = P<A3, A3>\ntype A5 = P<A4, A4>\nfn main() {\n    let a0: A0 = P.X(1)\n    let a1: A1 = P.X(a0)\n    let a2: A2 = P.X(a1)\n    let a3: A3 = P.X(a2)\n    let a4: A4 = P.X(a3)\n    let a5: A5 = P.X(a4)\n";
+        let direct = instantiated(&format!(
+            "{prefix}    print(Stack(items: [[a5]]).flat())\n}}\n"
+        ));
+        let bound = instantiated(&format!(
+            "{prefix}    let s = Stack(items: [[a5]])\n    print(s.flat())\n}}\n"
+        ));
+        let flat_name = |program: &Program| {
+            program
+                .functions
+                .iter()
+                .map(|f| f.name.as_str())
+                .find(|name| name.contains(".flat"))
+                .expect("the program should instantiate `flat`")
+                .to_owned()
+        };
+        let direct_name = flat_name(&direct);
+        let bound_name = flat_name(&bound);
+        assert_eq!(direct_name, bound_name);
+        assert!(
+            direct_name.starts_with("Stack<...>.flat#")
+                || direct_name.starts_with("Stack<[P<...>]>.flat#"),
+            "{direct_name}"
+        );
+    }
+
+    // Unchanged before and after the fix: a non-generic long conformance argument matches the fast
+    // path.
+    #[test]
+    fn non_generic_long_conformance_arg_should_match_fast_path() {
+        let l252 = format!("L{}", "a".repeat(251));
+        let base = format!(
+            "class {l252} {{}}\ninterface Conv<T> {{\n    fn convert(self) -> i64\n}}\nclass C {{}}\nextend C: Conv<{l252}> {{\n    fn convert(self) -> i64 {{ 1 }}\n}}\nfn main() {{\n    print(C().convert())\n}}\n"
+        );
+        let with_generic = format!("fn id<T>(x: T) -> T {{ x }}\n{base}");
+        let expected = format!("C.Conv<{l252}>.convert");
+        for (row, src, fast) in [("fast", &base, true), ("mono", &with_generic, false)] {
+            let program = instantiated(src);
+            assert_eq!(program.fast_path, fast, "{row}");
+            let names = function_names(&program);
+            assert!(names.contains(&expected.as_str()), "{row}: {names:?}");
+            for name in &names {
+                assert!(
+                    !name.contains("...") && !name.contains('#'),
+                    "{row}: {name}"
+                );
+            }
+        }
+    }
 }

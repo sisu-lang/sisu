@@ -3802,6 +3802,30 @@ fn build_should_name_the_result_that_holds_an_instance_of_a_generic_enum() {
     assert!(stderr.contains(&label), "{stderr}");
 }
 
+/// GIVEN `enum P<A, B> { End; Both(A, B) }` and a chain of type aliases `A0`..`A28`
+/// WHEN a program that binds an `A28` is built with `--emit ir`
+/// THEN it exits 1 with one E0160 whose message names `P<P<...>, P<...>>#`
+#[test]
+fn e0160_should_name_cut_generic_enum_instance() {
+    let mut source =
+        String::from("enum P<A, B> {\n    End\n    Both(A, B)\n}\ntype A0 = P<i64, i64>\n");
+    for k in 1..=28 {
+        use std::fmt::Write as _;
+        writeln!(source, "type A{k} = P<A{}, A{}>", k - 1, k - 1)
+            .expect("writing to a `String` should succeed");
+    }
+    source.push_str("fn main() {\n    let x: A28 = P.End\n    print(x)\n}\n");
+    let out = run_on(
+        "payload_cut_generic_enum",
+        &source,
+        &["build", "--emit", "ir"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert_eq!(e0160_errors(&stderr), 1, "{stderr}");
+    assert!(stderr.contains("enum `P<P<...>, P<...>>#"), "{stderr}");
+}
+
 /// GIVEN a chain of 28 enums, from `E4`, whose payload is 16 bytes under 4 GiB
 /// WHEN it is built to LLVM IR
 /// THEN it exits 0 and prints the IR

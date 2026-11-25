@@ -330,6 +330,8 @@ thread_local! {
     /// The most types `Type::subst` may substitute on this thread: the one that passes it panics,
     /// so a test of a substitution that would take too many steps fails at once.
     static SUBSTITUTED_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+    /// The steps `write_steps` has popped or scanned on this thread.
+    pub(crate) static WRITE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// How many types `Type::subst` has substituted on this thread: those that name a parameter.
@@ -456,7 +458,10 @@ fn write_steps<'n>(
 ) -> bool {
     while let Some(step) = steps.pop() {
         #[cfg(test)]
-        HELD.set(HELD.get().max(steps.len() + 1));
+        {
+            HELD.set(HELD.get().max(steps.len() + 1));
+            WRITE_STEPS.set(WRITE_STEPS.get() + 1);
+        }
         let ty = match step {
             Step::Close(text) => {
                 out.push_str(text);
@@ -469,6 +474,8 @@ fn write_steps<'n>(
                 // name that ends in `.Item` or `]` still names what it began to name.
                 out.push_str("...");
                 for step in steps.iter().rev() {
+                    #[cfg(test)]
+                    WRITE_STEPS.set(WRITE_STEPS.get() + 1);
                     match step {
                         Step::Close(text) => out.push_str(text),
                         Step::Assoc(interface, k) => {
