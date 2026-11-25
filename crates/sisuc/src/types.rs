@@ -330,6 +330,8 @@ thread_local! {
     /// The most types `Type::subst` may substitute on this thread: the one that passes it panics,
     /// so a test of a substitution that would take too many steps fails at once.
     static SUBSTITUTED_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(usize::MAX) };
+    /// The steps `write_steps` has popped or scanned on this thread.
+    pub(crate) static WRITE_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// How many types `Type::subst` has substituted on this thread: those that name a parameter.
@@ -408,7 +410,17 @@ enum Step<'a> {
 /// type names still owed end it. Each level entered before the cut adds at most one closer or one
 /// name, so the text is never longer than the whole text.
 pub(crate) fn write_type<'n>(out: &mut String, ty: Type, head: impl Fn(Head) -> &'n str) -> bool {
-    write_steps(out, vec![Step::Type(ty)], head)
+    write_type_with(out, ty, head, |_| None)
+}
+
+/// Writes `ty` to `out`, reusing any `(text, cut)` pair that `named` supplies.
+fn write_type_with<'n>(
+    out: &mut String,
+    ty: Type,
+    head: impl Fn(Head) -> &'n str,
+    named: impl Fn(Type) -> Option<(&'n str, bool)>,
+) -> bool {
+    write_steps(out, vec![Step::Type(ty)], head, named)
 }
 
 /// Writes the name of a method to `out`: the type `owner` it is declared on, the interface of its
@@ -423,11 +435,23 @@ pub(crate) fn write_method<'n>(
     method: &str,
     head: impl Fn(Head) -> &'n str + Copy,
 ) -> bool {
-    let mut cut = write_type(out, owner, head);
+    write_method_with(out, owner, interface, method, head, |_| None)
+}
+
+/// Writes a method name to `out`, reusing any `(text, cut)` pair that `named` supplies.
+pub(crate) fn write_method_with<'n>(
+    out: &mut String,
+    owner: Type,
+    interface: Option<(&str, TypeArgs)>,
+    method: &str,
+    head: impl Fn(Head) -> &'n str + Copy,
+    named: impl Fn(Type) -> Option<(&'n str, bool)> + Copy,
+) -> bool {
+    let mut cut = write_type_with(out, owner, head, named);
     if let Some((name, args)) = interface {
         out.push('.');
         out.push_str(name);
-        cut |= write_args(out, args.get(), head);
+        cut |= write_args_with(out, args.get(), head, named);
     }
     out.push('.');
     out.push_str(method);
@@ -441,22 +465,40 @@ pub(crate) fn write_args<'n>(
     args: &[Type],
     head: impl Fn(Head) -> &'n str,
 ) -> bool {
+    write_args_with(out, args, head, |_| None)
+}
+
+/// Writes `<a, b>` for `args` to `out`, reusing any `(text, cut)` pair that `named` supplies.
+/// Returns whether the text was cut.
+pub(crate) fn write_args_with<'n>(
+    out: &mut String,
+    args: &[Type],
+    head: impl Fn(Head) -> &'n str,
+    named: impl Fn(Type) -> Option<(&'n str, bool)>,
+) -> bool {
     let mut steps = Vec::new();
     push_args(out, &mut steps, args);
-    write_steps(out, steps, head)
+    write_steps(out, steps, head, named)
 }
 
 /// Writes `steps` to `out`, the last first. One string grows in place, and a stack stands in for
-/// recursion: a type can nest deeper than the call stack allows. Once `out` holds `NAME_LIMIT`
-/// bytes, no type or separator follows, so the work is linear in the text, not in the type.
+/// recursion: a type can nest deeper than the call stack allows. When `named` returns
+/// `Some((head, true))`, it writes `head<...>` and marks the output cut. When `named` returns
+/// `Some((text, false))` and `text` fits in `NAME_LIMIT`, it pastes `text` without descending.
+/// Once `out` holds `NAME_LIMIT` bytes, no type or separator follows, so the work is linear in
+/// the text, not in the type.
 fn write_steps<'n>(
     out: &mut String,
     mut steps: Vec<Step<'_>>,
     head: impl Fn(Head) -> &'n str,
+    named: impl Fn(Type) -> Option<(&'n str, bool)>,
 ) -> bool {
+    let mut cut = false;
     while let Some(step) = steps.pop() {
         #[cfg(test)]
         HELD.set(HELD.get().max(steps.len() + 1));
+        #[cfg(test)]
+        WRITE_STEPS.set(WRITE_STEPS.get() + 1);
         let ty = match step {
             Step::Close(text) => {
                 out.push_str(text);
@@ -469,6 +511,8 @@ fn write_steps<'n>(
                 // name that ends in `.Item` or `]` still names what it began to name.
                 out.push_str("...");
                 for step in steps.iter().rev() {
+                    #[cfg(test)]
+                    WRITE_STEPS.set(WRITE_STEPS.get() + 1);
                     match step {
                         Step::Close(text) => out.push_str(text),
                         Step::Assoc(interface, k) => {
@@ -492,6 +536,17 @@ fn write_steps<'n>(
             }
             Step::Type(ty) => ty,
         };
+        if let Some((text, is_cut)) = named(ty) {
+            if is_cut {
+                out.push_str(text);
+                out.push_str("<...>");
+                cut = true;
+                continue;
+            } else if out.len() + text.len() <= NAME_LIMIT {
+                out.push_str(text);
+                continue;
+            }
+        }
         let args = match ty.kind() {
             TypeKind::Class(id, args) => {
                 out.push_str(head(Head::Class(id)));
@@ -542,7 +597,7 @@ fn write_steps<'n>(
         };
         push_args(out, &mut steps, args.get());
     }
-    false
+    cut
 }
 
 /// Writes the `<` of a nonempty `args` to `out`, and pushes the rest of `<a, b>` onto `steps`
@@ -1413,5 +1468,56 @@ mod tests {
             .join()
             .expect("the walk should not panic");
         assert_eq!(result.0, result.1);
+    }
+
+    #[test]
+    fn write_args_with_should_paste_fitting_whole_names_and_fall_through_on_overflow() {
+        let leaf = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+        let wrapped = doubled(leaf, 4);
+        let mut whole_wrapped = String::new();
+        assert!(!write_type(&mut whole_wrapped, wrapped, |_| "P"));
+        assert!(whole_wrapped.len() < NAME_LIMIT);
+
+        // Exact boundary: `prefix` + `<` + `whole_wrapped` reaches `NAME_LIMIT` without descending.
+        let prefix = "X".repeat(NAME_LIMIT - 1 - whole_wrapped.len());
+        let mut out = prefix.clone();
+        WRITE_STEPS.set(0);
+        let cut = write_args_with(
+            &mut out,
+            &[wrapped],
+            |_| "P",
+            |ty| (ty == wrapped).then_some((whole_wrapped.as_str(), false)),
+        );
+        assert!(!cut);
+        assert_eq!(out, format!("{prefix}<{whole_wrapped}>"));
+        assert_eq!(WRITE_STEPS.get(), 3);
+
+        // One byte over `NAME_LIMIT`: falls through and walks `wrapped` just like `write_args`.
+        let mut over = format!("Y{prefix}");
+        let mut plain = over.clone();
+        WRITE_STEPS.set(0);
+        let cut_with = write_args_with(
+            &mut over,
+            &[wrapped],
+            |_| "P",
+            |ty| (ty == wrapped).then_some((whole_wrapped.as_str(), false)),
+        );
+        let steps_over = WRITE_STEPS.get();
+        let cut_plain = write_args(&mut plain, &[wrapped], |_| "P");
+        assert_eq!((cut_with, over), (cut_plain, plain));
+        assert!(steps_over > 3, "{steps_over} steps");
+
+        // Cut cached child: writes `head<...>` and returns `true`.
+        let mut cut_out = String::from("C");
+        WRITE_STEPS.set(0);
+        let cut = write_args_with(
+            &mut cut_out,
+            &[wrapped],
+            |_| "P",
+            |ty| (ty == wrapped).then_some(("P", true)),
+        );
+        assert!(cut);
+        assert_eq!(cut_out, "C<P<...>>");
+        assert_eq!(WRITE_STEPS.get(), 3);
     }
 }

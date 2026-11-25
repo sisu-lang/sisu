@@ -569,7 +569,7 @@ prints each known case on stdout. It exits with code 1 when:
 
 The pull request that fixes a known case removes its row. The gaps between
 the numbers keep a row from changing between known and fixed when a change
-moves a ratio a little. `KNOWN` has 18 rows. Seven are for the shapes mut
+moves a ratio a little. `KNOWN` has 17 rows. Seven are for the shapes mut
 exits and owned exits (#502), in `mir`, `codegen` and the LLVM stages. Each
 `return` writes its own cleanup, so n exits and n values give n² statements.
 Real programs have few of these: no exit in the benchmark programs or the
@@ -594,15 +594,12 @@ fields is linear. The shape struct `==` at `-O2` passes the rule only because it
 ratios fall, from 3.1 to 2.7. Its `optimize` stage takes 1.2 billion instructions
 at 400 fields, and 48 million at 50.
 
-The last three rows are for the shapes of body inference. Open pair nest
+The last two rows are for the shapes of body inference. Open pair nest
 (#686) nests generic `Pair` structs, so its `codegen` grows for the same
 `StructType::checkBody` reason as struct paths while `check` stays linear.
 The else-if chain with a result type (#765) is a function whose body is a
 chain of `else if`. Its `optimize` stage grows with the nested chain, in
-LLVM's `PromotePass`, and `main` gives the same counts. The alias chain
-(#766) is in `mono`. Its ratio is near the limit on `main` too (2.21 at 8n).
-The branch counts a quarter of the instructions of `main` on this shape, so
-the ratio crosses 2.3.
+LLVM's `PromotePass`, and `main` gives the same counts.
 
 Each `tir::Expr` holds its exit flag. The checker sets it once, when it makes
 the expression. So array literal depth (#344), type depth, method chain,

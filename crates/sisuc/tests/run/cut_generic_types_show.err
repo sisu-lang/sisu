@@ -1,0 +1,99 @@
+cut_generic_types_show.sisu:54:17: p6 = P<P<...>, P<...>>#6(
+    a: P<P<P<P<P<P<i64, i64>, P<i64, i64>>, P<P<i64, i64>, P<i64, i64>>>, P<P<P<i64, i64>, P<i64, i64>>, P<P<i64, i64>, P<i64, i64>>>>, P<P<P<P<i64, i64>, P<i64, i64>>, P<P<i64, i64>, P<i64, i64>>>, P<P<P<i64, i64>, P<i64, i64>>, P<P<i64, i64>, P<i64, i64>>>>>, P<...>>#5,
+    b: P<P<P<P<P<P<i64, i64>, P<i64, i64>>, P<P<i64, i64>, P<i64, i64>>>, P<P<P<i64, i64>, P<i64, i64>>, P<P<i64, i64>, P<i64, i64>>>>, P<P<P<P<i64, i64>, P<i64, i64>>, P<P<i64, i64>, P<i64, i64>>>, P<P<P<i64, i64>, P<i64, i64>>, P<P<i64, i64>, P<i64, i64>>>>>, P<...>>#5
+)
+cut_generic_types_show.sisu:64:17: s6 = S(
+    a: S(
+        a: S(
+            a: S(
+                a: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                ),
+                b: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                )
+            ),
+            b: S(
+                a: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                ),
+                b: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                )
+            )
+        ),
+        b: S(
+            a: S(
+                a: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                ),
+                b: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                )
+            ),
+            b: S(
+                a: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                ),
+                b: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                )
+            )
+        )
+    ),
+    b: S(
+        a: S(
+            a: S(
+                a: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                ),
+                b: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                )
+            ),
+            b: S(
+                a: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                ),
+                b: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                )
+            )
+        ),
+        b: S(
+            a: S(
+                a: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                ),
+                b: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                )
+            ),
+            b: S(
+                a: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                ),
+                b: S(
+                    a: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2)),
+                    b: S(a: S(a: 1, b: 2), b: S(a: 1, b: 2))
+                )
+            )
+        )
+    )
+)
+cut_generic_types_show.sisu:75:17: e6 = Leaf

@@ -26,7 +26,7 @@ use crate::tir::{
     Conformances, Enum, EnumId, Expr, ExprKind, Field, FuncId, Function, InterfaceId, Local, Place,
     Program, Stmt, Struct, StructId, Type, TypeArgs, TypeKind, head_of, layout_types,
 };
-use crate::types::{Head, write_args, write_method, write_type};
+use crate::types::{Head, write_args_with, write_method_with, write_type};
 
 #[cfg(test)]
 thread_local! {
@@ -409,7 +409,8 @@ impl Mono {
                 .expect("every non-generic function should be in place before the worklist runs");
             self.note_item(f.span);
             if f.method.is_some() {
-                f.name = self.instance_name(&f, &[], i);
+                let (owner, conformance) = self.reach_method_types(f.owner, f.conformance, &[]);
+                f.name = self.instance_name(&f, owner, conformance, &[], i);
             }
             self.function(&mut f, &[]);
             self.functions[i] = Some(f);
@@ -825,29 +826,100 @@ impl Mono {
         }
     }
 
-    /// The name of the instance `id` of the function `decl`, with the concrete checked `args`. A
-    /// method is written from its owner type, the interface of its conformance block and its
-    /// bare name (`write_method`), then its own arguments: `Stack<i64>.top`,
-    /// `Pair<Circle>.Same.same`, `Stack<[i64]>.flat`. It writes the checked types, because an
-    /// output type's head is a whole instance name. A name cut at `NAME_LIMIT` in any part ends
-    /// in `#id`, so it stays distinct.
-    fn instance_name(&self, decl: &Function, args: &[Type], id: usize) -> String {
+    /// The finished name of an already-named generic class, enum or struct instance. Returns
+    /// `(head, true)` when the name was cut (`#id`), and `(name, false)` when it is whole.
+    fn named(&self, ty: Type) -> Option<(&str, bool)> {
+        let (name, head) = match ty.kind() {
+            TypeKind::Class(id, args) if args != TypeArgs::NONE => {
+                let out = self.class_ids.get(&(id, args))?;
+                (self.out.classes[out.0].name.as_str(), Head::Class(id))
+            }
+            TypeKind::Enum(id, args) if args != TypeArgs::NONE => {
+                let out = self.enum_ids.get(&(id, args))?;
+                (self.out.enums[out.0].name.as_str(), Head::Enum(id))
+            }
+            TypeKind::Struct(id, args) if args != TypeArgs::NONE => {
+                let out = self.struct_ids.get(&(id, args))?;
+                (self.out.structs[out.0].name.as_str(), Head::Struct(id))
+            }
+            TypeKind::Class(..)
+            | TypeKind::Enum(..)
+            | TypeKind::Struct(..)
+            | TypeKind::Any(..)
+            | TypeKind::Array(_)
+            | TypeKind::Optional(_)
+            | TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Param(..)
+            | TypeKind::Assoc(..) => return None,
+            TypeKind::Infer(_) => {
+                unreachable!("the checker's write_back should leave no inference variable")
+            }
+        };
+        // A cut name always ends in `#<usize>` (at most 21 bytes on 64-bit), and `#` cannot occur
+        // in an identifier.
+        if name.bytes().rev().take(21).any(|b| b == b'#') {
+            Some((self.head(head), true))
+        } else {
+            Some((name, false))
+        }
+    }
+
+    /// Substitutes a method's `owner` and `conformance` arguments with `args`, and reaches each
+    /// generic instance inside them before `instance_name` names the method.
+    fn reach_method_types(
+        &mut self,
+        owner: Option<Type>,
+        conformance: Option<(InterfaceId, TypeArgs)>,
+        args: &[Type],
+    ) -> (Option<Type>, Option<(InterfaceId, TypeArgs)>) {
+        let owner = owner.map(|ty| {
+            let ty = self.subst(ty, args);
+            self.output(ty);
+            ty
+        });
+        let conformance = conformance.map(|(interface, args_of)| {
+            let args_of = self.subst_args(args_of, args);
+            self.reach(args_of.get());
+            (interface, args_of)
+        });
+        (owner, conformance)
+    }
+
+    /// The name of the instance `id` of the function `decl`, with the concrete checked `args` and
+    /// already-substituted `owner` and `conformance`. A method is written from its owner type,
+    /// the interface of its conformance block and its bare name (`write_method_with`), then its
+    /// own arguments: `Stack<i64>.top`, `Pair<Circle>.Same.same`, `Stack<[i64]>.flat`. It reuses
+    /// already-named generic instances via `named`. A name cut at `NAME_LIMIT` or holding a cut
+    /// child ends in `#id`, so it stays distinct.
+    fn instance_name(
+        &self,
+        decl: &Function,
+        owner: Option<Type>,
+        conformance: Option<(InterfaceId, TypeArgs)>,
+        args: &[Type],
+        id: usize,
+    ) -> String {
         let head = |head| self.head(head);
+        let named = |ty| self.named(ty);
         let mut out = String::new();
-        let (own, mut cut) = if let (Some(method), Some(owner)) = (&decl.method, decl.owner) {
-            let interface = decl.conformance.map(|(interface, args_of)| {
-                (
-                    self.out.interfaces[interface.0].name.as_str(),
-                    self.subst_args(args_of, args),
-                )
+        let (own, mut cut) = if let (Some(method), Some(owner)) = (&decl.method, owner) {
+            let interface = conformance.map(|(interface, args_of)| {
+                (self.out.interfaces[interface.0].name.as_str(), args_of)
             });
-            let cut = write_method(&mut out, self.subst(owner, args), interface, method, head);
+            let cut = write_method_with(&mut out, owner, interface, method, head, named);
             (&args[decl.owner_params..], cut)
         } else {
             out.push_str(&decl.name);
             (args, false)
         };
-        cut |= write_args(&mut out, own, head);
+        cut |= write_args_with(&mut out, own, head, named);
         if cut {
             // `#` cannot occur in an identifier, so a cut name never meets a whole one.
             out.push('#');
@@ -857,11 +929,11 @@ impl Mono {
     }
 
     /// The name of the instance `id` of the class or enum `name`, with the concrete checked
-    /// `args`, written as a program writes it: `Stack<i64>`. A name cut at `NAME_LIMIT` ends in
-    /// `#id`.
+    /// `args`, written as a program writes it: `Stack<i64>`. A name cut at `NAME_LIMIT` or holding
+    /// a cut child ends in `#id`.
     fn type_instance_name(&self, name: &str, args: &[Type], id: usize) -> String {
         let mut out = name.to_string();
-        if write_args(&mut out, args, |head| self.head(head)) {
+        if write_args_with(&mut out, args, |head| self.head(head), |ty| self.named(ty)) {
             out.push('#');
             out.push_str(&id.to_string());
         }
@@ -1008,11 +1080,18 @@ impl Mono {
             return done;
         }
         self.reach(args.get());
+        let (owner, conformance) = {
+            let decl = self.decls[id.0]
+                .as_ref()
+                .expect("a function reached with arguments should be generic or the prelude's");
+            (decl.owner, decl.conformance)
+        };
+        let (owner, conformance) = self.reach_method_types(owner, conformance, args.get());
         let done = FuncId(self.functions.len());
         let decl = self.decls[id.0]
             .as_ref()
             .expect("a function reached with arguments should be generic or the prelude's");
-        let name = self.instance_name(decl, args.get(), done.0);
+        let name = self.instance_name(decl, owner, conformance, args.get(), done.0);
         self.first_mut.push(first_mut(decl));
         self.functions.push(None);
         self.instances += 1;
@@ -3389,5 +3468,194 @@ mod tests {
         let mut mono = mono_with_limit("fn main() {}\n", 0);
         mono.expand();
         assert_eq!(mono.instances, 0);
+    }
+
+    fn alias_chain_source(n: usize) -> String {
+        let mut src = String::from("enum P<A, B> {\n    X(A)\n    Y(B)\n}\n\n");
+        src.push_str("type A0000 = P<i64, i64>\n");
+        for i in 1..=n {
+            writeln!(src, "type A{i:04} = P<A{:04}, A{:04}>", i - 1, i - 1)
+                .expect("writing to a `String` should succeed");
+        }
+        src.push_str("type B0000<T> = P<T, T>\n");
+        for i in 1..=n {
+            writeln!(
+                src,
+                "type B{i:04}<T> = P<B{:04}<T>, B{:04}<T>>",
+                i - 1,
+                i - 1
+            )
+            .expect("writing to a `String` should succeed");
+        }
+        writeln!(
+            src,
+            "\nclass C {{\n    v: A{n:04}\n    o: A{n:04}?\n}}\n\nenum E {{\n    V(A{n:04})\n    W([A{n:04}])\n}}\n\nenum G<T> {{\n    V(B{n:04}<T>)\n    W\n}}\n\nfn main() {{"
+        )
+        .expect("writing to a `String` should succeed");
+        src.push_str("    let a0000: A0000 = P.Y(2)\n");
+        for i in 1..=n {
+            writeln!(src, "    let a{i:04}: A{i:04} = P.X(a{:04})", i - 1)
+                .expect("writing to a `String` should succeed");
+        }
+        src.push_str("    let b0000: B0000<i64> = P.X(1)\n");
+        for i in 1..=n {
+            writeln!(src, "    let b{i:04}: B{i:04}<i64> = P.X(b{:04})", i - 1)
+                .expect("writing to a `String` should succeed");
+        }
+        writeln!(
+            src,
+            "    let c = C(v: a{n:04}, o: a{n:04})\n    let es = [E.V(a{n:04}), E.W([a{n:04}])]\n    let gs = [G.V(b{n:04}), G.W]\n    print(c.o == None)\n    print(shape(c.v))\n    for e in es {{\n        match e {{\n            E.V(x) => print(shape(x))\n            E.W(xs) => print(xs.len())\n        }}\n    }}\n    for g in gs {{\n        match g {{\n            G.V(q) => print(shape(q))\n            G.W => print(0)\n        }}\n    }}\n}}\n\nfn shape<A, B>(p: P<A, B>) -> i64 {{\n    match p {{\n        P.X(_) => 1\n        P.Y(_) => 2\n    }}\n}}"
+        )
+        .expect("writing to a `String` should succeed");
+        src
+    }
+
+    fn delimiters_balanced(name: &str) -> bool {
+        let mut stack = Vec::new();
+        for ch in name.chars() {
+            match ch {
+                '<' | '[' | '(' => stack.push(ch),
+                '>' if stack.pop() != Some('<') => return false,
+                ']' if stack.pop() != Some('[') => return false,
+                ')' if stack.pop() != Some('(') => return false,
+                _ => {}
+            }
+        }
+        stack.is_empty()
+    }
+
+    #[test]
+    fn mono_should_name_an_alias_chain_in_linear_steps() {
+        let steps = |n| {
+            let src = alias_chain_source(n);
+            let (program, diagnostics) = crate::front_end::checked(&src);
+            let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+            crate::types::WRITE_STEPS.set(0);
+            Mono::new(program)
+                .run()
+                .unwrap_or_else(|found| panic!("{found:?}"));
+            crate::types::WRITE_STEPS.get()
+        };
+        let (a, b, c) = (steps(20), steps(40), steps(60));
+        crate::mir::tests::assert_near_linear(a, b, c);
+    }
+
+    #[test]
+    fn cut_instance_names_should_reuse_cut_children_with_balanced_delimiters() {
+        let src = "enum P<A, B> {\n    X(A)\n    Y(B)\n}\nclass C<A, B> {\n    a: A\n    b: B\n}\nstruct S<A, B> {\n    a: A\n    b: B\n}\ninterface I<T> {\n    fn tag(self) -> i64\n}\nclass Box<T>: I<T> {\n    v: T\n    fn tag(self) -> i64 { 1 }\n}\ntype A0 = P<i64, i64>\ntype A1 = P<A0, A0>\ntype A2 = P<A1, A1>\ntype A3 = P<A2, A2>\ntype A4 = P<A3, A3>\ntype A5 = P<A4, A4>\ntype A6 = P<A5, A5>\nfn f<T>(x: T) -> i64 { 1 }\nfn main() {\n    let a0: A0 = P.X(1)\n    let a1: A1 = P.X(a0)\n    let a2: A2 = P.X(a1)\n    let a3: A3 = P.X(a2)\n    let a4: A4 = P.X(a3)\n    let a5: A5 = P.X(a4)\n    let a6: A6 = P.X(a5)\n    let c = C(a: a5, b: a5)\n    let s = S(a: a5, b: a5)\n    let opt: A6? = a6\n    let iface: any I<A6> = Box(v: a6)\n    let opt_iface: (any I<A6>)? = iface\n    print(f(a6) + f([a6]) + f(opt) + f(iface) + f(opt_iface) + f(c) + f(s))\n}\n";
+        let program = instantiated(src);
+        let names: Vec<&str> = program
+            .functions
+            .iter()
+            .map(|f| f.name.as_str())
+            .chain(program.classes.iter().map(|c| c.name.as_str()))
+            .chain(program.enums.iter().map(|e| e.name.as_str()))
+            .chain(program.structs.iter().map(|s| s.name.as_str()))
+            .collect();
+        for prefix in [
+            "P<P<...>, P<...>>#",
+            "C<P<...>, P<...>>#",
+            "S<P<...>, P<...>>#",
+            "f<P<...>>#",
+            "f<C<...>>#",
+            "f<S<...>>#",
+            "f<[P<...>]>#",
+            "f<P<...>?>#",
+            "f<any I<P<...>>>#",
+            "f<(any I<P<...>>)?>#",
+        ] {
+            assert!(
+                names.iter().any(|name| name.starts_with(prefix)),
+                "missing `{prefix}` in {names:?}"
+            );
+        }
+        let distinct: FxHashSet<&str> = names.iter().copied().collect();
+        assert_eq!(distinct.len(), names.len(), "{names:?}");
+        for name in &names {
+            assert!(delimiters_balanced(name), "unbalanced `{name}`");
+            assert_eq!(name.contains('#'), name.contains("..."), "{name}");
+        }
+    }
+
+    #[test]
+    fn method_names_should_reach_owner_and_conformance_arguments_before_naming() {
+        let conformance_steps = |n| {
+            let mut src =
+                String::from("enum P<A, B> {\n    X(A)\n    Y(B)\n}\ntype A0 = P<i64, i64>\n");
+            for i in 1..=n {
+                writeln!(src, "type A{i} = P<A{}, A{}>", i - 1, i - 1)
+                    .expect("writing to a `String` should succeed");
+            }
+            writeln!(
+                src,
+                "interface Conv<T> {{\n    fn f<U>(self, u: U) -> U\n}}\nclass C {{}}\nextend C: Conv<A{n}> {{\n    fn f<U>(self, u: U) -> U {{ u }}\n}}"
+            )
+            .expect("writing to a `String` should succeed");
+            for i in 0..n {
+                writeln!(src, "class T{i} {{}}").expect("writing to a `String` should succeed");
+            }
+            src.push_str("fn main() {\n    let c = C()\n");
+            for i in 0..n {
+                writeln!(src, "    let _ = c.f(T{i}())")
+                    .expect("writing to a `String` should succeed");
+            }
+            src.push_str("}\n");
+            let (program, diagnostics) = crate::front_end::checked(&src);
+            let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+            crate::types::WRITE_STEPS.set(0);
+            Mono::new(program)
+                .run()
+                .unwrap_or_else(|found| panic!("{found:?}"));
+            crate::types::WRITE_STEPS.get()
+        };
+        crate::mir::tests::assert_near_linear(
+            conformance_steps(20),
+            conformance_steps(40),
+            conformance_steps(60),
+        );
+
+        let prefix = "enum P<A, B> {\n    X(A)\n    Y(B)\n}\nclass Stack<T> {\n    items: [T]\n}\nextend<T> Stack<[T]> {\n    fn flat(self) -> i64 { self.items.len() }\n}\ntype A0 = P<i64, i64>\ntype A1 = P<A0, A0>\ntype A2 = P<A1, A1>\ntype A3 = P<A2, A2>\ntype A4 = P<A3, A3>\ntype A5 = P<A4, A4>\nfn main() {\n    let a0: A0 = P.X(1)\n    let a1: A1 = P.X(a0)\n    let a2: A2 = P.X(a1)\n    let a3: A3 = P.X(a2)\n    let a4: A4 = P.X(a3)\n    let a5: A5 = P.X(a4)\n";
+        let direct = instantiated(&format!(
+            "{prefix}    print(Stack(items: [[a5]]).flat())\n}}\n"
+        ));
+        let bound = instantiated(&format!(
+            "{prefix}    let s = Stack(items: [[a5]])\n    print(s.flat())\n}}\n"
+        ));
+        let flat_name = |program: &Program| {
+            program
+                .functions
+                .iter()
+                .map(|f| f.name.as_str())
+                .find(|name| name.contains(".flat"))
+                .expect("the program should instantiate `flat`")
+                .to_owned()
+        };
+        let direct_name = flat_name(&direct);
+        let bound_name = flat_name(&bound);
+        assert_eq!(direct_name, bound_name);
+        assert!(direct_name.starts_with("Stack<...>.flat#"), "{direct_name}");
+    }
+
+    // A non-generic long conformance argument keeps its whole name, matching the fast path.
+    #[test]
+    fn non_generic_long_conformance_arg_should_match_fast_path() {
+        let l252 = format!("L{}", "a".repeat(251));
+        let base = format!(
+            "class {l252} {{}}\ninterface Conv<T> {{\n    fn convert(self) -> i64\n}}\nclass C {{}}\nextend C: Conv<{l252}> {{\n    fn convert(self) -> i64 {{ 1 }}\n}}\nfn main() {{\n    print(C().convert())\n}}\n"
+        );
+        let with_generic = format!("fn id<T>(x: T) -> T {{ x }}\n{base}");
+        let expected = format!("C.Conv<{l252}>.convert");
+        for (row, src, fast) in [("fast", &base, true), ("mono", &with_generic, false)] {
+            let program = instantiated(src);
+            assert_eq!(program.fast_path, fast, "{row}");
+            let names = function_names(&program);
+            assert!(names.contains(&expected.as_str()), "{row}: {names:?}");
+            for name in &names {
+                assert!(
+                    !name.contains("...") && !name.contains('#'),
+                    "{row}: {name}"
+                );
+            }
+        }
     }
 }
