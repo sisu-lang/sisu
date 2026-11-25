@@ -979,22 +979,12 @@ struct ClosureIndex {
 type LeafKey = (Type, tir::InterfaceId, TypeArgs);
 type LeafAnswers = FxHashMap<LeafKey, Option<Type>>;
 
-/// A `let` without a type whose value keeps its inference variables open until the first read or
-/// write of the local (see `Checker::close_let`). It keeps what the E0050 of `main` needs there.
-struct BridgeLet {
-    /// The span of the value.
-    value: Span,
-    /// The type of the value, which holds the open variables.
-    ty: Type,
-    /// The name of the local, and whether the `let` writes `mut`: the E0050 of a whole literal
-    /// writes them in its help.
-    name: Symbol,
-    mutable: bool,
-    /// The literal, when the value is a whole `None` or `[]`: its E0050 gets a help from a use.
-    literal: Option<Literal>,
-    /// The E0050s that the close will write. Until the first use, nothing reaches the variables
-    /// of the value, so the count is known at the `let` (see `Checker::errors`).
-    errors: u32,
+/// A `let` without a type whose value keeps its open `Int` variables until the first read or
+/// write of the local (see `Checker::close_let`).
+#[derive(Clone, Copy)]
+pub(super) struct BridgeLet {
+    /// The type of the value, which holds the open `Int` variables.
+    pub(super) ty: Type,
 }
 
 /// The E0050 of a `None` or `[]` that a `let` initializes. A later use of the local can give the
@@ -1680,13 +1670,11 @@ impl<'src> Checker<'src> {
         let outer_misfits = std::mem::take(&mut self.misfits);
         let outer_bridge = std::mem::take(&mut self.bridge);
         let shown_from = (self.dbg_shown.len(), self.read_shown.len());
-        let errors = self.errors();
+        let errors = self.diagnostics.errors();
         let mut result = f(self);
         // A local that no code read closes as its `let` does on `main`.
-        let mut left: Vec<BridgeLet> = std::mem::take(&mut self.bridge).into_values().collect();
-        left.sort_by_key(|open| open.value.start());
-        for open in left {
-            self.settle_let(&open);
+        for open in std::mem::take(&mut self.bridge).into_values() {
+            self.settle_let(open);
         }
         for d in std::mem::replace(&mut self.misfits, outer_misfits)
             .into_iter()
@@ -1702,7 +1690,7 @@ impl<'src> Checker<'src> {
         });
         let left = self.table.take_held(None);
         debug_assert!(
-            left.is_empty() || self.errors() > errors,
+            left.is_empty() || self.diagnostics.errors() > errors,
             "each held argument with a type should be put back in its call"
         );
         self.report_held_conflicts();
@@ -1728,28 +1716,12 @@ impl<'src> Checker<'src> {
                 let _reported = self.report_unsettled(unsettled);
             }
             debug_assert!(
-                !written.open || self.errors() > errors,
+                !written.open || self.diagnostics.errors() > errors,
                 "no inference variable should be left in a function that reported no error"
             );
         }
         self.bridge = outer_bridge;
         result
-    }
-
-    /// How many errors were added, with the E0050s that the open `let`s write at their close
-    /// (see `BridgeLet`): `main` writes them at the `let`. Each check that compares the count
-    /// before and after a window reads this, so it sees what it sees on `main`.
-    fn errors(&self) -> u32 {
-        self.diagnostics.errors() + self.pending_errors()
-    }
-
-    /// `errors`, for a check that compares the count of all the diagnostics.
-    fn reports(&self) -> usize {
-        self.diagnostics.len() + self.pending_errors() as usize
-    }
-
-    fn pending_errors(&self) -> u32 {
-        self.bridge.values().map(|open| open.errors).sum()
     }
 
     /// The type that `checked`, a failed generic call, found for its result and could not meet

@@ -1346,16 +1346,12 @@ impl Checker<'_> {
 
     /// Reports E0050 at the origin of an `Any` variable that no type reached.
     pub(super) fn report_unsettled(&mut self, unsettled: Unsettled) -> Reported {
-        self.report_uninferred(self.unsettled_literal(unsettled.origin), unsettled.origin)
-    }
-
-    /// The literal at `origin`, the first source of an `Any` variable that no type reached.
-    pub(super) fn unsettled_literal(&self, origin: Span) -> Literal {
-        if self.source.text(origin).starts_with('[') {
+        let literal = if self.source.text(unsettled.origin).starts_with('[') {
             Literal::EmptyArray
         } else {
             Literal::None
-        }
+        };
+        self.report_uninferred(literal, unsettled.origin)
     }
 }
 

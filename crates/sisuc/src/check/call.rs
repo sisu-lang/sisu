@@ -977,7 +977,7 @@ impl Checker<'_> {
         method: &ast::Ident,
         func: Option<tir::FuncId>,
     ) -> Result<(Checked, MutParts), (Checked, Option<Reported>)> {
-        let errors = self.errors();
+        let errors = self.diagnostics.errors();
         // A receiver that failed has its own report, which the `?.` led to: E0062 would repeat
         // it. The payload of a `.` on an optional fails only when the optional did.
         let failed = match dot {
@@ -1025,7 +1025,7 @@ impl Checker<'_> {
             }))
         };
         if let Some(func) = func
-            && self.errors() != errors
+            && self.diagnostics.errors() != errors
         {
             self.needs_mut_self.insert(func);
         }

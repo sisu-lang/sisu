@@ -156,9 +156,6 @@ impl Checker<'_> {
                 conversion: false,
                 layers: false,
             },
-            Expectation::None if self.open_let_value(span) => {
-                return self.empty_array(span, Expectation::Member);
-            }
             Expectation::None => {
                 let reported = self.report_uninferred(Literal::EmptyArray, span);
                 return Err(Poisoned::untyped(reported));
@@ -201,13 +198,11 @@ impl Checker<'_> {
         let element = expected_element(expected.ty());
         // Without an element type, a `None` or `[]` cannot be inferred, unless `expected` is
         // `Poisoned`. A member's value is a member too: the join gives the payload of its `None`.
-        // The whole value of a `let` without a type keeps a literal `value` open, as a member.
-        let literal = match &value.kind {
-            ast::ExprKind::Int { .. } | ast::ExprKind::NoneLit => true,
-            ast::ExprKind::ArrayLit(elements) => elements.is_empty(),
-            _ => false,
-        };
-        let open = literal && expected == Expectation::None && self.open_let_value(span);
+        // The whole value of a `let` without a type keeps an integer literal open, as a member;
+        // `None` and `[]` stay on `main`'s path until the stage 2 switch.
+        let open = matches!(value.kind, ast::ExprKind::Int { .. })
+            && expected == Expectation::None
+            && self.open_let_value(span);
         let hint = match element {
             Some(element) => Expectation::Required(element, expected.origin()),
             None if open => Expectation::Member,

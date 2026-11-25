@@ -6,7 +6,7 @@ use super::array::must_unwrap;
 use super::branch::{branch_expectation, whole_members};
 use super::enums::unwrapped;
 use super::expectation::own_name;
-use super::expr::{local, whole_literal};
+use super::expr::local;
 use super::extend::mut_self_removal;
 use super::generic::Ahead;
 use super::join::{Heading, JoinForm};
@@ -471,21 +471,15 @@ impl Checker<'_> {
                 if let (None, Some(uninferred)) = (ty, uninferred) {
                     self.body.uninferred.insert(local, uninferred);
                 }
-                // A value with open variables keeps them until the first use of the local.
+                // A value with open `Int` variables keeps them until the first use of the local.
                 if let Some(ty) =
                     ty.filter(|&ty| ty.holds_infer() && !self.table.open_roots(ty).is_empty())
                 {
-                    let errors = self.table.unsettled_roots(ty).len();
-                    let open = BridgeLet {
-                        value: init_expr.span,
-                        ty,
-                        name: name.name,
-                        mutable: mutable.is_some(),
-                        literal: whole_literal(init_expr),
-                        errors: u32::try_from(errors)
-                            .expect("a value should hold fewer than 2^32 variables"),
-                    };
-                    self.bridge.insert(local, open);
+                    debug_assert!(
+                        self.table.unsettled_roots(ty).is_empty(),
+                        "a PR 1 bridge entry should hold only Int roots"
+                    );
+                    self.bridge.insert(local, BridgeLet { ty });
                 }
                 Ok(tir::Stmt::Let {
                     local,
@@ -507,7 +501,7 @@ impl Checker<'_> {
                 // Only the literal: the AST has no parenthesis node, so `(true)` is it too.
                 let endless = matches!(cond_ast.kind, ast::ExprKind::Bool(true));
                 // W0011 reads what changed from here to the end of the body.
-                let before = (self.errors(), self.body.writes, self.body.exits);
+                let before = (self.diagnostics.errors(), self.body.writes, self.body.exits);
                 let nans = self.body.nans;
                 let cond = self.in_header(*keyword, label.clone(), |c| {
                     c.expect(cond_ast, Expectation::Required(Type::BOOL, Origin::None))
@@ -672,7 +666,7 @@ impl Checker<'_> {
         };
         let word = Unwrap::LetElse;
         let (scrutinee, form, _) = self.let_value(word, pattern, value);
-        let before = self.reports();
+        let before = self.diagnostics.len();
         let block = self.block(else_block, Expectation::None);
         if let Ok(block) = &block
             && block.ty != Type::NEVER
@@ -686,7 +680,7 @@ impl Checker<'_> {
         // A `;` anywhere in the removed text, also one in a `';'` literal, makes the fix unsafe.
         let safe = mutable.is_none()
             && is_plain_exit(else_block)
-            && self.reports() == before
+            && self.diagnostics.len() == before
             && !self.comment_in(&[removal.range()])
             && !self.source.text(removal).contains(';');
         let (bound, _) = self.bind_pattern_as(
@@ -1535,12 +1529,12 @@ impl Checker<'_> {
             }))
         } else if let Some(at) = frame.bare {
             // The values join in the loop, in every position: each must be a `unit`.
-            let errors = self.errors();
+            let errors = self.diagnostics.errors();
             let mut members = whole_members(&mut values, &labels);
             let required = Expectation::Required(Type::UNIT, Origin::BareBreak { at });
             let joined = self.join_form(JoinForm::Loop, heading, &mut members, required, None);
             match joined {
-                Err(poisoned) if self.errors() > errors => {
+                Err(poisoned) if self.diagnostics.errors() > errors => {
                     frame.failed = Some(poisoned.reported());
                     None
                 }
@@ -2054,7 +2048,7 @@ impl Checker<'_> {
     /// start of the condition) wrote one, and nothing left the loop or reported an error.
     fn unchanged_condition(&mut self, at: Span, cond: &tir::Expr, before: (u32, u32, u32)) {
         let (errors, writes, exits) = before;
-        if self.errors() != errors || self.body.exits != exits {
+        if self.diagnostics.errors() != errors || self.body.exits != exits {
             return;
         }
         let Some(locals) = self.condition_locals(cond).filter(|l| !l.is_empty()) else {
