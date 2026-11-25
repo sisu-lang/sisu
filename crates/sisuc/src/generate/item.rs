@@ -740,7 +740,19 @@ class GapName: GapNamed {
 type GapItem<S> = [S.Named]
 fn gap_fnone<T>() -> T? { None }
 fn gap_unit() {}
-struct GapSw { fn nothing<T>(self) -> T? { None } }
+struct GapVal<A, B> { a: A; b: B }
+struct GapSw {
+    fn nothing<T>(self) -> T? { None }
+    fn val<A, B>(self, a: A, b: B) -> GapVal<A, B> { GapVal(a: a, b: b) }
+}
+fn gap_some<A, B>(p: GapVal<A, B>?) -> A? {
+    if let Some(q) = p {
+        let _ = q.b
+        Some(q.a)
+    } else {
+        None
+    }
+}
 interface GapPut<V> { fn put<U>(mut self, v: V, u: U) -> U }
 struct GapSlot<T>: GapPut<T> {
     v: T
@@ -2083,7 +2095,9 @@ impl Gen<'_> {
     ///   - `gap_fnone() == gap_unit()`: a `unit` beside an open `T?` (`open_any`);
     ///   - `gap_nothing`: a generic method that waits for its type in an argument (`own_params`);
     ///   - `gap_bump`: a call whose bound takes a type argument (`unknown_param`);
-    ///   - `gap_put`: an argument at an associated type that the join decides (`put_back`).
+    ///   - `gap_put`: an argument at an associated type that the join decides (`put_back`);
+    ///   - `gap_some`: `Some` around a generic method call at a closed parameter under an
+    ///     optional context (`Makes::some`).
     /// - the forms of member-bearing interface bounds, each for the functions of the checker that
     ///   resolve such a bound on demand (`tests/run/assoc_later_bound.sisu` reaches them). Each has
     ///   a point in `GAP_POINTS` (`coverage.rs`):
@@ -2225,6 +2239,8 @@ impl Gen<'_> {
             "print([gap_put(loop { break true }), gap_bit].len())",
             "print(gap_members(GapMembered(), GapOut(k: 99)))",
             "print(gap_scored(GapScored(), GapOut(k: 7)))",
+            "let gap_some_opt: u8? = gap_some(Some(GapSw().val(5, true)))",
+            "print(gap_some_opt ?? 0)",
         ] {
             calls.push(line);
         }
