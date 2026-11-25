@@ -51,7 +51,7 @@ fn main() {
     let _ = p6.a
     let _ = p6.b
     print(p6) // P<P<...>, P<...>>#6
-    let _ = dbg(p6) // P<P<...>, P<...>>#6(a: P<P<...>, P<...>>#5, b: ...) — see .err
+    let _ = dbg(p6)
 
     let s0: S0 = S(a: 1, b: 2)
     let s1: S1 = S(a: s0, b: s0)
