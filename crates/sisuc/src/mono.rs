@@ -26,7 +26,7 @@ use crate::tir::{
     Conformances, Enum, EnumId, Expr, ExprKind, Field, FuncId, Function, InterfaceId, Local, Place,
     Program, Stmt, Struct, StructId, Type, TypeArgs, TypeKind, head_of, layout_types,
 };
-use crate::types::{Head, write_args, write_method, write_type};
+use crate::types::{Head, write_args_with, write_method_with, write_type};
 
 #[cfg(test)]
 thread_local! {
@@ -409,7 +409,8 @@ impl Mono {
                 .expect("every non-generic function should be in place before the worklist runs");
             self.note_item(f.span);
             if f.method.is_some() {
-                f.name = self.instance_name(&f, &[], i);
+                let (owner, conformance) = self.reach_method_types(f.owner, f.conformance, &[]);
+                f.name = self.instance_name(&f, owner, conformance, &[], i);
             }
             self.function(&mut f, &[]);
             self.functions[i] = Some(f);
@@ -825,29 +826,74 @@ impl Mono {
         }
     }
 
-    /// The name of the instance `id` of the function `decl`, with the concrete checked `args`. A
-    /// method is written from its owner type, the interface of its conformance block and its
-    /// bare name (`write_method`), then its own arguments: `Stack<i64>.top`,
-    /// `Pair<Circle>.Same.same`, `Stack<[i64]>.flat`. It writes the checked types, because an
-    /// output type's head is a whole instance name. A name cut at `NAME_LIMIT` in any part ends
-    /// in `#id`, so it stays distinct.
-    fn instance_name(&self, decl: &Function, args: &[Type], id: usize) -> String {
+    /// The finished name of an already-named generic class, enum or struct instance.
+    fn named(&self, ty: Type) -> Option<&str> {
+        match ty.kind() {
+            TypeKind::Class(id, args) if args != TypeArgs::NONE => {
+                let out = self.class_ids.get(&(id, args))?;
+                Some(self.out.classes[out.0].name.as_str())
+            }
+            TypeKind::Enum(id, args) if args != TypeArgs::NONE => {
+                let out = self.enum_ids.get(&(id, args))?;
+                Some(self.out.enums[out.0].name.as_str())
+            }
+            TypeKind::Struct(id, args) if args != TypeArgs::NONE => {
+                let out = self.struct_ids.get(&(id, args))?;
+                Some(self.out.structs[out.0].name.as_str())
+            }
+            _ => None,
+        }
+    }
+
+    /// Substitutes a method's `owner` and `conformance` arguments with `args`, and reaches each
+    /// generic instance inside them before `instance_name` names the method.
+    fn reach_method_types(
+        &mut self,
+        owner: Option<Type>,
+        conformance: Option<(InterfaceId, TypeArgs)>,
+        args: &[Type],
+    ) -> (Option<Type>, Option<(InterfaceId, TypeArgs)>) {
+        let owner = owner.map(|ty| {
+            let ty = self.subst(ty, args);
+            self.output(ty);
+            ty
+        });
+        let conformance = conformance.map(|(interface, args_of)| {
+            let args_of = self.subst_args(args_of, args);
+            self.reach(args_of.get());
+            (interface, args_of)
+        });
+        (owner, conformance)
+    }
+
+    /// The name of the instance `id` of the function `decl`, with the concrete checked `args` and
+    /// already-substituted `owner` and `conformance`. A method is written from its owner type,
+    /// the interface of its conformance block and its bare name (`write_method_with`), then its
+    /// own arguments: `Stack<i64>.top`, `Pair<Circle>.Same.same`, `Stack<[i64]>.flat`. It reuses
+    /// already-named generic instances via `named`. A name cut at `NAME_LIMIT` or holding a cut
+    /// child ends in `#id`, so it stays distinct.
+    fn instance_name(
+        &self,
+        decl: &Function,
+        owner: Option<Type>,
+        conformance: Option<(InterfaceId, TypeArgs)>,
+        args: &[Type],
+        id: usize,
+    ) -> String {
         let head = |head| self.head(head);
+        let named = |ty| self.named(ty);
         let mut out = String::new();
-        let (own, mut cut) = if let (Some(method), Some(owner)) = (&decl.method, decl.owner) {
-            let interface = decl.conformance.map(|(interface, args_of)| {
-                (
-                    self.out.interfaces[interface.0].name.as_str(),
-                    self.subst_args(args_of, args),
-                )
+        let (own, mut cut) = if let (Some(method), Some(owner)) = (&decl.method, owner) {
+            let interface = conformance.map(|(interface, args_of)| {
+                (self.out.interfaces[interface.0].name.as_str(), args_of)
             });
-            let cut = write_method(&mut out, self.subst(owner, args), interface, method, head);
+            let cut = write_method_with(&mut out, owner, interface, method, head, named);
             (&args[decl.owner_params..], cut)
         } else {
             out.push_str(&decl.name);
             (args, false)
         };
-        cut |= write_args(&mut out, own, head);
+        cut |= write_args_with(&mut out, own, head, named);
         if cut {
             // `#` cannot occur in an identifier, so a cut name never meets a whole one.
             out.push('#');
@@ -857,11 +903,11 @@ impl Mono {
     }
 
     /// The name of the instance `id` of the class or enum `name`, with the concrete checked
-    /// `args`, written as a program writes it: `Stack<i64>`. A name cut at `NAME_LIMIT` ends in
-    /// `#id`.
+    /// `args`, written as a program writes it: `Stack<i64>`. A name cut at `NAME_LIMIT` or holding
+    /// a cut child ends in `#id`.
     fn type_instance_name(&self, name: &str, args: &[Type], id: usize) -> String {
         let mut out = name.to_string();
-        if write_args(&mut out, args, |head| self.head(head)) {
+        if write_args_with(&mut out, args, |head| self.head(head), |ty| self.named(ty)) {
             out.push('#');
             out.push_str(&id.to_string());
         }
@@ -1008,11 +1054,18 @@ impl Mono {
             return done;
         }
         self.reach(args.get());
+        let (owner, conformance) = {
+            let decl = self.decls[id.0]
+                .as_ref()
+                .expect("a function reached with arguments should be generic or the prelude's");
+            (decl.owner, decl.conformance)
+        };
+        let (owner, conformance) = self.reach_method_types(owner, conformance, args.get());
         let done = FuncId(self.functions.len());
         let decl = self.decls[id.0]
             .as_ref()
             .expect("a function reached with arguments should be generic or the prelude's");
-        let name = self.instance_name(decl, args.get(), done.0);
+        let name = self.instance_name(decl, owner, conformance, args.get(), done.0);
         self.first_mut.push(first_mut(decl));
         self.functions.push(None);
         self.instances += 1;

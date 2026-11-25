@@ -410,7 +410,17 @@ enum Step<'a> {
 /// type names still owed end it. Each level entered before the cut adds at most one closer or one
 /// name, so the text is never longer than the whole text.
 pub(crate) fn write_type<'n>(out: &mut String, ty: Type, head: impl Fn(Head) -> &'n str) -> bool {
-    write_steps(out, vec![Step::Type(ty)], head)
+    write_type_with(out, ty, head, |_| None)
+}
+
+/// Writes `ty` to `out`, reusing any name that `named` supplies when it fits or is already cut.
+fn write_type_with<'n>(
+    out: &mut String,
+    ty: Type,
+    head: impl Fn(Head) -> &'n str,
+    named: impl Fn(Type) -> Option<&'n str>,
+) -> bool {
+    write_steps(out, vec![Step::Type(ty)], head, named)
 }
 
 /// Writes the name of a method to `out`: the type `owner` it is declared on, the interface of its
@@ -425,11 +435,23 @@ pub(crate) fn write_method<'n>(
     method: &str,
     head: impl Fn(Head) -> &'n str + Copy,
 ) -> bool {
-    let mut cut = write_type(out, owner, head);
+    write_method_with(out, owner, interface, method, head, |_| None)
+}
+
+/// Writes a method name to `out`, reusing any name that `named` supplies for a generic instance.
+pub(crate) fn write_method_with<'n>(
+    out: &mut String,
+    owner: Type,
+    interface: Option<(&str, TypeArgs)>,
+    method: &str,
+    head: impl Fn(Head) -> &'n str + Copy,
+    named: impl Fn(Type) -> Option<&'n str> + Copy,
+) -> bool {
+    let mut cut = write_type_with(out, owner, head, named);
     if let Some((name, args)) = interface {
         out.push('.');
         out.push_str(name);
-        cut |= write_args(out, args.get(), head);
+        cut |= write_args_with(out, args.get(), head, named);
     }
     out.push('.');
     out.push_str(method);
@@ -443,19 +465,34 @@ pub(crate) fn write_args<'n>(
     args: &[Type],
     head: impl Fn(Head) -> &'n str,
 ) -> bool {
+    write_args_with(out, args, head, |_| None)
+}
+
+/// Writes `<a, b>` for `args` to `out`, reusing any name that `named` supplies for a generic
+/// instance. Returns whether the text was cut.
+pub(crate) fn write_args_with<'n>(
+    out: &mut String,
+    args: &[Type],
+    head: impl Fn(Head) -> &'n str,
+    named: impl Fn(Type) -> Option<&'n str>,
+) -> bool {
     let mut steps = Vec::new();
     push_args(out, &mut steps, args);
-    write_steps(out, steps, head)
+    write_steps(out, steps, head, named)
 }
 
 /// Writes `steps` to `out`, the last first. One string grows in place, and a stack stands in for
-/// recursion: a type can nest deeper than the call stack allows. Once `out` holds `NAME_LIMIT`
-/// bytes, no type or separator follows, so the work is linear in the text, not in the type.
+/// recursion: a type can nest deeper than the call stack allows. When `named` supplies a cut name,
+/// it writes `head<...>` and marks the output cut; when it supplies a whole name that fits in
+/// `NAME_LIMIT`, it pastes that name without descending. Once `out` holds `NAME_LIMIT` bytes, no
+/// type or separator follows, so the work is linear in the text, not in the type.
 fn write_steps<'n>(
     out: &mut String,
     mut steps: Vec<Step<'_>>,
     head: impl Fn(Head) -> &'n str,
+    named: impl Fn(Type) -> Option<&'n str>,
 ) -> bool {
+    let mut cut = false;
     while let Some(step) = steps.pop() {
         #[cfg(test)]
         {
@@ -472,19 +509,7 @@ fn write_steps<'n>(
                 // The cut elides only what has not begun: a type or the rest of a list. A type
                 // that has begun gets its end, each closer and each associated type name, so a
                 // name that ends in `.Item` or `]` still names what it began to name.
-                out.push_str("...");
-                for step in steps.iter().rev() {
-                    #[cfg(test)]
-                    WRITE_STEPS.set(WRITE_STEPS.get() + 1);
-                    match step {
-                        Step::Close(text) => out.push_str(text),
-                        Step::Assoc(interface, k) => {
-                            out.push('.');
-                            out.push_str(head(Head::Assoc(*interface, *k)));
-                        }
-                        Step::Type(_) | Step::Rest(_) => {}
-                    }
-                }
+                finish_cut(out, &steps, &head);
                 return true;
             }
             Step::Assoc(interface, k) => {
@@ -499,6 +524,17 @@ fn write_steps<'n>(
             }
             Step::Type(ty) => ty,
         };
+        if let Some(name) = named(ty) {
+            if name.contains('#') {
+                out.push_str(name.split('<').next().unwrap_or(name));
+                out.push_str("<...>");
+                cut = true;
+                continue;
+            } else if out.len() + name.len() <= NAME_LIMIT {
+                out.push_str(name);
+                continue;
+            }
+        }
         let args = match ty.kind() {
             TypeKind::Class(id, args) => {
                 out.push_str(head(Head::Class(id)));
@@ -549,7 +585,24 @@ fn write_steps<'n>(
         };
         push_args(out, &mut steps, args.get());
     }
-    false
+    cut
+}
+
+/// Finishes a cut name with `...` and closes any delimiters or associated types on `steps`.
+fn finish_cut<'n>(out: &mut String, steps: &[Step<'_>], head: &impl Fn(Head) -> &'n str) {
+    out.push_str("...");
+    for step in steps.iter().rev() {
+        #[cfg(test)]
+        WRITE_STEPS.set(WRITE_STEPS.get() + 1);
+        match step {
+            Step::Close(text) => out.push_str(text),
+            Step::Assoc(interface, k) => {
+                out.push('.');
+                out.push_str(head(Head::Assoc(*interface, *k)));
+            }
+            Step::Type(_) | Step::Rest(_) => {}
+        }
+    }
 }
 
 /// Writes the `<` of a nonempty `args` to `out`, and pushes the rest of `<a, b>` onto `steps`
@@ -1420,5 +1473,56 @@ mod tests {
             .join()
             .expect("the walk should not panic");
         assert_eq!(result.0, result.1);
+    }
+
+    #[test]
+    fn write_args_with_should_paste_fitting_whole_names_and_fall_through_on_overflow() {
+        let leaf = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+        let wrapped = doubled(leaf, 4);
+        let mut whole_wrapped = String::new();
+        assert!(!write_type(&mut whole_wrapped, wrapped, |_| "P"));
+        assert!(whole_wrapped.len() < NAME_LIMIT);
+
+        // Exact boundary: `prefix` + `<` + `whole_wrapped` reaches `NAME_LIMIT` without descending.
+        let prefix = "X".repeat(NAME_LIMIT - 1 - whole_wrapped.len());
+        let mut out = prefix.clone();
+        WRITE_STEPS.set(0);
+        let cut = write_args_with(
+            &mut out,
+            &[wrapped],
+            |_| "P",
+            |ty| (ty == wrapped).then_some(whole_wrapped.as_str()),
+        );
+        assert!(!cut);
+        assert_eq!(out, format!("{prefix}<{whole_wrapped}>"));
+        assert_eq!(WRITE_STEPS.get(), 3);
+
+        // One byte over `NAME_LIMIT`: falls through and walks `wrapped` just like `write_args`.
+        let mut over = format!("Y{prefix}");
+        let mut plain = over.clone();
+        WRITE_STEPS.set(0);
+        let cut_with = write_args_with(
+            &mut over,
+            &[wrapped],
+            |_| "P",
+            |ty| (ty == wrapped).then_some(whole_wrapped.as_str()),
+        );
+        let steps_over = WRITE_STEPS.get();
+        let cut_plain = write_args(&mut plain, &[wrapped], |_| "P");
+        assert_eq!((cut_with, over), (cut_plain, plain));
+        assert!(steps_over > 3, "{steps_over} steps");
+
+        // Cut cached child: writes `head<...>` and returns `true`.
+        let mut cut_out = String::from("C");
+        WRITE_STEPS.set(0);
+        let cut = write_args_with(
+            &mut cut_out,
+            &[wrapped],
+            |_| "P",
+            |ty| (ty == wrapped).then_some("P<...>#7"),
+        );
+        assert!(cut);
+        assert_eq!(cut_out, "C<P<...>>");
+        assert_eq!(WRITE_STEPS.get(), 3);
     }
 }
