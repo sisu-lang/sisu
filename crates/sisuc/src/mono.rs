@@ -826,22 +826,46 @@ impl Mono {
         }
     }
 
-    /// The finished name of an already-named generic class, enum or struct instance.
-    fn named(&self, ty: Type) -> Option<&str> {
-        match ty.kind() {
+    /// The finished name of an already-named generic class, enum or struct instance. Returns
+    /// `(head, true)` when the name was cut (`#id`), and `(name, false)` when it is whole.
+    fn named(&self, ty: Type) -> Option<(&str, bool)> {
+        let (name, head) = match ty.kind() {
             TypeKind::Class(id, args) if args != TypeArgs::NONE => {
                 let out = self.class_ids.get(&(id, args))?;
-                Some(self.out.classes[out.0].name.as_str())
+                (self.out.classes[out.0].name.as_str(), Head::Class(id))
             }
             TypeKind::Enum(id, args) if args != TypeArgs::NONE => {
                 let out = self.enum_ids.get(&(id, args))?;
-                Some(self.out.enums[out.0].name.as_str())
+                (self.out.enums[out.0].name.as_str(), Head::Enum(id))
             }
             TypeKind::Struct(id, args) if args != TypeArgs::NONE => {
                 let out = self.struct_ids.get(&(id, args))?;
-                Some(self.out.structs[out.0].name.as_str())
+                (self.out.structs[out.0].name.as_str(), Head::Struct(id))
             }
-            _ => None,
+            TypeKind::Class(..)
+            | TypeKind::Enum(..)
+            | TypeKind::Struct(..)
+            | TypeKind::Any(..)
+            | TypeKind::Array(_)
+            | TypeKind::Optional(_)
+            | TypeKind::I64
+            | TypeKind::U8
+            | TypeKind::F64
+            | TypeKind::Bool
+            | TypeKind::Char
+            | TypeKind::String
+            | TypeKind::Unit
+            | TypeKind::Never
+            | TypeKind::Param(..)
+            | TypeKind::Assoc(..)
+            | TypeKind::Infer(_) => return None,
+        };
+        // A cut name always ends in `#<usize>` (at most 21 bytes on 64-bit), and `#` cannot occur
+        // in an identifier.
+        if name.bytes().rev().take(21).any(|b| b == b'#') {
+            Some((self.head(head), true))
+        } else {
+            Some((name, false))
         }
     }
 
@@ -3607,15 +3631,10 @@ mod tests {
         let direct_name = flat_name(&direct);
         let bound_name = flat_name(&bound);
         assert_eq!(direct_name, bound_name);
-        assert!(
-            direct_name.starts_with("Stack<...>.flat#")
-                || direct_name.starts_with("Stack<[P<...>]>.flat#"),
-            "{direct_name}"
-        );
+        assert!(direct_name.starts_with("Stack<...>.flat#"), "{direct_name}");
     }
 
-    // Unchanged before and after the fix: a non-generic long conformance argument matches the fast
-    // path.
+    // A non-generic long conformance argument keeps its whole name, matching the fast path.
     #[test]
     fn non_generic_long_conformance_arg_should_match_fast_path() {
         let l252 = format!("L{}", "a".repeat(251));

@@ -413,12 +413,12 @@ pub(crate) fn write_type<'n>(out: &mut String, ty: Type, head: impl Fn(Head) -> 
     write_type_with(out, ty, head, |_| None)
 }
 
-/// Writes `ty` to `out`, reusing any name that `named` supplies when it fits or is already cut.
+/// Writes `ty` to `out`, reusing any `(text, cut)` pair that `named` supplies.
 fn write_type_with<'n>(
     out: &mut String,
     ty: Type,
     head: impl Fn(Head) -> &'n str,
-    named: impl Fn(Type) -> Option<&'n str>,
+    named: impl Fn(Type) -> Option<(&'n str, bool)>,
 ) -> bool {
     write_steps(out, vec![Step::Type(ty)], head, named)
 }
@@ -438,14 +438,14 @@ pub(crate) fn write_method<'n>(
     write_method_with(out, owner, interface, method, head, |_| None)
 }
 
-/// Writes a method name to `out`, reusing any name that `named` supplies for a generic instance.
+/// Writes a method name to `out`, reusing any `(text, cut)` pair that `named` supplies.
 pub(crate) fn write_method_with<'n>(
     out: &mut String,
     owner: Type,
     interface: Option<(&str, TypeArgs)>,
     method: &str,
     head: impl Fn(Head) -> &'n str + Copy,
-    named: impl Fn(Type) -> Option<&'n str> + Copy,
+    named: impl Fn(Type) -> Option<(&'n str, bool)> + Copy,
 ) -> bool {
     let mut cut = write_type_with(out, owner, head, named);
     if let Some((name, args)) = interface {
@@ -468,13 +468,13 @@ pub(crate) fn write_args<'n>(
     write_args_with(out, args, head, |_| None)
 }
 
-/// Writes `<a, b>` for `args` to `out`, reusing any name that `named` supplies for a generic
-/// instance. Returns whether the text was cut.
+/// Writes `<a, b>` for `args` to `out`, reusing any `(text, cut)` pair that `named` supplies.
+/// Returns whether the text was cut.
 pub(crate) fn write_args_with<'n>(
     out: &mut String,
     args: &[Type],
     head: impl Fn(Head) -> &'n str,
-    named: impl Fn(Type) -> Option<&'n str>,
+    named: impl Fn(Type) -> Option<(&'n str, bool)>,
 ) -> bool {
     let mut steps = Vec::new();
     push_args(out, &mut steps, args);
@@ -482,15 +482,16 @@ pub(crate) fn write_args_with<'n>(
 }
 
 /// Writes `steps` to `out`, the last first. One string grows in place, and a stack stands in for
-/// recursion: a type can nest deeper than the call stack allows. When `named` supplies a cut name,
-/// it writes `head<...>` and marks the output cut; when it supplies a whole name that fits in
-/// `NAME_LIMIT`, it pastes that name without descending. Once `out` holds `NAME_LIMIT` bytes, no
-/// type or separator follows, so the work is linear in the text, not in the type.
+/// recursion: a type can nest deeper than the call stack allows. When `named` returns
+/// `Some((head, true))`, it writes `head<...>` and marks the output cut. When `named` returns
+/// `Some((text, false))` and `text` fits in `NAME_LIMIT`, it pastes `text` without descending.
+/// Once `out` holds `NAME_LIMIT` bytes, no type or separator follows, so the work is linear in
+/// the text, not in the type.
 fn write_steps<'n>(
     out: &mut String,
     mut steps: Vec<Step<'_>>,
     head: impl Fn(Head) -> &'n str,
-    named: impl Fn(Type) -> Option<&'n str>,
+    named: impl Fn(Type) -> Option<(&'n str, bool)>,
 ) -> bool {
     let mut cut = false;
     while let Some(step) = steps.pop() {
@@ -535,14 +536,14 @@ fn write_steps<'n>(
             }
             Step::Type(ty) => ty,
         };
-        if let Some(name) = named(ty) {
-            if name.contains('#') {
-                out.push_str(name.split('<').next().unwrap_or(name));
+        if let Some((text, is_cut)) = named(ty) {
+            if is_cut {
+                out.push_str(text);
                 out.push_str("<...>");
                 cut = true;
                 continue;
-            } else if out.len() + name.len() <= NAME_LIMIT {
-                out.push_str(name);
+            } else if out.len() + text.len() <= NAME_LIMIT {
+                out.push_str(text);
                 continue;
             }
         }
@@ -1485,7 +1486,7 @@ mod tests {
             &mut out,
             &[wrapped],
             |_| "P",
-            |ty| (ty == wrapped).then_some(whole_wrapped.as_str()),
+            |ty| (ty == wrapped).then_some((whole_wrapped.as_str(), false)),
         );
         assert!(!cut);
         assert_eq!(out, format!("{prefix}<{whole_wrapped}>"));
@@ -1499,7 +1500,7 @@ mod tests {
             &mut over,
             &[wrapped],
             |_| "P",
-            |ty| (ty == wrapped).then_some(whole_wrapped.as_str()),
+            |ty| (ty == wrapped).then_some((whole_wrapped.as_str(), false)),
         );
         let steps_over = WRITE_STEPS.get();
         let cut_plain = write_args(&mut plain, &[wrapped], |_| "P");
@@ -1513,7 +1514,7 @@ mod tests {
             &mut cut_out,
             &[wrapped],
             |_| "P",
-            |ty| (ty == wrapped).then_some("P<...>#7"),
+            |ty| (ty == wrapped).then_some(("P", true)),
         );
         assert!(cut);
         assert_eq!(cut_out, "C<P<...>>");
