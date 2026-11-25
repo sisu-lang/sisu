@@ -857,8 +857,10 @@ impl Mono {
             | TypeKind::Unit
             | TypeKind::Never
             | TypeKind::Param(..)
-            | TypeKind::Assoc(..)
-            | TypeKind::Infer(_) => return None,
+            | TypeKind::Assoc(..) => return None,
+            TypeKind::Infer(_) => {
+                unreachable!("the checker's write_back should leave no inference variable")
+            }
         };
         // A cut name always ends in `#<usize>` (at most 21 bytes on 64-bit), and `#` cannot occur
         // in an identifier.
