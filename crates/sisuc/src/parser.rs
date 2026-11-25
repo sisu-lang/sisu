@@ -651,7 +651,7 @@ struct Parser<'a> {
     /// Where each line break is.
     breaks: &'a [usize],
     /// Recovered errors (format specs, `:` ranges, `E0015`, `E0122`, and `E0175`) that no broken
-    /// item took. When a lexer error breaks an item, `resolve_broken` keeps those before it.
+    /// item took. When a fatal error breaks an item, `resolve_broken` keeps those before it.
     recovered: Vec<Diagnostic>,
     /// Whether the parser reads the head of a `for`, `if`, `while` or `match`, outside any
     /// bracket or block in it. There, a `{` after `..` opens the body, not the end of the range.
@@ -1319,14 +1319,11 @@ impl<'a> Parser<'a> {
                 end > start,
                 "an item should hold a token, or the loop would not end"
             );
-            // An unnamed item starts where its line does, so text skipped before its first
+            // A broken unnamed item starts where its line does, so text skipped before its first
             // token is its own.
             let line = previous.map_or(0, |t| t.span.end());
             let mut bytes = self.bytes(start, end);
-            if header.is_none() {
-                bytes.start = line;
-            }
-            covered.push(bytes);
+            let recovered = self.recovered.len();
             let parsed = self.item(end);
             match parsed {
                 Ok((item, errors)) => {
@@ -1342,17 +1339,25 @@ impl<'a> Parser<'a> {
                         diagnostics.push(error);
                         broken.push(header);
                     } else {
-                        let skipped = self.lexer_in(line..error.span().start()).next().cloned();
-                        diagnostics.push(skipped.unwrap_or(error));
+                        bytes.start = line;
+                        let fatal = self
+                            .lexer_in(line..error.span().start())
+                            .next()
+                            .cloned()
+                            .unwrap_or(error);
+                        let fatal = self.resolve_broken(recovered, fatal);
+                        diagnostics.push(fatal);
                         checkable = false;
                     }
                 }
             }
+            covered.push(bytes);
             self.skip_newlines();
         }
         diagnostics.append(&mut self.recovered);
         diagnostics.append(&mut self.warnings);
-        // An unnamed item starts where its line does, inside the item before, so items may overlap.
+        // A broken unnamed item starts where its line does, inside the item before, so items may
+        // overlap.
         debug_assert!(rising(&covered), "the covered spans should rise");
         diagnostics.extend(
             self.lexer
@@ -1578,30 +1583,20 @@ impl<'a> Parser<'a> {
         self.lexer[start..at(bytes.end).max(start)].iter()
     }
 
-    /// Resolves a broken item's error from `fatal` and `self.recovered[recovered..]`: when a
-    /// lexer error at `lexed_start` caused `fatal`, keeps recovered diagnostics strictly before
-    /// `fatal`; otherwise folds them into `fatal`.
-    fn resolve_broken(
-        &mut self,
-        recovered: usize,
-        fatal: Diagnostic,
-        lexed_start: Option<usize>,
-    ) -> Diagnostic {
-        if lexed_start == Some(fatal.span().start()) {
-            let limit = fatal.span().start();
-            let tail = self.recovered.split_off(recovered);
-            self.recovered
-                .extend(tail.into_iter().filter(|d| d.span().start() < limit));
-            fatal
-        } else {
-            self.recovered.drain(recovered..).fold(fatal, earlier)
-        }
+    /// Keeps recovered diagnostics in `self.recovered[recovered..]` strictly before `fatal` and
+    /// returns `fatal`.
+    fn resolve_broken(&mut self, recovered: usize, fatal: Diagnostic) -> Diagnostic {
+        let limit = fatal.span().start();
+        let tail = self.recovered.split_off(recovered);
+        self.recovered
+            .extend(tail.into_iter().filter(|d| d.span().start() < limit));
+        fatal
     }
 
     /// Parses with `parse` the item or member that starts here and runs to `end`. Its error is
     /// the earlier of its first lexer diagnostic and its parse error, which a skip may have
-    /// caused. Keeps recovered diagnostics strictly before a fatal lexer error. After an error, the
-    /// parser resumes at `end`.
+    /// caused. Keeps recovered diagnostics strictly before that error. After an error, the parser
+    /// resumes at `end`.
     fn checked<T>(
         &mut self,
         end: usize,
@@ -1619,13 +1614,12 @@ impl<'a> Parser<'a> {
         if let (Ok(_), None) = (&parsed, &lexed) {
             return parsed;
         }
-        let lexed_start = lexed.as_ref().map(|d| d.span().start());
         let fatal = lexed
             .into_iter()
             .chain(parsed.err())
             .reduce(earlier)
             .expect("a broken item should hold an error");
-        let error = self.resolve_broken(recovered, fatal, lexed_start);
+        let error = self.resolve_broken(recovered, fatal);
         self.pos = end;
         Err(error)
     }
@@ -1633,7 +1627,7 @@ impl<'a> Parser<'a> {
     /// The class or enum that `body` parses, from here to `end`, and the error of each broken
     /// method. A method whose error follows its name is broken alone and leaves the item; any
     /// other error breaks the whole item, whose one error is then the earliest in it. Keeps
-    /// recovered diagnostics strictly before a fatal lexer error anywhere in `end`.
+    /// recovered diagnostics strictly before that error.
     fn with_methods(
         &mut self,
         end: usize,
@@ -1649,14 +1643,10 @@ impl<'a> Parser<'a> {
         let mut methods = Vec::new();
         let parsed = body(self, &mut errors, &mut methods);
         debug_assert!(rising(&methods), "the method spans should rise");
-        let (lexed_start, outside) = {
-            let mut lexed = self.lexer_in(bytes).peekable();
-            let start = lexed.peek().map(|d| d.span().start());
-            (
-                start,
-                lexed.find(|d| !holds(&methods, d.span().start())).cloned(),
-            )
-        };
+        let outside = self
+            .lexer_in(bytes)
+            .find(|d| !holds(&methods, d.span().start()))
+            .cloned();
         match (parsed, outside) {
             (Ok(item), None) => Ok((item, errors)),
             (parsed, outside) => {
@@ -1667,7 +1657,7 @@ impl<'a> Parser<'a> {
                     .chain(parsed.err())
                     .reduce(earlier)
                     .expect("a broken item should hold an error");
-                let error = self.resolve_broken(recovered, fatal, lexed_start);
+                let error = self.resolve_broken(recovered, fatal);
                 Err(error)
             }
         }
@@ -12142,10 +12132,11 @@ mod tests {
     }
 
     #[test]
-    fn checked_should_keep_recovered_errors_only_before_a_lexer_error() {
-        let rows = [
+    #[expect(clippy::too_many_lines, reason = "one row of the table for each case")]
+    fn checked_should_keep_recovered_errors_before_a_fatal_error() {
+        let unchanged = [
             (
-                "slice colon before lexer error",
+                "slice colon before lexer error, unchanged",
                 "fn main() {\n    let a = [1]\n    let _ = a[1:]\n    $\n}".to_string(),
                 vec![
                     (Code::ForeignRange, (3, 16)),
@@ -12158,28 +12149,12 @@ mod tests {
                 )),
             ),
             (
-                "format spec before lexer error",
+                "format spec before lexer error, unchanged",
                 "fn main() {\n    print(\"{x:+}\")\n    $\n}".to_string(),
                 vec![
                     (Code::UnsupportedFormatSpec, (2, 14)),
                     (Code::UnexpectedCharacter, (3, 5)),
                 ],
-                None,
-            ),
-            (
-                "slice colon before parse error, unchanged",
-                "fn main() {\n    let a = [1]\n    let _ = a[1:]\n    let = 2\n}".to_string(),
-                vec![(Code::ForeignRange, (3, 16))],
-                Some((
-                    0,
-                    false,
-                    "fn main() {\n    let a = [1]\n    let _ = a[1..]\n    let = 2\n}".to_string(),
-                )),
-            ),
-            (
-                "format spec before parse error, unchanged",
-                "fn main() {\n    print(\"{x:+}\")\n    let = 2\n}".to_string(),
-                vec![(Code::UnsupportedFormatSpec, (2, 14))],
                 None,
             ),
             (
@@ -12195,9 +12170,44 @@ mod tests {
                 None,
             ),
             (
-                "struct comma, parse error, then lexer error, unchanged",
+                "with_methods comma after broken method parse error and outer @, unchanged",
+                "struct S {\n    fn f(self) { let = 1 }\n    x: i64,\n    @\n}".to_string(),
+                vec![(Code::Expected, (2, 22))],
+                None,
+            ),
+            (
+                "unnamed broken extend after @ with 123, unchanged",
+                "@\nextend [i64] {\n    fn f(self) { print(xs[:-1]) }\n    123\n}".to_string(),
+                vec![(Code::UnexpectedCharacter, (1, 1))],
+                None,
+            ),
+        ];
+        assert_diagnostic_fix_table(&unchanged);
+
+        let rows = [
+            (
+                "slice colon before parse error",
+                "fn main() {\n    let a = [1]\n    let _ = a[1:]\n    let = 2\n}".to_string(),
+                vec![(Code::ForeignRange, (3, 16)), (Code::Expected, (4, 9))],
+                Some((
+                    0,
+                    false,
+                    "fn main() {\n    let a = [1]\n    let _ = a[1..]\n    let = 2\n}".to_string(),
+                )),
+            ),
+            (
+                "format spec before parse error",
+                "fn main() {\n    print(\"{x:+}\")\n    let = 2\n}".to_string(),
+                vec![
+                    (Code::UnsupportedFormatSpec, (2, 14)),
+                    (Code::Expected, (3, 9)),
+                ],
+                None,
+            ),
+            (
+                "struct comma, parse error, then lexer error",
                 "struct S {\n    x: i64,\n    y: ,\n    z: $\n}".to_string(),
-                vec![(Code::FieldComma, (2, 11))],
+                vec![(Code::FieldComma, (2, 11)), (Code::Expected, (3, 8))],
                 Some((
                     0,
                     true,
@@ -12206,6 +12216,121 @@ mod tests {
             ),
         ];
         assert_diagnostic_fix_table(&rows);
+
+        let code_rows = [
+            (
+                "two negative colon slices before parse error",
+                "fn main() {\n    let xs = [1, 2, 3]\n    print(xs[:-1])\n    print(xs[-2:])\n    print(xs[1.0[].:-1])\n}",
+                vec![
+                    (Code::ForeignRange, (3, 15)),
+                    (Code::ForeignRange, (4, 14)),
+                    (Code::Expected, (5, 18)),
+                ],
+            ),
+            (
+                "two non-negative colon slices before parse error",
+                "fn main() {\n    let xs = [1, 2, 3]\n    print(xs[1:])\n    print(xs[:2])\n    print(xs[1.0[].:-1])\n}",
+                vec![
+                    (Code::ForeignRange, (3, 15)),
+                    (Code::ForeignRange, (4, 14)),
+                    (Code::Expected, (5, 18)),
+                ],
+            ),
+            (
+                "whole colon slice and negative colon slice before parse error",
+                "fn main() {\n    let xs = [1, 2, 3]\n    print(xs[:])\n    print(xs[:-1])\n    let = 2\n}",
+                vec![
+                    (Code::ForeignRange, (3, 14)),
+                    (Code::ForeignRange, (4, 15)),
+                    (Code::Expected, (5, 9)),
+                ],
+            ),
+            (
+                "two match arm commas before parse error",
+                "fn main() {\n    match 1 {\n        0 => 1,\n        1 => 2,\n        _ => 1.0[]\n    }\n}",
+                vec![
+                    (Code::FieldComma, (3, 15)),
+                    (Code::FieldComma, (4, 15)),
+                    (Code::Expected, (5, 18)),
+                ],
+            ),
+            (
+                "two struct mut fields before broken method and outer @",
+                "struct S {\n    mut x: i64\n    mut y: i64\n    fn f(self) { let _ = 1.0[] }\n    @\n}",
+                vec![
+                    (Code::StructFieldMut, (2, 5)),
+                    (Code::StructFieldMut, (3, 5)),
+                    (Code::Expected, (4, 30)),
+                ],
+            ),
+            (
+                "two format specs before parse error",
+                "fn main() {\n    print(\"{x:+}\")\n    print(\"{y:+}\")\n    let _ = 1.0[]\n}",
+                vec![
+                    (Code::UnsupportedFormatSpec, (2, 14)),
+                    (Code::UnsupportedFormatSpec, (3, 14)),
+                    (Code::Expected, (4, 17)),
+                ],
+            ),
+            (
+                "mixed colon slice and format spec before parse error",
+                "fn main() {\n    let xs = [1, 2, 3]\n    print(xs[:-1])\n    print(\"{xs:+}\")\n    let _ = 1.0[]\n}",
+                vec![
+                    (Code::ForeignRange, (3, 15)),
+                    (Code::UnsupportedFormatSpec, (4, 15)),
+                    (Code::Expected, (5, 17)),
+                ],
+            ),
+            (
+                "const colon slice before parse error",
+                "const A = [1, 2][:-1] + 1.0[]",
+                vec![(Code::ForeignRange, (1, 19)), (Code::Expected, (1, 29))],
+            ),
+            (
+                "struct method two colon slices before parse error",
+                "struct S {\n    fn f(self) {\n        let xs = [1, 2, 3]\n        print(xs[:-1])\n        print(xs[-2:])\n        print(xs[1.0[].:-1])\n    }\n}",
+                vec![
+                    (Code::ForeignRange, (4, 19)),
+                    (Code::ForeignRange, (5, 18)),
+                    (Code::Expected, (6, 22)),
+                ],
+            ),
+            (
+                "extend method two colon slices before parse error",
+                "struct S {}\nextend S {\n    fn f(self) {\n        let xs = [1, 2, 3]\n        print(xs[:-1])\n        print(xs[-2:])\n        print(xs[1.0[].:-1])\n    }\n}",
+                vec![
+                    (Code::ForeignRange, (5, 19)),
+                    (Code::ForeignRange, (6, 18)),
+                    (Code::Expected, (7, 22)),
+                ],
+            ),
+            (
+                "class two commas before parse error",
+                "class C {\n    x: i64,\n    y: i64,\n    123\n}",
+                vec![
+                    (Code::FieldComma, (2, 11)),
+                    (Code::FieldComma, (3, 11)),
+                    (Code::Expected, (4, 5)),
+                ],
+            ),
+            (
+                "enum two commas before parse error",
+                "enum E {\n    A,\n    B,\n    123\n}",
+                vec![
+                    (Code::FieldComma, (2, 6)),
+                    (Code::FieldComma, (3, 6)),
+                    (Code::Expected, (4, 5)),
+                ],
+            ),
+        ];
+        for (name, src, want) in code_rows {
+            let ds = parsed(src).diagnostics;
+            let got: Vec<_> = ds
+                .iter()
+                .map(|d| (d.code(), line_col(src, d.span().start())))
+                .collect();
+            assert_eq!(got, want, "row `{name}`");
+        }
     }
 
     #[test]
@@ -12413,9 +12538,9 @@ mod tests {
                 None,
             ),
             (
-                "struct comma before parse error, unchanged",
+                "struct comma before parse error",
                 "struct S {\n    x: i64,\n    123\n}",
-                vec![(Code::FieldComma, (2, 11))],
+                vec![(Code::FieldComma, (2, 11)), (Code::Expected, (3, 5))],
                 Some((0, "struct S {\n    x: i64\n    123\n}")),
             ),
         ];
@@ -12504,21 +12629,14 @@ mod tests {
 
     #[test]
     fn with_methods_should_keep_lexer_error_inside_broken_method_beside_outer_lexer_error() {
-        let unchanged = [
-            (
-                "outer lexer error before broken method, unchanged",
-                "struct S {\n    x: i64,\n    @\n    fn f(self) { $ }\n    y: i64\n}",
-                vec![
-                    (Code::FieldComma, (2, 11)),
-                    (Code::UnexpectedCharacter, (3, 5)),
-                ],
-            ),
-            (
-                "parse error in method with outer lexer error, unchanged",
-                "struct S {\n    x: i64,\n    fn f(self) { let = 1 }\n    @\n    y: i64\n}",
-                vec![(Code::FieldComma, (2, 11))],
-            ),
-        ];
+        let unchanged = [(
+            "outer lexer error before broken method, unchanged",
+            "struct S {\n    x: i64,\n    @\n    fn f(self) { $ }\n    y: i64\n}",
+            vec![
+                (Code::FieldComma, (2, 11)),
+                (Code::UnexpectedCharacter, (3, 5)),
+            ],
+        )];
         for (row, src, want) in unchanged {
             let ds = parsed(src).diagnostics;
             let got: Vec<_> = ds
@@ -12531,6 +12649,11 @@ mod tests {
         }
 
         let rows = [
+            (
+                "parse error in method with outer lexer error",
+                "struct S {\n    x: i64,\n    fn f(self) { let = 1 }\n    @\n    y: i64\n}",
+                vec![(Code::FieldComma, (2, 11)), (Code::Expected, (3, 22))],
+            ),
             (
                 "struct comma before broken method and outer lexer error",
                 "struct S {\n    x: i64,\n    fn f(self) { $ }\n    @\n    y: i64\n}",
@@ -12565,6 +12688,111 @@ mod tests {
             assert_eq!(got, want, "row `{row}`");
             let breaches = crate::on_compiler_stack(|| crate::front_end::safe_fix_breaches(src));
             assert!(breaches.is_empty(), "row `{row}`: {breaches:?}");
+        }
+    }
+
+    #[test]
+    fn lexer_error_before_unnamed_extend_should_be_reported() {
+        let codes_of = |src: &str, ds: &[Diagnostic]| {
+            ds.iter()
+                .map(|d| (d.code(), line_col(src, d.span().start())))
+                .collect::<Vec<_>>()
+        };
+        let parsed_rows = [
+            (
+                "@ before unnamed slice extend",
+                "@\nextend [i64] {}\nfn main() {}",
+                vec![(Code::UnexpectedCharacter, (1, 1))],
+            ),
+            (
+                "@ same line before unnamed slice extend",
+                "@ extend [i64] {}\nfn main() {}",
+                vec![(Code::UnexpectedCharacter, (1, 1))],
+            ),
+            (
+                "@ before unnamed parenthesized extend",
+                "struct Foo {}\n@\nextend (Foo) {}\nfn main() {}",
+                vec![(Code::UnexpectedCharacter, (2, 1))],
+            ),
+            (
+                "@ before broken unnamed extend with inner $",
+                "@\nextend [i64] {\n    fn f(self) { print(xs[:-1]) }\n    $\n}",
+                vec![(Code::UnexpectedCharacter, (1, 1))],
+            ),
+        ];
+        for (row, src, want) in parsed_rows {
+            assert_eq!(codes_of(src, &parsed(src).diagnostics), want, "row `{row}`");
+        }
+
+        let front_end_rows = [
+            (
+                "@ before unnamed slice extend",
+                "@\nextend [i64] {}\nfn main() {}",
+                vec![
+                    (Code::UnexpectedCharacter, (1, 1)),
+                    (Code::CannotExtend, (2, 8)),
+                ],
+            ),
+            (
+                "@ same line before unnamed slice extend",
+                "@ extend [i64] {}\nfn main() {}",
+                vec![
+                    (Code::UnexpectedCharacter, (1, 1)),
+                    (Code::CannotExtend, (1, 10)),
+                ],
+            ),
+            (
+                "@ before unnamed parenthesized primitive extend",
+                "@\nextend (i64) {}\nfn main() {}",
+                vec![
+                    (Code::UnexpectedCharacter, (1, 1)),
+                    (Code::CannotExtend, (2, 9)),
+                ],
+            ),
+            (
+                "@ before unnamed Self extend",
+                "@\nextend Self {}\nfn main() {}",
+                vec![
+                    (Code::UnexpectedCharacter, (1, 1)),
+                    (Code::SelfOutside, (2, 8)),
+                ],
+            ),
+            (
+                "@ before generic unnamed extend",
+                "@\nextend<T> [T] {}\nfn main() {}",
+                vec![
+                    (Code::UnexpectedCharacter, (1, 1)),
+                    (Code::CannotExtend, (2, 11)),
+                ],
+            ),
+            (
+                "@ after struct before unnamed slice extend",
+                "struct S {}\n@\nextend [i64] {}\nfn main() {}",
+                vec![
+                    (Code::UnexpectedCharacter, (2, 1)),
+                    (Code::CannotExtend, (3, 8)),
+                ],
+            ),
+        ];
+        for (row, src, want) in front_end_rows {
+            let ds = crate::on_compiler_stack(|| crate::front_end::front_end(src).1);
+            assert_eq!(codes_of(src, &ds), want, "row `{row}`");
+        }
+
+        let unchanged = [
+            (
+                "@ before broken unnamed extend with inner 123, unchanged",
+                "@\nextend [i64] {\n    fn f(self) { print(xs[:-1]) }\n    123\n}",
+                vec![(Code::UnexpectedCharacter, (1, 1))],
+            ),
+            (
+                "@ inside unnamed extend header, unchanged",
+                "extend @ [i64] {}\nfn main() {}",
+                vec![(Code::UnexpectedCharacter, (1, 8))],
+            ),
+        ];
+        for (row, src, want) in unchanged {
+            assert_eq!(codes_of(src, &parsed(src).diagnostics), want, "row `{row}`");
         }
     }
 }
