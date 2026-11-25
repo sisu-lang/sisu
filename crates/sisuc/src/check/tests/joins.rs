@@ -2628,6 +2628,41 @@ fn a_side_checked_again_should_keep_the_checks_linear_in_depth() {
     }
 }
 
+/// Deeply nested generic calls check on a small stack without stack overflow.
+#[test]
+fn deep_nested_calls_should_check_on_a_small_stack() {
+    const STACK: usize = 256 * 1024;
+    let body = (0..42).fold("true".to_owned(), |side, _| {
+        format!("id(first(B(v: true).make({side}))) == o")
+    });
+    let src = format!(
+        "struct B {{\n    v: bool\n    fn make<T>(self, c: bool) -> [T] {{ [] }}\n}}\n\
+         fn first<T>(xs: [T]) -> T? {{ None }}\n\
+         fn id<T>(x: T) -> T {{ x }}\n\
+         fn main() {{\n    let o: u8? = None\n    let a: u8 = {body}\n}}"
+    );
+    let ast = parse_ok(&src);
+    let ds = std::thread::Builder::new()
+        .stack_size(STACK)
+        .spawn(move || {
+            let prelude = prelude_program("");
+            check(&ast, &prelude, &src, &[]).1
+        })
+        .expect("the thread should start")
+        .join()
+        .expect("the checker should not panic");
+    let errors: Vec<_> = ds
+        .iter()
+        .filter(|d| !is_judged(d))
+        .map(Diagnostic::code)
+        .collect();
+    assert_eq!(
+        errors,
+        vec![Code::Mismatch],
+        "expected only E0001 on `let a: u8 = ... == o`, got {ds:?}"
+    );
+}
+
 /// The header of `a_call_inside_a_member_call_should_take_its_type_from_the_join`.
 const MEMBER_CALLS: &str = "fn id<T>(x: T) -> T { x }\nfn first<T>(xs: [T]) -> T? { None }\n\
     fn pick<T>(a: T, b: T) -> T { a }\nfn make<T>(c: bool) -> [T] { [] }\n\

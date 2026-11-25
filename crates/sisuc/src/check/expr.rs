@@ -130,7 +130,8 @@ impl Checker<'_> {
         if !matches!(e.kind, ExprKind::Field { .. } | ExprKind::Index { .. }) {
             self.body.write_chain = None;
         }
-        let checked = self.expr_kind(e, expected, use_);
+        // Deep expressions nest up to the parser's limit, so grow the stack before the dispatch.
+        let checked = ensure_stack(|| self.expr_kind(e, expected, use_));
         self.body.indexed = outer;
         self.body.write_chain = chain;
         checked
