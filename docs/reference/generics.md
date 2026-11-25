@@ -180,7 +180,7 @@ fn main() {
 The examples use `fn pick<T>(a: T, b: T) -> T`, `fn h<T>(a: T, b: T?) -> T` and `fn opt<T>(x: T) -> T?`.
 
 - The arguments at the places of one type parameter are a [join](expressions.md#joins). A call decides each type parameter from its own arguments first. Its result then converts to the type that the context asks for at its top only, and wraps at most once ([ADR 0052](../adr/0052-a-join-takes-the-type-of-one-of-its-members.md)).
-- When the result does not convert, the call can take the part of the context type at the place of `T` in its return type. This applies to a call that is a member of a join, or a value under an expected type. Each argument at a place of `T` must then convert to that part, or have that exact type for a `mut` argument. Else the call is an error ([E0032](../diagnostics/E0032.md), or [E0170](../diagnostics/E0170.md) for a `mut` argument).
+- When the result does not convert, the call can take the part of the context type at the place of `T` in its return type. This applies to a call that is a member of a join, or a value under an expected type. Each argument at a place of `T` must then convert to that part, or have that exact type for a `mut` argument. Else the call is an error ([E0032](../diagnostics/E0032.md), or [E0047](../diagnostics/E0047.md) in `==`). Under a direct expected type, a `mut` argument that does not match reports [E0170](../diagnostics/E0170.md) instead. On the right of `??` or inside another generic call, it still reports [E0032](../diagnostics/E0032.md).
 - Take a generic call that is an argument at a place that names two or more type parameters of the outer call. It does not take a part of the context type. Its result must convert as it is. [E0032](../diagnostics/E0032.md)
 
 ```sisu

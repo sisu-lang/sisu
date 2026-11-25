@@ -3458,9 +3458,9 @@ impl Checker<'_> {
     /// shows the type that they give `t`. A literal has no type of its own. When the place is
     /// then known, a label names the argument that gives it. An open part can be left, where the
     /// place clashes with the argument. Then the report names an array place as "an array". Else
-    /// it shows each open part as `_`, as on `main`. A bound of `t`
-    /// that broke (`rejected`) leaves `t` open in the place that blames a part. It changes
-    /// `with[t]`, which the caller puts back. `None` when `misfits` is empty.
+    /// it shows each open part as `_`, as on `main`. A bound of `t` that broke (`rejected`) leaves
+    /// `t` open in the place that blames a part. It changes `with[t]`, which the caller puts back.
+    /// `None` when `misfits` is empty.
     fn report_misfits(
         &mut self,
         misfits: &[(Span, Type, Type, Origin)],
@@ -3517,7 +3517,7 @@ impl Checker<'_> {
             } else {
                 (inner, Some(Origin::None))
             };
-            let d = if let Some(shape) = Self::clashing_shape(want, got) {
+            let d = if let Some(shape) = clashing_shape(want, got) {
                 DiagnosticKind::Mismatch {
                     want: shape,
                     got: self.type_name(got),
@@ -3692,16 +3692,6 @@ impl Checker<'_> {
         for (&g, &w) in got.get().iter().zip(want.get()) {
             self.meet_parts(g, w);
         }
-    }
-
-    /// The outer array shape of `want` when it clashes with `got` and holds an open part. The
-    /// callee's parameter name would mislead there, as the arguments may give it a type. Another
-    /// clash, or a shape that `got` has, gives `None`, and the report writes the type.
-    fn clashing_shape(want: Type, got: Type) -> Option<Expected> {
-        let array =
-            matches!(want.kind(), TypeKind::Array(_)) && !matches!(got.kind(), TypeKind::Array(_));
-        // An argument with an open part of its own shows its type, as on `main`.
-        (array && want.holds_infer() && !got.holds_infer()).then_some(Expected::Array)
     }
 
     /// Whether a member of type `ty`, at a place that is `filled` with the variable `var` of its
@@ -6571,6 +6561,16 @@ fn walk_parts(
             walk_parts(ours, theirs, parts, seen);
         }
     });
+}
+
+/// The outer array shape of `want` when it clashes with `got` and holds an open part. "an array"
+/// reads more clearly than `[_]` when `got` is no array and has no open part. Another clash, or an
+/// array `got`, gives `None`, and the report writes the type.
+fn clashing_shape(want: Type, got: Type) -> Option<Expected> {
+    let array =
+        matches!(want.kind(), TypeKind::Array(_)) && !matches!(got.kind(), TypeKind::Array(_));
+    // An argument with an open part of its own shows its type, as on `main`.
+    (array && want.holds_infer() && !got.holds_infer()).then_some(Expected::Array)
 }
 
 #[cfg(test)]

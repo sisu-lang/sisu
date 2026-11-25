@@ -1,5 +1,6 @@
-// An open nominal parameter reports its type with `_` for each open type parameter.
-// An open array parameter reports "an array".
+// GIVEN calls with one wrong-shape argument at `[T]`, `Box<U>`, `CBox<U>`, `EBox<U>` and `Result<U, string>`.
+// WHEN `sisu check` runs on the file.
+// THEN `[T]` reports "an array", and each nominal parameter shows its type with `_` for `U`.
 struct Box<U> {
     v: U
 }
