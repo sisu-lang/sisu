@@ -5132,6 +5132,432 @@ fn a_read_through_an_associated_type_whose_bound_names_a_member_should_not_panic
     check_rows(&MEMBER_BOUND_ROWS);
 }
 
+/// `body` inside `main` after the ambiguous `Label` and `Code` declarations (`Label` returning
+/// `string` and `Code` returning `i64`), with optional `extra` top-level items before `fn main`.
+fn ambiguous_pick_program(extra: &str, body: &str) -> String {
+    format!(
+        "interface Label {{\n    fn name(self) -> string\n}}\ninterface Code {{\n    fn name(self) -> i64\n}}\nstruct S {{}}\nextend S: Label {{\n    fn name(self) -> string {{\n        \"a\"\n    }}\n}}\nextend S: Code {{\n    fn name(self) -> i64 {{\n        2\n    }}\n}}\nfn id<T>(x: T) -> T {{ x }}\nfn take(n: i64) {{}}\nfn pair<T>(a: T, b: T) {{}}\nstruct P {{\n    n: i64\n}}\n{extra}fn main() {{\n    let s = S()\n    let k: i64 = 7\n    let o: i64? = None\n    {body}\n}}"
+    )
+}
+
+/// Ambiguous `Label` and `Code` declarations with custom return types (`label_ret`, `label_body`)
+/// and (`code_ret`, `code_body`) for `Label.name` and `Code.name`.
+fn ambiguous_pick_with_returns(
+    (label_ret, label_body): (&str, &str),
+    (code_ret, code_body): (&str, &str),
+    body: &str,
+) -> String {
+    format!(
+        "interface Label {{\n    fn name(self) -> {label_ret}\n}}\ninterface Code {{\n    fn name(self) -> {code_ret}\n}}\nstruct S {{}}\nextend S: Label {{\n    fn name(self) -> {label_ret} {{\n        {label_body}\n    }}\n}}\nextend S: Code {{\n    fn name(self) -> {code_ret} {{\n        {code_body}\n    }}\n}}\nfn id<T>(x: T) -> T {{ x }}\nfn take(n: i64) {{}}\nfn pair<T>(a: T, b: T) {{}}\nstruct P {{\n    n: i64\n}}\nfn main() {{\n    let s = S()\n    let k: i64 = 7\n    let o: i64? = None\n    {body}\n}}"
+    )
+}
+
+#[test]
+fn required_type_should_pick_as_on_main() {
+    with_prelude();
+    // GIVEN `Label`, `Code`, `S`, `id`, `take`, `pair`, `P`, `s`, `k`, and `o`
+    // WHEN `sisu check` runs on each call with a required type or an open-argument form
+    // THEN each inferred call checks clean, and the open integer argument reports E0050 at `id`
+    let valid_rows = [
+        (
+            "a typed let picks",
+            "",
+            "let z: i64 = s.name()\n    print(z)",
+        ),
+        ("a parameter picks", "", "take(s.name())"),
+        (
+            "a result picks",
+            "fn r(s: S) -> i64 {\n    s.name()\n}\n",
+            "print(r(s))",
+        ),
+        (
+            "a field picks",
+            "",
+            "let p = P(n: s.name())\n    print(p.n)",
+        ),
+        (
+            "an assignment to a typed place picks",
+            "",
+            "let mut q: i64 = 0\n    q = s.name()\n    print(q)",
+        ),
+        (
+            "a wrap picks",
+            "",
+            "let z: i64? = s.name()\n    print(z ?? 0)",
+        ),
+        (
+            "a branch under a required type picks",
+            "",
+            "let z: i64 = if k > 1 {\n        s.name()\n    } else {\n        0\n    }\n    print(z)",
+        ),
+        (
+            "an array element under a required type picks",
+            "",
+            "let z: [i64] = [s.name()]\n    print(z.len())",
+        ),
+        (
+            "a type that the expected type fixes through T picks",
+            "",
+            "let z: i64 = id(s.name())\n    print(z)",
+        ),
+        (
+            "a type fixed through Some picks",
+            "",
+            "let z: i64? = Some(s.name())\n    print(z ?? 0)",
+        ),
+        (
+            "a type fixed through a generic constructor picks",
+            "",
+            "let r: Result<i64, string> = Ok(s.name())\n    print(r == Ok(1))",
+        ),
+        ("pair with k first picks", "", "pair(k, s.name())"),
+        ("pair with s.name() first picks", "", "pair(s.name(), k)"),
+        (
+            "the string literal form keeps main",
+            "",
+            "print(id(s.name()) == \"a\")",
+        ),
+    ];
+    for (row, extra, body) in valid_rows {
+        clean_row(row, &ambiguous_pick_program(extra, body));
+    }
+    codes_row(
+        "the integer literal form keeps E0050",
+        &ambiguous_pick_program("", "print(id(s.name()) == 7)"),
+        &[(Code::CannotInfer, (28, 11))],
+    );
+}
+
+#[test]
+fn pick_should_read_a_closed_int_as_i64() {
+    // GIVEN an open `Int` local closed before a pick, or an optional beside its payload
+    // WHEN `sisu check` runs on each closed-integer and optional-payload call
+    // THEN each row is valid and picks the matching `i64` or exact optional answer
+    let rows = [
+        (
+            "an open Int fits only the integer answer",
+            ambiguous_pick_program("", "let mut q = 0\n    q = s.name()\n    print(q)"),
+            "(call S.Code.name",
+        ),
+        (
+            "an open Int reads as i64 for the pick",
+            ambiguous_pick_with_returns(
+                ("u8", "1"),
+                ("i64", "2"),
+                "let mut q = 0\n    q = s.name()\n    print(q)",
+            ),
+            "(call S.Code.name",
+        ),
+        (
+            "the exact answer picks before the payload",
+            ambiguous_pick_with_returns(
+                ("i64?", "None"),
+                ("i64", "2"),
+                "let z: i64? = s.name()\n    print(z ?? 0)",
+            ),
+            "(call S.Label.name",
+        ),
+        (
+            "an open Int from a sibling argument reads as i64",
+            ambiguous_pick_program("", "let j = 7\n    pair(j, s.name())"),
+            "(call S.Code.name",
+        ),
+        (
+            "beside_side reads an open Int as i64",
+            ambiguous_pick_program("", "let j = 7\n    print(id(s.name()) == j)"),
+            "(call S.Code.name",
+        ),
+    ];
+    for (row, src, part) in rows {
+        let printed = lowered(&src);
+        assert!(printed.contains(part), "row `{row}`: {part} in {printed}");
+    }
+}
+
+/// Asserts that `src` gives one `Ambiguous` diagnostic matching `(method, receiver, pairs)` and
+/// `let_name`.
+fn assert_ambiguous_each(
+    src: &str,
+    method: &str,
+    receiver: &str,
+    pairs: &[(&str, &str)],
+    name_pos: Option<usize>,
+) -> Vec<Diagnostic> {
+    let (_, ds) = checked(src);
+    let let_name = name_pos.map(|start| Span::new(start, start + 1));
+    let expected: Diagnostic = DiagnosticKind::Ambiguous {
+        method: method.to_string(),
+        receiver: receiver.to_string(),
+        interfaces: pairs.iter().map(|&(i, _)| i.to_string()).collect(),
+        at: ds[0].span(),
+        help: Some(crate::diagnostic::AmbiguousHelp::Each {
+            results: pairs
+                .iter()
+                .map(|&(_, ty)| crate::diagnostic::AmbiguousResult {
+                    ty: ty.to_string(),
+                    whole: true,
+                })
+                .collect(),
+            let_name,
+        }),
+    }
+    .into();
+    assert_eq!(ds, vec![expected]);
+    ds
+}
+
+/// Byte offset of `name` in `let <name> = ` inside `src`.
+fn let_name_pos(src: &str, needle: &str) -> usize {
+    src.find(needle)
+        .unwrap_or_else(|| panic!("`{needle}` should be in the program"))
+        + "let ".len()
+}
+
+/// A program with three distinct `Convert<T>` answers on `Celsius` and an untyped `let x`.
+const CONVERT_THREE: &str = "interface Convert<T> {\n    fn convert(self) -> T\n}\nclass Fahrenheit {\n    d: f64\n}\nclass Kelvin {\n    d: f64\n}\nclass Rankine {\n    d: f64\n}\nclass Celsius {\n    d: f64\n}\nextend Celsius: Convert<Fahrenheit> {\n    fn convert(self) -> Fahrenheit { Fahrenheit(d: self.d) }\n}\nextend Celsius: Convert<Kelvin> {\n    fn convert(self) -> Kelvin { Kelvin(d: self.d) }\n}\nextend Celsius: Convert<Rankine> {\n    fn convert(self) -> Rankine { Rankine(d: self.d) }\n}\nfn main() {\n    let c = Celsius(d: 100.0)\n    let x = c.convert()\n    print(c.d)\n}";
+
+#[test]
+fn different_results_should_name_each_answer() {
+    // GIVEN ambiguous calls whose answers each have a distinct result type
+    let later_use =
+        ambiguous_pick_program("", "let x = s.name()\n    let y: i64 = x\n    print(y)");
+    let join_member = ambiguous_pick_program("", "print(s.name() == k)");
+    let typed_let = ambiguous_pick_program("", "let b: bool = s.name()");
+    let wildcard_let = ambiguous_pick_program("", "let _ = s.name()");
+    let mut_let = ambiguous_pick_program("", "let mut m = s.name()\n    print(m)");
+
+    // WHEN `sisu check` runs on them
+    // THEN each gets E0156 with help and unsafe `: <T>` fixes only for an untyped `let`
+    fix_rows(&[
+        FixRow {
+            id: "a later use does not pick",
+            src: later_use.clone(),
+            reports: vec![
+                Report::new(Code::Ambiguous, ("s.", "name"))
+                    .help(true)
+                    .fix(false, 1, ("let x =", "let x: string ="))
+                    .fix(false, 1, ("let x =", "let x: i64 =")),
+            ],
+        },
+        FixRow {
+            id: "a join member under no required type does not pick",
+            src: join_member.clone(),
+            reports: vec![Report::new(Code::Ambiguous, ("s.", "name")).help(true)],
+        },
+        FixRow {
+            id: "a typed let that matches neither answer gets no fix",
+            src: typed_let,
+            reports: vec![Report::new(Code::Ambiguous, ("s.", "name")).help(true)],
+        },
+        FixRow {
+            id: "a wildcard let gets no fix",
+            src: wildcard_let,
+            reports: vec![Report::new(Code::Ambiguous, ("s.", "name")).help(true)],
+        },
+        FixRow {
+            id: "a mutable untyped let gets unsafe fixes after the name",
+            src: mut_let,
+            reports: vec![
+                Report::new(Code::Ambiguous, ("s.", "name"))
+                    .help(true)
+                    .fix(false, 1, ("let mut m =", "let mut m: string ="))
+                    .fix(false, 1, ("let mut m =", "let mut m: i64 =")),
+            ],
+        },
+        FixRow {
+            id: "three distinct answers get three unsafe fixes after the let name",
+            src: CONVERT_THREE.to_string(),
+            reports: vec![
+                Report::new(Code::Ambiguous, ("c.", "convert"))
+                    .help(true)
+                    .fix(false, 1, ("let x =", "let x: Fahrenheit ="))
+                    .fix(false, 1, ("let x =", "let x: Kelvin ="))
+                    .fix(false, 1, ("let x =", "let x: Rankine =")),
+            ],
+        },
+    ]);
+
+    let x_start = let_name_pos(&later_use, "let x = ");
+    let ds_later = assert_ambiguous_each(
+        &later_use,
+        "name",
+        "S",
+        &[("Label", "string"), ("Code", "i64")],
+        Some(x_start),
+    );
+    assert_eq!(
+        fixes(&later_use, &ds_later[0]),
+        vec![
+            (false, vec![(28, 10, "", ": string".to_string())]),
+            (false, vec![(28, 10, "", ": i64".to_string())]),
+        ]
+    );
+    assert_ambiguous_each(
+        &join_member,
+        "name",
+        "S",
+        &[("Label", "string"), ("Code", "i64")],
+        None,
+    );
+
+    let three_x = let_name_pos(CONVERT_THREE, "let x = ");
+    let ds_three = assert_ambiguous_each(
+        CONVERT_THREE,
+        "convert",
+        "Celsius",
+        &[
+            ("Convert<Fahrenheit>", "Fahrenheit"),
+            ("Convert<Kelvin>", "Kelvin"),
+            ("Convert<Rankine>", "Rankine"),
+        ],
+        Some(three_x),
+    );
+    assert_eq!(
+        fixes(CONVERT_THREE, &ds_three[0]),
+        vec![
+            (false, vec![(27, 10, "", ": Fahrenheit".to_string())]),
+            (false, vec![(27, 10, "", ": Kelvin".to_string())]),
+            (false, vec![(27, 10, "", ": Rankine".to_string())]),
+        ]
+    );
+}
+
+#[test]
+fn shared_result_should_keep_the_help_of_main() {
+    // GIVEN ambiguous calls with a shared result, an unknown generic result, an associated type,
+    // or all equal results
+    let pairs = "interface I<T, U> {\n    fn m(self) -> T\n}\nclass C {}\nextend C: I<i64, bool> {\n    fn m(self) -> i64 { 1 }\n}\nextend C: I<i64, char> {\n    fn m(self) -> i64 { 2 }\n}\nextend C: I<string, bool> {\n    fn m(self) -> string { \"s\" }\n}\nfn main() {\n    let c = C()\n    let x = c.m()\n}";
+    let generic = "interface One {\n    fn make<U>(self, x: U) -> U\n}\ninterface Many {\n    fn make<V>(self, x: V) -> [V]\n}\nclass C {}\nextend C: One {\n    fn make<U>(self, x: U) -> U { x }\n}\nextend C: Many {\n    fn make<V>(self, x: V) -> [V] { [x] }\n}\nfn main() {\n    let n: i64 = C().make(1)\n    print(n)\n}";
+    let associated = "interface Source {\n    type Item\n}\ninterface Feed {\n    type Item\n}\nfn show<S: Source & Feed>(x: S.Item) {}\nfn main() {}";
+    let same = "interface A {\n    fn name(self) -> string\n}\ninterface B {\n    fn name(self) -> string\n}\nclass C {}\nextend C: A {\n    fn name(self) -> string { \"a\" }\n}\nextend C: B {\n    fn name(self) -> string { \"b\" }\n}\nfn main() {\n    let c = C()\n    let n = c.name()\n}";
+
+    // WHEN `sisu check` runs on each
+    // THEN `pairs` keeps its help with no fix, and the other three keep no help and no fix
+    fix_rows(&[
+        FixRow {
+            id: "shared result and unique result keep main help without fixes",
+            src: pairs.to_string(),
+            reports: vec![Report::new(Code::Ambiguous, ("c.", "m")).help(true)],
+        },
+        FixRow {
+            id: "unknown generic result keeps no help and no fix",
+            src: generic.to_string(),
+            reports: vec![Report::new(Code::Ambiguous, ("C().", "make"))],
+        },
+        FixRow {
+            id: "associated type keeps no help and no fix",
+            src: associated.to_string(),
+            reports: vec![Report::new(Code::Ambiguous, ("S.", "Item"))],
+        },
+        FixRow {
+            id: "same result type keeps no help and no fix",
+            src: same.to_string(),
+            reports: vec![Report::new(Code::Ambiguous, ("c.", "name"))],
+        },
+    ]);
+}
+
+#[test]
+fn safe_call_should_wrap_ambiguous_results_as_optional() {
+    // GIVEN ambiguous safe calls whose answers return plain, optional, or shared result types
+    let plain_and_plain = ambiguous_pick_with_returns(
+        ("string", "\"a\""),
+        ("i64", "2"),
+        "let c: S? = Some(s)\n    let n = c?.name()\n    print(n == None)",
+    );
+    let optional_and_plain = ambiguous_pick_with_returns(
+        ("string?", "None"),
+        ("i64", "2"),
+        "let c: S? = Some(s)\n    let n = c?.name()\n    print(n == None)",
+    );
+    let optional_and_same_payload = ambiguous_pick_with_returns(
+        ("string?", "None"),
+        ("string", "\"b\""),
+        "let c: S? = Some(s)\n    let n = c?.name()\n    print(n == None)",
+    );
+    let typed_optional_let = ambiguous_pick_with_returns(
+        ("string", "\"a\""),
+        ("i64", "2"),
+        "let c: S? = Some(s)\n    let b: bool? = c?.name()\n    print(b == None)",
+    );
+    let bound_safe = ambiguous_pick_program(
+        "fn pick<T: Label & Code>(c: T?) {\n    let n = c?.name()\n    print(n == None)\n}\n",
+        "",
+    );
+
+    // WHEN `sisu check` runs on each safe call
+    // THEN each answer type becomes optional before comparing results and emitting help or fixes
+    fix_rows(&[
+        FixRow {
+            id: "two plain results wrap as optionals with unsafe fixes",
+            src: plain_and_plain.clone(),
+            reports: vec![
+                Report::new(Code::Ambiguous, ("c?.", "name"))
+                    .help(true)
+                    .fix(false, 1, ("let n =", "let n: string? ="))
+                    .fix(false, 1, ("let n =", "let n: i64? =")),
+            ],
+        },
+        FixRow {
+            id: "one optional and one plain distinct result keep both optional fixes",
+            src: optional_and_plain.clone(),
+            reports: vec![
+                Report::new(Code::Ambiguous, ("c?.", "name"))
+                    .help(true)
+                    .fix(false, 1, ("let n =", "let n: string? ="))
+                    .fix(false, 1, ("let n =", "let n: i64? =")),
+            ],
+        },
+        FixRow {
+            id: "optional and plain of the same payload match and give no help",
+            src: optional_and_same_payload,
+            reports: vec![Report::new(Code::Ambiguous, ("c?.", "name"))],
+        },
+        FixRow {
+            id: "a typed let on a safe call keeps optional help without fixes",
+            src: typed_optional_let.clone(),
+            reports: vec![Report::new(Code::Ambiguous, ("c?.", "name")).help(true)],
+        },
+        FixRow {
+            id: "a safe call on a bounded type parameter wraps both optional fixes",
+            src: bound_safe.clone(),
+            reports: vec![
+                Report::new(Code::Ambiguous, ("c?.", "name"))
+                    .help(true)
+                    .fix(false, 1, ("let n =", "let n: string? ="))
+                    .fix(false, 1, ("let n =", "let n: i64? =")),
+            ],
+        },
+    ]);
+
+    for (src, receiver, let_name) in [
+        (
+            &plain_and_plain,
+            "S",
+            Some(let_name_pos(&plain_and_plain, "let n = ")),
+        ),
+        (
+            &optional_and_plain,
+            "S",
+            Some(let_name_pos(&optional_and_plain, "let n = ")),
+        ),
+        (&typed_optional_let, "S", None),
+        (
+            &bound_safe,
+            "T",
+            Some(let_name_pos(&bound_safe, "let n = ")),
+        ),
+    ] {
+        assert_ambiguous_each(
+            src,
+            "name",
+            receiver,
+            &[("Label", "string?"), ("Code", "i64?")],
+            let_name,
+        );
+    }
+}
+
 /// The three #722 shapes, their forward-order twins, cross-interface parameter bounds,
 /// inheritance, mixed bounds, and transitive chains resolve on demand.
 #[test]
@@ -5554,6 +5980,43 @@ fn mutual_param_assoc_cycle_should_emit_bounds_loop_help() {
     }
 }
 
+#[test]
+fn safe_call_should_suggest_optional_when_one_answer_is_unique() {
+    // GIVEN an ambiguous safe call where two answers share a result type and one is unique
+    let pairs_safe = "interface Pair2<T, U> {\n    fn first(self) -> T\n}\nclass Tag {\n    n: i64\n}\nextend Tag: Pair2<i64, bool> {\n    fn first(self) -> i64 { self.n }\n}\nextend Tag: Pair2<i64, char> {\n    fn first(self) -> i64 { self.n + 1 }\n}\nextend Tag: Pair2<string, bool> {\n    fn first(self) -> string { \"tag\" }\n}\nfn main() {\n    let t: Tag? = Some(Tag(n: 1))\n    let n = t?.first()\n    print(n == None)\n}";
+
+    // WHEN `sisu check` runs on it
+    // THEN the single-let help suggests the optional type of the unique answer
+    fix_rows(&[FixRow {
+        id: "a shared payload with one unique answer suggests an optional let",
+        src: pairs_safe.to_string(),
+        reports: vec![Report::new(Code::Ambiguous, ("t?.", "first")).help(true)],
+    }]);
+
+    let (_, ds) = checked(pairs_safe);
+    assert_eq!(
+        ds,
+        vec![
+            DiagnosticKind::Ambiguous {
+                method: "first".to_string(),
+                receiver: "Tag".to_string(),
+                interfaces: vec![
+                    "Pair2<i64, bool>".to_string(),
+                    "Pair2<i64, char>".to_string(),
+                    "Pair2<string, bool>".to_string(),
+                ],
+                at: ds[0].span(),
+                help: Some(crate::diagnostic::AmbiguousHelp::One {
+                    call: "t?.first()".to_string(),
+                    binding: "n".to_string(),
+                    ty: "string?".to_string(),
+                }),
+            }
+            .into()
+        ]
+    );
+}
+
 /// Missing associated types in interface parameter and associated-type bounds emit plain E0030
 /// without loop help.
 #[test]
@@ -5598,4 +6061,57 @@ fn missing_associated_type_in_interface_bounds_should_report_without_loop_help()
             "{name}: missing associated type should not emit BoundsLoop help"
         );
     }
+}
+
+#[test]
+fn truncated_result_type_should_omit_broken_e0156_fix() {
+    // GIVEN an ambiguous call in an untyped `let` where a candidate's return type exceeds the
+    // 256-byte display limit and is cut with `...`
+    let long_a = "VeryLongStructNameForTestingTypeTruncationBeyondLimit<\
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<\
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<\
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<i64, i64>, i64>, i64>, \
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<i64, i64>>";
+    let long_b = "VeryLongStructNameForTestingTypeTruncationBeyondLimit<\
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<\
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<\
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<string, string>, string>, string>, \
+        VeryLongStructNameForTestingTypeTruncationBeyondLimit<string, string>>";
+    let one_cut = format!(
+        "struct VeryLongStructNameForTestingTypeTruncationBeyondLimit<A, B> {{\n    a: A\n    b: B\n}}\ninterface I1 {{\n    fn f(self) -> {long_a}\n}}\ninterface I2 {{\n    fn f(self) -> i64\n}}\nstruct S {{}}\nextend S: I1 {{\n    fn f(self) -> {long_a} {{\n        panic(\"x\")\n    }}\n}}\nextend S: I2 {{\n    fn f(self) -> i64 {{\n        2\n    }}\n}}\nfn main() {{\n    let s = S()\n    let x = s.f()\n    print(x)\n}}"
+    );
+    let safe_cut = format!(
+        "struct VeryLongStructNameForTestingTypeTruncationBeyondLimit<A, B> {{\n    a: A\n    b: B\n}}\ninterface I1 {{\n    fn f(self) -> {long_a}\n}}\ninterface I2 {{\n    fn f(self) -> i64\n}}\nstruct S {{}}\nextend S: I1 {{\n    fn f(self) -> {long_a} {{\n        panic(\"x\")\n    }}\n}}\nextend S: I2 {{\n    fn f(self) -> i64 {{\n        2\n    }}\n}}\nfn main() {{\n    let s: S? = Some(S())\n    let x = s?.f()\n    print(x == None)\n}}"
+    );
+    let both_cut = format!(
+        "struct VeryLongStructNameForTestingTypeTruncationBeyondLimit<A, B> {{\n    a: A\n    b: B\n}}\ninterface I1 {{\n    fn f(self) -> {long_a}\n}}\ninterface I2 {{\n    fn f(self) -> {long_b}\n}}\nstruct S {{}}\nextend S: I1 {{\n    fn f(self) -> {long_a} {{\n        panic(\"x\")\n    }}\n}}\nextend S: I2 {{\n    fn f(self) -> {long_b} {{\n        panic(\"y\")\n    }}\n}}\nfn main() {{\n    let s = S()\n    let x = s.f()\n    print(x)\n}}"
+    );
+
+    // WHEN `sisu check` runs on each program
+    // THEN only candidates with whole, non-truncated type names get unsafe `: <T>` fixes
+    fix_rows(&[
+        FixRow {
+            id: "one truncated candidate omits its fix and keeps the other",
+            src: one_cut,
+            reports: vec![Report::new(Code::Ambiguous, ("s.", "f")).help(true).fix(
+                false,
+                1,
+                ("let x = ", "let x: i64 = "),
+            )],
+        },
+        FixRow {
+            id: "safe call with one truncated candidate keeps the optional fix for the other",
+            src: safe_cut,
+            reports: vec![Report::new(Code::Ambiguous, ("s?.", "f")).help(true).fix(
+                false,
+                1,
+                ("let x = ", "let x: i64? = "),
+            )],
+        },
+        FixRow {
+            id: "two truncated candidates keep the help and emit no fixes",
+            src: both_cut,
+            reports: vec![Report::new(Code::Ambiguous, ("s.", "f")).help(true)],
+        },
+    ]);
 }

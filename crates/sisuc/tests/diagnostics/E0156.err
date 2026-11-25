@@ -4,7 +4,15 @@ error[E0156]: `name` on `Circle` could come from `Label` or `Code`
 27 |     let n = c.name()
    |               ^^^^
    |
-   = help: annotate the result: `let n: string = c.name()`
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
+help: write `: string` to pick `Label`
+   |
+27 |     let n: string = c.name()
+   |          ++++++++
+help: write `: i64` to pick `Code`
+   |
+27 |     let n: i64 = c.name()
+   |          +++++
 
 sisu: 1 error
 sisu: for more on a code, run `sisu explain <code>`: E0156

@@ -563,3 +563,105 @@ fn the_optimize_guard_should_find_each_use_of_optimize() {
         ["call", "pointer", "in_assert", "in_closure"]
     );
 }
+
+/// The `.rs` files under `dir`, as paths of `/`-joined names relative to `root`.
+fn rust_files(root: &Path, dir: &Path, out: &mut Vec<String>) {
+    let entries =
+        fs::read_dir(dir).unwrap_or_else(|e| panic!("{} should be readable: {e}", dir.display()));
+    for entry in entries {
+        let path = entry
+            .unwrap_or_else(|e| panic!("{} should list its entries: {e}", dir.display()))
+            .path();
+        if path.is_dir() {
+            rust_files(root, &path, out);
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            let relative = path
+                .strip_prefix(root)
+                .expect("a file under `src` should have a path under `src`");
+            out.push(relative.to_string_lossy().replace('\\', "/"));
+        }
+    }
+}
+
+/// The files of `src/` outside `check/infer.rs` and `check/infer/` that name `TypeKind::Infer`,
+/// with how many times they name it. A line whose arm ends in the `unreachable!` of `write_back`
+/// does not count.
+fn infer_matches() -> BTreeMap<String, usize> {
+    const UNREACHABLE: &str = "the checker's write_back should leave no inference variable";
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    rust_files(&root, &root, &mut files);
+    let mut found = BTreeMap::new();
+    for file in files
+        .into_iter()
+        .filter(|f| f != "check/infer.rs" && !f.starts_with("check/infer/"))
+    {
+        let text = fs::read_to_string(root.join(&file))
+            .unwrap_or_else(|e| panic!("{file} should be readable: {e}"));
+        let lines: Vec<&str> = text.lines().collect();
+        let count: usize = lines
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| {
+                !lines
+                    .get(i + 1)
+                    .is_some_and(|next| next.contains(UNREACHABLE))
+            })
+            .map(|(_, line)| line.matches("TypeKind::Infer").count())
+            .sum();
+        if count > 0 {
+            found.insert(file, count);
+        }
+    }
+    found
+}
+
+/// GIVEN the count of `TypeKind::Infer` in each file of `src/` outside `check/infer.rs` and
+/// `check/infer/`, taken when body inference stage 2 began
+/// WHEN the files are counted again
+/// THEN no file has more of them than its row says, and a file with fewer has its row lowered
+#[test]
+fn infer_matches_should_not_grow() {
+    const ALLOWED: &[(&str, usize)] = &[
+        ("check/any.rs", 1),
+        ("check/array.rs", 1),
+        ("check/branch.rs", 1),
+        ("check/cycle.rs", 1),
+        ("check/expr.rs", 1),
+        ("check/generic.rs", 21),
+        ("check/join.rs", 4),
+        ("check/join/join_report.rs", 2),
+        ("check/operator.rs", 6),
+        ("check/tests/joins.rs", 1),
+        ("conformance.rs", 4),
+        ("generate/coverage.rs", 1),
+        ("payload_limit.rs", 1),
+        ("tir.rs", 2),
+        ("types.rs", 4),
+    ];
+    let found = infer_matches();
+    let mut wrong = Vec::new();
+    let mut files: Vec<&str> = found.keys().map(String::as_str).collect();
+    files.extend(ALLOWED.iter().map(|&(file, _)| file));
+    files.sort_unstable();
+    files.dedup();
+    for file in files {
+        let allowed = ALLOWED
+            .iter()
+            .find_map(|&(name, n)| (name == file).then_some(n))
+            .unwrap_or(0);
+        let now = found.get(file).copied().unwrap_or(0);
+        if now > allowed {
+            wrong.push(format!(
+                "`{file}` has {now} `TypeKind::Infer`, the row says {allowed}: a body type is resolved in `resolve_local` or `close`, not matched here"
+            ));
+        } else if now == 0 {
+            wrong.push(format!("`{file}` has no `TypeKind::Infer`: remove its row"));
+        } else if now < allowed {
+            wrong.push(format!(
+                "`{file}` has {now} `TypeKind::Infer`, the row says {allowed}: lower the row"
+            ));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}

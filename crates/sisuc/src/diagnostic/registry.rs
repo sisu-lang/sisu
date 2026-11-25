@@ -695,13 +695,14 @@ pub(crate) enum DiagnosticKind {
         used: Option<Span>,
     },
     /// A call of the method `method` of `receiver`, at `at`, that more than one conformance
-    /// could answer: those of `interfaces`. `annotate` is the `let` that picks one.
+    /// could answer: those of `interfaces`. `help` guides the user to pick one when their result
+    /// types differ.
     Ambiguous {
         method: String,
         receiver: String,
         interfaces: Vec<String>,
         at: Span,
-        annotate: Option<Annotate>,
+        help: Option<AmbiguousHelp>,
     },
     /// A `self` at `at` that is not a method's first parameter.
     SelfNotFirst { at: Span },
@@ -1967,16 +1968,22 @@ pub(crate) enum Plain {
     RemoveElse { span: Span, safe: bool },
 }
 
+/// `items` joined with `, ` and `last` before the last one: "`a`", "`a` and `b`", "`a`, `b` and
+/// `c`".
+fn join_items(items: &[String], last: &str) -> String {
+    let (end, rest) = items
+        .split_last()
+        .expect("a list should hold at least one item");
+    if rest.is_empty() {
+        return end.clone();
+    }
+    format!("{} {last} {end}", rest.join(", "))
+}
+
 /// `names` in backticks, with `last` before the last one: "`a`", "`a` or `b`", "`a`, `b` or `c`".
 fn listed(names: &[String], last: &str) -> String {
-    let (end, rest) = names
-        .split_last()
-        .expect("a list should hold at least one name");
-    if rest.is_empty() {
-        return format!("`{end}`");
-    }
-    let rest: Vec<_> = rest.iter().map(|name| format!("`{name}`")).collect();
-    format!("{} {last} `{end}`", rest.join(", "))
+    let quoted: Vec<String> = names.iter().map(|name| format!("`{name}`")).collect();
+    join_items(&quoted, last)
 }
 
 /// The message of a fix that converts a value to the type `to`.
@@ -3320,13 +3327,29 @@ pub(crate) enum PeelLayers {
     Extra,
 }
 
-/// The `let` that picks one answer of an ambiguous call: the call as written, the name of the
-/// binding, and the type that exactly one answer returns.
+/// One candidate's formatted result type in [`AmbiguousHelp::Each`]. `whole` is false when
+/// formatting cut the type with `...`, so no `: <T>` fix is offered for it.
 #[derive(Clone)]
-pub(crate) struct Annotate {
-    pub(crate) call: String,
-    pub(crate) binding: String,
+pub(crate) struct AmbiguousResult {
     pub(crate) ty: String,
+    pub(crate) whole: bool,
+}
+
+/// How [`DiagnosticKind::Ambiguous`] guides the user to pick one answer.
+#[derive(Clone)]
+pub(crate) enum AmbiguousHelp {
+    /// Some answers share a result type, and at least one is unique: show one `let`.
+    One {
+        call: String,
+        binding: String,
+        ty: String,
+    },
+    /// Every answer has its own result type: `results` aligns 1-to-1 with `interfaces`, and
+    /// `let_name` adds `: <T>` fixes for an untyped `let`.
+    Each {
+        results: Vec<AmbiguousResult>,
+        let_name: Option<Span>,
+    },
 }
 
 /// What an interface holds that it should not.
@@ -4159,7 +4182,7 @@ impl From<DiagnosticKind> for Diagnostic {
                 receiver,
                 interfaces,
                 at,
-                annotate,
+                help,
             } => {
                 let d = Diagnostic::coded(
                     code,
@@ -4169,9 +4192,35 @@ impl From<DiagnosticKind> for Diagnostic {
                         listed(&interfaces, "or")
                     ),
                 );
-                match annotate {
-                    Some(Annotate { call, binding, ty }) => {
+                match help {
+                    Some(AmbiguousHelp::One { call, binding, ty }) => {
                         d.with_help(format!("annotate the result: `let {binding}: {ty} = {call}`"))
+                    }
+                    Some(AmbiguousHelp::Each { results, let_name }) => {
+                        let items: Vec<String> = interfaces
+                            .iter()
+                            .zip(&results)
+                            .map(|(interface, result)| {
+                                format!("`{interface}` gives `{}`", result.ty)
+                            })
+                            .collect();
+                        let mut d = d.with_help(format!(
+                            "{}; write the type of the result to pick one",
+                            join_items(&items, "and")
+                        ));
+                        if let Some(name) = let_name {
+                            let at = name.end_point();
+                            for (interface, result) in interfaces.iter().zip(&results) {
+                                if result.whole {
+                                    d = d.with_fix(unsafe_fix(
+                                        &format!("write `: {}` to pick `{interface}`", result.ty),
+                                        at,
+                                        &format!(": {}", result.ty),
+                                    ));
+                                }
+                            }
+                        }
+                        d
                     }
                     None => d,
                 }

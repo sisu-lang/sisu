@@ -1093,7 +1093,7 @@ impl Written {
     }
 
     /// The two passes over what `walk` visits, each type once for each pass.
-    fn walk_types(table: &mut Table, walk: &mut dyn FnMut(Each<'_>)) -> Written {
+    pub(super) fn walk_types(table: &mut Table, walk: &mut dyn FnMut(Each<'_>)) -> Written {
         let mut written = Written::default();
         walk(&mut |ty| written.settle(table, *ty));
         walk(&mut |ty| written.put(table, ty));

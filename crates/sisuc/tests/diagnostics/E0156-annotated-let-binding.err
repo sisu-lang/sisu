@@ -1,46 +1,82 @@
 error[E0156]: `name` on `T` could come from `Label` or `Code`
-  --> E0156-annotated-let-binding.sisu:23:21
+  --> E0156-annotated-let-binding.sisu:42:21
    |
-23 |     let k: bool = t.name()
+42 |     let k: bool = t.name()
    |                     ^^^^
    |
-   = help: annotate the result: `let k: string = t.name()`
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
 
 error[E0156]: `name` on `Circle` could come from `Label` or `Code`
-  --> E0156-annotated-let-binding.sisu:28:21
+  --> E0156-annotated-let-binding.sisu:47:21
    |
-28 |     let n: bool = c.name()
+47 |     let n: bool = c.name()
    |                     ^^^^
    |
-   = help: annotate the result: `let n: string = c.name()`
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
 
 warning[W0002]: `m` is never reassigned
-  --> E0156-annotated-let-binding.sisu:29:13
+  --> E0156-annotated-let-binding.sisu:48:13
    |
-29 |     let mut m: [i64] = c.name()
+48 |     let mut m: [i64] = c.name()
    |             ^
    |
 help: declare it with `let`
    |
-29 -     let mut m: [i64] = c.name()
-29 +     let m: [i64] = c.name()
+48 -     let mut m: [i64] = c.name()
+48 +     let m: [i64] = c.name()
    |
 
 error[E0156]: `name` on `Circle` could come from `Label` or `Code`
-  --> E0156-annotated-let-binding.sisu:29:26
+  --> E0156-annotated-let-binding.sisu:48:26
    |
-29 |     let mut m: [i64] = c.name()
+48 |     let mut m: [i64] = c.name()
    |                          ^^^^
    |
-   = help: annotate the result: `let mut m: string = c.name()`
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
 
 error[E0156]: `name` on `Circle` could come from `Label` or `Code`
-  --> E0156-annotated-let-binding.sisu:30:21
+  --> E0156-annotated-let-binding.sisu:49:21
    |
-30 |     let _: bool = c.name()
+49 |     let _: bool = c.name()
    |                     ^^^^
    |
-   = help: annotate the result: `let x: string = c.name()`
+   = help: `Label` gives `string` and `Code` gives `i64`; write the type of the result to pick one
 
-sisu: 4 errors, 1 warning
+error[E0156]: `first` on `Tag` could come from `Pair2<i64, bool>`, `Pair2<i64, char>` or `Pair2<string, bool>`
+  --> E0156-annotated-let-binding.sisu:52:21
+   |
+52 |     let p: bool = t.first()
+   |                     ^^^^^
+   |
+   = help: annotate the result: `let p: string = t.first()`
+
+warning[W0002]: `q` is never reassigned
+  --> E0156-annotated-let-binding.sisu:53:13
+   |
+53 |     let mut q: [bool] = t.first()
+   |             ^
+   |
+help: declare it with `let`
+   |
+53 -     let mut q: [bool] = t.first()
+53 +     let q: [bool] = t.first()
+   |
+
+error[E0156]: `first` on `Tag` could come from `Pair2<i64, bool>`, `Pair2<i64, char>` or `Pair2<string, bool>`
+  --> E0156-annotated-let-binding.sisu:53:27
+   |
+53 |     let mut q: [bool] = t.first()
+   |                           ^^^^^
+   |
+   = help: annotate the result: `let mut q: string = t.first()`
+
+error[E0156]: `first` on `Tag` could come from `Pair2<i64, bool>`, `Pair2<i64, char>` or `Pair2<string, bool>`
+  --> E0156-annotated-let-binding.sisu:54:21
+   |
+54 |     let _: bool = t.first()
+   |                     ^^^^^
+   |
+   = help: annotate the result: `let x: string = t.first()`
+
+sisu: 7 errors, 2 warnings
 sisu: for more on a code, run `sisu explain <code>`: E0156, W0002

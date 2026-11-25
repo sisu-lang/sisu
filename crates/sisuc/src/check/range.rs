@@ -4,6 +4,7 @@
 use super::array::must_unwrap;
 use super::call::Dot;
 use super::string::single_term;
+use super::use_kind::Use;
 use super::{Checked, Checker, Expectation, Origin, Poisoned, known_type};
 use crate::ast::{self, ExprKind};
 use crate::diagnostic::{
@@ -125,12 +126,12 @@ impl Checker<'_> {
     ) -> Checked {
         if error_for_good(range) {
             self.stamp_push(base);
-            drop(self.value(base, Expectation::None));
+            drop(self.value_as(base, Use::Receiver));
             let d = self.index_outside(base, range, None);
             return Err(Poisoned::untyped(self.diagnostics.error(d)));
         }
         let outer = std::mem::replace(&mut self.body.indexed, true);
-        let checked = self.value(base, Expectation::None);
+        let checked = self.value_as(base, Use::Receiver);
         // The bounds are not part of the chain that the index ends.
         self.body.indexed = false;
         let ty = match known_type(&checked) {
@@ -289,8 +290,11 @@ impl Checker<'_> {
                 checked
             })
         };
+        // A bound is only read, also in the place of a write: `xs[0..s.k][0].n = 5` writes no `s`.
+        let chain = std::mem::take(&mut self.body.write_chain);
         let start = bound(self, &range.start);
         let end = bound(self, &range.end);
+        self.body.write_chain = chain;
         (start, end, mismatched)
     }
 
@@ -338,7 +342,7 @@ impl Checker<'_> {
         let found = range_index(target)?;
         self.stamp_push(target);
         // The base is read, as `xs[0..2]` reads it, and reports its own mistakes.
-        let base_type = known_type(&self.value(found.base, Expectation::None));
+        let base_type = known_type(&self.value_as(found.base, Use::Receiver));
         let range = found.range;
         // `xs[..][i]` is an element of `xs`, which E0021 helps; `xs[..]` is `xs`.
         let element_of_all = found.parent.is_some() && range.start.is_none() && !range.inclusive;

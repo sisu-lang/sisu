@@ -13,6 +13,7 @@ use super::join::{Heading, JoinForm};
 use super::names::{self, Position, Resolved};
 use super::reports::Reported;
 use super::stmt::BlockSoFar;
+use super::use_kind::Use;
 use super::{Checked, CheckedBlock, Checker, Declared, Expectation, Origin, Poisoned, type_of};
 use crate::ast;
 use crate::diagnostic::{
@@ -223,7 +224,7 @@ impl Checker<'_> {
     ) -> Checked {
         let dropped = self.body.dropped == Some(span);
         let whole = expected;
-        let checked = self.value_kept(scrutinee);
+        let checked = self.value_kept(scrutinee, Use::Scrutinee);
         let mut position = type_of(&checked);
         let cannot = position.take_if(|&mut ty| !matchable(ty)).map(|ty| {
             let ty = self.type_name(ty);
@@ -488,7 +489,7 @@ impl Checker<'_> {
         pattern: &ast::Pattern,
         value: &ast::Expr,
     ) -> (Checked, LetValue, bool) {
-        let checked = self.value(value, Expectation::None);
+        let checked = self.value_as(value, Use::Scrutinee);
         let ty = type_of(&checked);
         let name = match &pattern.kind {
             // A variant of the enum inside matches that value, as in `match`.
@@ -1451,6 +1452,7 @@ impl Checker<'_> {
                     b.also.push(name.span);
                     (b.ty, b.span)
                 });
+                let earlier = earlier.map(|(ty, at)| (ty.map(|ty| self.resolve_local(ty)), at));
                 if let (Some((Some(want), earlier)), Some(got)) = (earlier, ty)
                     && want != got
                 {

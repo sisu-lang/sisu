@@ -968,7 +968,7 @@ impl Checker<'_> {
                         .map(|&(interface, _)| self.bound_text(interface, TypeArgs::NONE))
                         .collect(),
                     at: name.span,
-                    annotate: None,
+                    help: None,
                 });
                 None
             }

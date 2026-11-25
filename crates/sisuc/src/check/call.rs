@@ -15,6 +15,7 @@ use super::place::{Change, CheckedPlace, first_safe, try_unread};
 use super::prelude::PRELUDE;
 use super::reports::Reported;
 use super::unused_names::Used;
+use super::use_kind::Use;
 use super::{
     Checked, Checker, Declared, Expectation, Holder, Lowered, Origin, Poisoned, block_expr,
     own_args, type_of,
@@ -695,11 +696,11 @@ impl Checker<'_> {
                     .body
                     .write_chain
                     .replace((span, Change::Receiver(method.name, true)));
-                let scrutinee = self.value_kept(receiver);
+                let scrutinee = self.value_kept(receiver, Use::Receiver);
                 self.body.write_chain = outer;
                 scrutinee
             } else {
-                self.value_kept(receiver)
+                self.value_kept(receiver, Use::Receiver)
             };
             let mut call = |c: &mut Self, checked: Checked| -> Checked {
                 if !path && let Some((first, _)) = types.split_first() {

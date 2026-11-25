@@ -418,7 +418,7 @@ impl Checker<'_> {
         if place.guard.is_some() {
             place.chain = Some(Chain {
                 name: self.chain_head(arg),
-                class_object: place.guards_class(&self.body.locals),
+                class_object: self.guards_class(&place),
             });
         }
         Ok(place)

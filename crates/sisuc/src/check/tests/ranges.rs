@@ -1252,3 +1252,16 @@ fn an_assignment_in_a_misplaced_range_should_count_as_a_reassignment() {
         &[(Code::RangeOutsideFor, (3, 14))],
     );
 }
+
+/// GIVEN a write to a field of an element of a range index, whose bound reads a field of a local
+/// WHEN the program is checked
+/// THEN the bound is a read: E0062 at the bound, as in a plain read, and no E0001 for the local
+#[test]
+fn a_bound_in_a_written_place_should_be_only_a_read() {
+    codes(
+        "struct P {\n    n: i64\n}\nstruct Q {\n    p: P\n}\n\
+         fn main() {\n    let o: Q? = Q(p: P(n: 0))\n    let mut xs = [P(n: 1)]\n\
+         \x20   xs[0..o?.p.n][0].n = 5\n    print(xs.len())\n}",
+        &[(Code::MayBeNone, (10, 11))],
+    );
+}
