@@ -106,6 +106,24 @@ fn non_empty_else(c1: bool, c2: bool, tail: string) -> i64 {
     }
 }
 
+fn loop_exits(o: string?, xs: [i64]) -> i64 {
+    let mut total = 0
+    for x in xs {
+        if let s = o {
+            total = total + s.len()
+        } else if x == 1 {
+            continue
+        } else if x == 2 {
+            break
+        } else if x == 9 {
+            return 99
+        } else {
+            total = total + x
+        }
+    }
+    total
+}
+
 fn main() {
     let base = (read_line() ?? "").len()
     let s = "v" + "{base}"
@@ -138,4 +156,7 @@ fn main() {
     print(non_empty_else(true, false, s))     // 1
     print(non_empty_else(false, true, s))     // else-v0, 2
     print(non_empty_else(false, false, s))    // else-v0, 3
+    print(loop_exits(None, [3, 1, 4, 2, 5]))  // 7
+    print(loop_exits(None, [3, 9, 4]))        // 99
+    print(loop_exits(some_str, [1, 2]))       // 10
 }

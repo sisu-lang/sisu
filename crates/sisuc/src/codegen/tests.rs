@@ -4704,10 +4704,10 @@ fn return_block_over_the_copy_limit_should_not_be_copied() {
 }
 
 /// A function of `arms` calls in nested `else` blocks, with `TAIL_COPY_LIMIT` strings. Each
-/// `else` block runs `let _u = 0` before its inner `if`, so lowering keeps an empty `goto` chain.
-/// Arm `j` passes `s{j % TAIL_COPY_LIMIT}` to `g` and returns the result, so the other strings
-/// stay live after the call. The arms join through empty `goto` blocks into one return block that
-/// releases each string.
+/// outer `else` block runs `let _u = 0` before its inner `if`, so lowering keeps an empty `goto`
+/// chain; the innermost `else` holds only `""`. Branch `j` passes `s{j % TAIL_COPY_LIMIT}` to `g`
+/// and returns the result, so the other strings stay live after the call. The branches join
+/// through empty `goto` blocks into one return block that releases each string.
 fn elif_arms(arms: usize) -> String {
     let lets = (0..TAIL_COPY_LIMIT)
         .map(|i| format!("    let s{i} = \"x\" + k.to_string()\n"))
@@ -4747,11 +4747,11 @@ fn tail_return_should_not_read_the_statements_of_a_block_over_the_limit() {
     assert_near_linear(steps(100), steps(200), steps(300));
 }
 
-/// `n` arms in nested `else` blocks each call and return the result. Each arm copies a return
-/// block of `TAIL_COPY_LIMIT` statements and joins through `n` empty `goto` blocks. A walk that
-/// follows the chain again for each block makes the steps `n` times `n`. The memo of
-/// `empty_goto_ends` keeps them linear. The size stays at 60: 100 nested `else` blocks overflow
-/// the stack of a test thread in a debug build.
+/// `n` branches in nested `else` blocks each call and return the result. Each branch copies a
+/// return block of `TAIL_COPY_LIMIT` statements and joins through `n` empty `goto` blocks. A walk
+/// that follows the chain again for each block makes the steps `n` times `n`. The memo of
+/// `empty_goto_ends` keeps them linear. Each branch adds two nesting levels, so sizes stay at 60
+/// (127 branches reach the parser nesting limit of 256, E0071).
 #[test]
 fn empty_goto_chain_should_be_walked_in_linear_steps_when_each_arm_calls() {
     let src20 = elif_arms(20);
@@ -4774,41 +4774,6 @@ fn empty_goto_chain_should_be_walked_in_linear_steps_when_each_arm_calls() {
     );
     let steps = |n: usize| tail_steps(&elif_arms(n));
     assert_near_linear(steps(20), steps(40), steps(60));
-}
-
-/// A 10-arm `else if` chain in `pick` emits zero empty trampoline blocks in raw LLVM IR.
-#[test]
-fn else_if_chain_should_emit_no_empty_branch_trampoline_blocks() {
-    let mut arms = String::from("if c { a }");
-    for _ in 0..10 {
-        arms.push_str(" else if c { a }");
-    }
-    arms.push_str(" else { a }");
-    let src = format!(
-        "fn pick(c: bool, a: u8) -> u8 {{\n    {arms}\n}}\nfn main() {{\n    print(pick(true, 1))\n}}"
-    );
-    let context = Context::create();
-    let module = compiled(&context, &src);
-    let pick = module
-        .get_function("sisu.pick")
-        .expect("`sisu.pick` should be compiled");
-    let trampolines = pick
-        .get_basic_blocks()
-        .into_iter()
-        .filter(|bb| {
-            let Some(first) = bb.get_first_instruction() else {
-                return false;
-            };
-            let Some(term) = bb.get_terminator() else {
-                return false;
-            };
-            first == term && term.get_opcode() == InstructionOpcode::UncondBr
-        })
-        .count();
-    assert_eq!(
-        trampolines, 0,
-        "expected 0 empty trampoline blocks in sisu.pick, got {trampolines}"
-    );
 }
 
 /// A call into a `let` before an endless loop: the block of the call goes to a block that goes

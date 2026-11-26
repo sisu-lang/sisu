@@ -1391,11 +1391,13 @@ impl<'a> Lowering<'a> {
         Some(Some(result))
     }
 
-    /// Lowers `if` and `if let` branches into `dest` and a shared `join` block. Bare `else if`
-    /// chains iterate here, so all arms share one `join` block and one `dest`. Without a final
-    /// `else`, the false edge jumps straight to `join`. When `bind` is present, it binds the
-    /// unwrapped payload at the start of the `then` block. A `borrowed` optional borrows the
-    /// payload through the `then` block.
+    /// Lowers `if` and `if let` branches into `dest` and a shared `join` block that exists only
+    /// when an edge reaches it. Each `else` block that holds only an `if` iterates here, so every
+    /// branch shares one `join` block and one `dest`. An `else` block with statements or an
+    /// `else if let` stays on `self.arm` so its own scope and borrowed-optional `End` guard stay
+    /// intact. Without a final `else`, the false edge jumps straight to `join`. When `bind` is
+    /// present, it binds the unwrapped payload at the start of the `then` block; its third flag
+    /// marks a borrowed optional, which borrows the payload through the `then` block.
     fn branches(
         &mut self,
         term: impl FnOnce(BlockId, BlockId) -> Terminator,

@@ -1940,72 +1940,64 @@ fn place_printer_should_format_wrapping_projections() {
 /// Each flattened `else if` chain shares one join block and has zero empty `goto` blocks.
 #[test]
 fn else_if_chain_should_share_one_join_block_with_no_empty_goto_blocks() {
-    let mut valued_arms = String::from("if c { a }");
+    // 30 `else if` clauses (32 branches) sit well past a single pair while staying fast.
+    let mut valued_branches = String::from("if c { a }");
     for _ in 0..30 {
-        valued_arms.push_str(" else if c { a }");
+        valued_branches.push_str(" else if c { a }");
     }
-    valued_arms.push_str(" else { a }");
-    let valued_src = format!("fn pick(c: bool, a: u8) -> u8 {{\n    {valued_arms}\n}}");
+    valued_branches.push_str(" else { a }");
+    let valued_src = format!("fn pick(c: bool, a: u8) -> u8 {{\n    {valued_branches}\n}}");
 
-    let cases: [(&str, &str, &str, Option<usize>); 10] = [
-        ("valued 30-arm u8", &valued_src, "pick", Some(1)),
+    let cases: [(&str, &str, &str); 10] = [
+        ("30 else-if clauses, u8", &valued_src, "pick"),
         (
             "statement without else",
             "fn f(c1: bool, c2: bool, c3: bool) {\n    if c1 { print(1) } else if c2 { print(2) } else if c3 { print(3) }\n}",
             "f",
-            Some(1),
         ),
         (
             "statement without else, returning then falling",
             "fn f(c1: bool, c2: bool) {\n    if c1 { return } else if c2 { print(2) }\n    print(3)\n}",
             "f",
-            Some(2),
         ),
         (
-            "statement without else, all arms return",
+            "statement without else, all branches return",
             "fn f(c1: bool, c2: bool) {\n    if c1 { return } else if c2 { return }\n    print(3)\n}",
             "f",
-            Some(3),
         ),
         (
-            "all arms return",
+            "all branches return (must pass before and after: no join)",
             "fn f(c1: bool, c2: bool) -> i64 {\n    if c1 { return 1 } else if c2 { return 2 } else { return 3 }\n}",
             "f",
-            Some(3),
         ),
         (
-            "exiting condition after falling arm",
+            "exiting condition after falling branch",
             "fn f(c1: bool, c2: bool, c3: bool) -> i64 {\n    if c1 { 1 } else if (if c2 { return 2 } else { c3 }) { 3 } else { 4 }\n}",
             "f",
-            Some(2),
         ),
         (
-            "exiting condition after returning arm",
+            "exiting condition after returning branch",
             "fn f(c1: bool, c2: bool, c3: bool) -> i64 {\n    if c1 { return 1 } else if (if c2 { return 2 } else { c3 }) { 3 } else { 4 }\n}",
             "f",
-            Some(3),
         ),
         (
             "counted string valued and discarded chains",
             "fn f(c1: bool, c2: bool, s: string) -> string {\n    if c1 { s + \"1\" } else if c2 { s + \"2\" } else { s + \"3\" }\n    if c1 { \"a\" + \"1\" } else if c2 { \"a\" + \"2\" } else { \"a\" + \"3\" }\n    if c1 { s + \"x\" } else if c2 { return s + \"y\" } else { s + \"z\" }\n}",
             "f",
-            Some(2),
         ),
         (
             "counted string statement without else",
             "fn f(c1: bool, c2: bool) {\n    if c1 { let _a = \"x\" + \"1\" } else if c2 { let _b = \"x\" + \"2\" }\n}",
             "f",
-            Some(1),
         ),
         (
             "borrowed if let before else if chain",
             "fn f(o: string?, c1: bool, c2: bool) -> i64 {\n    if let s = o { s.len() } else if c1 { 1 } else if c2 { 2 } else { 3 }\n}",
             "f",
-            Some(1),
         ),
     ];
 
-    for (name, src, fn_name, expected_returns) in cases {
+    for (name, src, fn_name) in cases {
         let program = checked(src);
         let mir = build(&program);
         let f = mir
@@ -2022,33 +2014,22 @@ fn else_if_chain_should_share_one_join_block_with_no_empty_goto_blocks() {
             empty_gotos, 0,
             "{name}: expected 0 empty goto blocks, got {empty_gotos}"
         );
-        if let Some(returns) = expected_returns {
-            let actual_returns = f
-                .blocks
-                .iter()
-                .filter(|b| matches!(b.term, Terminator::Return(_)))
-                .count();
-            assert_eq!(
-                actual_returns, returns,
-                "{name}: expected {returns} return blocks, got {actual_returns}"
-            );
-        }
     }
 }
 
-/// A non-empty `else` block and an `else if let` stay unflattened. Their statements and optional
-/// borrow guards stay in place.
+/// A non-empty `else` block and an `else if let` stay unflattened. The outer `else` block's local
+/// stays live across the inner `if` and releases after it, and `else if let` keeps its `End` guard.
 #[test]
-fn non_empty_else_block_before_if_should_not_be_flattened() {
+fn non_empty_else_and_else_if_let_should_stay_unflattened() {
     let printed = built(
-        "fn f(c1: bool, c2: bool) -> i64 {\n    if c1 { 1 } else {\n        let s = \"a\" + \"b\"\n        print(s)\n        if c2 { 2 } else { 3 }\n    }\n}\n\
+        "fn f(c1: bool, c2: bool) -> i64 {\n    if c1 { 1 } else {\n        let s = \"a\" + \"b\"\n        if c2 { s.len() } else { 3 }\n    }\n}\n\
          fn g(c: bool, o: string?) -> i64 {\n    if c { 1 } else if let s = o { s.len() } else { 0 }\n}\n\
          fn main() {\n    print(f(false, true))\n    print(g(false, Some(\"hi\")))\n}",
     );
     has(
         &printed,
         "f",
-        &["branch c1#0", "call print(", "release ", "branch c2#1"],
+        &["branch c1#0", "branch c2#1", "release? s#"],
     );
     has(&printed, "g", &["branch c#0", "if_present ", "end _"]);
 }

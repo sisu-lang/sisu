@@ -595,9 +595,8 @@ ratios fall, from 3.1 to 2.7. Its `optimize` stage takes 1.2 billion instruction
 at 400 fields, and 48 million at 50.
 
 One row is for body inference: open pair nest (#686) nests generic `Pair`
-structs. Its `codegen` grows like struct paths while `check` stays linear. The
-else-if chain with a result type (#765) is linear because `else if` chains
-share one join block.
+structs, so its `codegen` grows for the same `StructType::checkBody` reason as
+struct paths while `check` stays linear.
 
 Two rows are for the optional wrap chain (#835). It chains
 `wrap<T>(t: T) -> T?` calls to check that `mono` stays linear (#825). Its
