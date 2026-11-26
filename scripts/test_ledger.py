@@ -143,6 +143,16 @@ class SetGroup(unittest.TestCase):
             self.assertEqual(ledger.main(["event", str(missing), "note"]), 2)
         self.assertIn("ledger.py:", err.getvalue())
 
+    def test_an_event_on_a_read_only_ledger_should_return_exit_2(self) -> None:
+        with tempfile.TemporaryDirectory() as d, redirect_stderr(StringIO()) as err:
+            path = ledger.init_batch(Path(d), "issues-x", NOW)
+            path.chmod(0o444)
+            try:
+                self.assertEqual(ledger.main([str(path), "event", "started"]), 2)
+            finally:
+                path.chmod(0o644)
+        self.assertIn("ledger.py:", err.getvalue())
+
 
 class InitBatch(unittest.TestCase):
     def test_init_should_reserve_unique_folders_and_write_skeleton(self) -> None:

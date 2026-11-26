@@ -168,6 +168,15 @@ def find_closing_ticks(line: str, start: int, ticks: int) -> int | None:
 ODD_ESCAPED_DOUBLE_TICK = re.compile(r"(?<!\\)(?:\\\\)*\\``")
 
 
+def classify_single_span(span: str) -> str:
+    """Return `"broken"`, `"odd"`, or `"ok"` for the text inside a single-backtick span."""
+    if (len(span) - len(span.rstrip("\\"))) % 2 == 1:
+        return "broken" if span.rstrip("\\").strip() else "odd"
+    if ODD_ESCAPED_DOUBLE_TICK.search(span) is not None:
+        return "odd"
+    return "ok"
+
+
 def has_escaped_backtick_in_code_span(line: str) -> bool:
     r"""Whether `line` has a single-backtick Markdown span broken by a `` \` `` escape."""
     i, end = 0, len(line)
@@ -178,6 +187,8 @@ def has_escaped_backtick_in_code_span(line: str) -> bool:
             i += 2
             continue
         if line[i : i + 2] == "\\`":
+            if escaped_or_odd and line[i + 2 : i + 3] == "`":
+                return True
             escaped_or_odd = True
             i += 2
             continue
@@ -194,11 +205,10 @@ def has_escaped_backtick_in_code_span(line: str) -> bool:
             i = j
             continue
         if ticks == 1:
-            span = line[j:close]
-            if (len(span) - len(span.rstrip("\\"))) % 2 == 1 or ODD_ESCAPED_DOUBLE_TICK.search(
-                span
-            ) is not None:
-                escaped_or_odd = True
+            kind = classify_single_span(line[j:close])
+            if kind == "broken":
+                return True
+            escaped_or_odd = escaped_or_odd or kind == "odd"
         i = close + ticks
     return unclosed and escaped_or_odd
 

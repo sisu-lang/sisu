@@ -110,6 +110,10 @@ class SentenceTests(unittest.TestCase):
             r"Write `\`` here.",
             r"Write `foo\`` here.",
             r"Write `\`` and `bar` here.",
+            r"Write `a \` b` and the backslash `\`.",
+            r"Write `x\`y` for `\`.",
+            r"Write `foo \` bar` here, and \`x\` in prose.",
+            r"Write `\`foo\`` here, and `\` for a backslash.",
         ):
             with self.subTest(line=line):
                 issues = found("a.md", line + "\n")
@@ -125,6 +129,10 @@ class SentenceTests(unittest.TestCase):
             r"Use `\`s for escapes.",
             r"| `\` | \` |",
             r"Type `\`, then \`x\` in plain text.",
+            r"Write \\`foo` here.",
+            r"Write a lone ` here.",
+            r"Write `a\\``b` and a lone ` here.",
+            r"Write ``a\`` and a lone ` here.",
             r"Write ``expected a `Box` `` here.",
             r"Write ``the checker should reject `break` outside a loop``.",
             r"Outside code, \`foo\` is plain text.",
