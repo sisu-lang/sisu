@@ -164,14 +164,21 @@ def find_closing_ticks(line: str, start: int, ticks: int) -> int | None:
     return None
 
 
+# An odd number of backslashes right before two backticks inside a 1-tick span (e.g. `\``).
+ODD_ESCAPED_DOUBLE_TICK = re.compile(r"(?<!\\)(?:\\\\)*\\``")
+
+
 def has_escaped_backtick_in_code_span(line: str) -> bool:
     r"""Whether `line` has a single-backtick Markdown span broken by a `` \` `` escape."""
     i, end = 0, len(line)
-    suspect = False
+    unclosed = False
+    escaped_or_odd = False
     while i < end:
+        if line[i : i + 2] == "\\\\":
+            i += 2
+            continue
         if line[i : i + 2] == "\\`":
-            if suspect:
-                return True
+            escaped_or_odd = True
             i += 2
             continue
         if line[i] != "`":
@@ -183,17 +190,17 @@ def has_escaped_backtick_in_code_span(line: str) -> bool:
         ticks = j - i
         close = find_closing_ticks(line, j, ticks)
         if close is None:
-            if suspect:
-                return True
+            unclosed = True
             i = j
             continue
-        if ticks == 1 and (len(line[j:close]) - len(line[j:close].rstrip("\\"))) % 2 == 1:
-            after = line[close + 1 : close + 2]
-            if after and (after.isalnum() or after in "_`([<'\""):
-                return True
-            suspect = True
+        if ticks == 1:
+            span = line[j:close]
+            if (len(span) - len(span.rstrip("\\"))) % 2 == 1 or ODD_ESCAPED_DOUBLE_TICK.search(
+                span
+            ) is not None:
+                escaped_or_odd = True
         i = close + ticks
-    return False
+    return unclosed and escaped_or_odd
 
 
 def findings(path: str, lines: list[str], changed: set[int]) -> list[str]:

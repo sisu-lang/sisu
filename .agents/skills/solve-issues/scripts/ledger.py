@@ -22,7 +22,7 @@ from pathlib import Path
 SUBCOMMANDS = ("event", "after-merge", "group")
 TEMPLATE = (
     "# Batch {batch}\n\n"
-    "Started {date}.\n\n"
+    "Started {date} on origin/main <sha>. Build: <path of the origin/main sisu>.\n\n"
     "## Issues\n\n"
     "| Issue | State | Group | Note |\n"
     "| --- | --- | --- | --- |\n\n"
@@ -41,13 +41,19 @@ TEMPLATE = (
 
 def init_batch(scratch_dir: Path, prefix: str, now: datetime) -> Path:
     """Create a unique `<scratch_dir>/<batch>/progress.md` atomically and return its path."""
-    if not prefix or "/" in prefix or "\\" in prefix or prefix in (".", ".."):
+    if (
+        not prefix
+        or any(ch.isspace() for ch in prefix)
+        or "/" in prefix
+        or "\\" in prefix
+        or prefix in (".", "..")
+    ):
         raise ValueError(f"invalid batch prefix {prefix!r}")
     scratch_dir.mkdir(parents=True, exist_ok=True)
     candidates = [
         prefix,
         *(f"{prefix}{letter}" for letter in string.ascii_lowercase[1:]),
-        *(f"{prefix}-{n}" for n in range(2, 1000)),
+        *(f"{prefix}-{n}" for n in range(2, 100)),
     ]
     for batch in candidates:
         folder = scratch_dir / batch
@@ -140,7 +146,7 @@ def run_init(argv: list[str], now: datetime) -> int:
         return 2
     try:
         created = init_batch(Path(argv[1]), argv[2], now)
-    except ValueError as e:
+    except (OSError, ValueError) as e:
         print(f"ledger.py: {e}", file=sys.stderr)
         return 2
     print(created)
@@ -163,10 +169,10 @@ def main(argv: list[str]) -> int:
             updated = set_group(ledger, rest[0], rest[1])
         else:
             updated = add(ledger, kind, rest[0], now)
+        Path(path).write_text(updated, encoding="utf-8")
     except (OSError, ValueError) as e:
         print(f"ledger.py: {e}", file=sys.stderr)
         return 2
-    Path(path).write_text(updated, encoding="utf-8")
     return 0
 
 

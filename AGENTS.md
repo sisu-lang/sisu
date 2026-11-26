@@ -10,11 +10,11 @@ The workspace also holds `selfhost/`: `lexer.sisu`, Sisu's lexer written in Sisu
 
 ## Commands
 
-Run commands through `make`; `make help` lists every target (`docs/development.md`, Build and test). `make test` runs nextest, not `cargo test`, and skips `make form-matrix` and `make memory-safety`. Run `make form-matrix` after front-end changes, `make memory-safety` after codegen, drop, runtime or harness changes, and `make miri` after `crates/runtime` changes. Run `make mutation-test` only when asked; quote only `make mutation-status` for progress. Heavy targets share one clone lock (`scripts/heavy-run.sh --status`).
+Run commands through `make`; `make help` lists every target (`docs/development.md`, Build and test). `make test` runs nextest, not `cargo test`, and skips `make form-matrix` and `make memory-safety`. Run `make form-matrix` after front-end changes, `make memory-safety` after codegen, drop, runtime or harness changes, and `make miri` after `crates/runtime` changes. Run `make coverage` on changes since `BASE` (`docs/development.md`, Coverage and performance; `CODING_STANDARDS.md`, Tests). Run `make mutation-test` only when asked; quote only `make mutation-status` for progress. Heavy targets share one clone lock (`scripts/heavy-run.sh --status`).
 
-Wait for pull request reviews and checks only with `python3 scripts/watch_pr.py <N>`, with the sandbox off and `run_in_background`; run it again after each event. Use `python3 scripts/pr_threads.py <N>` (sandbox off) to list review threads and comment ids.
+Wait for pull request reviews and checks only with `python3 scripts/watch_pr.py <N>`, with the sandbox off and `run_in_background`; run it again after each event (a `Monitor` watch wakes a full turn for each check). Use `python3 scripts/pr_threads.py <N>` (sandbox off) to list review threads and comment ids.
 
-For compile speed and scaling sweeps, use `make compile-speed` and `make scaling` (`docs/benchmarks.md`). Run `make setup` once per clone to install LLVM 23 into `.llvm/23` and enable Git hooks; do not build against system LLVM (`docs/development.md`, Set up a clone).
+For compile speed and scaling sweeps, use `make compile-speed` and `make scaling` (`docs/benchmarks.md`). Run `make setup` once per clone to install LLVM 23 into `.llvm/23` (`.cargo/config.toml` points `LLVM_SYS_231_PREFIX` at it; do not build against system LLVM) and enable Git hooks (`docs/development.md`, Set up a clone).
 
 ## Code rules
 
@@ -22,7 +22,7 @@ For compile speed and scaling sweeps, use `make compile-speed` and `make scaling
 - Fix code to satisfy Clippy (`#[expect]` with a reason, no `unwrap()` outside tests, `// SAFETY:` comments). For a shape lint such as `clippy::struct_excessive_bools` or `clippy::too_many_lines`, keep a right shape and add `#[expect(<lint>, reason = "...")]`. The lint table changes only with the user's agreement.
 - Python: `ruff.toml` and `pyrefly.toml` hold the rules (`CODING_STANDARDS.md`, Python).
 - Write and review code against `CODING_STANDARDS.md`; its Performance section covers allocation and measurement.
-- Before you write, refactor or review Rust, load the `rust-best-practices` skill from [BeautifulRust](https://github.com/morganlinton/BeautifulRust). When that skill and this file, `CODING_STANDARDS.md` or the lint table disagree, Sisu's rules apply.
+- Before you write, refactor or review Rust, load the `rust-best-practices` skill from [BeautifulRust](https://github.com/morganlinton/BeautifulRust). An agent without plugin support reads `skills/rust-best-practices/SKILL.md` in that repository. When that skill and this file, `CODING_STANDARDS.md` or the lint table disagree, Sisu's rules apply.
 - When `.codegraph/` exists, call `codegraph_explore` (or `codegraph explore "<query>"`) before grepping to trace callers and readers.
 
 ## Writing

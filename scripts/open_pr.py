@@ -3,8 +3,9 @@ r"""Opens a pull request of sisu-lang/sisu from a title and a body file.
 Usage: python3 scripts/open_pr.py --title TITLE --body-file FILE [--head BRANCH] [--base B] [ROOT]
 
 The body goes from the file into the JSON of the request, and never through a shell. So
-backticks and `$` in the body stay as they are. The title is an argument: put it in single
-quotes, and write an apostrophe in it as '\''. HEAD is the branch checked out in ROOT, the
+backticks and `$` in the body stay as they are. The script checks the body with `text_limits.py`
+before it calls `gh`, and stops when a line breaks a limit. The title is an argument: put it in
+single quotes, and write an apostrophe in it as '\''. HEAD is the branch checked out in ROOT, the
 current directory by default. Push it first.
 The script prints the URL of the new pull request.
 It calls `gh api` (REST), so it needs the network: run it with the sandbox off.
@@ -48,11 +49,12 @@ def main(argv: list[str]) -> int:
         print(f"open_pr: FAIL: {e}")
         return 1
     body_lines = body.splitlines(keepends=True)
-    check_path = str(args.body_file) if args.body_file.suffix == ".md" else f"{args.body_file}.md"
+    raw_path = str(args.body_file)
+    check_path = raw_path if args.body_file.suffix == ".md" else f"{raw_path}.md"
     problems = text_limits.findings(check_path, body_lines, set(range(1, len(body_lines) + 1)))
     if problems:
         for line in problems:
-            print(line)
+            print(line.replace(f"{check_path}:", f"{raw_path}:", 1))
         print("open_pr: FAIL: correct the pull request body")
         return 1
     request = {"title": args.title, "head": head, "base": args.base, "body": body}

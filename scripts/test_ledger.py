@@ -159,9 +159,31 @@ class InitBatch(unittest.TestCase):
             self.assertEqual(ledger.main([str(second), "event", "started"]), 0)
 
     def test_init_with_invalid_prefix_should_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            for prefix in ("bad/prefix", " ", "\t", ".."):
+                with self.subTest(prefix=prefix), redirect_stderr(StringIO()) as err:
+                    self.assertEqual(ledger.main(["init", d, prefix]), 2)
+                self.assertIn("invalid batch prefix", err.getvalue())
+
+    def test_init_on_an_existing_file_should_return_exit_2(self) -> None:
         with tempfile.TemporaryDirectory() as d, redirect_stderr(StringIO()) as err:
-            self.assertEqual(ledger.main(["init", d, "bad/prefix"]), 2)
-        self.assertIn("invalid batch prefix", err.getvalue())
+            blocker = Path(d) / "not-a-dir"
+            blocker.write_text("x", encoding="utf-8")
+            self.assertEqual(ledger.main(["init", str(blocker), "issues-2026-11-26"]), 2)
+        self.assertIn("ledger.py:", err.getvalue())
+
+    def test_init_template_should_match_ledger_md_headings_and_tables(self) -> None:
+        doc = (SCRIPT.parents[1] / "ledger.md").read_text(encoding="utf-8")
+        doc_lines = [
+            line for line in doc.splitlines() if line.startswith(("## ", "| Group |", "| Issue |"))
+        ]
+        tpl_lines = [
+            line
+            for line in ledger.TEMPLATE.splitlines()
+            if line.startswith(("## ", "| Group |", "| Issue |"))
+        ]
+        self.assertEqual(tpl_lines, doc_lines)
+        self.assertIn("Started {date} on origin/main <sha>. Build:", ledger.TEMPLATE)
 
     def test_main_init_should_print_the_created_path(self) -> None:
         with tempfile.TemporaryDirectory() as d:

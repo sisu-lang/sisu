@@ -144,6 +144,40 @@ class TestNamesDiffAndBaseline(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("new fixture `bad_bytes.sisu` needs leading", out)
 
+    def test_a_bom_or_trailing_comment_fixture_should_pass(self) -> None:
+        bom = "crates/sisuc/tests/diagnostics/bom_case.sisu"
+        trailing = "crates/sisuc/tests/diagnostics/byte0_case.sisu"
+        with git_fixture.repo({"f.rs": ""}) as tmp:
+            baseline = Path(tmp, "baseline.txt")
+            write(tmp, "baseline.txt", "")
+            for rel, content in (
+                (
+                    bom,
+                    "\ufeff// GIVEN a BOM\n// WHEN checked\n// THEN E0010\nfn main() {}\n",
+                ),
+                (
+                    trailing,
+                    "@\nfn main() {}\n// GIVEN bad byte 0\n// WHEN checked\n// THEN E0010\n",
+                ),
+            ):
+                target = Path(tmp, rel)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+            cwd = Path.cwd()
+            os.chdir(tmp)
+            self.addCleanup(os.chdir, cwd)
+            self.assertEqual(run(["--diff", "HEAD", bom, trailing], baseline), (0, ""))
+
+    def test_an_existing_non_ascii_sisu_fixture_should_be_skipped(self) -> None:
+        non_ascii = "crates/sisuc/tests/run/ä.sisu"
+        with git_fixture.repo({non_ascii: "fn main() {}\n"}) as tmp:
+            baseline = Path(tmp, "baseline.txt")
+            write(tmp, "baseline.txt", "")
+            cwd = Path.cwd()
+            os.chdir(tmp)
+            self.addCleanup(os.chdir, cwd)
+            self.assertEqual(run(["--diff", "HEAD", non_ascii], baseline), (0, ""))
+
 
 if __name__ == "__main__":
     unittest.main()

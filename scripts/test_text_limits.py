@@ -107,6 +107,9 @@ class SentenceTests(unittest.TestCase):
             r"Write `\`Box\`` here.",
             r"Write `foo \` bar` here.",
             r"Write `foo \` bar \` baz` here.",
+            r"Write `\`` here.",
+            r"Write `foo\`` here.",
+            r"Write `\`` and `bar` here.",
         ):
             with self.subTest(line=line):
                 issues = found("a.md", line + "\n")
@@ -117,6 +120,11 @@ class SentenceTests(unittest.TestCase):
         for line in (
             r"After a `\` a `char` literal takes `\n`.",
             r"| `\\` | `\` |",
+            r'Write "`\`" here.',
+            r"Read `\`'s escape table.",
+            r"Use `\`s for escapes.",
+            r"| `\` | \` |",
+            r"Type `\`, then \`x\` in plain text.",
             r"Write ``expected a `Box` `` here.",
             r"Write ``the checker should reject `break` outside a loop``.",
             r"Outside code, \`foo\` is plain text.",

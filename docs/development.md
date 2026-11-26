@@ -167,9 +167,9 @@ and check that no span splits a character.
 A new diagnostic with a fix needs a program in `diagnostics/` that shows the fix.
 Use the shape that is most likely to go wrong, such as a typed `let` or a `(` before the token.
 
-To add a case, write the `.sisu` file and an empty expected file beside it,
-then fill the expected file with `make bless`. Read what it wrote before
-you commit it:
+To add a case, write the `.sisu` file with leading `// GIVEN`, `// WHEN` and
+`// THEN` lines. Add an empty expected file beside it, fill it with
+`make bless`, and read what it wrote before you commit it:
 
 ```console
 $ touch crates/sisuc/tests/run/new_case.out
@@ -1771,9 +1771,10 @@ number in its series, `E` for errors and `W` for warnings.
    A rule need not look for comments or stray characters inside the text its
    fix deletes: `front_end::sound_fixes` makes that fix unsafe for it.
 3. Report the variant from the lexer, parser or checker.
-4. Add the fixture `crates/sisuc/tests/diagnostics/<CODE>.sisu`, and a
-   `<CODE>-<case>.sisu` for each other shape. Create the `.err` and `.json`
-   files empty, then fill them with `SISU_BLESS=1` as above and read them.
+4. Add the fixture `crates/sisuc/tests/diagnostics/<CODE>.sisu` with leading
+   `// GIVEN`, `// WHEN` and `// THEN` lines, and a `<CODE>-<case>.sisu` for
+   each other shape. Create the `.err` and `.json` files empty, then fill them
+   with `SISU_BLESS=1` as above and read them.
 5. Add unit tests that assert the code and its `(line, col)`. A safe fix
    also gets a test that applies it to an input other than the explanation's
    example and checks that the code is gone.

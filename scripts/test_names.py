@@ -73,8 +73,9 @@ def tests(lines: Sequence[str]) -> list[tuple[int, str, list[str]]]:  # noqa: C9
 def sisu_comment(lines: Sequence[str]) -> list[str]:
     """Return the leading `//` comment lines of a `.sisu` fixture, with `//` stripped."""
     comment = []
-    for line in lines:
-        text = line.strip()
+    for idx, line in enumerate(lines):
+        text = line.removeprefix("\ufeff") if idx == 0 else line
+        text = text.strip()
         if text.startswith("//"):
             comment.append(text[2:].strip())
         elif not text:
@@ -84,10 +85,35 @@ def sisu_comment(lines: Sequence[str]) -> list[str]:
     return comment
 
 
+def sisu_trailing_comment(lines: Sequence[str]) -> list[str]:
+    """Return the trailing `//` comment lines of a `.sisu` fixture, in source order."""
+    comment = []
+    for line in reversed(lines):
+        text = line.strip()
+        if text.startswith("//"):
+            comment.append(text[2:].strip())
+        elif not text:
+            continue
+        else:
+            break
+    comment.reverse()
+    return comment
+
+
 def tracked_sisu_cases(ref: str) -> frozenset[str]:
     """Return the real paths of `.sisu` fixtures under `crates/sisuc/tests` at `ref`."""
     top = changed_tests.git(".", "rev-parse", "--show-toplevel").rstrip("\n")
-    out = changed_tests.git(".", "ls-tree", "-r", "--name-only", ref, "--", "crates/sisuc/tests")
+    out = changed_tests.git(
+        ".",
+        "-c",
+        "core.quotepath=off",
+        "ls-tree",
+        "-r",
+        "--name-only",
+        ref,
+        "--",
+        "crates/sisuc/tests",
+    )
     return frozenset(os.path.realpath(Path(top) / rel) for rel in out.splitlines() if rel)
 
 
@@ -114,7 +140,10 @@ def main(
             if os.path.realpath(path) not in existing_sisu:
                 with Path(path).open(encoding="utf-8", errors="replace") as f:
                     lines = f.read().splitlines()
-                if not has_given_when_then(sisu_comment(lines)):
+                if not (
+                    has_given_when_then(sisu_comment(lines))
+                    or has_given_when_then(sisu_trailing_comment(lines))
+                ):
                     print(
                         f"{path}:1: new fixture `{Path(path).name}` needs leading "
                         "// GIVEN, // WHEN and // THEN lines"
@@ -186,11 +215,15 @@ def cli(argv: list[str], baseline: Path = BASELINE) -> int:
     if args.diff and args.files:
         try:
             changed = frozenset(changed_tests.changed(args.diff))
-            if any(SISU_CASE.search(path) for path in args.files):
-                existing_sisu = tracked_sisu_cases(args.diff)
         except subprocess.CalledProcessError as error:
             print(f"test_names: `git diff {args.diff}` failed: {error.stderr.strip()}")
             return 1
+        if any(SISU_CASE.search(path) for path in args.files):
+            try:
+                existing_sisu = tracked_sisu_cases(args.diff)
+            except subprocess.CalledProcessError as error:
+                print(f"test_names: `git ls-tree {args.diff}` failed: {error.stderr.strip()}")
+                return 1
     return main(args.files, baseline, changed, existing_sisu)
 
 
