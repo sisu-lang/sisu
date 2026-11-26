@@ -148,6 +148,71 @@ def long_sentences(numbered: list[tuple[int, str]], changed: set[int]) -> list[t
     return found
 
 
+def find_closing_ticks(line: str, start: int, ticks: int) -> int | None:
+    """Return the index of the next exact run of `ticks` backticks in `line` from `start`."""
+    k, end = start, len(line)
+    while k < end:
+        if line[k] != "`":
+            k += 1
+            continue
+        run_end = k
+        while run_end < end and line[run_end] == "`":
+            run_end += 1
+        if run_end - k == ticks:
+            return k
+        k = run_end
+    return None
+
+
+# An odd number of backslashes right before two backticks inside a 1-tick span (e.g. `\``).
+ODD_ESCAPED_DOUBLE_TICK = re.compile(r"(?<!\\)(?:\\\\)*\\``")
+
+
+def classify_single_span(span: str) -> str:
+    """Return `"broken"`, `"odd"`, or `"ok"` for the text inside a single-backtick span."""
+    if (len(span) - len(span.rstrip("\\"))) % 2 == 1:
+        return "broken" if span.rstrip("\\").strip() else "odd"
+    if ODD_ESCAPED_DOUBLE_TICK.search(span) is not None:
+        return "odd"
+    return "ok"
+
+
+def has_escaped_backtick_in_code_span(line: str) -> bool:
+    r"""Whether `line` has a single-backtick Markdown span broken by a `` \` `` escape."""
+    i, end = 0, len(line)
+    unclosed = False
+    escaped_or_odd = False
+    while i < end:
+        if line[i : i + 2] == "\\\\":
+            i += 2
+            continue
+        if line[i : i + 2] == "\\`":
+            if escaped_or_odd and line[i + 2 : i + 3] == "`":
+                return True
+            escaped_or_odd = True
+            i += 2
+            continue
+        if line[i] != "`":
+            i += 1
+            continue
+        j = i
+        while j < end and line[j] == "`":
+            j += 1
+        ticks = j - i
+        close = find_closing_ticks(line, j, ticks)
+        if close is None:
+            unclosed = True
+            i = j
+            continue
+        if ticks == 1:
+            kind = classify_single_span(line[j:close])
+            if kind == "broken":
+                return True
+            escaped_or_odd = escaped_or_odd or kind == "odd"
+        i = close + ticks
+    return unclosed and escaped_or_odd
+
+
 def findings(path: str, lines: list[str], changed: set[int]) -> list[str]:
     """One line for each limit that a changed line breaks."""
     numbered = prose(path, lines)
@@ -155,6 +220,13 @@ def findings(path: str, lines: list[str], changed: set[int]) -> list[str]:
         f"{path}:{n}: a sentence has {words} words; the limit is {SENTENCE}: split it"
         for n, words in long_sentences(numbered, changed)
     ]
+    if path.endswith(".md"):
+        for n, text in numbered:
+            if n in changed and has_escaped_backtick_in_code_span(text):
+                out.append(
+                    f"{path}:{n}: single-backtick code span escapes a backtick with \\`: "
+                    "use double backticks"
+                )
     if path.endswith((".py", ".sh")):
         for n, _ in numbered:
             columns = len(lines[n - 1].rstrip("\n"))

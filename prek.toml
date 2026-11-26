@@ -92,7 +92,7 @@ id = "test-names"
 name = "test names say what should hold"
 language = "system"
 entry = "python3 scripts/test_names.py --diff HEAD"
-types = ["rust"]
+files = '(\.rs|^crates/sisuc/tests/(diagnostics|run|run-fail)/[^/]+\.sisu)$'
 
 # Runs on the message, not the files: `make setup` installs this stage's Git shim.
 [[repos.hooks]]

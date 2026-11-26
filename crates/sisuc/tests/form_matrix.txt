@@ -277,6 +277,7 @@ fn outer2<T, U>(p: Two<T, U>?, _a: T, _b: U) -> Two<T, U>? { p }
 // A `mut` place that binds the result's parameter, under a required type.
 fn mfirst<T>(mut xs: [T]) -> T { xs[0] }
 fn mput<T>(mut xs: [T], x: T) -> T { x }
+fn mpair<T, U>(mut xs: [T], mut ys: [U]) -> T { xs[0] }
 // A join of a call under a required type, beside a member that takes it (`None`).
 fn both<T>(a: T, b: T) -> [T] { [a, b] }
 fn count<T>(xs: [T]) -> i64 { xs.len() }
@@ -933,11 +934,24 @@ let _a = outer({ pair($, $) }, $, $)
 let _a = outer({ dbg(pair($, $)) }, $, $)
 let _a = outer2(dbg(pair($, $)), $, $)
 # A `mut` place is checked against the type that a required context makes of its parameter, before
-# the result is. Each with a bare and an optional required type, and with a second argument.
+# the result is. Each with a bare and an optional required type, with a second argument, through
+# pass-through wrappers (`dbg`, `Some`, branches, loops, arrays), across `??` and `==`, and with
+# two `mut` parameters.
 let _a: i64 = mfirst(mut $)
 let _a: i64? = mfirst(mut $)
 let _a: i64 = mput(mut $, $)
 let _a: i64 = id(mfirst(mut $))
+let _a: i64 = dbg(mfirst(mut $))
+let _a: i64? = Some(mfirst(mut $))
+let _a: i64 = if c { mfirst(mut $) } else { 1 }
+let _a: i64 = match k { _ => mfirst(mut $) }
+let _a: i64 = loop { break mfirst(mut $) }
+let _a: [i64] = [mfirst(mut $)]
+let _a: [i64] = [mfirst(mut $); 2]
+let _a: i64 = oi() ?? mfirst(mut $)
+let _a: bool = mfirst(mut $) == 1
+let _a: i64 = mpair(mut $, mut [1])
+let _a: i64 = mpair(mut $, mut $)
 # A required type picks its report from every member, an open one too, in each order: only
 # members that all fail are reported at the whole call.
 let _a: [i64?] = both($, None)

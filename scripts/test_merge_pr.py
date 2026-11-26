@@ -147,6 +147,14 @@ class MergePr(unittest.TestCase):
         self.assertIn("does not contain main", result.stdout)
         self.assertEqual(self.merges(), [])
 
+    def test_a_head_behind_main_should_not_wait_when_the_local_branch_is_at_the_head(
+        self,
+    ) -> None:
+        result = self.run_script(**{f"compare/main...{self.sha}": {"behind_by": 2}})
+        self.assertEqual(result.returncode, 1)
+        calls = self.log.read_text().splitlines()
+        self.assertEqual(sum("pulls/7" in line for line in calls), 1)
+
     def test_a_worktree_with_changes_should_stay_after_the_merge(self) -> None:
         (self.tree / "note").write_text("draft\n")
         result = self.run_script()

@@ -1,9 +1,11 @@
-"""Reject a `#[test]` whose name does not say what should hold, and an end-to-end test without
-GIVEN, WHEN and THEN lines above it (CODING_STANDARDS.md, Tests). The tests in
+"""Reject a `#[test]` whose name does not say what should hold, an end-to-end test without
+GIVEN, WHEN and THEN lines above it, and a new `.sisu` fixture without leading `// GIVEN`,
+`// WHEN` and `// THEN` lines (CODING_STANDARDS.md, Tests). The tests in
 test_names_baseline.txt were named before the rule and are skipped.
 
 With `--diff REF`, it also rejects a baseline test whose body differs from REF: the change is
-the time to rename it. With `--baseline`, it rejects a line of the baseline that names no test.
+the time to rename it. It skips `.sisu` fixtures that already exist at REF. With `--baseline`, it
+rejects a line of the baseline that names no test.
 
 Usage: python3 test_names.py [--diff REF] FILE...
        python3 test_names.py --baseline
@@ -23,6 +25,7 @@ import changed_tests
 ROOT = Path(__file__).absolute().parent / ".."
 BASELINE = ROOT / "scripts" / "test_names_baseline.txt"
 END_TO_END = re.compile(r"(^|/)crates/[^/]+/tests/")
+SISU_CASE = re.compile(r"(^|/)crates/sisuc/tests/(?:diagnostics|run|run-fail)/[^/]+\.sisu$")
 # At the start of a line, so `fn` inside an attribute such as `#[should_panic(expected = "fn f")]`
 # is not the test's name. rustfmt puts `#[test]` and `fn` on lines of their own.
 FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:(?:async|const|unsafe)\s+)*fn\s+(\w+)")
@@ -67,6 +70,53 @@ def tests(lines: Sequence[str]) -> list[tuple[int, str, list[str]]]:  # noqa: C9
     return found
 
 
+def sisu_comment(lines: Sequence[str]) -> list[str]:
+    """Return the leading `//` comment lines of a `.sisu` fixture, with `//` stripped."""
+    comment = []
+    for idx, line in enumerate(lines):
+        text = line.removeprefix("\ufeff") if idx == 0 else line
+        text = text.strip()
+        if text.startswith("//"):
+            comment.append(text[2:].strip())
+        elif not text:
+            continue
+        else:
+            break
+    return comment
+
+
+def sisu_trailing_comment(lines: Sequence[str]) -> list[str]:
+    """Return the trailing `//` comment lines of a `.sisu` fixture, in source order."""
+    comment = []
+    for line in reversed(lines):
+        text = line.strip()
+        if text.startswith("//"):
+            comment.append(text[2:].strip())
+        elif not text:
+            continue
+        else:
+            break
+    comment.reverse()
+    return comment
+
+
+def tracked_sisu_cases(ref: str) -> frozenset[str]:
+    """Return the real paths of `.sisu` fixtures under `crates/sisuc/tests` at `ref`."""
+    top = changed_tests.git(".", "rev-parse", "--show-toplevel").rstrip("\n")
+    out = changed_tests.git(
+        ".",
+        "-c",
+        "core.quotepath=off",
+        "ls-tree",
+        "-r",
+        "--name-only",
+        ref,
+        "--",
+        "crates/sisuc/tests",
+    )
+    return frozenset(os.path.realpath(Path(top) / rel) for rel in out.splitlines() if rel)
+
+
 def has_given_when_then(comment: list[str]) -> bool:
     """Whether lines that start with GIVEN, WHEN and THEN come in that order."""
     words = iter(line.split(" ", 1)[0] for line in comment)
@@ -74,7 +124,10 @@ def has_given_when_then(comment: list[str]) -> bool:
 
 
 def main(
-    paths: list[str], baseline: Path = BASELINE, changed: frozenset[tuple[str, str]] = frozenset()
+    paths: list[str],
+    baseline: Path = BASELINE,
+    changed: frozenset[tuple[str, str]] = frozenset(),
+    existing_sisu: frozenset[str] = frozenset(),
 ) -> int:
     # A count, so a new test that reuses an old name in another module of the file is checked.
     with baseline.open(encoding="utf-8") as f:
@@ -83,6 +136,20 @@ def main(
         )
     bad = 0
     for path in paths:
+        if SISU_CASE.search(path):
+            if os.path.realpath(path) not in existing_sisu:
+                with Path(path).open(encoding="utf-8", errors="replace") as f:
+                    lines = f.read().splitlines()
+                if not (
+                    has_given_when_then(sisu_comment(lines))
+                    or has_given_when_then(sisu_trailing_comment(lines))
+                ):
+                    print(
+                        f"{path}:1: new fixture `{Path(path).name}` needs leading "
+                        "// GIVEN, // WHEN and // THEN lines"
+                    )
+                    bad = 1
+            continue
         with Path(path).open(encoding="utf-8") as f:
             lines = f.read().splitlines()
         for n, name, comment in tests(lines):
@@ -144,13 +211,20 @@ def cli(argv: list[str], baseline: Path = BASELINE) -> int:
     if args.check:
         return check_baseline(baseline)
     changed = frozenset()
+    existing_sisu: frozenset[str] = frozenset()
     if args.diff and args.files:
         try:
             changed = frozenset(changed_tests.changed(args.diff))
         except subprocess.CalledProcessError as error:
             print(f"test_names: `git diff {args.diff}` failed: {error.stderr.strip()}")
             return 1
-    return main(args.files, baseline, changed)
+        if any(SISU_CASE.search(path) for path in args.files):
+            try:
+                existing_sisu = tracked_sisu_cases(args.diff)
+            except subprocess.CalledProcessError as error:
+                print(f"test_names: `git ls-tree {args.diff}` failed: {error.stderr.strip()}")
+                return 1
+    return main(args.files, baseline, changed, existing_sisu)
 
 
 if __name__ == "__main__":
