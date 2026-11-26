@@ -46,7 +46,8 @@ pub(crate) fn compile(dir: &Path, name: &str, exe: &Path, flags: &[&str]) -> Vec
     out.stderr
 }
 
-/// The unused-name warnings that no case may get.
+/// The unused-name warnings that no case may get. Other warnings may stay, except an unmarked
+/// `W0002`.
 const UNUSED: [&str; 3] = ["warning[W0012]", "warning[W0013]", "warning[W0014]"];
 
 /// The unused-`mut` warning prefix. A case may get one only when marked with `ALLOW_WARNING`.
@@ -81,7 +82,7 @@ pub(crate) fn allow_w0002(path: &Path, source: &str) -> Result<bool, String> {
     {
         if marker.trim() != "W0002" {
             return Err(format!(
-                "{}: `{ALLOW_WARNING}{marker}` allows only `W0002`",
+                "{}: `{ALLOW_WARNING}{marker}` must be `{ALLOW_WARNING} W0002`",
                 path.display()
             ));
         }
@@ -784,10 +785,7 @@ fn build_into<const N: usize>(path: &Path, out: &Path, builds: [Build; N]) -> [P
         .and_then(OsStr::to_str)
         .expect("a case's name should be UTF-8");
     let source = fs::read_to_string(path).expect("the case should be readable");
-    let allows_w0002 = match allow_w0002(path, &source) {
-        Ok(allows) => allows,
-        Err(message) => panic!("{message}"),
-    };
+    let allows_w0002 = allow_w0002(path, &source).unwrap_or_else(|message| panic!("{message}"));
     builds.map(|(file, flags)| {
         let exe = out.join(file);
         let stderr = compile(dir, name, &exe, flags);

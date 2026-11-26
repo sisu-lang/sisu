@@ -4441,11 +4441,11 @@ fn unused_warning_should_match_only_a_diagnostic_first_line() {
     assert!(support::has_unused_warning(real));
 }
 
-/// GIVEN case sources with no marker, one valid marker, an indented marker, a repeated marker or
-/// another code
+/// GIVEN case sources with no marker, one valid marker, an indented marker, a repeated marker,
+/// trailing text or another code
 /// WHEN the run harness parses `// allow-warning:` lines
 /// THEN only one start-of-line `// allow-warning: W0002` returns `Ok(true)`, an indented line is
-/// ignored, and repeated or other codes fail
+/// ignored, and repeated, trailing or other forms fail
 #[test]
 fn allow_w0002_should_validate_start_of_line_markers() {
     let path = Path::new("case.sisu");
@@ -4470,21 +4470,24 @@ fn allow_w0002_should_validate_start_of_line_markers() {
 
     let err = support::allow_w0002(path, "// allow-warning: W0001\n")
         .expect_err("other code should fail");
-    assert!(err.contains("allows only `W0002`"), "{err}");
+    assert!(err.contains("must be `// allow-warning: W0002`"), "{err}");
+
+    let err = support::allow_w0002(path, "// allow-warning: W0002 on purpose\n")
+        .expect_err("trailing text should fail");
+    assert!(err.contains("must be `// allow-warning: W0002`"), "{err}");
 }
 
-/// GIVEN build stderrs with zero, one or two W0002 warnings, a quoted W0002 or a W0012
+/// GIVEN build stderrs with zero, one or two W0002 warnings, or a quoted W0002
 /// WHEN the run harness checks the build warnings with and without `allows_w0002`
-/// THEN unmarked W0002, stale markers, two W0002 warnings and W0012 fail, while clean builds,
-/// quoted text and one marked W0002 pass
+/// THEN unmarked W0002, stale markers and two W0002 warnings fail, while clean builds, quoted
+/// text and one marked W0002 pass
 #[test]
-fn build_warnings_should_enforce_w0002_count_and_unused_names() {
+fn check_build_warnings_should_accept_only_a_marked_single_w0002() {
     let path = Path::new("case.sisu");
     let one_w0002 = "warning[W0002]: `n` is never reassigned\n --> case.sisu:2:13\n";
     let two_w0002 =
         format!("{one_w0002}warning[W0002]: `m` is never reassigned\n --> case.sisu:3:13\n");
     let quoted_w0002 = "warning[W0004]: unused value\n2 |     let _ = \"warning[W0002]\"\n";
-    let w0012 = "warning[W0012]: function `f` is never called\n --> case.sisu:1:4\n";
 
     assert_eq!(
         support::check_build_warnings(path, false, ""),
@@ -4504,7 +4507,7 @@ fn build_warnings_should_enforce_w0002_count_and_unused_names() {
 
     let err = support::check_build_warnings(path, false, one_w0002)
         .expect_err("unmarked W0002 should fail");
-    assert!(err.contains("W0002"), "{err}");
+    assert!(err.contains("unused `mut`"), "{err}");
 
     let err = support::check_build_warnings(path, true, "")
         .expect_err("stale allow-warning marker should fail");
@@ -4513,9 +4516,17 @@ fn build_warnings_should_enforce_w0002_count_and_unused_names() {
     let err = support::check_build_warnings(path, true, &two_w0002)
         .expect_err("two W0002 warnings with one marker should fail");
     assert!(err.contains("reported 2"), "{err}");
+}
 
-    let err =
-        support::check_build_warnings(path, true, w0012).expect_err("W0012 should still fail");
+/// GIVEN a build stderr with a W0012 warning and `allows_w0002` set to true
+/// WHEN the run harness checks the build warnings
+/// THEN it still rejects the unused-name warning
+#[test]
+fn check_build_warnings_should_reject_unused_names_even_with_w0002_marker() {
+    let path = Path::new("case.sisu");
+    let w0012 = "warning[W0012]: function `f` is never called\n --> case.sisu:1:4\n";
+    let err = support::check_build_warnings(path, true, w0012)
+        .expect_err("W0012 should fail even when W0002 is allowed");
     assert!(err.contains("unused name"), "{err}");
 }
 
@@ -4535,7 +4546,7 @@ fn run_harness_should_reject_an_unmarked_w0002_case() {
         ],
     );
     let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
-    assert!(message.contains("W0002"), "{message}");
+    assert!(message.contains("unused `mut`"), "{message}");
 }
 
 /// The file of every token kind and every case of the lexer's rules.

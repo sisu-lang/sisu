@@ -23,10 +23,12 @@ row in `probes.md`.
   ```
 
 - **Wildcard arms at decision points.** No debt row is left. Look for a
-  new `_ =>` arm in a match over `tir`, `mir` or `Type` that decides a
-  result for a variant, such as a walk into the parts of a type. In a match
-  on a pair of types, one side lists each kind that no unguarded arm above
-  covers, and no arm is `_` on both sides.
+  new `_ =>` arm over `tir`, `mir` or `Type` where `_` would be wrong for a
+  new kind with parts (`CODING_STANDARDS.md`, Code). Examples are a walk
+  that gives no part for `_`, or a step over `mir::Projection` that skips
+  `_`. A `_ =>` arm that stays right for every kind with nothing inline may
+  stay. In a pair match on types, one side lists each uncovered kind, and no
+  arm is `_` on both sides.
 - **Direct name-map reads.** The uses of the five name maps that the
   name-map row names, in `check/`:
 
