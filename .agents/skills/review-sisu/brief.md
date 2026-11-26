@@ -84,7 +84,7 @@ languages do, not by what Sisu did before.
     unless the target or "Focus" names the row. A diff can also grow debt
     that no row tracks:
     - It adds a field to `Checker`, `Codegen` or `Gen`.
-    - It adds a `_` arm to a match over an enum of the compiler's IR.
+    - It adds a `_` arm to a match over an IR enum outside a decision point. At a decision point over `tir`, `mir` or `Type`, `CODING_STANDARDS.md` forbids `_ =>` and blocks.
     - It states a rule a second time.
 
     Such a diff names the module that owns the rule, or the reason for the

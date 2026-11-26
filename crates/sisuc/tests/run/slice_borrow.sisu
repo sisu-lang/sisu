@@ -11,6 +11,7 @@
 // o2-calls: main note 1
 // o2-calls: main note_field 1
 // o2-calls: main sum 1
+//
 // `mutable_a` tests an unwritten `let mut` slice on purpose.
 // allow-warning: W0002
 fn two() -> [string] { ["a", "b".to_string() + "c"] }

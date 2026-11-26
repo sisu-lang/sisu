@@ -21,7 +21,7 @@ Cause: <function, file and line at the base, and why it gives this output>.
 
 Fix: <what to change, and where>.
 
-Cost: <each walk the fix adds, its worst input, and the step counter that guards it>. The counter ticks in the one accessor that reads the data, so a scan anywhere ticks. Never tick a counter inside a function that the fix rewrites. Without a shared accessor, omit it or use a scaling shape. Its proof is an un-ticked mutation (`CODING_STANDARDS.md`, Tests): put back the old scan, add no tick, and show that the test fails. A fix that adds or changes a walk names a counter test for each shape of `SHAPES` (`scripts/scaling.py`) that reaches it. Use shapes such as "else-if chain with a result type" or "alias chain".
+Cost: <each walk the fix adds, its worst input, and the step counter that guards it>. The counter ticks in the one accessor that reads the data, so a scan anywhere ticks. Never tick a counter inside a function that the fix rewrites. Without a shared accessor, add one that the old scan and the fix both call, and tick there. Its proof is an un-ticked mutation (`CODING_STANDARDS.md`, Tests): put back the old scan, add no tick, and show that the test fails. A fix that adds or changes a walk names a counter test for each shape of `SHAPES` (`scripts/scaling.py`) that reaches it. Use shapes such as "else-if chain with a result type" or "alias chain".
 
 Diagnostic text: <the message, label, secondary labels and help; each fix with its message, edit, and safe or unsafe; as the controller wrote them for a probe with user names>.
 

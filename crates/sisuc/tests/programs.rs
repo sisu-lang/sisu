@@ -4441,51 +4441,101 @@ fn unused_warning_should_match_only_a_diagnostic_first_line() {
     assert!(support::has_unused_warning(real));
 }
 
-/// GIVEN build stderrs with and without W0002 and W0012, and sources with and without the marker
-/// WHEN the run harness checks the build warnings of each case
-/// THEN unmarked W0002, W0012, stale markers, repeated markers and other codes fail, while clean
-/// builds, quoted text and marked W0002 pass
+/// GIVEN case sources with no marker, one valid marker, an indented marker, a repeated marker or
+/// another code
+/// WHEN the run harness parses `// allow-warning:` lines
+/// THEN only one start-of-line `// allow-warning: W0002` returns `Ok(true)`, an indented line is
+/// ignored, and repeated or other codes fail
 #[test]
-fn build_warnings_should_require_a_matching_marker_for_w0002() {
+fn allow_w0002_should_validate_start_of_line_markers() {
     let path = Path::new("case.sisu");
-    let w0002 = "warning[W0002]: `n` is never reassigned\n --> case.sisu:2:13\n";
+    assert_eq!(
+        support::allow_w0002(path, "fn main() {}\n"),
+        Ok(false),
+        "no marker"
+    );
+    assert_eq!(
+        support::allow_w0002(path, "// allow-warning: W0002\nfn main() {}\n"),
+        Ok(true),
+        "single valid marker"
+    );
+    assert_eq!(
+        support::allow_w0002(path, "fn main() {\n    // allow-warning: W0002\n}\n"),
+        Ok(false),
+        "indented marker is ignored"
+    );
+    let err = support::allow_w0002(path, "// allow-warning: W0002\n// allow-warning: W0002\n")
+        .expect_err("repeated marker should fail");
+    assert!(err.contains("more than one"), "{err}");
+
+    let err = support::allow_w0002(path, "// allow-warning: W0001\n")
+        .expect_err("other code should fail");
+    assert!(err.contains("allows only `W0002`"), "{err}");
+}
+
+/// GIVEN build stderrs with zero, one or two W0002 warnings, a quoted W0002 or a W0012
+/// WHEN the run harness checks the build warnings with and without `allows_w0002`
+/// THEN unmarked W0002, stale markers, two W0002 warnings and W0012 fail, while clean builds,
+/// quoted text and one marked W0002 pass
+#[test]
+fn build_warnings_should_enforce_w0002_count_and_unused_names() {
+    let path = Path::new("case.sisu");
+    let one_w0002 = "warning[W0002]: `n` is never reassigned\n --> case.sisu:2:13\n";
+    let two_w0002 =
+        format!("{one_w0002}warning[W0002]: `m` is never reassigned\n --> case.sisu:3:13\n");
     let quoted_w0002 = "warning[W0004]: unused value\n2 |     let _ = \"warning[W0002]\"\n";
     let w0012 = "warning[W0012]: function `f` is never called\n --> case.sisu:1:4\n";
-    let marked = "// allow-warning: W0002\nfn main() {}\n";
 
     assert_eq!(
-        support::check_build_warnings(path, "fn main() {}\n", ""),
-        Ok(())
+        support::check_build_warnings(path, false, ""),
+        Ok(()),
+        "clean build"
     );
     assert_eq!(
-        support::check_build_warnings(path, "fn main() {}\n", quoted_w0002),
-        Ok(())
+        support::check_build_warnings(path, false, quoted_w0002),
+        Ok(()),
+        "quoted W0002 in excerpt"
     );
-    assert_eq!(support::check_build_warnings(path, marked, w0002), Ok(()));
+    assert_eq!(
+        support::check_build_warnings(path, true, one_w0002),
+        Ok(()),
+        "marked single W0002"
+    );
 
-    let err = support::check_build_warnings(path, "fn main() {}\n", w0002)
+    let err = support::check_build_warnings(path, false, one_w0002)
         .expect_err("unmarked W0002 should fail");
     assert!(err.contains("W0002"), "{err}");
 
-    let err = support::check_build_warnings(path, marked, "")
+    let err = support::check_build_warnings(path, true, "")
         .expect_err("stale allow-warning marker should fail");
     assert!(err.contains("stale"), "{err}");
 
-    let err = support::check_build_warnings(
-        path,
-        "// allow-warning: W0002\n// allow-warning: W0002\n",
-        w0002,
-    )
-    .expect_err("duplicate allow-warning marker should fail");
-    assert!(err.contains("more than one"), "{err}");
-
-    let err = support::check_build_warnings(path, "// allow-warning: W0001\n", "")
-        .expect_err("unknown allow-warning code should fail");
-    assert!(err.contains("allows only `W0002`"), "{err}");
+    let err = support::check_build_warnings(path, true, &two_w0002)
+        .expect_err("two W0002 warnings with one marker should fail");
+    assert!(err.contains("reported 2"), "{err}");
 
     let err =
-        support::check_build_warnings(path, marked, w0012).expect_err("W0012 should still fail");
+        support::check_build_warnings(path, true, w0012).expect_err("W0012 should still fail");
     assert!(err.contains("unused name"), "{err}");
+}
+
+/// GIVEN a `run` case fixture with an unwritten `let mut` and no `// allow-warning: W0002` line
+/// WHEN `support::run` builds and runs it
+/// THEN it panics with the unmarked W0002 message
+#[test]
+fn run_harness_should_reject_an_unmarked_w0002_case() {
+    let dir = fixture(
+        "run_harness_should_reject_an_unmarked_w0002_case",
+        &[
+            (
+                "a.sisu",
+                "fn main() {\n    let mut n = 1\n    print(n)\n}\n",
+            ),
+            ("a.out", "1\n"),
+        ],
+    );
+    let message = panic_message(|| support::run(&dir.join("a.sisu"), false));
+    assert!(message.contains("W0002"), "{message}");
 }
 
 /// The file of every token kind and every case of the lexer's rules.
