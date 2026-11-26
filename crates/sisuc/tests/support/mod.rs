@@ -49,12 +49,69 @@ pub(crate) fn compile(dir: &Path, name: &str, exe: &Path, flags: &[&str]) -> Vec
 /// The unused-name warnings that no case may get. A case can keep other warnings.
 const UNUSED: [&str; 3] = ["warning[W0012]", "warning[W0013]", "warning[W0014]"];
 
+/// The unused-`mut` warning prefix. A case may get it only when marked with `ALLOW_WARNING`.
+const UNUSED_MUT: &str = "warning[W0002]";
+
+/// The marker line that lets a case keep an intentional `W0002`: `// allow-warning: W0002`.
+const ALLOW_WARNING: &str = "// allow-warning:";
+
+/// Whether `stderr` holds a warning whose first line starts with `prefix`. A source line in an
+/// excerpt starts with its line number, so it does not count.
+fn has_warning_prefix(stderr: &str, prefix: &str) -> bool {
+    stderr.lines().any(|line| line.starts_with(prefix))
+}
+
 /// Whether `stderr` holds an `UNUSED` warning: a line that starts with one, as a diagnostic's
 /// first line does. A source line in an excerpt starts with its line number, so it does not count.
 pub(crate) fn has_unused_warning(stderr: &str) -> bool {
-    stderr
+    UNUSED.iter().any(|code| has_warning_prefix(stderr, code))
+}
+
+/// Checks a build's `stderr` against `source`'s warning markers. Every `UNUSED` warning fails.
+/// `W0002` fails unless `source` holds one `// allow-warning: W0002` line, and that marker fails
+/// when the build reports no `W0002`.
+pub(crate) fn check_build_warnings(path: &Path, source: &str, stderr: &str) -> Result<(), String> {
+    if has_unused_warning(stderr) {
+        return Err(format!(
+            "{}: an unused name, which the case must not have:\n{stderr}",
+            path.display()
+        ));
+    }
+    let mut allows_w0002 = false;
+    for marker in source
         .lines()
-        .any(|line| UNUSED.iter().any(|code| line.starts_with(code)))
+        .filter_map(|line| line.trim().strip_prefix(ALLOW_WARNING))
+    {
+        let code = marker.trim();
+        if code != "W0002" {
+            return Err(format!(
+                "{}: `{ALLOW_WARNING}{marker}` allows only `W0002`",
+                path.display()
+            ));
+        }
+        if allows_w0002 {
+            return Err(format!(
+                "{}: more than one `{ALLOW_WARNING} W0002` line",
+                path.display()
+            ));
+        }
+        allows_w0002 = true;
+    }
+    let has_w0002 = has_warning_prefix(stderr, UNUSED_MUT);
+    if has_w0002 && !allows_w0002 {
+        return Err(format!(
+            "{}: an unused `mut` (W0002), which the case must not have without \
+             `{ALLOW_WARNING} W0002`:\n{stderr}",
+            path.display()
+        ));
+    }
+    if !has_w0002 && allows_w0002 {
+        return Err(format!(
+            "{}: `{ALLOW_WARNING} W0002` is stale, because the build reported no W0002",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 /// The marker line that gives a case's arguments: `// args: <arg> <arg> ...`.
@@ -700,7 +757,7 @@ pub(crate) const VALGRIND_O2: Build = (
 );
 
 /// Compiles `path` once for each of `builds` into its `case_dir`, and returns the executables.
-/// A build with an `UNUSED` warning fails the case.
+/// A build with an `UNUSED` warning or an unmarked `W0002` fails the case.
 fn build<const N: usize>(path: &Path, builds: [Build; N]) -> [PathBuf; N] {
     build_into(path, &case_dir(path), builds)
 }
@@ -712,15 +769,14 @@ fn build_into<const N: usize>(path: &Path, out: &Path, builds: [Build; N]) -> [P
         .file_stem()
         .and_then(OsStr::to_str)
         .expect("a case's name should be UTF-8");
+    let source = fs::read_to_string(path).expect("the case should be readable");
     builds.map(|(file, flags)| {
         let exe = out.join(file);
         let stderr = compile(dir, name, &exe, flags);
         let stderr = String::from_utf8_lossy(&stderr);
-        assert!(
-            !has_unused_warning(&stderr),
-            "{}: an unused name, which the case must not have:\n{stderr}",
-            path.display()
-        );
+        if let Err(message) = check_build_warnings(path, &source, &stderr) {
+            panic!("{message}");
+        }
         exe
     })
 }

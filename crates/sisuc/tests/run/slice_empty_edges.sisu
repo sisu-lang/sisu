@@ -15,7 +15,7 @@ fn main() {
     print(e[0..])                    // []
 
     // a push onto a slice at the end of a full block that another value holds
-    let mut xs = [1, 2, 3]
+    let xs = [1, 2, 3]
     let mut t = xs[3..3]
     t.push(1)
     print(t)                         // [1]

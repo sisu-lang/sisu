@@ -4441,6 +4441,53 @@ fn unused_warning_should_match_only_a_diagnostic_first_line() {
     assert!(support::has_unused_warning(real));
 }
 
+/// GIVEN build stderrs with and without W0002 and W0012, and sources with and without the marker
+/// WHEN the run harness checks the build warnings of each case
+/// THEN unmarked W0002, W0012, stale markers, repeated markers and other codes fail, while clean
+/// builds, quoted text and marked W0002 pass
+#[test]
+fn build_warnings_should_require_a_matching_marker_for_w0002() {
+    let path = Path::new("case.sisu");
+    let w0002 = "warning[W0002]: `n` is never reassigned\n --> case.sisu:2:13\n";
+    let quoted_w0002 = "warning[W0004]: unused value\n2 |     let _ = \"warning[W0002]\"\n";
+    let w0012 = "warning[W0012]: function `f` is never called\n --> case.sisu:1:4\n";
+    let marked = "// allow-warning: W0002\nfn main() {}\n";
+
+    assert_eq!(
+        support::check_build_warnings(path, "fn main() {}\n", ""),
+        Ok(())
+    );
+    assert_eq!(
+        support::check_build_warnings(path, "fn main() {}\n", quoted_w0002),
+        Ok(())
+    );
+    assert_eq!(support::check_build_warnings(path, marked, w0002), Ok(()));
+
+    let err = support::check_build_warnings(path, "fn main() {}\n", w0002)
+        .expect_err("unmarked W0002 should fail");
+    assert!(err.contains("W0002"), "{err}");
+
+    let err = support::check_build_warnings(path, marked, "")
+        .expect_err("stale allow-warning marker should fail");
+    assert!(err.contains("stale"), "{err}");
+
+    let err = support::check_build_warnings(
+        path,
+        "// allow-warning: W0002\n// allow-warning: W0002\n",
+        w0002,
+    )
+    .expect_err("duplicate allow-warning marker should fail");
+    assert!(err.contains("more than one"), "{err}");
+
+    let err = support::check_build_warnings(path, "// allow-warning: W0001\n", "")
+        .expect_err("unknown allow-warning code should fail");
+    assert!(err.contains("allows only `W0002`"), "{err}");
+
+    let err =
+        support::check_build_warnings(path, marked, w0012).expect_err("W0012 should still fail");
+    assert!(err.contains("unused name"), "{err}");
+}
+
 /// The file of every token kind and every case of the lexer's rules.
 const ALL_TOKENS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/tokens/all_tokens.sisu");
 
