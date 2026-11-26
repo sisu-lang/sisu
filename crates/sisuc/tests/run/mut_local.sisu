@@ -3,6 +3,9 @@
 // THEN it prints "[9, 2]"
 // AND a `mut` parameter of a string, an integer, a `bool` and an optional changes the caller's
 // local the same way, and a `mut` parameter that the function only reads leaves it as it was
+//
+// `look` tests an unwritten `mut` parameter on purpose.
+// allow-warning: W0002
 fn set(mut xs: [i64]) {
     xs[0] = 9
 }

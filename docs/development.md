@@ -204,6 +204,13 @@ no marker does. A case has one such line at most; a second fails the case. An
 argument that holds a space, or that is not valid UTF-8, goes in a
 `programs.rs` test instead, which can pass any bytes.
 
+A `run/` or `run-fail/` build (including `site/programs/`) fails on unused-name
+warnings (W0012, W0013 and W0014) and on an unmarked W0002. A case that tests an
+unwritten `mut` on purpose marks that with one `// allow-warning: W0002` line at
+the start of a line. That marker allows one W0002. It fails when the build
+reports no W0002 or more than one, when the line repeats, or when it names
+another code. Other warnings may stay.
+
 A `run/` case that writes to standard error on purpose, with `eprint`, has a
 `<name>.err` beside it. Each run of the output test, and each native, ASan and
 `--rc-checks` run of the memory test, must write exactly that to stderr.
