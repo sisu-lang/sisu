@@ -119,6 +119,10 @@ KNOWN: list[tuple[str, str, int | str]] = [
     ("struct writes -O2", "object", 687),
     # LLVM's `PromotePass` on the nested chain; `main` gives the same counts.
     ("else-if chain with a result type", "optimize", 765),
+    # `Type::is_counted` recurses every `Optional` layer uncached (`mir` and `check::spill_before`),
+    # and `check::infer_call` walks the nested optional types.
+    ("optional wrap chain", "check", 835),
+    ("optional wrap chain", "mir", 835),
 ]
 ANNOTATE = ["callgrind_annotate", "--inclusive=yes", "--threshold=100", "--show=Ir", "--auto=no"]
 DIAGNOSTIC = re.compile(r"^(error|warning)\[([EW]\d{4})\]")
