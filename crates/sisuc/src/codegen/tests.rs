@@ -2738,11 +2738,14 @@ fn store_to_a_moved_root_faults() {
 }
 
 #[test]
-fn make_unique_of_a_moved_array_faults() {
+fn make_unique_of_a_moved_array_should_fault() {
     let array = Type::intern(TypeKind::Array(Type::I64));
     assert_root_read_faults(array, ("make_array", "take_array"), |r| {
         (
-            vec![Statement::MakeUnique(whole_place(r))],
+            vec![Statement::MakeUnique {
+                place: whole_place(r),
+                start: mir::UniqueStart::Root,
+            }],
             Terminator::Goto(BlockId(1)),
         )
     });
@@ -7728,5 +7731,47 @@ fn tail_return_should_not_take_a_read_of_a_projection_as_the_result() {
     assert!(
         !tail(vec![field]),
         "a read of a field should not be the result"
+    );
+}
+
+/// GIVEN a boxed struct chain of depth `n` written in `main`
+/// WHEN codegen emits LLVM IR at `-O0` for `n` of 8, 16 and 32
+/// THEN `sisu.main` calls `unique_box` `n` times and its IR lines grow linearly
+#[test]
+fn boxed_write_path_should_emit_linear_ir() {
+    let measure = |n: usize| {
+        let mut structs = String::new();
+        for i in 0..n {
+            use std::fmt::Write as _;
+            writeln!(structs, "struct S{i} {{\n    p: S{}\n}}", i + 1)
+                .expect("writing to a string should not fail");
+        }
+        writeln!(structs, "struct S{n} {{\n    _p: S0?\n    n: i64\n}}")
+            .expect("writing to a string should not fail");
+        let mut value = format!("S{n}(_p: None, n: 1)");
+        for i in (0..n).rev() {
+            value = format!("S{i}(p: {value})");
+        }
+        let path = ".p".repeat(n);
+        let src = format!(
+            "{structs}fn main() {{\n    let mut s = {value}\n    s{path}.n = 2\n    print(s{path}.n)\n}}"
+        );
+        let context = Context::create();
+        let module = compiled(&context, &src);
+        let ir = module.print_to_string().to_string();
+        let main = function_body(&ir, "@sisu.main(");
+        let calls = main
+            .lines()
+            .filter(|l| l.contains("call ") && l.contains("@sisu_rc.unique_box."))
+            .count();
+        assert_eq!(calls, n, "n = {n}");
+        main.lines().count()
+    };
+    let _lines_8 = measure(8);
+    let lines_16 = measure(16);
+    let lines_32 = measure(32);
+    assert!(
+        lines_32 * 10 < lines_16 * 23,
+        "IR lines grew superlinearly: 16 -> {lines_16}, 32 -> {lines_32}"
     );
 }

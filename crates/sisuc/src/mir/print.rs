@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use super::{
     Block, BlockId, Const, Function, LocalId, Operand, Place, Program, Projection, Rvalue,
-    Statement, Terminator,
+    Statement, Terminator, UniqueStart,
 };
 use crate::tir::{self, Type};
 
@@ -91,7 +91,21 @@ impl Printer<'_> {
 
     /// `o#2.1`, `a#1[i#2]`, `(e#3 as 1).0`, `(p#4 as some)`, `t#5.name`, `(t#5.next as box)`.
     fn place(&self, place: &Place) -> String {
-        let mut text = self.local(place.local);
+        let wraps = place
+            .projections
+            .iter()
+            .filter(|p| {
+                matches!(
+                    p,
+                    Projection::Payload { .. } | Projection::Some | Projection::Box
+                )
+            })
+            .count();
+        let mut text = String::with_capacity(wraps);
+        for _ in 0..wraps {
+            text.push('(');
+        }
+        text.push_str(&self.local(place.local));
         let mut ty = self.function.locals[place.local.0].ty;
         for projection in &place.projections {
             let base = ty;
@@ -99,20 +113,21 @@ impl Printer<'_> {
             match projection {
                 Projection::StructField { index } => {
                     let name = self.tir.struct_field(base, *index);
-                    write!(text, ".{name}").expect("writing to a string should not fail");
+                    write!(text, ".{name}").expect("writing to a `String` should not fail");
                 }
                 Projection::Field { index, .. } => {
-                    write!(text, ".{index}").expect("writing to a string should not fail");
+                    write!(text, ".{index}").expect("writing to a `String` should not fail");
                 }
                 Projection::Payload { variant, field } => {
-                    text = format!("({text} as {variant}).{field}");
+                    write!(text, " as {variant}).{field}")
+                        .expect("writing to a `String` should not fail");
                 }
                 Projection::Index { index, .. } => {
                     let index = self.operand(index);
-                    write!(text, "[{index}]").expect("writing to a string should not fail");
+                    write!(text, "[{index}]").expect("writing to a `String` should not fail");
                 }
-                Projection::Some => text = format!("({text} as some)"),
-                Projection::Box => text = format!("({text} as box)"),
+                Projection::Some => text.push_str(" as some)"),
+                Projection::Box => text.push_str(" as box)"),
             }
         }
         text
@@ -312,7 +327,12 @@ impl Printer<'_> {
             }
             Statement::Release(local) => format!("release {}", self.local(*local)),
             Statement::ScopeRelease(local) => format!("release? {}", self.local(*local)),
-            Statement::MakeUnique(place) => format!("make_unique {}", self.place(place)),
+            Statement::MakeUnique { place, start } => match start {
+                UniqueStart::Root => format!("make_unique {}", self.place(place)),
+                UniqueStart::AfterRootIndex => {
+                    format!("make_unique {} after root", self.place(place))
+                }
+            },
             Statement::Check(place) => format!("check {}", self.place(place)),
             Statement::End(local) => format!("end {}", self.local(*local)),
             Statement::TakeApart {

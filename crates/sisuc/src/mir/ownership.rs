@@ -108,7 +108,7 @@ impl Placer<'_> {
         match stmt {
             Statement::Assign { value, .. } => self.rvalue(value),
             Statement::Take { place, .. }
-            | Statement::MakeUnique(place)
+            | Statement::MakeUnique { place, .. }
             | Statement::Check(place) => self.place(place),
             Statement::Store { place, value } | Statement::Push { place, value, .. } => {
                 self.place(place);

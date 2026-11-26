@@ -13,7 +13,7 @@
 //! them to the pre-headers.
 
 use self::seam::{Blocks, BlocksMut, Roots, State, States};
-use super::{Function, LocalId, Loop, Operand, Place, Rvalue, Statement, Terminator};
+use super::{Function, LocalId, Loop, Operand, Place, Rvalue, Statement, Terminator, UniqueStart};
 
 /// The locals that `lp` can make unique before it starts, sorted. A local `L` qualifies when
 /// the loop's blocks, its nested loops' included, both:
@@ -62,13 +62,14 @@ pub(super) fn hoist(function: &mut Function) {
     for group in arrive.chunk_by(|a, b| a.0 == b.0) {
         blocks.append(
             group[0].0,
-            group.iter().map(|&(_, local)| {
-                Statement::MakeUnique(Place {
+            group.iter().map(|&(_, local)| Statement::MakeUnique {
+                place: Place {
                     local,
                     projections: Vec::new(),
                     borrow: false,
                     guard: false,
-                })
+                },
+                start: UniqueStart::Root,
             }),
         );
     }
@@ -227,8 +228,8 @@ fn solve(nest: &Nest, own: &[Walk]) -> (Vec<Roots>, Vec<(usize, LocalId)>) {
 /// The local that `stmt` makes unique whole, if it is a `make_unique` with no projection.
 fn level_0(stmt: &Statement) -> Option<LocalId> {
     match stmt {
-        Statement::MakeUnique(place) if place.projections.is_empty() => Some(place.local),
-        Statement::MakeUnique(_)
+        Statement::MakeUnique { place, .. } if place.projections.is_empty() => Some(place.local),
+        Statement::MakeUnique { .. }
         | Statement::Assign { .. }
         | Statement::Take { .. }
         | Statement::Store { .. }
@@ -275,7 +276,7 @@ impl Walk {
                 self.barred
                     .extend(tokens.iter().chain(bindings).map(|&(local, _)| local));
             }
-            Statement::MakeUnique(_) => self.written.extend(level_0(stmt)),
+            Statement::MakeUnique { .. } => self.written.extend(level_0(stmt)),
             Statement::ScopeRelease(_) | Statement::Check(_) | Statement::End(_) => {}
         }
     }

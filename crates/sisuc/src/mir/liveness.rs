@@ -191,7 +191,7 @@ fn written(stmt: &Statement, mut f: impl FnMut(LocalId)) {
         | Statement::Push { .. }
         | Statement::Release(_)
         | Statement::ScopeRelease(_)
-        | Statement::MakeUnique(_)
+        | Statement::MakeUnique { .. }
         | Statement::Check(_)
         | Statement::End(_)
         | Statement::Free(_) => {}
@@ -202,7 +202,9 @@ fn written(stmt: &Statement, mut f: impl FnMut(LocalId)) {
 fn statement(stmt: &Statement, read: &mut impl FnMut(LocalId)) {
     match stmt {
         Statement::Assign { value, .. } => rvalue(value, read),
-        Statement::Take { place, .. } | Statement::MakeUnique(place) | Statement::Check(place) => {
+        Statement::Take { place, .. }
+        | Statement::MakeUnique { place, .. }
+        | Statement::Check(place) => {
             self::place(place, read);
         }
         Statement::Store { place, value } | Statement::Push { place, value, .. } => {

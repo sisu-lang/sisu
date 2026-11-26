@@ -99,7 +99,7 @@ fn step(set: &mut Vec<LocalId>, stmt: &Statement, locals: &[Local], program: &ti
         | Statement::Push { .. }
         | Statement::Release(_)
         | Statement::ScopeRelease(_)
-        | Statement::MakeUnique(_)
+        | Statement::MakeUnique { .. }
         | Statement::Check(_)
         | Statement::End(_) => {}
     }

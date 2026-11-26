@@ -1,0 +1,19 @@
+struct S0 {
+    p: S1
+}
+
+struct S1 {
+    a: [S0]
+    _p: S0?
+    xs: [i64]
+}
+
+// GIVEN a mixed boxed struct and array write path whose outer index is out of bounds
+// WHEN `main` writes `s.p.a[99].p.xs[0] = 1`
+// THEN it panics at the offending index `[99]` before any deeper check
+fn main() {
+    let leaf = S0(p: S1(a: [], _p: None, xs: [0]))
+    let mut s = S0(p: S1(a: [leaf], _p: None, xs: [0]))
+    s.p.a[99].p.xs[0] = 1
+    print(s.p.a[0].p.xs[0])           // never runs
+}
