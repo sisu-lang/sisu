@@ -68,7 +68,7 @@ pub(super) fn elaborate(function: &mut Function) {
                 | Statement::Store { .. }
                 | Statement::Push { .. }
                 | Statement::Release(_)
-                | Statement::MakeUnique(_)
+                | Statement::MakeUnique { .. }
                 | Statement::Check(_)
                 | Statement::End(_)
                 | Statement::TakeApart { .. } => Some(stmt),

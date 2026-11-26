@@ -45,6 +45,14 @@ fn pushing(place: Place, value: Operand) -> Statement {
     }
 }
 
+/// `make_unique place` from the root.
+fn make_unique(place: Place) -> Statement {
+    Statement::MakeUnique {
+        place,
+        start: UniqueStart::Root,
+    }
+}
+
 /// `call f(args)`, with a `unit` result, and `borrowed` the argument flags.
 fn call(args: Vec<Operand>, borrowed: Vec<bool>) -> Statement {
     Statement::Assign {
@@ -1296,7 +1304,7 @@ fn object() -> Type {
 /// `b = borrow xs` in one block, then `make_unique xs` and a read of `b` in the next: the
 /// write comes before `b`'s first mention in its block, while `b` is borrowed on entry.
 #[test]
-fn borrow_is_ended_by_a_write_before_its_first_mention_in_a_block() {
+fn borrow_should_end_by_a_write_before_its_first_mention_in_a_block() {
     let mut b = Builder::new("f");
     let xs = b.param("xs", Type::array(Type::I64));
     let x = b.local("b", Type::array(Type::I64));
@@ -1304,7 +1312,7 @@ fn borrow_is_ended_by_a_write_before_its_first_mention_in_a_block() {
     b.block(vec![assign(x, Rvalue::Borrow(whole(xs)))], goto(1));
     b.block(
         vec![
-            Statement::MakeUnique(whole(xs)),
+            make_unique(whole(xs)),
             show(read(x)),
             Statement::End(x),
             Statement::Release(xs),
@@ -1317,7 +1325,7 @@ fn borrow_is_ended_by_a_write_before_its_first_mention_in_a_block() {
 /// `b = borrow xs`, then `make_unique xs` or `xs[0] = 1`, then a read of `b`: copy-on-write
 /// may give `xs` a new buffer and release the one `b` reads.
 #[test]
-fn borrow_is_ended_by_a_write_to_its_root() {
+fn borrow_should_end_by_a_write_to_its_root() {
     for store in [false, true] {
         let label = if store { "xs[0] = 1" } else { "make_unique xs" };
         let mut b = Builder::new("f");
@@ -1327,7 +1335,7 @@ fn borrow_is_ended_by_a_write_to_its_root() {
         let write = if store {
             store_int(first(xs))
         } else {
-            Statement::MakeUnique(whole(xs))
+            make_unique(whole(xs))
         };
         b.block(
             vec![
@@ -1444,7 +1452,7 @@ fn borrow_through_a_field_is_ended_by_a_counted_store() {
 /// `b = borrow o.0`, then `make_unique p.0`. It frees nothing, but it decides on the count:
 /// when `p` is `o` and `b` holds none, it finds the value unique and writes into it in place.
 #[test]
-fn borrow_through_a_field_is_ended_by_make_unique() {
+fn borrow_through_a_field_should_end_by_make_unique() {
     let mut b = Builder::new("f");
     let o = b.param("o", object());
     let p = b.param("p", object());
@@ -1453,7 +1461,7 @@ fn borrow_through_a_field_is_ended_by_make_unique() {
     b.block(
         vec![
             assign(x, Rvalue::Borrow(field(o))),
-            Statement::MakeUnique(field(p)),
+            make_unique(field(p)),
             show(read(x)),
             Statement::End(x),
             Statement::Release(o),
@@ -1483,7 +1491,7 @@ fn certify_should_read_root_kills_across_ended_borrows_linearly() {
         for &x in &locals {
             stmts.extend([assign(x, Rvalue::Borrow(whole(xs))), Statement::End(x)]);
         }
-        stmts.extend((0..n).map(|_| Statement::MakeUnique(whole(xs))));
+        stmts.extend((0..n).map(|_| make_unique(whole(xs))));
         for &x in &locals {
             stmts.extend([assign(x, Rvalue::Borrow(whole(xs))), Statement::End(x)]);
         }
@@ -1507,7 +1515,7 @@ fn certify_should_reject_a_root_write_between_two_events_of_a_borrow() {
     b.block(
         vec![
             assign(x, Rvalue::Borrow(whole(xs))),
-            Statement::MakeUnique(whole(xs)),
+            make_unique(whole(xs)),
             show(read(x)),
             Statement::End(x),
             Statement::Release(xs),
@@ -2031,7 +2039,7 @@ fn use_after_the_ownership_pass_panics() {
 /// `make_unique b` with `b` a borrow of the array `xs` finds the buffer unique, though `xs`
 /// holds it too, and so writes into `xs` in place.
 #[test]
-fn write_into_a_borrowed_array_is_rejected() {
+fn write_into_a_borrowed_array_should_be_rejected() {
     let mut b = Builder::new("f");
     let xs = b.param("xs", Type::array(Type::I64));
     let x = b.local("b", Type::array(Type::I64));
@@ -2039,7 +2047,7 @@ fn write_into_a_borrowed_array_is_rejected() {
     b.block(
         vec![
             assign(x, Rvalue::Borrow(whole(xs))),
-            Statement::MakeUnique(whole(x)),
+            make_unique(whole(x)),
             Statement::End(x),
             Statement::Release(xs),
         ],
@@ -2177,7 +2185,7 @@ fn proved_through_some() -> [Optionals; 3] {
             |b, xs, ys| {
                 let stmts = vec![
                     Statement::Check(some(xs)),
-                    Statement::MakeUnique(some(xs)),
+                    make_unique(some(xs)),
                     push_one(some(xs)),
                 ];
                 b.block(vec![], test(whole(xs), 1, 2));
@@ -2190,10 +2198,7 @@ fn proved_through_some() -> [Optionals; 3] {
             "make_unique in the present block",
             |b, xs, ys| {
                 b.block(vec![], test(whole(xs), 1, 2));
-                b.block(
-                    released(vec![Statement::MakeUnique(some(xs))], &[xs, ys]),
-                    ret(),
-                );
+                b.block(released(vec![make_unique(some(xs))], &[xs, ys]), ret());
                 b.block(released(vec![], &[xs, ys]), ret());
             },
             None,
@@ -2214,10 +2219,7 @@ fn unproved_through_some() -> [Optionals; 8] {
         (
             "make_unique with no test",
             |b, xs, ys| {
-                b.block(
-                    released(vec![Statement::MakeUnique(some(xs))], &[xs, ys]),
-                    ret(),
-                );
+                b.block(released(vec![make_unique(some(xs))], &[xs, ys]), ret());
             },
             Some(0),
         ),
@@ -2292,7 +2294,7 @@ fn unproved_by_statements() -> [Optionals; 6] {
             // The first write would stop the walk of the second, and has no proof itself.
             "make_unique of the path with no test, then a push",
             |b, xs, ys| {
-                let stmts = vec![Statement::MakeUnique(some(xs)), push_one(some(xs))];
+                let stmts = vec![make_unique(some(xs)), push_one(some(xs))];
                 b.block(released(stmts, &[xs, ys]), ret());
             },
             Some(0),
@@ -2300,7 +2302,7 @@ fn unproved_by_statements() -> [Optionals; 6] {
         (
             "make_unique of another place, with no test",
             |b, xs, ys| {
-                let stmts = vec![Statement::MakeUnique(whole(ys)), push_one(some(xs))];
+                let stmts = vec![make_unique(whole(ys)), push_one(some(xs))];
                 b.block(released(stmts, &[xs, ys]), ret());
             },
             Some(0),
@@ -2308,7 +2310,7 @@ fn unproved_by_statements() -> [Optionals; 6] {
         (
             "make_unique of another optional's array before the push",
             |b, xs, ys| {
-                let stmts = vec![Statement::MakeUnique(some(ys)), push_one(some(xs))];
+                let stmts = vec![make_unique(some(ys)), push_one(some(xs))];
                 b.block(vec![], test(whole(ys), 1, 2));
                 b.block(released(stmts, &[xs, ys]), ret());
                 b.block(released(vec![], &[xs, ys]), ret());
@@ -2377,7 +2379,7 @@ fn unproved_by_another_path() -> [Classes; 3] {
             |b, c| {
                 b.block(vec![], test(whole(c), 1, 3));
                 let stmts = vec![
-                    Statement::MakeUnique(some_items(c)),
+                    make_unique(some_items(c)),
                     push_one(path(c, vec![Projection::Some, other(), Projection::Some])),
                 ];
                 b.block(released(stmts, &[c]), ret());
@@ -2394,7 +2396,7 @@ fn unproved_by_another_path() -> [Classes; 3] {
                 b.block(vec![], test(whole(c), 1, 3));
                 b.block(vec![], test(some_items(c), 2, 3));
                 let stmts = vec![
-                    Statement::MakeUnique(some_items_some(c)),
+                    make_unique(some_items_some(c)),
                     push_one(path(c, vec![Projection::Some, other(), Projection::Some])),
                 ];
                 b.block(released(stmts, &[c]), ret());
@@ -2493,7 +2495,7 @@ fn write_through_two_optionals_should_need_a_test_for_each() {
             |b, c| {
                 b.block(vec![], test(whole(c), 1, 3));
                 b.block(vec![], test(some_items(c), 2, 3));
-                let stmts = vec![Statement::MakeUnique(some_items_some(c))];
+                let stmts = vec![make_unique(some_items_some(c))];
                 b.block(released(stmts, &[c]), ret());
                 b.block(released(vec![], &[c]), ret());
             },
@@ -2525,10 +2527,7 @@ fn proof_chain_should_pass_the_statements_that_keep_the_optionals() {
             let mut item = element.clone();
             item.push(Projection::Some);
             b.block(vec![], test(path(groups, element), 1, 2));
-            let stmts = vec![
-                Statement::MakeUnique(whole(groups)),
-                push_one(path(groups, item)),
-            ];
+            let stmts = vec![make_unique(whole(groups)), push_one(path(groups, item))];
             b.block(released(stmts, &[groups]), ret());
             b.block(released(vec![], &[groups]), ret());
         }),
@@ -2541,7 +2540,7 @@ fn proof_chain_should_pass_the_statements_that_keep_the_optionals() {
             b.block(vec![], test(whole(xss), 1, 2));
             let stmts = vec![
                 Statement::Check(path(xss, item.clone())),
-                Statement::MakeUnique(some(xss)),
+                make_unique(some(xss)),
                 push_one(path(xss, item)),
             ];
             b.block(released(stmts, &[xss]), ret());
@@ -2687,9 +2686,7 @@ fn proof_walk_should_read_linearly() {
         let c = b.param("c", Type::optional(object()));
         b.block(vec![], test(whole(c), 1, 3));
         b.block(vec![], test(some_items(c), 2, 3));
-        let mut stmts: Vec<Statement> = (0..n)
-            .map(|_| Statement::MakeUnique(some_items_some(c)))
-            .collect();
+        let mut stmts: Vec<Statement> = (0..n).map(|_| make_unique(some_items_some(c))).collect();
         stmts.extend([push_one(some_items_some(c)), Statement::Release(c)]);
         b.block(stmts, ret());
         b.block(released(vec![], &[c]), ret());
@@ -2706,7 +2703,7 @@ fn proof_walk_should_read_linearly() {
                     index: Operand::Const(Const::Int(at, Type::I64)),
                     span: Span::new(0, 0),
                 };
-                Statement::MakeUnique(path(xs, vec![Projection::Some, element]))
+                make_unique(path(xs, vec![Projection::Some, element]))
             })
             .collect();
         stmts.push(Statement::Release(xs));
@@ -2750,7 +2747,7 @@ fn push_through_some_should_write_a_borrowed_optional_class_but_not_a_borrowed_o
     let mut b = Builder::new("f");
     let c = b.param("c", Type::optional(object()));
     b.borrowed(c);
-    b.block(vec![Statement::MakeUnique(whole(c))], ret());
+    b.block(vec![make_unique(whole(c))], ret());
     rejects(&b.finish(), 0, c, Rule::WriteBorrowed);
 }
 
@@ -3504,11 +3501,11 @@ fn clobbers_before_many_borrows_read_linearly() {
 /// of `xs[0] = i` lines and then `print(xs == xs)` lines: a walk over the root's kills from
 /// the block's start for each borrow is quadratic. The reads grow near linearly with `n`.
 #[test]
-fn root_writes_before_many_borrows_read_linearly() {
+fn root_writes_before_many_borrows_should_read_linearly() {
     let reads = |n: usize| {
         let mut b = Builder::new("f");
         let xs = b.param("xs", Type::array(Type::STRING));
-        let mut stmts: Vec<Statement> = (0..n).map(|_| Statement::MakeUnique(whole(xs))).collect();
+        let mut stmts: Vec<Statement> = (0..n).map(|_| make_unique(whole(xs))).collect();
         for i in 0..n {
             let x = b.local(&format!("b_{i}"), Type::array(Type::STRING));
             b.owner(x, xs);
@@ -4301,7 +4298,7 @@ fn certify_should_reject_a_root_write_while_a_slice_borrows() {
             assign(t, Rvalue::Borrow(whole(xs))),
             assign(d, slice_of(read(t), false)),
             Statement::End(t),
-            Statement::MakeUnique(whole(xs)),
+            make_unique(whole(xs)),
             show(read(d)),
             Statement::End(d),
             Statement::Release(xs),
@@ -4369,7 +4366,7 @@ fn certify_should_reject_a_write_through_a_slice_that_borrows() {
         vec![
             assign(t, Rvalue::Borrow(whole(xs))),
             assign(d, slice_of(read(t), false)),
-            Statement::MakeUnique(whole(d)),
+            make_unique(whole(d)),
             Statement::End(d),
             Statement::End(t),
             Statement::Release(xs),

@@ -1,0 +1,142 @@
+// GIVEN deep boxed struct chains, nested arrays and mixed paths shared with copies
+// WHEN `main` writes through each form, including `=`, `+=`, `.push`, `?.push`, `mut`, and loops
+// THEN each written value updates and every shared copy keeps its original value
+struct S0 {
+    p: S1
+}
+
+struct S1 {
+    p: S2
+}
+
+struct S2 {
+    _p: S0?
+    xs: [i64]
+    opt: [i64]?
+    txt: string
+    n: i64
+
+    fn bump(mut self) {
+        self.n += 1
+    }
+}
+
+class Holder {
+    mut s: S0
+}
+
+struct Mix0 {
+    p: Mix1
+    n: i64
+}
+
+struct Mix1 {
+    a: [Mix0]
+    _p: Mix0?
+}
+
+fn make_s(n: i64) -> S0 {
+    S0(p: S1(p: S2(_p: None, xs: [n], opt: Some([n]), txt: "a", n: n)))
+}
+
+fn add_one(mut x: i64) {
+    x += 1
+}
+
+fn main() {
+    // 1. Boxed field assignment `=`.
+    let mut s1 = make_s(10)
+    let keep1 = s1
+    s1.p.p.n = 20
+    print(s1.p.p.n)                   // 20
+    print(keep1.p.p.n)                // 10
+
+    // 2. String append `+=`.
+    let mut s2 = make_s(1)
+    let keep2 = s2
+    s2.p.p.txt += "b"
+    print(s2.p.p.txt)                 // ab
+    print(keep2.p.p.txt)              // a
+
+    // 3. Array `.push` and `?.push`.
+    let mut s3 = make_s(3)
+    let keep3 = s3
+    s3.p.p.xs.push(4)
+    s3.p.p.opt?.push(5)
+    print(s3.p.p.xs.len())            // 2
+    print(keep3.p.p.xs.len())         // 1
+    print((s3.p.p.opt ?? []).len())   // 2
+    print((keep3.p.p.opt ?? []).len()) // 1
+
+    // 4. `mut` arg and `mut self`.
+    let mut s4 = make_s(30)
+    let keep4 = s4
+    add_one(mut s4.p.p.n)
+    s4.p.p.bump()
+    print(s4.p.p.n)                   // 32
+    print(keep4.p.p.n)                // 30
+
+    // 5. Class-field root.
+    let keep5 = make_s(40)
+    let h = Holder(s: keep5)
+    h.s.p.p.n = 41
+    print(h.s.p.p.n)                  // 41
+    print(keep5.p.p.n)                // 40
+
+    // 6. Replace a whole boxed field.
+    let mut s6 = make_s(50)
+    let keep6 = s6
+    s6.p = S1(p: S2(_p: None, xs: [51], opt: None, txt: "z", n: 51))
+    print(s6.p.p.n)                   // 51
+    print(keep6.p.p.n)                // 50
+
+    // 7. Replace a boxed optional field.
+    let mut s7 = make_s(60)
+    let keep7 = s7
+    s7.p.p._p = Some(make_s(61))
+    let got7 = match s7.p.p._p {
+        Some(v) => v.p.p.n
+        None => -1
+    }
+    let old7 = match keep7.p.p._p {
+        Some(v) => v.p.p.n
+        None => -1
+    }
+    print(got7)                       // 61
+    print(old7)                       // -1
+
+    // 8. Mixed boxed struct and array path.
+    let leaf = Mix0(p: Mix1(a: [], _p: None), n: 70)
+    let mut m = Mix0(p: Mix1(a: [Mix0(p: Mix1(a: [leaf], _p: None), n: 71)], _p: None), n: 72)
+    let keep_m = m
+    m.p.a[0].p.a[0].n = 99
+    print(m.p.a[0].p.a[0].n)          // 99
+    print(keep_m.p.a[0].p.a[0].n)     // 70
+
+    // 9. 3D nested array COW.
+    let mut grid = [[[1, 2], [3, 4]]]
+    let keep_grid = grid
+    grid[0][1][0] = 42
+    print(grid[0][1][0])              // 42
+    print(keep_grid[0][1][0])         // 3
+
+    // 10. Loop-hoisted write on an array of boxed structs.
+    let mut arr = [make_s(80), make_s(81)]
+    let keep_arr = arr
+    for i in 0..2 {
+        arr[i].p.p.n = i + 90
+    }
+    print(arr[0].p.p.n)               // 90
+    print(arr[1].p.p.n)               // 91
+    print(keep_arr[0].p.p.n)          // 80
+    print(keep_arr[1].p.p.n)          // 81
+
+    // 11. Shared inner box alongside a root copy (guards box-pointer reload after `box_unique`).
+    let mut s_inner = make_s(100)
+    let other_inner = s_inner.p
+    let keep_inner = s_inner
+    s_inner.p.p.n = 101
+    print(s_inner.p.p.n)              // 101
+    print(keep_inner.p.p.n)           // 100
+    print(other_inner.p.n)            // 100
+}

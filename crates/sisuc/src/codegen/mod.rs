@@ -257,6 +257,15 @@ const _: () = {
     assert_sync::<mir::Program>();
 };
 
+/// Position of a place walk in codegen: storage address, value type, optional TBAA tag, and
+/// whether `address` holds a boxed optional field's storage slot rather than its value.
+struct PlaceCursor<'ctx> {
+    address: PointerValue<'ctx>,
+    ty: Type,
+    tag: Option<MetadataValue<'ctx>>,
+    boxed: bool,
+}
+
 impl Analyses {
     /// The analyses of `program`, whose text is `source`.
     pub(crate) fn new(program: &Program, source: &str) -> Analyses {
@@ -977,13 +986,8 @@ impl<'ctx> Codegen<'ctx, '_> {
             Statement::ScopeRelease(local) => {
                 self.release(self.load_local(*local), self.types[local.0]);
             }
-            Statement::MakeUnique(place) => {
-                let (address, ty, _, boxed) = self.located(place.local, &place.projections, false);
-                if boxed {
-                    self.box_unique(address, ty);
-                } else {
-                    self.unique(address, ty);
-                }
+            Statement::MakeUnique { place, start } => {
+                self.prepare_unique(place, *start);
             }
             Statement::Check(place) => {
                 let Some((Projection::Index { index, span }, array)) =
@@ -1412,66 +1416,136 @@ impl<'ctx> Codegen<'ctx, '_> {
         checked: bool,
     ) -> (PointerValue<'ctx>, Type, Option<MetadataValue<'ctx>>, bool) {
         self.check_not_moved(local);
-        let (mut address, _) = self.slot(local);
-        let mut ty = self.types[local.0];
-        let mut tag = None;
-        let mut boxed = false;
+        let (address, _) = self.slot(local);
+        let mut cursor = PlaceCursor {
+            address,
+            ty: self.types[local.0],
+            tag: None,
+            boxed: false,
+        };
         for projection in projections {
-            (address, ty, tag) = match projection {
-                Projection::Field { index, .. } => {
-                    let class = class_of(ty);
-                    let object = self.load_pointer(address);
-                    (
-                        self.field_ptr(class, object, *index),
-                        self.program.classes[class.0].fields[*index].ty,
-                        Some(self.field_tag(class, *index)),
-                    )
-                }
-                Projection::Payload { variant, field } => {
-                    let id = enum_of(ty);
-                    let place;
-                    (place, boxed) = self.field_place(address, Inline::Enum(id), *variant, *field);
-                    (
-                        place,
-                        self.program.enums[id.0].variants[*variant].fields[*field].ty,
-                        None,
-                    )
-                }
-                Projection::Index { index, span } => {
-                    // `tag` is the tag of the array's own place, the step before this one.
-                    let data = self.load_data(address, tag);
-                    let index = self.operand(index).0.into_int_value();
-                    if checked {
-                        self.check_bounds(self.load_len(address, tag), index, *span);
-                    }
-                    let element = element_of(ty);
-                    (
-                        self.element_ptr(element, data, index),
-                        element,
-                        Some(self.element_tag),
-                    )
-                }
-                Projection::Some => {
-                    let place;
-                    (place, ty, boxed) = self.some_place(address, ty, boxed);
-                    (place, ty, None)
-                }
-                // A struct field has no TBAA tag: an access with no tag may alias any other. A
-                // boxed field gives its storage, as `boxed` says, and a `Box` after it the value.
-                &Projection::StructField { index } => {
-                    let id = struct_of(ty);
-                    let field = &self.program.structs[id.0].fields[index];
-                    boxed = field.boxed;
-                    (self.struct_field_ptr(id, address, index), field.ty, None)
-                }
-                Projection::Box => {
-                    let pointer = self.load_pointer(address);
-                    boxed = false;
-                    (self.box_value(boxed_type(ty), pointer), ty, None)
-                }
-            };
+            cursor = self.step_located(cursor, projection, checked);
         }
-        (address, ty, tag, boxed)
+        (cursor.address, cursor.ty, cursor.tag, cursor.boxed)
+    }
+
+    /// Advances `cursor` across one `projection`, checking bounds when `checked`.
+    fn step_located(
+        &self,
+        mut cursor: PlaceCursor<'ctx>,
+        projection: &Projection,
+        checked: bool,
+    ) -> PlaceCursor<'ctx> {
+        let (address, ty, tag) = match projection {
+            Projection::Field { index, .. } => {
+                let class = class_of(cursor.ty);
+                let object = self.load_pointer(cursor.address);
+                (
+                    self.field_ptr(class, object, *index),
+                    self.program.classes[class.0].fields[*index].ty,
+                    Some(self.field_tag(class, *index)),
+                )
+            }
+            Projection::Payload { variant, field } => {
+                let id = enum_of(cursor.ty);
+                let place;
+                (place, cursor.boxed) =
+                    self.field_place(cursor.address, Inline::Enum(id), *variant, *field);
+                (
+                    place,
+                    self.program.enums[id.0].variants[*variant].fields[*field].ty,
+                    None,
+                )
+            }
+            Projection::Index { index, span } => {
+                // `tag` is the tag of the array's own place, the step before this one.
+                let data = self.load_data(cursor.address, cursor.tag);
+                let index = self.operand(index).0.into_int_value();
+                if checked {
+                    self.check_bounds(self.load_len(cursor.address, cursor.tag), index, *span);
+                }
+                let element = element_of(cursor.ty);
+                (
+                    self.element_ptr(element, data, index),
+                    element,
+                    Some(self.element_tag),
+                )
+            }
+            Projection::Some => {
+                let place;
+                (place, cursor.ty, cursor.boxed) =
+                    self.some_place(cursor.address, cursor.ty, cursor.boxed);
+                (place, cursor.ty, None)
+            }
+            // A struct field has no TBAA tag: an access with no tag may alias any other. A
+            // boxed field gives its storage, as `boxed` says, and a `Box` after it the value.
+            &Projection::StructField { index } => {
+                let id = struct_of(cursor.ty);
+                let field = &self.program.structs[id.0].fields[index];
+                cursor.boxed = field.boxed;
+                (
+                    self.struct_field_ptr(id, cursor.address, index),
+                    field.ty,
+                    None,
+                )
+            }
+            Projection::Box => {
+                let pointer = self.load_pointer(cursor.address);
+                cursor.boxed = false;
+                (
+                    self.box_value(boxed_type(cursor.ty), pointer),
+                    cursor.ty,
+                    None,
+                )
+            }
+        };
+        PlaceCursor {
+            address,
+            ty,
+            tag,
+            boxed: cursor.boxed,
+        }
+    }
+
+    /// Walks `place` from `start` once, checking each active index and making each box or array
+    /// unique outermost first.
+    fn prepare_unique(&self, place: &Place, start: mir::UniqueStart) {
+        debug_assert!(
+            start == mir::UniqueStart::Root
+                || matches!(place.projections.first(), Some(Projection::Index { .. })),
+            "AfterRootIndex should start with an Index projection"
+        );
+        self.check_not_moved(place.local);
+        let (address, _) = self.slot(place.local);
+        let mut cursor = PlaceCursor {
+            address,
+            ty: self.types[place.local.0],
+            tag: None,
+            boxed: false,
+        };
+        let skip = match start {
+            mir::UniqueStart::Root => 0,
+            mir::UniqueStart::AfterRootIndex => 1,
+        };
+        for (i, projection) in place.projections.iter().enumerate() {
+            match projection {
+                Projection::Index { index, span } if i >= skip => {
+                    let index = self.operand(index).0.into_int_value();
+                    self.check_bounds(self.load_len(cursor.address, cursor.tag), index, *span);
+                    self.unique(cursor.address, cursor.ty);
+                }
+                Projection::Box => self.box_unique(cursor.address, cursor.ty),
+                Projection::Index { .. }
+                | Projection::Field { .. }
+                | Projection::Payload { .. }
+                | Projection::Some
+                | Projection::StructField { .. } => {}
+            }
+            cursor = self.step_located(cursor, projection, false);
+        }
+        if place.projections.is_empty() {
+            self.unique(cursor.address, cursor.ty);
+        }
     }
 
     /// The first element of the array at `address`, tagged `tag` when its place has one.

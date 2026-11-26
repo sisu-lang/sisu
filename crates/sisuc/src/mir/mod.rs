@@ -560,8 +560,14 @@ pub(crate) enum Statement {
     Release(LocalId),
     /// Releases the local if it still owns a reference.
     ScopeRelease(LocalId),
-    /// Copies the array or string the place holds when it is shared (ADR 0021).
-    MakeUnique(Place),
+    /// Makes each box and array along `place` unique from `start`, outermost first, checking
+    /// each active index before making its array unique. When `place` has no projections, it
+    /// makes that local's array unique (`UniqueStart::Root`), which `hoist` can move to a
+    /// loop's pre-header (ADR 0021).
+    MakeUnique {
+        place: Place,
+        start: UniqueStart,
+    },
     /// The bounds check of the place's last index.
     Check(Place),
     /// A borrow ends.
@@ -578,6 +584,16 @@ pub(crate) enum Statement {
     },
     /// Frees a token's block, if it holds one; the block's contents were moved out.
     Free(LocalId),
+}
+
+/// Where a `MakeUnique` statement starts checking bounds and making boxes or arrays unique.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UniqueStart {
+    /// From the root of the place, including a whole-local array with no projections.
+    Root,
+    /// After the first projection (`Projection::Index`), which level-0 `Check` and
+    /// `MakeUnique` already handled so ADR 0021 loop hoisting can move the root check.
+    AfterRootIndex,
 }
 
 #[derive(Debug)]

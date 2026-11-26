@@ -424,7 +424,7 @@ impl Clobbers {
                     },
                     Statement::Take { dest, .. } => function.locals[dest.0].counted,
                     Statement::Store { value, .. } => counted_value(function, value),
-                    Statement::MakeUnique(_) | Statement::Push { .. } => true,
+                    Statement::MakeUnique { .. } | Statement::Push { .. } => true,
                     Statement::Release(_)
                     | Statement::ScopeRelease(_)
                     | Statement::Check(_)
@@ -805,7 +805,7 @@ pub(super) fn statement<'a>(
         }
         Statement::Release(local) => f(*local, Effect::Release, None),
         Statement::ScopeRelease(local) => f(*local, Effect::ScopeRelease, None),
-        Statement::MakeUnique(place) => self::place(place, Effect::Write, lowered, f),
+        Statement::MakeUnique { place, .. } => self::place(place, Effect::Write, lowered, f),
         Statement::Check(place) => self::place(place, Effect::ReadInPlace, lowered, f),
         Statement::End(local) => f(*local, Effect::End, None),
         // The places are the scrutinee's own, so the statement reads nothing else.
@@ -1096,7 +1096,7 @@ fn same_projections(a: &[Projection], b: &[Projection]) -> bool {
 /// changes only its own local, which is neither the root of the path nor an index local of it.
 fn keeps_proofs(stmt: &Statement, write: &Place) -> bool {
     match stmt {
-        Statement::Check(_) | Statement::MakeUnique(_) => true,
+        Statement::Check(_) | Statement::MakeUnique { .. } => true,
         Statement::Assign {
             dest: Some(dest),
             value: Rvalue::Use(_) | Rvalue::Copy(_),
@@ -1133,7 +1133,7 @@ fn proves(
         for stmt in function.blocks[block].stmts[..end].iter().rev() {
             count(1);
             match stmt {
-                Statement::MakeUnique(place)
+                Statement::MakeUnique { place, .. }
                     if place.local == write.local
                         && place.projections.len() > last
                         && same_projections(
@@ -1185,7 +1185,7 @@ fn proved(function: &Function, tree: &Tree) -> Result<(), Violation> {
             continue;
         }
         for (at, stmt) in block.stmts.iter().enumerate() {
-            let (Statement::Push { place, .. } | Statement::MakeUnique(place)) = stmt else {
+            let (Statement::Push { place, .. } | Statement::MakeUnique { place, .. }) = stmt else {
                 continue;
             };
             if place.projections.contains(&Projection::Some)

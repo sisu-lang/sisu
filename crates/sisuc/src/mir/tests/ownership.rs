@@ -335,7 +335,7 @@ fn objects_self_and_if_let() {
 /// like any other: the last of them moves. The earlier read of `b.xs` is only read within its
 /// block, so pair removal (`mir/pairs.rs`) makes its copy a borrow.
 #[test]
-fn place_operands() {
+fn place_operands_should_move_at_last_read() {
     let printed = built(
         "class O {\n    mut n: i64\n}\nclass B {\n    mut xs: [i64]\n}\n\
          fn field() {\n    let o = O(n: 0)\n    print(o.n)\n    o.n = 1\n}\n\
@@ -350,7 +350,12 @@ fn place_operands() {
     has(
         &printed,
         "root",
-        &["_ = borrow b#0.0", "end _", "_ = move b#0", "check _.0[0]"],
+        &[
+            "_ = borrow b#0.0",
+            "end _",
+            "_ = move b#0",
+            "make_unique _.0[0]",
+        ],
     );
     has(
         &printed,
