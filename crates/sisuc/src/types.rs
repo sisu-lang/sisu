@@ -406,9 +406,9 @@ enum Step<'a> {
 }
 
 /// Writes `ty` to `out` as a program writes it, each class and enum named by `head`. Returns
-/// whether the text was cut: past `NAME_LIMIT` bytes, `...` and the closers and the associated
-/// type names still owed end it. Each level entered before the cut adds at most one closer or one
-/// name, so the text is never longer than the whole text.
+/// whether the text was cut. When `out` and the closers it owes reach `NAME_LIMIT` bytes, `...`
+/// and the owed closers and associated type names end it. Each level entered before the cut adds
+/// at most one closer or one name.
 pub(crate) fn write_type<'n>(out: &mut String, ty: Type, head: impl Fn(Head) -> &'n str) -> bool {
     write_type_with(out, ty, head, |_| None)
 }
@@ -420,7 +420,7 @@ fn write_type_with<'n>(
     head: impl Fn(Head) -> &'n str,
     named: impl Fn(Type) -> Option<(&'n str, bool)>,
 ) -> bool {
-    write_steps(out, vec![Step::Type(ty)], head, named)
+    write_steps(out, vec![Step::Type(ty)], 0, head, named)
 }
 
 /// Writes the name of a method to `out`: the type `owner` it is declared on, the interface of its
@@ -477,19 +477,24 @@ pub(crate) fn write_args_with<'n>(
     named: impl Fn(Type) -> Option<(&'n str, bool)>,
 ) -> bool {
     let mut steps = Vec::new();
-    push_args(out, &mut steps, args);
-    write_steps(out, steps, head, named)
+    let owed = push_args(out, &mut steps, args);
+    write_steps(out, steps, owed, head, named)
 }
 
 /// Writes `steps` to `out`, the last first. One string grows in place, and a stack stands in for
 /// recursion: a type can nest deeper than the call stack allows. When `named` returns
 /// `Some((head, true))`, it writes `head<...>` and marks the output cut. When `named` returns
-/// `Some((text, false))` and `text` fits in `NAME_LIMIT`, it pastes `text` without descending.
-/// Once `out` holds `NAME_LIMIT` bytes, no type or separator follows, so the work is linear in
-/// the text, not in the type.
+/// `Some((text, false))` and `out.len() + owed + text.len() <= NAME_LIMIT`, it pastes `text`
+/// without descending. Once `out.len() + owed >= NAME_LIMIT`, no type or separator follows, so
+/// the work is linear in `NAME_LIMIT` and in the depth of associated types, which are never cut.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one stack-machine loop handles every step and type kind"
+)]
 fn write_steps<'n>(
     out: &mut String,
     mut steps: Vec<Step<'_>>,
+    mut owed: usize,
     head: impl Fn(Head) -> &'n str,
     named: impl Fn(Type) -> Option<(&'n str, bool)>,
 ) -> bool {
@@ -501,11 +506,12 @@ fn write_steps<'n>(
         WRITE_STEPS.set(WRITE_STEPS.get() + 1);
         let ty = match step {
             Step::Close(text) => {
+                owed -= text.len();
                 out.push_str(text);
                 continue;
             }
             Step::Rest([]) => continue,
-            Step::Type(_) | Step::Rest(_) if out.len() >= NAME_LIMIT => {
+            Step::Type(_) | Step::Rest(_) if out.len() + owed >= NAME_LIMIT => {
                 // The cut elides only what has not begun: a type or the rest of a list. A type
                 // that has begun gets its end, each closer and each associated type name, so a
                 // name that ends in `.Item` or `]` still names what it began to name.
@@ -542,7 +548,7 @@ fn write_steps<'n>(
                 out.push_str("<...>");
                 cut = true;
                 continue;
-            } else if out.len() + text.len() <= NAME_LIMIT {
+            } else if out.len() + owed + text.len() <= NAME_LIMIT {
                 out.push_str(text);
                 continue;
             }
@@ -567,6 +573,7 @@ fn write_steps<'n>(
             }
             TypeKind::Array(element) => {
                 out.push('[');
+                owed += 1;
                 steps.extend([Step::Close("]"), Step::Type(element)]);
                 continue;
             }
@@ -574,8 +581,10 @@ fn write_steps<'n>(
                 // `any I?` is not a type: the interface value is grouped.
                 if matches!(payload.kind(), TypeKind::Any(..)) {
                     out.push('(');
+                    owed += 2;
                     steps.extend([Step::Close(")?"), Step::Type(payload)]);
                 } else {
+                    owed += 1;
                     steps.extend([Step::Close("?"), Step::Type(payload)]);
                 }
                 continue;
@@ -595,19 +604,24 @@ fn write_steps<'n>(
                 continue;
             }
         };
-        push_args(out, &mut steps, args.get());
+        owed += push_args(out, &mut steps, args.get());
     }
+    debug_assert_eq!(
+        owed, 0,
+        "all owed closers should be popped before returning"
+    );
     cut
 }
 
-/// Writes the `<` of a nonempty `args` to `out`, and pushes the rest of `<a, b>` onto `steps`
-/// for `write_steps`, `a` on top.
-fn push_args<'a>(out: &mut String, steps: &mut Vec<Step<'a>>, args: &'a [Type]) {
+/// Writes `<` for a nonempty `args` to `out`, and pushes `<a, b>` onto `steps` with `a` on top.
+/// Returns the byte count of any closer pushed.
+fn push_args<'a>(out: &mut String, steps: &mut Vec<Step<'a>>, args: &'a [Type]) -> usize {
     let [first, rest @ ..] = args else {
-        return;
+        return 0;
     };
     out.push('<');
     steps.extend([Step::Close(">"), Step::Rest(rest), Step::Type(*first)]);
+    1
 }
 
 /// The kinds without a payload, at the indices of `Type`'s constants.
@@ -1478,8 +1492,9 @@ mod tests {
         assert!(!write_type(&mut whole_wrapped, wrapped, |_| "P"));
         assert!(whole_wrapped.len() < NAME_LIMIT);
 
-        // Exact boundary: `prefix` + `<` + `whole_wrapped` reaches `NAME_LIMIT` without descending.
-        let prefix = "X".repeat(NAME_LIMIT - 1 - whole_wrapped.len());
+        // Exact boundary: `prefix` + `<` + `whole_wrapped` + `>` reaches `NAME_LIMIT` without
+        // descending.
+        let prefix = "X".repeat(NAME_LIMIT - 2 - whole_wrapped.len());
         let mut out = prefix.clone();
         WRITE_STEPS.set(0);
         let cut = write_args_with(
@@ -1519,5 +1534,117 @@ mod tests {
         assert!(cut);
         assert_eq!(cut_out, "C<P<...>>");
         assert_eq!(WRITE_STEPS.get(), 3);
+    }
+
+    #[test]
+    fn nested_optionals_should_cut_at_the_limit_with_bounded_steps() {
+        let nested_opt = |depth| (0..depth).fold(Type::I64, |t, _| Type::optional(t));
+        HELD.set(0);
+        WRITE_STEPS.set(0);
+        let (deep, cut) = text(nested_opt(10_000));
+        assert!(cut, "{deep}");
+        assert_eq!(deep, format!("...{}", "?".repeat(NAME_LIMIT)));
+        assert!(HELD.get() <= NAME_LIMIT + 4, "{} held", HELD.get());
+        assert!(
+            WRITE_STEPS.get() <= 2 * NAME_LIMIT + 4,
+            "{} steps",
+            WRITE_STEPS.get()
+        );
+
+        let (uncut, cut) = text(nested_opt(NAME_LIMIT - 1));
+        assert!(!cut, "{uncut}");
+        assert_eq!(uncut, format!("i64{}", "?".repeat(NAME_LIMIT - 1)));
+        let (at_limit, cut) = text(nested_opt(NAME_LIMIT));
+        assert!(cut, "{at_limit}");
+        assert_eq!(at_limit, format!("...{}", "?".repeat(NAME_LIMIT)));
+
+        let class = |arg| Type::intern(TypeKind::Class(ClassId(0), TypeArgs::intern(&[arg])));
+        let (uncut, cut) = text(class(nested_opt(NAME_LIMIT - 4)));
+        assert!(!cut, "{uncut}");
+        assert_eq!(uncut, format!("P<i64{}>", "?".repeat(NAME_LIMIT - 4)));
+        let (at_limit, cut) = text(class(nested_opt(NAME_LIMIT - 3)));
+        assert!(cut, "{at_limit}");
+        assert_eq!(at_limit, format!("P<...{}>", "?".repeat(NAME_LIMIT - 3)));
+
+        let args_text = |arg| {
+            let mut out = String::from("f");
+            let cut = write_args(&mut out, &[arg], |_| "P");
+            (out, cut)
+        };
+        let (uncut, cut) = args_text(nested_opt(NAME_LIMIT - 4));
+        assert!(!cut, "{uncut}");
+        assert_eq!(uncut, format!("f<i64{}>", "?".repeat(NAME_LIMIT - 4)));
+        let (at_limit, cut) = args_text(nested_opt(NAME_LIMIT - 3));
+        assert!(cut, "{at_limit}");
+        assert_eq!(at_limit, format!("f<...{}>", "?".repeat(NAME_LIMIT - 3)));
+
+        let any_i = Type::intern(TypeKind::Any(InterfaceId(0), TypeArgs::NONE));
+        let opt_any = Type::optional(any_i);
+        let wrap_opt = |base, depth| (0..depth).fold(base, |t, _| Type::optional(t));
+        let named_any = |ty| {
+            let mut out = String::new();
+            let cut = write_type(&mut out, ty, |_| "I");
+            (out, cut)
+        };
+        let (uncut, cut) = named_any(wrap_opt(opt_any, NAME_LIMIT - 4));
+        assert!(!cut, "{uncut}");
+        assert_eq!(uncut, format!("(any I)?{}", "?".repeat(NAME_LIMIT - 4)));
+        let (at_limit, cut) = named_any(wrap_opt(opt_any, NAME_LIMIT - 3));
+        assert!(cut, "{at_limit}");
+        assert_eq!(at_limit, format!("(...)?{}", "?".repeat(NAME_LIMIT - 3)));
+    }
+
+    #[test]
+    fn popped_closers_should_not_count_toward_later_arguments() {
+        let nested_opt = (0..130).fold(Type::I64, |t, _| Type::optional(t));
+        let pair = Type::intern(TypeKind::Class(
+            ClassId(0),
+            TypeArgs::intern(&[nested_opt, Type::I64]),
+        ));
+        let (got, cut) = text(pair);
+        assert!(!cut, "{got}");
+        assert_eq!(got, format!("P<i64{}, i64>", "?".repeat(130)));
+    }
+
+    #[test]
+    fn write_args_with_should_not_paste_past_limit_when_closers_are_owed() {
+        let leaf = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+        let wrapped = doubled(leaf, 4);
+        let mut whole_wrapped = String::new();
+        assert!(!write_type(&mut whole_wrapped, wrapped, |_| "P"));
+        assert!(2 + whole_wrapped.len() <= NAME_LIMIT);
+
+        // `out` starts as `"C"` (`"C<"` is 2 bytes), and `owed` is `1 + k` (`>` and `k` `?`s).
+        let k = NAME_LIMIT - 3 - whole_wrapped.len();
+        assert!(3 + k < NAME_LIMIT);
+        let fit_ty = (0..k).fold(wrapped, |t, _| Type::optional(t));
+        let mut fitted = String::from("C");
+        WRITE_STEPS.set(0);
+        let cut_fit = write_args_with(
+            &mut fitted,
+            &[fit_ty],
+            |_| "P",
+            |ty| (ty == wrapped).then_some((whole_wrapped.as_str(), false)),
+        );
+        assert!(!cut_fit);
+        assert_eq!(fitted, format!("C<{whole_wrapped}{}>", "?".repeat(k)));
+        assert_eq!(fitted.len(), NAME_LIMIT);
+        assert_eq!(WRITE_STEPS.get(), 2 * k + 3);
+
+        let over_ty = Type::optional(fit_ty);
+        let mut over = String::from("C");
+        let mut plain = String::from("C");
+        WRITE_STEPS.set(0);
+        let cut_with = write_args_with(
+            &mut over,
+            &[over_ty],
+            |_| "P",
+            |ty| (ty == wrapped).then_some((whole_wrapped.as_str(), false)),
+        );
+        let over_steps = WRITE_STEPS.get();
+        let cut_plain = write_args(&mut plain, &[over_ty], |_| "P");
+        assert!(cut_with);
+        assert_eq!((cut_with, over), (cut_plain, plain));
+        assert!(over_steps > 2 * (k + 1) + 3, "{over_steps} steps");
     }
 }
