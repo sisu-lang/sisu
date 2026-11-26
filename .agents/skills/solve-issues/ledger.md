@@ -1,8 +1,6 @@
 # Ledger
 
-`.scratch/<batch>/progress.md` holds the state of one batch. `<batch>` names
-it, for example `issues-2026-11`. Add a line after each event. A new session
-goes on from the last line of "Events".
+`.scratch/<batch>/progress.md` holds the state of one batch. Reserve it atomically with `python3 .agents/skills/solve-issues/scripts/ledger.py init .scratch issues-<date>`, which picks a unique `<batch>` such as `issues-2026-11-26` or `issues-2026-11-26b` and writes this skeleton. Add a line after each event. A new session goes on from the last line of "Events".
 
 ```markdown
 # Batch <batch>

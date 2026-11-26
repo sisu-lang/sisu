@@ -97,6 +97,53 @@ class TestNamesDiffAndBaseline(unittest.TestCase):
         )
         self.assertEqual((run.returncode, run.stdout), (0, ""))
 
+    def test_a_new_sisu_fixture_without_given_when_then_should_fail(self) -> None:
+        old_fixture = "crates/sisuc/tests/diagnostics/old.sisu"
+        new_bad = "crates/sisuc/tests/diagnostics/new_bad.sisu"
+        new_good = "crates/sisuc/tests/run/new_good.sisu"
+        with git_fixture.repo({old_fixture: "fn main() {}\n"}) as tmp:
+            baseline = Path(tmp, "baseline.txt")
+            write(tmp, "baseline.txt", "")
+            cwd = Path.cwd()
+            os.chdir(tmp)
+            self.addCleanup(os.chdir, cwd)
+            # An existing fixture at HEAD is skipped even without GIVEN/WHEN/THEN.
+            self.assertEqual(run(["--diff", "HEAD", old_fixture], baseline), (0, ""))
+            write(tmp, new_bad, "// just a note\nfn main() {}\n")
+            Path(tmp, new_good).parent.mkdir(parents=True, exist_ok=True)
+            write(
+                tmp,
+                new_good,
+                "// args: one\n// GIVEN a program\n// WHEN it runs\n// THEN it prints 1\n"
+                "fn main() { print(1) }\n",
+            )
+            code, out = run(["--diff", "HEAD", new_bad, new_good], baseline)
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            out.splitlines(),
+            [
+                (
+                    f"{new_bad}:1: new fixture `new_bad.sisu` needs leading "
+                    "// GIVEN, // WHEN and // THEN lines"
+                )
+            ],
+        )
+
+    def test_a_new_run_fail_fixture_with_non_utf8_bytes_should_be_checked(self) -> None:
+        fixture = "crates/sisuc/tests/run-fail/bad_bytes.sisu"
+        with git_fixture.repo({"f.rs": ""}) as tmp:
+            baseline = Path(tmp, "baseline.txt")
+            write(tmp, "baseline.txt", "")
+            target = Path(tmp, fixture)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"fn main() {}\n// \xff\n")
+            cwd = Path.cwd()
+            os.chdir(tmp)
+            self.addCleanup(os.chdir, cwd)
+            code, out = run(["--diff", "HEAD", fixture], baseline)
+        self.assertEqual(code, 1)
+        self.assertIn("new fixture `bad_bytes.sisu` needs leading", out)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,22 +10,20 @@ The workspace also holds `selfhost/`: `lexer.sisu`, Sisu's lexer written in Sisu
 
 ## Commands
 
-Run commands through `make`; `make help` lists the targets. `make test` runs nextest, not `cargo test`: nextest's setup script builds the runtime. It leaves out the form matrix; run `make form-matrix` after a change to the front end (`docs/development.md`, Build and test). It also leaves out the memory tests of the `run/` cases; run `make memory-safety` after a change to codegen, drops, the runtime or the harness, before a pull request (CI runs it on a push to main). `make coverage` and `make mutation-test` measure the changes since `BASE`, by default where HEAD left `origin/main`; on a stacked branch, pass the stage's base. With the nightly that `make setup` installs, `make coverage` also lists "Missed branches on changed lines"; read it as `CODING_STANDARDS.md` (Tests) says. Run `make mutation-test` only when the user or your instructions ask for it; `docs/development.md` (Build and test) says how a plan runs it, how long it takes and how to keep its summary. `make mutation-status` gives the progress and time left of a run; quote only that line. `make test`, `make form-matrix`, `make memory-safety`, `make coverage`, `make mutation-test` and `make miri` hold one lock for every worktree of the clone, so a second such run waits for the first. `scripts/heavy-run.sh --status` names the run that holds it. A second `make mutation-test` in the same worktree fails at once (`docs/development.md`). `make miri` runs the runtime's unit tests under Miri on nightly, as CI does; run it after a change to `crates/runtime`. A slow-test warning fails nothing: `docs/development.md` (Build and test) says how to read one. After the tests, `make test` fails on a filter in `.config/nextest.toml` that matches no test.
+Run commands through `make`; `make help` lists every target (`docs/development.md`, Build and test). `make test` runs nextest, not `cargo test`, and skips `make form-matrix` and `make memory-safety`. Run `make form-matrix` after front-end changes, `make memory-safety` after codegen, drop, runtime or harness changes, and `make miri` after `crates/runtime` changes. Run `make mutation-test` only when asked; quote only `make mutation-status` for progress. Heavy targets share one clone lock (`scripts/heavy-run.sh --status`).
 
-Wait for the reviews and checks of a pull request only with `python3 scripts/watch_pr.py <N>`, with the sandbox off and `run_in_background`. Run it again after each event. It wakes the session for a review with text, a comment, the first failed check, or the end of all checks with none failed; a `Monitor` watch wakes a full turn for each check. `python3 scripts/pr_threads.py <N>` (sandbox off) lists the review threads, open ones first, with the comment id that a reply goes to.
+Wait for pull request reviews and checks only with `python3 scripts/watch_pr.py <N>`, with the sandbox off and `run_in_background`; run it again after each event. Use `python3 scripts/pr_threads.py <N>` (sandbox off) to list review threads and comment ids.
 
-`make compile-speed` times `sisu`, `rustc`, `clang++` and Go on one generated program and prints a table; `ARGS='--check-only'` only checks the inputs, and `docs/benchmarks.md` (Compile speed) says how to read the table. `make scaling` counts the instructions of each compiler stage on each shape of program in `SHAPES` (`scripts/scaling.py`). It fails on a superlinear stage that has no row in `scripts/scaling.py` (`docs/benchmarks.md`, The scaling sweep).
-
-Once per clone, run `make setup`. It installs LLVM 23 into `.llvm/23`, which `.cargo/config.toml` points `LLVM_SYS_231_PREFIX` at; do not build against a system LLVM. It also enables the Git pre-commit and commit-msg hooks. The toolchain is pinned in `rust-toolchain.toml`.
+For compile speed and scaling sweeps, use `make compile-speed` and `make scaling` (`docs/benchmarks.md`). Run `make setup` once per clone to install LLVM 23 into `.llvm/23` and enable Git hooks; do not build against system LLVM (`docs/development.md`, Set up a clone).
 
 ## Code rules
 
 - Lint policy lives in the root `Cargo.toml` under `[workspace.lints]`. Every crate opts in with `[lints] workspace = true`. CI fails on any warning.
-- Clippy enforces the code rules (`#[expect]` with a reason, no `unwrap()` outside tests, `// SAFETY:` comments). Fix the code to satisfy a lint. A lint on the shape of code, such as `clippy::struct_excessive_bools` or `clippy::too_many_lines`, is different: when the shape is right, keep it and add `#[expect(<lint>, reason = "...")]`, as the repo does. The lint table changes only with the user's agreement.
-- Python: `ruff.toml` and `pyrefly.toml` hold the rules, and `CODING_STANDARDS.md` (Python) says how to use them.
-- Reviews: apply `CODING_STANDARDS.md`.
-- Write code to the rules in `CODING_STANDARDS.md` as well as reviewing against them; its Performance section covers allocation and measurement.
-- Before you write, refactor or review Rust, load the `rust-best-practices` skill from [BeautifulRust](https://github.com/morganlinton/BeautifulRust) and follow it. Claude Code installs it with `/plugin marketplace add morganlinton/BeautifulRust`, then `/plugin install beautiful-rust@beautiful-rust`. An agent without plugin support reads `skills/rust-best-practices/SKILL.md` in that repository. When the skill and this file, `CODING_STANDARDS.md` or the lint table do not agree, the Sisu rules apply.
+- Fix code to satisfy Clippy (`#[expect]` with a reason, no `unwrap()` outside tests, `// SAFETY:` comments). For a shape lint such as `clippy::struct_excessive_bools` or `clippy::too_many_lines`, keep a right shape and add `#[expect(<lint>, reason = "...")]`. The lint table changes only with the user's agreement.
+- Python: `ruff.toml` and `pyrefly.toml` hold the rules (`CODING_STANDARDS.md`, Python).
+- Write and review code against `CODING_STANDARDS.md`; its Performance section covers allocation and measurement.
+- Before you write, refactor or review Rust, load the `rust-best-practices` skill from [BeautifulRust](https://github.com/morganlinton/BeautifulRust). When that skill and this file, `CODING_STANDARDS.md` or the lint table disagree, Sisu's rules apply.
+- When `.codegraph/` exists, call `codegraph_explore` (or `codegraph explore "<query>"`) before grepping to trace callers and readers.
 
 ## Writing
 
@@ -35,7 +33,7 @@ When you show Sisu code to the user, fence it as `rust`, which highlighters know
 
 ## Specs, plans and tests
 
-A spec states its acceptance tests as Gherkin scenarios with IDs, and a plan maps each scenario to a task and a test. A test name says what should hold: `<subject>_should_<result>`. An end-to-end test has GIVEN, WHEN and THEN lines. `CODING_STANDARDS.md` (Tests, Specs and plans) has the rules.
+Follow `CODING_STANDARDS.md` (Tests, Specs and plans) for Gherkin scenarios, `<subject>_should_<result>` names, and GIVEN, WHEN and THEN lines.
 
 ## Open-source facts: use GitHits, do not guess
 

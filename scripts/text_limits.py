@@ -148,6 +148,54 @@ def long_sentences(numbered: list[tuple[int, str]], changed: set[int]) -> list[t
     return found
 
 
+def find_closing_ticks(line: str, start: int, ticks: int) -> int | None:
+    """Return the index of the next exact run of `ticks` backticks in `line` from `start`."""
+    k, end = start, len(line)
+    while k < end:
+        if line[k] != "`":
+            k += 1
+            continue
+        run_end = k
+        while run_end < end and line[run_end] == "`":
+            run_end += 1
+        if run_end - k == ticks:
+            return k
+        k = run_end
+    return None
+
+
+def has_escaped_backtick_in_code_span(line: str) -> bool:
+    r"""Whether `line` has a single-backtick Markdown span broken by a `` \` `` escape."""
+    i, end = 0, len(line)
+    suspect = False
+    while i < end:
+        if line[i : i + 2] == "\\`":
+            if suspect:
+                return True
+            i += 2
+            continue
+        if line[i] != "`":
+            i += 1
+            continue
+        j = i
+        while j < end and line[j] == "`":
+            j += 1
+        ticks = j - i
+        close = find_closing_ticks(line, j, ticks)
+        if close is None:
+            if suspect:
+                return True
+            i = j
+            continue
+        if ticks == 1 and (len(line[j:close]) - len(line[j:close].rstrip("\\"))) % 2 == 1:
+            after = line[close + 1 : close + 2]
+            if after and (after.isalnum() or after in "_`([<'\""):
+                return True
+            suspect = True
+        i = close + ticks
+    return False
+
+
 def findings(path: str, lines: list[str], changed: set[int]) -> list[str]:
     """One line for each limit that a changed line breaks."""
     numbered = prose(path, lines)
@@ -155,6 +203,13 @@ def findings(path: str, lines: list[str], changed: set[int]) -> list[str]:
         f"{path}:{n}: a sentence has {words} words; the limit is {SENTENCE}: split it"
         for n, words in long_sentences(numbered, changed)
     ]
+    if path.endswith(".md"):
+        for n, text in numbered:
+            if n in changed and has_escaped_backtick_in_code_span(text):
+                out.append(
+                    f"{path}:{n}: single-backtick code span escapes a backtick with \\`: "
+                    "use double backticks"
+                )
     if path.endswith((".py", ".sh")):
         for n, _ in numbered:
             columns = len(lines[n - 1].rstrip("\n"))

@@ -105,6 +105,22 @@ class OpenPr(unittest.TestCase):
         self.assertIn("open_pr: FAIL: cannot read the branch of", result.stdout)
         self.assertFalse(self.log.exists())
 
+    def test_a_body_over_text_limits_should_fail_before_calling_gh(self) -> None:
+        self.body.write_text(" ".join(["word"] * 26) + ".\n", encoding="utf-8")
+        result = self.open_pr()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("the limit is 25", result.stdout)
+        self.assertIn("open_pr: FAIL: correct the pull request body", result.stdout)
+        self.assertFalse(self.log.exists())
+
+    def test_a_body_with_broken_code_span_should_fail_before_calling_gh(self) -> None:
+        self.body.write_text(r"Fix `expected a \`Box\``." + "\n", encoding="utf-8")
+        result = self.open_pr()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("use double backticks", result.stdout)
+        self.assertIn("open_pr: FAIL: correct the pull request body", result.stdout)
+        self.assertFalse(self.log.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

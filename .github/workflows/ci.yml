@@ -84,7 +84,7 @@ jobs:
           set -o pipefail
           # The base of the pull request, so a pull request on a stage branch skips the stage below.
           base=$(git merge-base "origin/$BASE_REF" HEAD)
-          git -c core.quotepath=off diff -z --name-only --diff-filter=d "$base" -- '*.rs' | xargs -0 --no-run-if-empty python3 scripts/test_names.py --diff "$base"
+          git -c core.quotepath=off diff -z --name-only --diff-filter=d "$base" -- '*.rs' 'crates/sisuc/tests/diagnostics/*.sisu' 'crates/sisuc/tests/run/*.sisu' 'crates/sisuc/tests/run-fail/*.sisu' | xargs -0 --no-run-if-empty python3 scripts/test_names.py --diff "$base"
       # Shows the test health report in the job summary. It never fails the job.
       - if: (success() || failure()) && steps.nextest.outcome != 'skipped'
         run: |

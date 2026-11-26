@@ -100,6 +100,35 @@ class SentenceTests(unittest.TestCase):
     def test_another_kind_of_file_should_pass(self) -> None:
         self.assertEqual(found("a.toml", f"# {LONG}\n"), [])
 
+    def test_an_escaped_backtick_inside_a_single_backtick_span_should_fail(self) -> None:
+        for line in (
+            r"Write `expected a \`Box\`` here.",
+            r"Write `the checker should reject \`break\` outside a loop`.",
+            r"Write `\`Box\`` here.",
+            r"Write `foo \` bar` here.",
+            r"Write `foo \` bar \` baz` here.",
+        ):
+            with self.subTest(line=line):
+                issues = found("a.md", line + "\n")
+                self.assertEqual(len(issues), 1, issues)
+                self.assertIn("use double backticks", issues[0])
+
+    def test_valid_backslashes_and_double_backticks_in_markdown_should_pass(self) -> None:
+        for line in (
+            r"After a `\` a `char` literal takes `\n`.",
+            r"| `\\` | `\` |",
+            r"Write ``expected a `Box` `` here.",
+            r"Write ``the checker should reject `break` outside a loop``.",
+            r"Outside code, \`foo\` is plain text.",
+            "```\n" + r"`expected a \`Box\``" + "\n```",
+        ):
+            with self.subTest(line=line):
+                self.assertEqual(found("a.md", line + "\n"), [])
+
+    def test_an_unchanged_broken_code_span_should_pass(self) -> None:
+        text = "Ok.\n\n" + r"Write `expected a \`Box\`` here." + "\n"
+        self.assertEqual(found("a.md", text, changed={1}), [])
+
 
 class WidthTests(unittest.TestCase):
     WIDE = "# " + "w" * 99

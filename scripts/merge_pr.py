@@ -94,6 +94,17 @@ def git(root: str, *args: str) -> str:
     return run(["git", "-C", root, *args])
 
 
+def local_head(root: str, branch: str) -> str | None:
+    """Return the commit SHA of local `branch` in `root`, or None when no such branch exists."""
+    done = subprocess.run(
+        ["git", "-C", root, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
 def remove_worktree(root: str, branch: str, sha: str) -> str:
     """Remove the worktree of `branch` and the branch, only when it is clean and at `sha`."""
     path = None
@@ -124,8 +135,10 @@ def merge(number: str, root: str) -> None:
     try:
         check_base(pr, sha)
     except Stop:
-        # Right after a push, GitHub can still answer with the old head. Read the pull request
-        # again.
+        # Right after a push, GitHub can still answer with the old head. Skip the wait when the
+        # head already matches the local branch.
+        if local_head(root, pr["head"]["ref"]) == sha:
+            raise
         time.sleep(POLL)
         pr = gh(f"{REPO}/pulls/{number}")
         sha = pr["head"]["sha"]

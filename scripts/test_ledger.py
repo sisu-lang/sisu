@@ -3,6 +3,7 @@
 import importlib.util
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stderr
 from datetime import UTC, datetime
 from io import StringIO
@@ -123,6 +124,53 @@ class SetGroup(unittest.TestCase):
             path.write_text(GROUPS, encoding="utf-8")
             self.assertEqual(ledger.main([str(path), "group", "G2", "final review"]), 0)
             self.assertIn("| G2 | #2 | final review |", path.read_text(encoding="utf-8"))
+
+    def test_subcommand_first_order_should_edit_the_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "progress.md"
+            path.write_text(LEDGER + "\n" + GROUPS, encoding="utf-8")
+            self.assertEqual(ledger.main(["event", str(path), "pushed branch"]), 0)
+            self.assertEqual(ledger.main(["after-merge", str(path), "deferred item"]), 0)
+            self.assertEqual(ledger.main(["group", str(path), "G1", "done"]), 0)
+            text = path.read_text(encoding="utf-8")
+        self.assertIn("pushed branch\n", text)
+        self.assertIn("- deferred item\n", text)
+        self.assertIn("| G1 | #1 | done |", text)
+
+    def test_a_missing_ledger_file_should_return_exit_2_with_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as d, redirect_stderr(StringIO()) as err:
+            missing = Path(d) / "missing.md"
+            self.assertEqual(ledger.main(["event", str(missing), "note"]), 2)
+        self.assertIn("ledger.py:", err.getvalue())
+
+
+class InitBatch(unittest.TestCase):
+    def test_init_should_reserve_unique_folders_and_write_skeleton(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            scratch = Path(d)
+            first = ledger.init_batch(scratch, "issues-2026-11-26", NOW)
+            second = ledger.init_batch(scratch, "issues-2026-11-26", NOW)
+            self.assertEqual(first, scratch / "issues-2026-11-26" / "progress.md")
+            self.assertEqual(second, scratch / "issues-2026-11-26b" / "progress.md")
+            text = second.read_text(encoding="utf-8")
+            self.assertIn("# Batch issues-2026-11-26b", text)
+            self.assertIn("## Groups", text)
+            self.assertIn("## Events", text)
+            self.assertEqual(ledger.main([str(second), "event", "started"]), 0)
+
+    def test_init_with_invalid_prefix_should_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as d, redirect_stderr(StringIO()) as err:
+            self.assertEqual(ledger.main(["init", d, "bad/prefix"]), 2)
+        self.assertIn("invalid batch prefix", err.getvalue())
+
+    def test_main_init_should_print_the_created_path(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            out = StringIO()
+            with unittest.mock.patch("sys.stdout", out):
+                code = ledger.main(["init", d, "issues-2026-11-26"])
+            self.assertEqual(code, 0)
+            created = Path(out.getvalue().strip())
+            self.assertTrue(created.is_file())
 
 
 if __name__ == "__main__":

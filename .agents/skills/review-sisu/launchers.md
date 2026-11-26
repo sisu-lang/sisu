@@ -68,6 +68,16 @@ The prompt tells the reviewer which commands to use in place of `grep`,
 as `scripts/golden_diff.py`, fails in `RUN`. Run these scripts yourself, and
 put their output into `RUN`.
 
+### agy executor (non-Claude harness)
+
+When the harness has no Claude `Agent` tool, launch an executor in its worktree with `agy -p`:
+
+```
+cd <worktree> && PAGER=cat agy -p "Read <brief path> and follow it. Write your final report to <report path> and also return it." --model <model> --yolo > <report path> 2> <cli log>
+```
+
+Check `agy models` for the exact `<model>` ID, such as `gemini-4-hydrogen-high`. Strip any status lines before parsing the report.
+
 ## copilot
 
 For a model that copilot serves, such as `gpt-6.1-sol`. Start the call with

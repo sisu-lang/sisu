@@ -16,6 +16,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import text_limits
+
 REPO = "repos/sisu-lang/sisu"
 
 
@@ -44,6 +46,14 @@ def main(argv: list[str]) -> int:
         return 1
     except (OSError, UnicodeDecodeError) as e:
         print(f"open_pr: FAIL: {e}")
+        return 1
+    body_lines = body.splitlines(keepends=True)
+    check_path = str(args.body_file) if args.body_file.suffix == ".md" else f"{args.body_file}.md"
+    problems = text_limits.findings(check_path, body_lines, set(range(1, len(body_lines) + 1)))
+    if problems:
+        for line in problems:
+            print(line)
+        print("open_pr: FAIL: correct the pull request body")
         return 1
     request = {"title": args.title, "head": head, "base": args.base, "body": body}
     result = subprocess.run(
