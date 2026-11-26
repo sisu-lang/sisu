@@ -4703,26 +4703,30 @@ fn return_block_over_the_copy_limit_should_not_be_copied() {
     assert_eq!(returns_of_shared_cleanup(TAIL_COPY_LIMIT + 1), 1);
 }
 
-/// A function of `arms` calls in an `else if` chain, with `TAIL_COPY_LIMIT` strings. Arm `j`
-/// passes the string `j % TAIL_COPY_LIMIT` to `g` and returns the result, so the other strings
-/// stay live after the call. The arms join through a chain of empty `goto` blocks into one return
-/// block that releases each string.
+/// A function of `arms` calls in nested `else` blocks, with `TAIL_COPY_LIMIT` strings. Each
+/// `else` block runs `let _u = 0` before its inner `if`, so lowering keeps an empty `goto` chain.
+/// Arm `j` passes `s{j % TAIL_COPY_LIMIT}` to `g` and returns the result, so the other strings
+/// stay live after the call. The arms join through empty `goto` blocks into one return block that
+/// releases each string.
 fn elif_arms(arms: usize) -> String {
     let lets = (0..TAIL_COPY_LIMIT)
         .map(|i| format!("    let s{i} = \"x\" + k.to_string()\n"))
         .collect::<Vec<_>>()
         .concat();
-    let chain = (1..=arms)
-        .map(|j| {
-            format!(
-                "if k == {j} {{\n        g({j}, s{})\n    }}",
-                j % TAIL_COPY_LIMIT
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" else ");
+    let mut chain = String::from("    \"\"\n");
+    for j in (1..=arms).rev() {
+        let branch = format!(
+            "if k == {j} {{\n    g({j}, s{})\n}} else {{\n{chain}}}",
+            j % TAIL_COPY_LIMIT
+        );
+        chain = if j > 1 {
+            format!("let _u = 0\n{branch}\n")
+        } else {
+            branch
+        };
+    }
     format!(
-        "fn g(k: i64, s: string) -> string {{\n    s + k.to_string()\n}}\n\nfn f(k: i64) -> string {{\n{lets}    {chain} else {{\n        \"\"\n    }}\n}}\n\nfn main() {{\n    print(f((read_line() ?? \"\").len()).len())\n}}\n"
+        "fn g(k: i64, s: string) -> string {{\n    s + k.to_string()\n}}\n\nfn f(k: i64) -> string {{\n{lets}    {chain}\n}}\n\nfn main() {{\n    print(f((read_line() ?? \"\").len()).len())\n}}\n"
     )
 }
 
@@ -4743,14 +4747,31 @@ fn tail_return_should_not_read_the_statements_of_a_block_over_the_limit() {
     assert_near_linear(steps(100), steps(200), steps(300));
 }
 
-/// `n` arms of an `else if` chain each call and return the result, and each copies a return block
-/// of `TAIL_COPY_LIMIT` statements. The arms join through a chain of `n` empty `goto` blocks. A
-/// walk that follows the chain again for each block makes the steps `n` times `n`. The memo of
-/// `empty_goto_ends` keeps them linear. At 20, 40 and 60 arms the steps are 265, 525 and 785.
-/// Without the memo they are 436, 1266 and 2496. The size stays at 60: an `else if` chain of 100
-/// arms overflows the stack of a test thread in a debug build.
+/// `n` arms in nested `else` blocks each call and return the result. Each arm copies a return
+/// block of `TAIL_COPY_LIMIT` statements and joins through `n` empty `goto` blocks. A walk that
+/// follows the chain again for each block makes the steps `n` times `n`. The memo of
+/// `empty_goto_ends` keeps them linear. The size stays at 60: 100 nested `else` blocks overflow
+/// the stack of a test thread in a debug build.
 #[test]
 fn empty_goto_chain_should_be_walked_in_linear_steps_when_each_arm_calls() {
+    let src20 = elif_arms(20);
+    let (program, diagnostics) = crate::front_end::front_end(&src20);
+    let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+    let mir = mir::build(&program);
+    let f = mir
+        .functions
+        .iter()
+        .find(|f| f.name == "f")
+        .expect("`f` should exist in mir");
+    let empty_gotos = f
+        .blocks
+        .iter()
+        .filter(|b| b.stmts.is_empty() && matches!(b.term, Terminator::Goto(_)))
+        .count();
+    assert!(
+        empty_gotos >= 19,
+        "expected at least 19 empty goto blocks in `f`, got {empty_gotos}"
+    );
     let steps = |n: usize| tail_steps(&elif_arms(n));
     assert_near_linear(steps(20), steps(40), steps(60));
 }

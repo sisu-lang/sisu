@@ -1975,15 +1975,15 @@ fn else_if_chain_should_share_one_join_block_with_no_empty_goto_blocks() {
         ),
         (
             "exiting condition after falling arm",
-            "fn f(c1: bool) -> i64 {\n    if c1 { 1 } else if return 2 { 3 } else { 4 }\n}",
+            "fn f(c1: bool, c2: bool, c3: bool) -> i64 {\n    if c1 { 1 } else if (if c2 { return 2 } else { c3 }) { 3 } else { 4 }\n}",
             "f",
             Some(2),
         ),
         (
             "exiting condition after returning arm",
-            "fn f(c1: bool) -> i64 {\n    if c1 { return 1 } else if return 2 { 3 } else { 4 }\n}",
+            "fn f(c1: bool, c2: bool, c3: bool) -> i64 {\n    if c1 { return 1 } else if (if c2 { return 2 } else { c3 }) { 3 } else { 4 }\n}",
             "f",
-            Some(2),
+            Some(3),
         ),
         (
             "counted string valued and discarded chains",

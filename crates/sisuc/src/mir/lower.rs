@@ -1391,12 +1391,11 @@ impl<'a> Lowering<'a> {
         Some(Some(result))
     }
 
-    /// `if` and `if let`: the two-way branch `term` makes from the then and else blocks, each
-    /// block's value into one destination when the `if` has a value, and a join that exists
-    /// only if an edge reaches it. Without an `else`, the else edge goes straight to the join.
-    /// `bind`, an `if let`'s binding, the optional it unwraps and whether that optional is
-    /// borrowed, takes the payload at the start of the then block and is in scope there. From a
-    /// borrowed optional it borrows the payload, and is borrowed through the then block.
+    /// Lowers `if` and `if let` branches into `dest` and a shared `join` block. Bare `else if`
+    /// chains iterate here, so all arms share one `join` block and one `dest`. Without a final
+    /// `else`, the false edge jumps straight to `join`. When `bind` is present, it binds the
+    /// unwrapped payload at the start of the `then` block. A `borrowed` optional borrows the
+    /// payload through the `then` block.
     fn branches(
         &mut self,
         term: impl FnOnce(BlockId, BlockId) -> Terminator,
@@ -1419,9 +1418,35 @@ impl<'a> Lowering<'a> {
         if let Some((bind, _, true)) = bind {
             self.guarded[bind.0] = false;
         }
-        if let Some(else_block) = else_block {
-            self.current = Some(else_);
-            self.arm(self.scope.len(), else_block, dest, &mut join);
+        let mut next_else = else_block;
+        let mut current_else = else_;
+        while let Some(block) = next_else {
+            self.current = Some(current_else);
+            if block.stmts.is_empty()
+                && let Some(expr) = &block.value
+                && let ExprKind::If {
+                    cond,
+                    then_block,
+                    else_block,
+                } = &expr.kind
+            {
+                let Some(cond) = self.operand(cond) else {
+                    break;
+                };
+                let then = self.new_block();
+                let else_ = match else_block {
+                    Some(_) => self.new_block(),
+                    None => *join.get_or_insert_with(|| self.new_block()),
+                };
+                self.terminate(Terminator::Branch { cond, then, else_ });
+                self.current = Some(then);
+                self.arm(self.scope.len(), then_block, dest, &mut join);
+                next_else = else_block.as_ref();
+                current_else = else_;
+                continue;
+            }
+            self.arm(self.scope.len(), block, dest, &mut join);
+            break;
         }
         self.current = join;
         join.map(|_| dest)
