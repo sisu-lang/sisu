@@ -4755,6 +4755,41 @@ fn empty_goto_chain_should_be_walked_in_linear_steps_when_each_arm_calls() {
     assert_near_linear(steps(20), steps(40), steps(60));
 }
 
+/// A 10-arm `else if` chain in `pick` emits zero empty trampoline blocks in raw LLVM IR.
+#[test]
+fn else_if_chain_should_emit_no_empty_branch_trampoline_blocks() {
+    let mut arms = String::from("if c { a }");
+    for _ in 0..10 {
+        arms.push_str(" else if c { a }");
+    }
+    arms.push_str(" else { a }");
+    let src = format!(
+        "fn pick(c: bool, a: u8) -> u8 {{\n    {arms}\n}}\nfn main() {{\n    print(pick(true, 1))\n}}"
+    );
+    let context = Context::create();
+    let module = compiled(&context, &src);
+    let pick = module
+        .get_function("sisu.pick")
+        .expect("`sisu.pick` should be compiled");
+    let trampolines = pick
+        .get_basic_blocks()
+        .into_iter()
+        .filter(|bb| {
+            let Some(first) = bb.get_first_instruction() else {
+                return false;
+            };
+            let Some(term) = bb.get_terminator() else {
+                return false;
+            };
+            first == term && term.get_opcode() == InstructionOpcode::UncondBr
+        })
+        .count();
+    assert_eq!(
+        trampolines, 0,
+        "expected 0 empty trampoline blocks in sisu.pick, got {trampolines}"
+    );
+}
+
 /// A call into a `let` before an endless loop: the block of the call goes to a block that goes
 /// to itself and never reaches a `return`. The walk from the call must stop.
 #[test]
