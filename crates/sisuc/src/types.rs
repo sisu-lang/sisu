@@ -406,9 +406,9 @@ enum Step<'a> {
 }
 
 /// Writes `ty` to `out` as a program writes it, each class and enum named by `head`. Returns
-/// whether the text was cut: past `NAME_LIMIT` bytes, `...` and the closers and the associated
-/// type names still owed end it. Each level entered before the cut adds at most one closer or one
-/// name, so the text is never longer than the whole text.
+/// whether the text was cut. When `out.len() + owed >= NAME_LIMIT`, `...` and the owed closers
+/// and associated type names end it. Each level entered before the cut adds at most one closer or
+/// one name.
 pub(crate) fn write_type<'n>(out: &mut String, ty: Type, head: impl Fn(Head) -> &'n str) -> bool {
     write_type_with(out, ty, head, |_| None)
 }
@@ -420,7 +420,7 @@ fn write_type_with<'n>(
     head: impl Fn(Head) -> &'n str,
     named: impl Fn(Type) -> Option<(&'n str, bool)>,
 ) -> bool {
-    write_steps(out, vec![Step::Type(ty)], head, named)
+    write_steps(out, vec![Step::Type(ty)], 0, head, named)
 }
 
 /// Writes the name of a method to `out`: the type `owner` it is declared on, the interface of its
@@ -477,19 +477,24 @@ pub(crate) fn write_args_with<'n>(
     named: impl Fn(Type) -> Option<(&'n str, bool)>,
 ) -> bool {
     let mut steps = Vec::new();
-    push_args(out, &mut steps, args);
-    write_steps(out, steps, head, named)
+    let owed = push_args(out, &mut steps, args);
+    write_steps(out, steps, owed, head, named)
 }
 
 /// Writes `steps` to `out`, the last first. One string grows in place, and a stack stands in for
 /// recursion: a type can nest deeper than the call stack allows. When `named` returns
 /// `Some((head, true))`, it writes `head<...>` and marks the output cut. When `named` returns
-/// `Some((text, false))` and `text` fits in `NAME_LIMIT`, it pastes `text` without descending.
-/// Once `out` holds `NAME_LIMIT` bytes, no type or separator follows, so the work is linear in
-/// the text, not in the type.
+/// `Some((text, false))` and `out.len() + owed + text.len() <= NAME_LIMIT`, it pastes `text`
+/// without descending. Once `out.len() + owed >= NAME_LIMIT`, no type or separator follows, so
+/// the work is linear in `NAME_LIMIT`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one stack-machine loop handles every step and type kind"
+)]
 fn write_steps<'n>(
     out: &mut String,
     mut steps: Vec<Step<'_>>,
+    mut owed: usize,
     head: impl Fn(Head) -> &'n str,
     named: impl Fn(Type) -> Option<(&'n str, bool)>,
 ) -> bool {
@@ -501,11 +506,12 @@ fn write_steps<'n>(
         WRITE_STEPS.set(WRITE_STEPS.get() + 1);
         let ty = match step {
             Step::Close(text) => {
+                owed -= text.len();
                 out.push_str(text);
                 continue;
             }
             Step::Rest([]) => continue,
-            Step::Type(_) | Step::Rest(_) if out.len() >= NAME_LIMIT => {
+            Step::Type(_) | Step::Rest(_) if out.len() + owed >= NAME_LIMIT => {
                 // The cut elides only what has not begun: a type or the rest of a list. A type
                 // that has begun gets its end, each closer and each associated type name, so a
                 // name that ends in `.Item` or `]` still names what it began to name.
@@ -542,7 +548,7 @@ fn write_steps<'n>(
                 out.push_str("<...>");
                 cut = true;
                 continue;
-            } else if out.len() + text.len() <= NAME_LIMIT {
+            } else if out.len() + owed + text.len() <= NAME_LIMIT {
                 out.push_str(text);
                 continue;
             }
@@ -567,6 +573,7 @@ fn write_steps<'n>(
             }
             TypeKind::Array(element) => {
                 out.push('[');
+                owed += 1;
                 steps.extend([Step::Close("]"), Step::Type(element)]);
                 continue;
             }
@@ -574,8 +581,10 @@ fn write_steps<'n>(
                 // `any I?` is not a type: the interface value is grouped.
                 if matches!(payload.kind(), TypeKind::Any(..)) {
                     out.push('(');
+                    owed += 2;
                     steps.extend([Step::Close(")?"), Step::Type(payload)]);
                 } else {
+                    owed += 1;
                     steps.extend([Step::Close("?"), Step::Type(payload)]);
                 }
                 continue;
@@ -595,19 +604,24 @@ fn write_steps<'n>(
                 continue;
             }
         };
-        push_args(out, &mut steps, args.get());
+        owed += push_args(out, &mut steps, args.get());
     }
+    debug_assert_eq!(
+        owed, 0,
+        "all owed closers should be popped before returning"
+    );
     cut
 }
 
-/// Writes the `<` of a nonempty `args` to `out`, and pushes the rest of `<a, b>` onto `steps`
-/// for `write_steps`, `a` on top.
-fn push_args<'a>(out: &mut String, steps: &mut Vec<Step<'a>>, args: &'a [Type]) {
+/// Writes `<` for a nonempty `args` to `out`, and pushes `<a, b>` onto `steps` with `a` on top.
+/// Returns the byte count of any closer pushed.
+fn push_args<'a>(out: &mut String, steps: &mut Vec<Step<'a>>, args: &'a [Type]) -> usize {
     let [first, rest @ ..] = args else {
-        return;
+        return 0;
     };
     out.push('<');
     steps.extend([Step::Close(">"), Step::Rest(rest), Step::Type(*first)]);
+    1
 }
 
 /// The kinds without a payload, at the indices of `Type`'s constants.

@@ -769,6 +769,15 @@ def failed_bounds(k: int) -> str:
     )
 
 
+def optional_wrap_chain(k: int) -> str:
+    """Return a program with `k + 1` chained calls of `wrap<T>(t: T) -> T?` from a `char`."""
+    lets = "".join(f"    let a{tag(i)} = wrap(a{tag(i - 1)})\n" for i in range(1, k + 2))
+    return (
+        "fn wrap<T>(t: T) -> T? {\n    t\n}\n\n"
+        f"fn main() {{\n    let a{tag(0)} = 'a'\n{lets}    print(a{tag(k + 1)} == None)\n}}\n"
+    )
+
+
 # The name of a shape, its `n` and the program at a size. The sizes are 0, n, 2n, 4n and 8n.
 SHAPES = {
     "functions": (250, functions),
@@ -828,6 +837,7 @@ SHAPES = {
     "unannotated array with None": (1000, unannotated_array_with_none),
     "open let chain": (250, open_let_chain),
     "open pair nest": (24, open_pair_nest),
+    "optional wrap chain": (100, optional_wrap_chain),
 }
 
 
