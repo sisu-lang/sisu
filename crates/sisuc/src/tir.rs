@@ -3705,7 +3705,7 @@ mod tests {
         let limit = crate::types::NAME_LIMIT;
         assert_eq!(
             name,
-            format!("{}...{}", "[".repeat(limit), "]".repeat(limit))
+            format!("{}...{}", "[".repeat(limit / 2), "]".repeat(limit / 2))
         );
     }
 

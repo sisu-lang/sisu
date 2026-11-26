@@ -3658,4 +3658,38 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn mono_should_name_a_nested_optional_chain_in_linear_steps() {
+        let optional_chain = |n| {
+            let mut src =
+                String::from("fn wrap<T>(t: T) -> T? {\n    t\n}\nfn main() {\n    let a0 = 1\n");
+            for k in 1..=n {
+                writeln!(src, "    let a{k} = wrap(a{})", k - 1)
+                    .expect("writing to a `String` should succeed");
+            }
+            src + "}\n"
+        };
+        let steps = |n| {
+            let src = optional_chain(n);
+            let (program, diagnostics) = crate::front_end::checked(&src);
+            let program = program.unwrap_or_else(|| panic!("{diagnostics:?}"));
+            crate::types::WRITE_STEPS.set(0);
+            let mono = Mono::new(program)
+                .run()
+                .unwrap_or_else(|found| panic!("{found:?}"));
+            (crate::types::WRITE_STEPS.get(), mono)
+        };
+        let ((s1, program), (s2, _), (s3, _)) = (steps(300), steps(600), steps(900));
+        crate::mir::tests::assert_near_linear(s1, s2, s3);
+
+        let names = function_names(&program);
+        let distinct: FxHashSet<&str> = names.iter().copied().collect();
+        assert_eq!(distinct.len(), names.len(), "{names:?}");
+        for name in &names {
+            assert!(name.len() <= NAME_LIMIT + 64, "{name}");
+            assert!(delimiters_balanced(name), "unbalanced `{name}`");
+            assert_eq!(name.contains('#'), name.contains("..."), "{name}");
+        }
+    }
 }
