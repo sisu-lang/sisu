@@ -406,9 +406,9 @@ enum Step<'a> {
 }
 
 /// Writes `ty` to `out` as a program writes it, each class and enum named by `head`. Returns
-/// whether the text was cut. When `out.len() + owed >= NAME_LIMIT`, `...` and the owed closers
-/// and associated type names end it. Each level entered before the cut adds at most one closer or
-/// one name.
+/// whether the text was cut. When `out` and the closers it owes reach `NAME_LIMIT` bytes, `...`
+/// and the owed closers and associated type names end it. Each level entered before the cut adds
+/// at most one closer or one name.
 pub(crate) fn write_type<'n>(out: &mut String, ty: Type, head: impl Fn(Head) -> &'n str) -> bool {
     write_type_with(out, ty, head, |_| None)
 }
@@ -486,7 +486,7 @@ pub(crate) fn write_args_with<'n>(
 /// `Some((head, true))`, it writes `head<...>` and marks the output cut. When `named` returns
 /// `Some((text, false))` and `out.len() + owed + text.len() <= NAME_LIMIT`, it pastes `text`
 /// without descending. Once `out.len() + owed >= NAME_LIMIT`, no type or separator follows, so
-/// the work is linear in `NAME_LIMIT`.
+/// the work is linear in `NAME_LIMIT` and in the depth of associated types, which are never cut.
 #[expect(
     clippy::too_many_lines,
     reason = "one stack-machine loop handles every step and type kind"

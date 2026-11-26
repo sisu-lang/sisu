@@ -599,9 +599,11 @@ Two rows are for the shapes of body inference. Open pair nest
 `StructType::checkBody` reason as struct paths while `check` stays linear.
 The else-if chain with a result type (#765) is a function whose body is a
 chain of `else if`. Its `optimize` stage grows with the nested chain, in
-LLVM's `PromotePass`, and `main` gives the same counts. The optional wrap chain
-(#835) chains `wrap<T>(t: T) -> T?` calls so `mono` stays linear (#825). Its
-`mir` and `check` stages grow because `Type::is_counted` walks each optional
+LLVM's `PromotePass`, and `main` gives the same counts.
+
+Two rows are for the optional wrap chain (#835). It chains
+`wrap<T>(t: T) -> T?` calls to check that `mono` stays linear (#825). Its
+`check` and `mir` stages grow because `Type::is_counted` walks each optional
 layer uncached, and `check::infer_call` walks the nested optionals.
 
 Each `tir::Expr` holds its exit flag. The checker sets it once, when it makes
