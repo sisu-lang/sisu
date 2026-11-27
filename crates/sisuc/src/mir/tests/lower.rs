@@ -1936,3 +1936,100 @@ fn place_printer_should_format_wrapping_projections() {
         "{payloads}"
     );
 }
+
+/// Each flattened `else if` chain shares one join block and has zero empty `goto` blocks.
+#[test]
+fn else_if_chain_should_share_one_join_block_with_no_empty_goto_blocks() {
+    // 30 `else if` clauses (32 branches) sit well past a single pair while staying fast.
+    let mut valued_branches = String::from("if c { a }");
+    for _ in 0..30 {
+        valued_branches.push_str(" else if c { a }");
+    }
+    valued_branches.push_str(" else { a }");
+    let valued_src = format!("fn pick(c: bool, a: u8) -> u8 {{\n    {valued_branches}\n}}");
+
+    let cases: [(&str, &str, &str); 10] = [
+        ("30 else-if clauses, u8", &valued_src, "pick"),
+        (
+            "statement without else",
+            "fn f(c1: bool, c2: bool, c3: bool) {\n    if c1 { print(1) } else if c2 { print(2) } else if c3 { print(3) }\n}",
+            "f",
+        ),
+        (
+            "statement without else, returning then falling",
+            "fn f(c1: bool, c2: bool) {\n    if c1 { return } else if c2 { print(2) }\n    print(3)\n}",
+            "f",
+        ),
+        (
+            "statement without else, all branches return",
+            "fn f(c1: bool, c2: bool) {\n    if c1 { return } else if c2 { return }\n    print(3)\n}",
+            "f",
+        ),
+        (
+            "all branches return (must pass before and after: no join)",
+            "fn f(c1: bool, c2: bool) -> i64 {\n    if c1 { return 1 } else if c2 { return 2 } else { return 3 }\n}",
+            "f",
+        ),
+        (
+            "exiting condition after falling branch",
+            "fn f(c1: bool, c2: bool, c3: bool) -> i64 {\n    if c1 { 1 } else if (if c2 { return 2 } else { c3 }) { 3 } else { 4 }\n}",
+            "f",
+        ),
+        (
+            "exiting condition after returning branch",
+            "fn f(c1: bool, c2: bool, c3: bool) -> i64 {\n    if c1 { return 1 } else if (if c2 { return 2 } else { c3 }) { 3 } else { 4 }\n}",
+            "f",
+        ),
+        (
+            "counted string valued and discarded chains",
+            "fn f(c1: bool, c2: bool, s: string) -> string {\n    if c1 { s + \"1\" } else if c2 { s + \"2\" } else { s + \"3\" }\n    if c1 { \"a\" + \"1\" } else if c2 { \"a\" + \"2\" } else { \"a\" + \"3\" }\n    if c1 { s + \"x\" } else if c2 { return s + \"y\" } else { s + \"z\" }\n}",
+            "f",
+        ),
+        (
+            "counted string statement without else",
+            "fn f(c1: bool, c2: bool) {\n    if c1 { let _a = \"x\" + \"1\" } else if c2 { let _b = \"x\" + \"2\" }\n}",
+            "f",
+        ),
+        (
+            "borrowed if let before else if chain",
+            "fn f(o: string?, c1: bool, c2: bool) -> i64 {\n    if let s = o { s.len() } else if c1 { 1 } else if c2 { 2 } else { 3 }\n}",
+            "f",
+        ),
+    ];
+
+    for (name, src, fn_name) in cases {
+        let program = checked(src);
+        let mir = build(&program);
+        let f = mir
+            .functions
+            .iter()
+            .find(|f| f.name == fn_name)
+            .unwrap_or_else(|| panic!("{name}: missing function {fn_name}"));
+        let empty_gotos = f
+            .blocks
+            .iter()
+            .filter(|b| b.stmts.is_empty() && matches!(b.term, Terminator::Goto(_)))
+            .count();
+        assert_eq!(
+            empty_gotos, 0,
+            "{name}: expected 0 empty goto blocks, got {empty_gotos}"
+        );
+    }
+}
+
+/// A non-empty `else` block and an `else if let` stay unflattened. The outer `else` block's local
+/// stays live across the inner `if` and releases after it, and `else if let` keeps its `End` guard.
+#[test]
+fn non_empty_else_and_else_if_let_should_stay_unflattened() {
+    let printed = built(
+        "fn f(c1: bool, c2: bool) -> i64 {\n    if c1 { 1 } else {\n        let s = \"a\" + \"b\"\n        if c2 { s.len() } else { 3 }\n    }\n}\n\
+         fn g(c: bool, o: string?) -> i64 {\n    if c { 1 } else if let s = o { s.len() } else { 0 }\n}\n\
+         fn main() {\n    print(f(false, true))\n    print(g(false, Some(\"hi\")))\n}",
+    );
+    has(
+        &printed,
+        "f",
+        &["branch c1#0", "branch c2#1", "release? s#"],
+    );
+    has(&printed, "g", &["branch c#0", "if_present ", "end _"]);
+}
