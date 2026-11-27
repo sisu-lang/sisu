@@ -15,7 +15,7 @@ You rule on their findings. Two planned stops wait for the user, and
 | Role | Who | Does |
 | --- | --- | --- |
 | Controller | you | picks, groups, finds root causes, writes briefs, rules on findings, keeps the ledger |
-| Executor | `sonnet-high` (Agent tool, `subagent_type` only) | implements one task brief or fix-round brief; never does root-cause work |
+| Executor | `sonnet-high` (`Agent` in Claude Code, or `invoke_subagent` `self` in `agy`) | implements one task brief or fix-round brief; never does root-cause work |
 | Task review | `opus-medium` in every round, and the outside seat in the first round | through `review-sisu` |
 | Final review | `opus-high`, and the outside seat in the first round | through `review-sisu`, on the whole branch |
 
@@ -143,7 +143,7 @@ Do this once for each group. On resume, use the worktree in the ledger.
    - **BLOCKED:** the stated cause is wrong. Do step 3 again for that issue, then Stop 2 again.
    - **DONE_WITH_CONCERNS:** check each concern, then commit the work.
 
-   Before you commit, stop each background job of the executor. The task notification can say that it still has background work: then stop that work with `TaskStop`. Then check that no `cargo` process runs in the worktree: `for p in $(pgrep -x cargo); do readlink /proc/$p/cwd; done` prints no path in it. Run it with the sandbox off, because the sandbox shows only its own processes. brief.md (step 6) tells the executor to stop its jobs, but an executor can end its turn with a job still running.
+   Before you commit, stop each background job of the executor. The task notification can say that it still has background work: then stop that work with `TaskStop` (or `manage_task` in `agy`, see `review-sisu/launchers.md`). Then check that no `cargo` process runs in the worktree: `for p in $(pgrep -x cargo); do readlink /proc/$p/cwd; done` prints no path in it. Run it with the sandbox off, because the sandbox shows only its own processes. brief.md (step 6) tells the executor to stop its jobs, but an executor can end its turn with a job still running.
 
    To commit the work: the executor's sandbox cannot write the git index, so the executor writes each commit as a message file and a patch (brief.md, step 4). Each patch holds all the changes since the `HEAD` that the executor started from: `<BASE>`, or the round base in a fix round. First check that the last patch holds the whole worktree: write a new patch with the command of brief.md step 4, and compare it with the last patch (`cmp`). Then, for each pair in order, run `git -C <worktree> read-tree --reset -u <that HEAD> && git -C <worktree> clean -fdq && git -C <worktree> apply --index <patch> && git -C <worktree> commit -F <message file>`. The first two commands make the worktree equal to that `HEAD`, so the hooks of a commit see no file of a later commit. Commit as the user's git identity, one commit per Bash call, with the sandbox off. Then check `git log -1`. After the last commit, `git -C <worktree> status --short` must print nothing.
 

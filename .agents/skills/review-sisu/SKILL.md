@@ -90,7 +90,7 @@ reviews alone.
 Launch the seats together. Each launcher must let its reviewer read `RUN`
 and the skill paths in the brief.
 
-- **Claude seat:** the Agent tool with the `subagent_type` from the table, and the prompt `Read RUN/brief.md and follow it. Your scratch directory is RUN/opus-scratch. Your final reply is the whole report.` with `RUN` written out, and `brief-<round>.md` in a later round. Pass no `model` or `effort`. A read-only reviewer such as `opus-medium` cannot write a file. So save each reply word for word with `python3 <skill base>/scripts/review_round.py save-report RUN opus --agent <agent ID> --round <round>`, which writes `RUN/opus.md` (`opus-<round>.md` in a later round) from the agent's transcript.
+- **Primary seat:** follow `Primary seat` in [launchers.md](launchers.md) for the active harness (`Agent` + `save-report` in Claude Code; `invoke_subagent` + direct `RUN/<stem>.md` in `agy`).
 - **Outside seat:** the command for its CLI in [launchers.md](launchers.md). Its report stem is the model's short name, such as `sol` or `fable`. When it fails, hits a usage limit or leaves no report, show the user the error it prints and ask how to go on. Do not put another model in its place without asking.
 
 After the last reviewer ends and you saved each report, run `python3 <skill base>/scripts/review_round.py verify <repository root> RUN --round <round> --report <stem>`,

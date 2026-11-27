@@ -1170,6 +1170,49 @@ class ScalingTest(unittest.TestCase):
             run_main("--shapes", "functions,nope")
         self.assertEqual(raised.exception.code, 2)
 
+    def test_benchmarks_doc_known_count_should_match_scaling_known(self) -> None:
+        """GIVEN `docs/benchmarks.md` and `KNOWN` in `scripts/scaling.py`
+        WHEN the test reads the `` `KNOWN` has N rows. `` sentence in `docs/benchmarks.md`
+        THEN N matches `len(KNOWN)`
+        """
+        doc = (sc.ROOT / "docs" / "benchmarks.md").read_text(encoding="utf-8")
+        match = re.search(r"`KNOWN` has (\d+) rows\.", doc)
+        self.assertIsNotNone(match, "docs/benchmarks.md should state `` `KNOWN` has N rows. ``")
+        assert match is not None
+        self.assertEqual(int(match[1]), len(sc.KNOWN))
+
+    def test_keep_callgrind_should_save_each_size_profile_in_the_shape_directory(self) -> None:
+        """GIVEN a run of the functions shape with `--keep-callgrind` and one without
+        WHEN `scripts/scaling.py` measures all five sizes at -O0 and -O2
+        THEN `--keep-callgrind` saves `callgrind-<size>.out` and `callgrind-<size>-o2.out`
+        AND without `--keep-callgrind`, no `callgrind-*.out` file stays in the shape directory
+        """
+        code, _, err = self.stub_run("functions")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(list((self.out / "functions").glob("callgrind-*.out")), [])
+
+        kept_tmp = Path(tempfile.mkdtemp(dir=self.tmp))
+        kept_out = kept_tmp / "out"
+        path = stubs(kept_tmp)
+        code, _, err = run_main(
+            "--shapes",
+            "functions",
+            "--sisu",
+            f"{path}/sisu",
+            "--out",
+            str(kept_out),
+            "--keep-callgrind",
+            path=path,
+        )
+        self.assertEqual((code, err), (0, ""))
+        expected = sorted(
+            f"callgrind-{k}{suffix}.out"
+            for k in (0, 250, 500, 1000, 2000)
+            for suffix in ("", "-o2")
+        )
+        found = sorted(p.name for p in (kept_out / "functions").glob("callgrind-*.out"))
+        self.assertEqual(found, expected)
+
 
 if __name__ == "__main__":
     unittest.main()

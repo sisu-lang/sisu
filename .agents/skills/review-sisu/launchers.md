@@ -1,15 +1,32 @@
-# Launch an outside seat
+# Launch reviewers
 
-Step 3 of `SKILL.md` chooses the model, the CLI and the effort. This file
-gives the command for each CLI. Run each one through Bash with
-`run_in_background` and the sandbox off, because each CLI needs the network
-and writes under its own home directory. The completion notification ends
-the wait; do not poll. Write `RUN`, `<effort>` and each path as a literal.
+Step 3 of `SKILL.md` chooses the primary seat, and the outside seat's model, CLI
+and effort. This file gives the launch steps for each harness and outside CLI.
+Run each outside CLI through Bash with `run_in_background` and the sandbox off,
+because each CLI needs the network and writes under its own home directory. The
+completion notification ends the wait; do not poll. Write `RUN`, `<effort>` and
+each path as a literal.
 
 Each launch can write anywhere, so `verify` is the guard (step 3). The agy
 launch cannot write in the repository: its sandbox mounts the repository
 read-only for terminal commands, and its `deny` rule refuses a file-tool
 write. `verify` still runs.
+
+## Primary seat
+
+- **Claude Code:** call the `Agent` tool with the table's `subagent_type`, and pass
+  no `model` or `effort`. Prompt: `Read RUN/brief.md and follow it. Your scratch
+  directory is RUN/opus-scratch. Your final reply is the whole report.` Use
+  `brief-<round>.md` in a later round. A read-only reviewer cannot write a file.
+  Save its reply word for word with `python3 <skill base>/scripts/review_round.py
+  save-report RUN opus --agent <agent ID> --round <round>`.
+- **Antigravity CLI (`agy`):** call `invoke_subagent` with `TypeName: "self"`,
+  `Model: "inherit"`, and `Workspace: "inherit"`. Prompt: `Read RUN/brief.md and
+  follow it. Your scratch directory is RUN/opus-scratch. Do not edit or write any
+  file in <repository root>. Start your report with Model: <model> on line 1. Write
+  your report to RUN/<stem>.md; your final reply is that exact report.` Use
+  `brief-<round>.md` and `<stem>-<round>.md` in a later round. Stop background work
+  with `manage_task` in place of `TaskStop`.
 
 ## agy
 
@@ -28,12 +45,16 @@ Run it from `RUN` with `set -euo pipefail` so a failed step stops the launch:
 
 ```
 set -euo pipefail
-cd RUN && PAGER=cat agy -p "Read RUN/brief.md and follow it. Your scratch directory is RUN/outside-scratch. Run only the commands that RUN/agy-settings.json allows, each in its own call, as git -C <repository root> ... for git. Use no pipe, no redirection and no \$(...). A command that the settings do not allow ends your run with no report. Name each check that you could not run under Unverified. Use rg and rg --files, not grep or find. To export a commit, run git -C <repository root> archive -o RUN/outside-scratch/<sha>.tar <sha>, then python3 -m tarfile -e RUN/outside-scratch/<sha>.tar <dir>. Do not run cargo or make, also not through python3. Your final reply is the whole report." --settings RUN/agy-settings.json --sandbox --model <model> > RUN/<stem>.md 2> RUN/<stem>-cli.log
+cd RUN && PAGER=cat agy -p "Read RUN/brief.md and follow it. Your scratch directory is RUN/outside-scratch. Run only the commands that RUN/agy-settings.json allows, each in its own call, as git -C <repository root> ... for git. Use no pipe, no redirection and no \$(...). A command that the settings do not allow ends your run with no report. Name each check that you could not run under Unverified. Use rg and rg --files, not grep or find. To export a commit, run git -C <repository root> archive -o RUN/outside-scratch/<sha>.tar <sha>, then python3 -m tarfile -e RUN/outside-scratch/<sha>.tar <dir>. Do not run cargo or make, also not through python3. Your final reply is the whole report." --settings RUN/agy-settings.json --sandbox --model <model> --log-file RUN/<stem>-agy.log < /dev/null > RUN/<stem>.md 2> RUN/<stem>-cli.log
 ```
 
-`PAGER=cat` stops `git` from waiting for a pager in the sandbox. `agy -p` can
-print status lines before `Model:`. Strip them before `review_round.py verify`
-with `sed -i '/^Model:/,$!d' RUN/<stem>.md`.
+`PAGER=cat` stops `git` from waiting for a pager in the sandbox. `agy -p`
+buffers stdout until exit, so `RUN/<stem>.md` stays empty while it runs.
+`--log-file RUN/<stem>-agy.log` logs the conversation ID and live tool checks
+during the run. Keep it separate from `2> RUN/<stem>-cli.log` so stderr and the
+log file do not overwrite each other. `agy -p` can print status lines before
+`Model:`. Strip them before `review_round.py verify` with
+`sed -i '/^Model:/,$!d' RUN/<stem>.md`.
 
 A rule matches the first words of a command, not a glob, so a rule for a
 directory does not match a binary in it. An `mcp` rule names
