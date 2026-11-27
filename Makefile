@@ -89,7 +89,7 @@ compile-speed: ## Compare compile speed with rustc, clang++ and Go (ARGS='--chec
 	python3 scripts/compile_speed.py $(ARGS)
 
 scaling: ## Find the shapes of program for which a compiler stage is superlinear (ARGS='--shapes ...')
-	cargo build --release --quiet -p sisuc
+	cargo build --release --quiet -p sisuc -p sisu-runtime-mimalloc
 	python3 scripts/scaling.py $(ARGS)
 
 structs-gate: ## Run the gates of the structs spec on bench/structs/ (ARGS='--class-only' runs the class versions only)
