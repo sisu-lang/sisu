@@ -117,10 +117,6 @@ KNOWN: list[tuple[str, str, int | str]] = [
     # calls of the helpers that make an array or a box unique.
     ("struct writes -O2", "optimize", 687),
     ("struct writes -O2", "object", 687),
-    # `Type::is_counted` recurses every `Optional` layer uncached (`mir` and `check::spill_before`),
-    # and `check::infer_call` walks the nested optional types.
-    ("optional wrap chain", "check", 835),
-    ("optional wrap chain", "mir", 835),
 ]
 ANNOTATE = ["callgrind_annotate", "--inclusive=yes", "--threshold=100", "--show=Ir", "--auto=no"]
 DIAGNOSTIC = re.compile(r"^(error|warning)\[([EW]\d{4})\]")

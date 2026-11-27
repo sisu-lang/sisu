@@ -1,9 +1,10 @@
+use super::layout::LAYOUT_STEPS;
 use super::*;
 use crate::check::check_alone;
 use crate::mir::tests::{assert_near_linear, assert_near_linear_for};
 use crate::parser::parse_ok;
 use crate::payload_limit;
-use crate::tir::{BinaryOp, LAYOUT_STEPS};
+use crate::tir::BinaryOp;
 use inkwell::GlobalVisibility;
 use inkwell::values::{AnyValue, CallSiteValue, InstructionOpcode, InstructionValue, Operand};
 use std::panic::{self, AssertUnwindSafe};
@@ -5219,11 +5220,9 @@ fn show_of_a_component_should_find_each_member_in_linear_steps() {
     assert_near_linear(scans(100), scans(200), scans(300));
 }
 
-/// The layout of an optional of `n` layers is worked out once for each layer, not once for each
-/// walk over the layers: `niche` and the `Optional` arm of `llvm_type` keep their answer for each
-/// type, and `retain_or_release` asks `is_counted` once. A walk down the layers in each of them
-/// reads the layers quadratically, and the walks that call them again for each layer read them
-/// cubically (#461).
+/// Codegen computes the layout of an `n`-layer optional once per layer. `niche` and the
+/// `Optional` arm of `llvm_type` cache each type. Without those caches, walks over the layers
+/// grow quadratically or cubically (#461).
 #[test]
 fn deep_optionals_should_take_linear_layout_steps() {
     let steps = |program: &dyn Fn(usize) -> String, n: usize| {

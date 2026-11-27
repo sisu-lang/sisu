@@ -13,15 +13,6 @@ pub(crate) use crate::ast::{Align, CompareOp, UnaryOp};
 use crate::types::{Head, write_args, write_method, write_type};
 pub(crate) use crate::types::{Type, TypeArgs, TypeKind};
 
-#[cfg(test)]
-thread_local! {
-    /// How many calls of `Codegen::niche`, of the `Optional` arm of `Codegen::llvm_type`, and of
-    /// the `Optional` arm of `Type::is_counted` have happened on this thread. It counts each call,
-    /// also one that a cache answers. It lives here, not in `codegen`, because `is_counted` is
-    /// in this module and a lower layer may not use a higher one.
-    pub(crate) static LAYOUT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct LocalId(pub(crate) usize);
 
@@ -995,11 +986,7 @@ impl Type {
             | TypeKind::Infer(_) => true,
             TypeKind::Enum(id, _) => enums[id.0].counted,
             TypeKind::Struct(id, _) => structs[id.0].counted,
-            TypeKind::Optional(payload) => {
-                #[cfg(test)]
-                LAYOUT_STEPS.set(LAYOUT_STEPS.get() + 1);
-                payload.is_counted(enums, structs)
-            }
+            TypeKind::Optional(_) => self.without_optionals().is_counted(enums, structs),
             TypeKind::I64
             | TypeKind::U8
             | TypeKind::F64
@@ -1017,14 +1004,6 @@ impl Type {
         self.is_counted(enums, structs) || self.has_param()
     }
 
-    /// This type with each `?` removed: `T` for `T`, `T?` and `T??`.
-    pub(crate) fn without_optionals(mut self) -> Self {
-        while let TypeKind::Optional(payload) = self.kind() {
-            self = payload;
-        }
-        self
-    }
-
     /// Whether a value of this type is an array or a string, or one inside `?` at any depth:
     /// the values that a trim point checks (`Rvalue::Trim`), except a string literal, which
     /// `Lowering::placed` passes as it is.
@@ -1038,10 +1017,9 @@ impl Type {
     /// The enum or struct that a field of this type holds inline unless boxed: `F` for `F` or
     /// `F?`. These are the edges of the holds-inline graph.
     pub(crate) fn inline_type(self) -> Option<Inline> {
-        match self.kind() {
+        match self.without_optionals().kind() {
             TypeKind::Enum(id, _) => Some(Inline::Enum(id)),
             TypeKind::Struct(id, _) => Some(Inline::Struct(id)),
-            TypeKind::Optional(payload) => payload.inline_type(),
             _ => None,
         }
     }

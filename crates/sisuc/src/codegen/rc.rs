@@ -1173,9 +1173,8 @@ impl<'ctx> Codegen<'ctx, '_> {
         }
     }
 
-    /// `retain_or_release` of a value of the counted type `ty`. `is_counted` walks all the layers
-    /// of an optional, so `retain_or_release` asks it once, and an optional layer here does not
-    /// ask it again: the payload of a counted optional is counted.
+    /// Retains or releases a value of the counted type `ty`. `retain_or_release` checks
+    /// `is_counted` once, because the payload of a counted optional is also counted.
     fn count_counted(&self, kind: Helper, value: BasicValueEnum<'ctx>, ty: Type) {
         if counted_core(ty).is_some() {
             self.count_object(kind, ty, self.counted_pointer(ty, value));
