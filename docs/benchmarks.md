@@ -598,7 +598,7 @@ One row is for body inference: open pair nest (#686) nests generic `Pair`
 structs, so its `codegen` grows for the same `StructType::checkBody` reason as
 struct paths while `check` stays linear.
 
-Each interned `Type` entry stores its innermost non-optional type. So optional
+Each interned `Type` entry stores its type with leading `?` removed. So optional
 wrap chain (#835) is linear in `check` and `mir`, and `mono` stays linear
 (#825).
 

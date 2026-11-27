@@ -458,14 +458,6 @@ fn whole_local(operand: &crate::mir::Operand) -> Option<crate::mir::LocalId> {
     }
 }
 
-/// The type under every `?` layer of `ty`.
-fn under_optionals(mut ty: Type) -> Type {
-    while let TypeKind::Optional(inner) = ty.kind() {
-        ty = inner;
-    }
-    ty
-}
-
 /// Whether `ty` is an array, an optional, an enum or a class: a type whose value `print` writes
 /// through a helper.
 fn is_compound(ty: Type) -> bool {
@@ -3408,7 +3400,7 @@ impl Walk {
                 // A class has no `Eq`: only the comparison with `None` is left of it.
                 let none = matches!(lhs.kind, tir::ExprKind::None)
                     || matches!(rhs.kind, tir::ExprKind::None);
-                if none && matches!(under_optionals(lhs.ty).kind(), TypeKind::Class(..)) {
+                if none && matches!(lhs.ty.without_optionals().kind(), TypeKind::Class(..)) {
                     self.mark(IDENTITY);
                 }
                 // `x == None` on a `T?` calls nothing and needs no bound.
@@ -3428,7 +3420,7 @@ impl Walk {
             tir::ExprKind::Is { lhs, rhs } => {
                 self.mark("tir::ExprKind::Is");
                 self.mark(IDENTITY);
-                if matches!(under_optionals(lhs.ty).kind(), TypeKind::Param(..)) {
+                if matches!(lhs.ty.without_optionals().kind(), TypeKind::Param(..)) {
                     self.mark("reach: `is` runs on a type parameter");
                 }
                 self.tir_expr(lhs, Parent::Other);
