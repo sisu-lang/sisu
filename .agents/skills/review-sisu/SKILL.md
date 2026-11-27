@@ -59,16 +59,16 @@ It takes `build_sisu.sh` and `diff_brief.py` from `origin/main`, because a branc
 
 ### 3. Launch the reviewers
 
-Each review has a Claude seat. Round 1 can also have an outside seat.
+Each review has a primary seat. Round 1 can also have an outside seat.
 
-| Review | Claude seat | Outside seat |
+| Review | Primary seat | Outside seat |
 | --- | --- | --- |
 | spec or plan | `opus-high` | round 1, when chosen |
 | the diff of one task | `opus-medium` | round 1, when chosen |
 | the diff of one task in the light flow of `solve-issues` | `opus-medium` | none |
 | the final diff of a branch or a milestone | `opus-high` | round 1, when chosen |
 
-The Claude seat reviews every round. In a later round it reviews alone, and
+The primary seat reviews every round. In a later round it reviews alone, and
 it also checks the fixes for the outside seat's findings.
 
 The outside seat is a model that is not the caller's: Sol, Fable 5.2, or
@@ -84,7 +84,7 @@ A source can name a model but no CLI, or a CLI that
 [launchers.md](launchers.md) does not list. Then ask the user for the CLI and its command.
 
 Ask the user for the effort of the outside seat every time, unless the user
-named it for this review. "None" is a correct answer: then the Claude seat
+named it for this review. "None" is a correct answer: then the primary seat
 reviews alone.
 
 Launch the seats together. Each launcher must let its reviewer read `RUN`
@@ -98,7 +98,7 @@ with one `--report` for each reviewer, such as `--report sol --report opus`. Wit
 It fails when a report is missing or has no `Model:` first line, or when the checkout differs from the record of `prepare`. A
 missing report means that the reviewer failed or that you did not save its reply. Check that the `Model:` line names the model you launched. A difference
 means that a reviewer wrote in the repository, so the round is a failed run: show the user the difference and
-ask how to go on. An outside seat's launch can write anywhere, except agy, which cannot write in the repository ([launchers.md](launchers.md)), so this check is the guard. It does not see a
+ask how to go on. An outside seat's launch or the agy primary seat can write in the repository, except the outside agy launch ([launchers.md](launchers.md)), so `verify` is the guard. It does not see a
 write to an ignored file. When only HEAD moved, `verify`
 names the new commits and still fails, because a reviewer can commit too. When you made each of
 those commits, the round is good.
@@ -176,7 +176,7 @@ the round's target (for a diff, the fix range) and `--round <round>`. It writes
 `RUN/brief-<round>.md` and takes `RUN/rulings-<round - 1>.md` and each earlier report from `RUN`.
 Its "Re-review" section asks for a verdict on each accepted finding, the
 neighbours of each fix, and regressions against the base of the whole
-work. Send it to the Claude seat; its report goes to `RUN/opus-<round>.md`.
+work. Send it to the primary seat; its report goes to `RUN/<stem>-<round>.md`.
 
 The number of fix rounds, and what happens to a blocking finding that is
 still open after the review of the last one:
@@ -192,7 +192,7 @@ still open after the review of the last one:
 A redo stops the patching. Give it to a fresh `opus-high` executor.
 It first commits failing tests for
 each open finding and its neighbours, then fixes the code until they pass.
-The Claude seat reviews the redo as one more round. When that review finds a blocking
+The primary seat reviews the redo as one more round. When that review finds a blocking
 defect, or the failed rounds already ran on `opus-high`, ask the user.
 
 In a `solve-issues` batch, the rules of `solve-issues` (Scope) replace

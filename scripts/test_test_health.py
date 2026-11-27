@@ -79,9 +79,10 @@ class TestHealth(unittest.TestCase):
 <testcase name="ok2" classname="sisuc" time="0.010"/>
 <testcase name="bad" classname="sisuc" time="0.020"><failure message="boom"/></testcase>
 <testcase name="err" classname="sisuc" time="0.020"><error message="err"/></testcase>
+<testcase name="ign" classname="sisuc" time="0.000"><skipped message="ignored"/></testcase>
 </testsuite>
 </testsuites>"""
-        self.assertEqual(th.summary(failing), "Tests: 2 passed, 2 failed")
+        self.assertEqual(th.summary(failing), "Tests: 2 passed, 2 failed, 1 skipped")
 
     def test_summary_flag_should_print_one_line_and_handle_missing_reports(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -2,17 +2,21 @@
 
 Step 3 of `SKILL.md` chooses the primary seat, and the outside seat's model, CLI
 and effort. This file gives the launch steps for each harness and outside CLI.
-Run each outside CLI through Bash with `run_in_background` and the sandbox off,
-because each CLI needs the network and writes under its own home directory. The
+Run each outside CLI through Bash with `run_in_background` and the sandbox off.
+Each CLI needs the network and writes under its own home directory. The
 completion notification ends the wait; do not poll. Write `RUN`, `<effort>` and
 each path as a literal.
 
-Each launch can write anywhere, so `verify` is the guard (step 3). The agy
-launch cannot write in the repository: its sandbox mounts the repository
-read-only for terminal commands, and its `deny` rule refuses a file-tool
-write. `verify` still runs.
+Each launch can write anywhere, so `verify` is the guard (step 3). The outside
+agy launch (`## agy`) cannot write in the repository: its sandbox mounts the
+repository read-only for terminal commands, and its `deny` rule refuses a
+file-tool write. The agy primary seat inherits the writable workspace, so
+`verify` guards it too.
 
 ## Primary seat
+
+The primary seat's report stem is `opus` in Claude Code, and the active model's
+short name (such as `neon`) in `agy`.
 
 - **Claude Code:** call the `Agent` tool with the table's `subagent_type`, and pass
   no `model` or `effort`. Prompt: `Read RUN/brief.md and follow it. Your scratch

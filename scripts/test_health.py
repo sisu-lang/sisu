@@ -24,8 +24,16 @@ def summary(junit: str) -> str:
     failed = sum(
         1 for case in cases if case.find("failure") is not None or case.find("error") is not None
     )
-    passed = len(cases) - failed
-    return f"Tests: {passed} passed, {failed} failed"
+    skipped = sum(
+        1
+        for case in cases
+        if case.find("failure") is None
+        and case.find("error") is None
+        and case.find("skipped") is not None
+    )
+    passed = len(cases) - failed - skipped
+    line = f"Tests: {passed} passed, {failed} failed"
+    return f"{line}, {skipped} skipped" if skipped else line
 
 
 def report(junit: str, top: int = TOP) -> str:
