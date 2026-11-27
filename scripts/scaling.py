@@ -2,7 +2,7 @@
 """Finds the shapes of program for which a stage of the Sisu compiler is superlinear.
 
 Usage: python3 scripts/scaling.py [--shapes a,b] [--counts FILE] [--out target/scaling]
-       [--sisu target/release/sisu] [--time-bound SECONDS]
+       [--sisu target/release/sisu] [--time-bound SECONDS] [--keep-callgrind]
 
 A shape is a kind of program that grows in one direction. For each shape, the script makes the
 program at size 0 and at the sizes n, 2n, 4n and 8n. It builds each into an executable under
@@ -1135,9 +1135,13 @@ def measure_shape(
         case = name + suffix
         per_stage: dict[str, list[int]] = {stage: [] for stage, _ in STAGES}
         with tempfile.TemporaryDirectory() as tmp:
-            profile = str(Path(tmp, "callgrind.out"))
             for k, path in zip(sizes, files, strict=False):
                 what = f"{case}, size {k}"
+                if args.keep_callgrind:
+                    tag_o2 = "-o2" if flags else ""
+                    profile = str(directory / f"callgrind-{k}{tag_o2}.out")
+                else:
+                    profile = str(Path(tmp, "callgrind.out"))
                 callgrind = ["valgrind", "--tool=callgrind", f"--callgrind-out-file={profile}"]
                 if name in CHECK_ONLY:
                     command = [*callgrind, args.sisu, "check", path]
@@ -1186,6 +1190,11 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("--sisu", default=DEFAULT_SISU, help="the compiler")
     parser.add_argument("--time-bound", type=float, default=3600, help="seconds for the whole run")
+    parser.add_argument(
+        "--keep-callgrind",
+        action="store_true",
+        help="keep each callgrind output file in the shape directory under --out",
+    )
     args = parser.parse_args(argv)
     counts: dict[str, Any] = {
         "commit": "unknown",

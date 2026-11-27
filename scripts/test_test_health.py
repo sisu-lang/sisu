@@ -66,6 +66,43 @@ class TestHealth(unittest.TestCase):
         self.assertEqual(run.returncode, 0)
         self.assertIn("cannot read", run.stdout)
 
+    def test_summary_should_count_passed_and_failed_tests_without_setup_scripts(self) -> None:
+        self.assertEqual(th.summary(REPORT), "Tests: 4 passed, 0 failed")
+        failing = """<testsuites name="nextest-run" time="5.000">
+<testsuite name="@setup-script:build-runtime">
+<testcase name="build-runtime" classname="@setup-script:build-runtime" time="1.000">
+<failure message="ignored"/>
+</testcase>
+</testsuite>
+<testsuite name="sisuc">
+<testcase name="ok1" classname="sisuc" time="0.010"/>
+<testcase name="ok2" classname="sisuc" time="0.010"/>
+<testcase name="bad" classname="sisuc" time="0.020"><failure message="boom"/></testcase>
+<testcase name="err" classname="sisuc" time="0.020"><error message="err"/></testcase>
+<testcase name="ign" classname="sisuc" time="0.000"><skipped message="ignored"/></testcase>
+</testsuite>
+</testsuites>"""
+        self.assertEqual(th.summary(failing), "Tests: 2 passed, 2 failed, 1 skipped")
+
+    def test_summary_flag_should_print_one_line_and_handle_missing_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory, "junit.xml")
+            junit.write_text(REPORT, encoding="utf-8")
+            run = subprocess.run(
+                [sys.executable, SCRIPT, "--summary", junit],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual((run.returncode, run.stdout), (0, "Tests: 4 passed, 0 failed\n"))
+            missing = subprocess.run(
+                [sys.executable, SCRIPT, "--summary", Path(directory, "none.xml")],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual((missing.returncode, missing.stdout), (0, ""))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -35,6 +35,7 @@ build: ## Build sisu and the two runtime archives
 test: ## Run every test but the memory tests (make memory-safety) and the form matrix (make form-matrix, and CI) with nextest, whose setup script builds the runtime
 	scripts/heavy-run.sh cargo nextest run --workspace --locked
 	list=$$(mktemp) && cargo nextest list --workspace --locked --message-format json > $$list && python3 scripts/nextest_filters.py .config/nextest.toml $$list; status=$$?; rm -f $$list; exit $$status
+	python3 scripts/test_health.py --summary target/nextest/default/junit.xml
 
 form-matrix: ## Run the form matrix: each form of tests/form_matrix.txt in each position, checked for no crash and no breaking safe fix
 	scripts/heavy-run.sh cargo nextest run --workspace --locked --ignore-default-filter -E 'binary(form_matrix)'

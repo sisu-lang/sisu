@@ -1170,6 +1170,64 @@ class ScalingTest(unittest.TestCase):
             run_main("--shapes", "functions,nope")
         self.assertEqual(raised.exception.code, 2)
 
+    def test_benchmarks_doc_known_count_should_match_scaling_known(self) -> None:
+        """GIVEN `docs/benchmarks.md`, `prek.toml`, and `KNOWN` in `scripts/scaling.py`
+        WHEN the test reads the `` `KNOWN` has N rows. `` sentence in `docs/benchmarks.md`
+        THEN N matches `len(KNOWN)` and `prek.toml` triggers `python-tests` on `docs/benchmarks.md`
+        """
+        doc = (sc.ROOT / "docs" / "benchmarks.md").read_text(encoding="utf-8")
+        match = re.search(r"`KNOWN` has (\d+) rows\.", doc)
+        self.assertIsNotNone(match, "docs/benchmarks.md should state `` `KNOWN` has N rows. ``")
+        assert match is not None
+        self.assertEqual(int(match[1]), len(sc.KNOWN))
+        prek = (sc.ROOT / "prek.toml").read_text(encoding="utf-8")
+        block = prek[prek.index('id = "python-tests"') :]
+        files_match = re.search(r"^files = '(.*)'$", block, re.MULTILINE)
+        assert files_match is not None
+        self.assertRegex("docs/benchmarks.md", files_match[1])
+
+    def test_keep_callgrind_should_save_each_size_profile_in_the_shape_directory(self) -> None:
+        """GIVEN a run of the functions shape with `--keep-callgrind` and one without
+        WHEN `scripts/scaling.py` measures all five sizes at -O0 and -O2
+        THEN `--keep-callgrind` saves `-O0` runs to `callgrind-<size>.out` and `-O2` runs to
+        `callgrind-<size>-o2.out`
+        AND without `--keep-callgrind`, no `callgrind-*.out` file stays in the shape directory
+        """
+        code, _, err = self.stub_run("functions")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(list((self.out / "functions").glob("callgrind-*.out")), [])
+
+        kept_tmp = Path(tempfile.mkdtemp(dir=self.tmp))
+        kept_out = kept_tmp / "out"
+        path = stubs(kept_tmp)
+        code, _, err = run_main(
+            "--shapes",
+            "functions",
+            "--sisu",
+            f"{path}/sisu",
+            "--out",
+            str(kept_out),
+            "--keep-callgrind",
+            path=path,
+        )
+        self.assertEqual((code, err), (0, ""))
+        sizes = (0, 250, 500, 1000, 2000)
+        expected = sorted(f"callgrind-{k}{suffix}.out" for k in sizes for suffix in ("", "-o2"))
+        found = sorted(p.name for p in (kept_out / "functions").glob("callgrind-*.out"))
+        self.assertEqual(found, expected)
+        profiled = [
+            row
+            for row in (kept_tmp / "log").read_text().splitlines()
+            if row.startswith("valgrind --tool=callgrind ")
+        ]
+        self.assertEqual(len(profiled), 10)
+        for row, k in zip(profiled[:5], sizes, strict=True):
+            self.assertIn(f"/callgrind-{k}.out ", row)
+            self.assertNotIn(" -O2 ", row)
+        for row, k in zip(profiled[5:], sizes, strict=True):
+            self.assertIn(f"/callgrind-{k}-o2.out ", row)
+            self.assertIn(" -O2 ", row)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -532,7 +532,8 @@ a full run takes about 12 minutes on the machine above.
 The script prints one table for each shape. It also writes `table.md` and
 `counts.json` to `target/scaling/`. `ARGS='--shapes functions,fields'`
 measures only those shapes. `ARGS='--counts FILE'` reads the `counts.json` of
-an earlier run and measures nothing.
+an earlier run and measures nothing. `ARGS='--keep-callgrind'` saves each
+size's callgrind profile in its shape directory.
 
 - **Growth** is the count of a stage at one size, less its count at size 0.
   Size 0 takes away the fixed cost, such as the prelude.
