@@ -3,6 +3,7 @@
 Each test runs the script with a fake `gh` on PATH that answers from a table.
 """
 
+import base64
 import json
 import os
 import shutil
@@ -16,9 +17,24 @@ from typing import Any, override
 
 SCRIPT = Path(__file__).resolve().parent / "watch_pr.py"
 FAKE_GH = f"""#!{sys.executable}
-import json, os, sys
+import base64, json, os, sys, time
 table = json.load(open(os.environ['GH_TABLE']))
-answer = table[sys.argv[-1].split('?')[0]]
+key = sys.argv[-1].split('?')[0]
+if key not in table or table[key] is None:
+    # Real `gh api` writes the JSON error body to stdout before exiting 1.
+    print('{{"message":"Not Found"}}')
+    sys.exit(1)
+answer = table[key]
+if isinstance(answer, dict) and '__sleep__' in answer:
+    time.sleep(answer['__sleep__'])
+    print('2026-11-26T20:17:31Z E: late error')
+    sys.exit(0)
+if isinstance(answer, dict) and '__b64__' in answer and '--allow-escape-sequences' in sys.argv:
+    sys.stdout.buffer.write(base64.b64decode(answer['__b64__']))
+    sys.exit(0)
+if isinstance(answer, str) and '--allow-escape-sequences' in sys.argv:
+    sys.stdout.write(answer)
+    sys.exit(0)
 # --paginate --slurp: a list of pages. A list over 2 items comes as two pages.
 if '--slurp' in sys.argv:
     answer = [answer[:2], answer[2:]] if isinstance(answer, list) and len(answer) > 2 else [answer]
@@ -62,7 +78,7 @@ class WatchPr(unittest.TestCase):
             },
         }
 
-    def watch(self) -> subprocess.CompletedProcess[str]:
+    def watch(self, **extra_env: str) -> subprocess.CompletedProcess[str]:
         (self.dir / "table.json").write_text(json.dumps(self.table))
         env = dict(
             os.environ,
@@ -70,6 +86,7 @@ class WatchPr(unittest.TestCase):
             GH_TABLE=str(self.dir / "table.json"),
             WATCH_PR_POLL="0",
             WATCH_PR_LIMIT="0",
+            **extra_env,
         )
         return subprocess.run(
             [sys.executable, SCRIPT, "7", self.state],
@@ -191,20 +208,129 @@ class WatchPr(unittest.TestCase):
 
     def test_watch_should_report_a_failed_check_and_then_the_end_of_checks_once(self) -> None:
         runs = f"{P}/commits/abcdef0123/check-runs"
+        non_actions = "https://ci.example/job/42abc"
+        self.table[f"{P}/actions/jobs/42/logs"] = "2026-11-26T20:17:31Z E: wrong job\n"
         self.table[runs] = {
             "check_runs": [
-                {"status": "completed", "conclusion": "failure", "name": "test", "html_url": "u"},
+                {
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "name": "test",
+                    "html_url": non_actions,
+                },
                 {"status": "in_progress"},
             ]
         }
-        self.assertEqual(self.watch().stdout, "checks failed at abcdef01: test u\n")
+        self.assertEqual(self.watch().stdout, f"checks failed at abcdef01: test {non_actions}\n")
         self.table[runs] = {
             "check_runs": [
-                {"status": "completed", "conclusion": "success", "name": "test", "html_url": "u"}
+                {
+                    "status": "completed",
+                    "conclusion": "success",
+                    "name": "test",
+                    "html_url": non_actions,
+                }
             ]
         }
         self.assertEqual(self.watch().stdout, "checks passed at abcdef01: 1 checks\n")
         self.assertEqual(self.watch().returncode, 1)
+
+    def test_watch_should_print_stripped_error_lines_of_a_failed_actions_job(self) -> None:
+        runs = f"{P}/commits/abcdef0123/check-runs"
+        url = "https://github.com/sisu-lang/sisu/actions/runs/99/job/42?pr=7"
+        self.table[runs] = {
+            "check_runs": [
+                {"status": "completed", "conclusion": "failure", "name": "Lint", "html_url": url}
+            ]
+        }
+        long_err = "error[E0308]: " + ("x" * 280)
+        capped = f"ERROR second | FAIL third | {long_err}"[:300]
+        self.assertEqual(len(capped), 300)
+        cases: list[tuple[str, Any, str]] = [
+            (
+                "bom, ansi, generic exit ignored, cleanup dropped",
+                (
+                    "\ufeff2026-11-26T20:17:24Z \x1b[31mE: Failed to fetch mirror 403 Forbidden\x1b[0m\n"
+                    "2026-11-26T20:17:32Z ##[error]Process completed with exit code 100.\n"
+                    "2026-11-26T20:17:32Z Post job cleanup.   \n"
+                    "2026-11-26T20:17:32Z ##[error]cleanup noise\n"
+                ),
+                "E: Failed to fetch mirror 403 Forbidden",
+            ),
+            (
+                "tail of 3 matching lines with 300-char cap and blank/bare timestamps skipped",
+                (
+                    "2026-11-26T20:17:20Z error: first ignored\n"
+                    "2026-11-26T20:17:21Z\n"
+                    "2026-11-26T20:17:22Z   \n"
+                    "2026-11-26T20:17:23Z ERROR second\n"
+                    "2026-11-26T20:17:24Z FAIL third\n"
+                    f"2026-11-26T20:17:25Z {long_err}\n"
+                ),
+                capped,
+            ),
+            (
+                "workflow annotation and clippy error: match before generic exit footer",
+                (
+                    "2026-11-26T20:17:23Z ##[error]line coverage 98.1% is below 98.5%\n"
+                    "2026-11-26T20:17:24Z error: item foo is never used\n"
+                    "2026-11-26T20:17:25Z   --> crates/sisuc/src/lib.rs:4:4\n"
+                    "2026-11-26T20:17:26Z ##[error]Process completed with exit code 101.\n"
+                ),
+                "##[error]line coverage 98.1% is below 98.5% | error: item foo is never used",
+            ),
+            (
+                "fallback to cleaned tail when only generic exit matches",
+                (
+                    "2026-11-26T20:17:24Z plain step one\n"
+                    "2026-11-26T20:17:25Z plain step two\n"
+                    "2026-11-26T20:17:26Z\n"
+                    "2026-11-26T20:17:27Z ##[error]Process completed with exit code 1.\n"
+                    "2026-11-26T20:17:28Z Post job cleanup.\n"
+                ),
+                "plain step one | plain step two | ##[error]Process completed with exit code 1.",
+            ),
+            (
+                "non-utf8 bytes replaced, FAILED matched over plain lines, trailing spaces stripped",
+                {
+                    "__b64__": base64.b64encode(
+                        b"2026-11-26T20:17:30Z running 1 test\n"
+                        b"2026-11-26T20:17:31Z FAILED bad byte \xff here   \n"
+                    ).decode("ascii")
+                },
+                "FAILED bad byte \ufffd here",
+            ),
+        ]
+        for label, payload, expected in cases:
+            with self.subTest(label=label):
+                self.state.unlink(missing_ok=True)
+                self.table[f"{P}/actions/jobs/42/logs"] = payload
+                out = self.watch()
+                self.assertEqual(out.returncode, 0, out.stderr)
+                self.assertEqual(
+                    out.stdout,
+                    f"checks failed at abcdef01: Lint {url}\n  Lint: {expected}\n",
+                )
+
+    def test_watch_should_still_report_a_failed_job_when_log_fetch_fails_or_times_out(self) -> None:
+        runs = f"{P}/commits/abcdef0123/check-runs"
+        url = "https://github.com/sisu-lang/sisu/actions/runs/99/job/43"
+        self.table[runs] = {
+            "check_runs": [
+                {"status": "completed", "conclusion": "failure", "name": "Lint", "html_url": url}
+            ]
+        }
+        failures: tuple[tuple[str, Any, dict[str, str]], ...] = (
+            ("http error with json stdout", None, {}),
+            ("timeout", {"__sleep__": 0.5}, {"WATCH_PR_LOG_TIMEOUT": "0.05"}),
+        )
+        for label, payload, extra_env in failures:
+            with self.subTest(label=label):
+                self.state.unlink(missing_ok=True)
+                self.table[f"{P}/actions/jobs/43/logs"] = payload
+                out = self.watch(**extra_env)
+                self.assertEqual(out.returncode, 0, out.stderr)
+                self.assertEqual(out.stdout, f"checks failed at abcdef01: Lint {url}\n")
 
 
 if __name__ == "__main__":

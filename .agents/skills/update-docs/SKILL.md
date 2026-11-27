@@ -124,13 +124,14 @@ gitignored, and the docs do not link to it.
 ## 5. Check
 
 ```console
-$ python3 .agents/skills/update-docs/scripts/check_links.py README.md CONTRIBUTING.md AGENTS.md GLOSSARY.md CODING_STANDARDS.md docs/*.md docs/adr/*.md docs/agents/*.md
-broken: 0
+$ prek run doc-links --files README.md CONTRIBUTING.md AGENTS.md GLOSSARY.md CODING_STANDARDS.md docs/*.md docs/adr/*.md docs/agents/*.md
 $ for case in 1:run/simplify.sisu 7:run/manager.sisu 9:run/shared_arrays.sisu 11:run-fail/factorial.sisu 15:diagnostics/counter.sisu; do awk -v k="${case%%:*}" '/^```/{n++;next} n==k' README.md | diff - "crates/sisuc/tests/${case#*:}"; done
 $ awk '/^```/{n++;next} n==17' README.md | tail -n +2 | diff - crates/sisuc/tests/diagnostics/counter.err
 $ make site
 $ prek run --files <each changed file>
 ```
+
+`prek run doc-links --files <path>` runs `.agents/skills/update-docs/scripts/check_links.py` on the given files.
 
 The two `awk` lines print nothing when the README's examples match their
 cases. The number before each case is its code block's position: block `k`

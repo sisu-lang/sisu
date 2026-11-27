@@ -17,36 +17,17 @@ For a model that agy (Antigravity CLI) serves, such as `gemini-4-neon-medium`.
 The model name holds the effort, so the launch has no `--effort`. The
 reviewer runs in agy's terminal sandbox, with `RUN` as its workspace.
 
-Write `RUN/agy-settings.json` first. Each `read_file` rule mounts its
-directory read-only, and the `write_file` rule for `RUN` makes `RUN`
-writable. Give `read_file` for the main checkout, the directory above
-`git -C <repository root> rev-parse --path-format=absolute --git-common-dir`.
-A worktree's `.git` points into it, so git fails without it. Give one
-`read_file` rule for each skill directory in the brief. Give one `command`
-rule with the full path of each `sisu` build in `RUN/bin`:
+`review_round.py prepare` writes `RUN/agy-settings.json` on every round. Each
+`read_file` rule mounts its directory read-only, and `write_file(RUN)` makes
+`RUN` writable. The generated file allows the main checkout (so worktree git works) and every
+skill directory in the brief. It also allows every `sisu` build in `RUN/bin`,
+the safe read commands, and `mcp(GitHits/*)`. It denies writes to the main
+checkout.
 
-```json
-{
-  "agentMode": "",
-  "toolPermission": "request-review",
-  "permissions": {
-    "allow": [
-      "read_file(<main checkout>)",
-      "read_file(<each skill directory in the brief>)",
-      "write_file(RUN)",
-      "command(git -C)", "command(rg)", "command(ls)", "command(cat)",
-      "command(head)", "command(sed -n)", "command(python3)",
-      "command(RUN/bin/<sha>/sisu)",
-      "mcp(GitHits/*)"
-    ],
-    "deny": ["write_file(<main checkout>)"]
-  }
-}
-```
-
-Then run it from `RUN`:
+Run it from `RUN` with `set -euo pipefail` so a failed step stops the launch:
 
 ```
+set -euo pipefail
 cd RUN && PAGER=cat agy -p "Read RUN/brief.md and follow it. Your scratch directory is RUN/outside-scratch. Run only the commands that RUN/agy-settings.json allows, each in its own call, as git -C <repository root> ... for git. Use no pipe, no redirection and no \$(...). A command that the settings do not allow ends your run with no report. Name each check that you could not run under Unverified. Use rg and rg --files, not grep or find. To export a commit, run git -C <repository root> archive -o RUN/outside-scratch/<sha>.tar <sha>, then python3 -m tarfile -e RUN/outside-scratch/<sha>.tar <dir>. Do not run cargo or make, also not through python3. Your final reply is the whole report." --settings RUN/agy-settings.json --sandbox --model <model> > RUN/<stem>.md 2> RUN/<stem>-cli.log
 ```
 
@@ -67,6 +48,17 @@ The prompt tells the reviewer which commands to use in place of `grep`,
 `find`, `tar`, `cargo` and `make`. A script that runs git with no `-C`, such
 as `scripts/golden_diff.py`, fails in `RUN`. Run these scripts yourself, and
 put their output into `RUN`.
+
+## kiro-cli
+
+For a model that `kiro-cli` serves, such as `claude-opus-5.5`. Run it from
+`RUN/outside-scratch` (or `RUN/opus-scratch`). Send stdout to a `.out` file so
+a later round does not read it as a second Markdown report:
+
+```
+set -euo pipefail
+cd RUN/outside-scratch && kiro-cli chat --no-interactive --trust-all-tools --model <model> --effort <effort> "Read RUN/brief.md and follow it. Your scratch directory is RUN/outside-scratch. Do not edit or write any file in <repository root>. Write your report to RUN/<stem>.md; your final reply is that report." < /dev/null > RUN/<stem>-cli.out 2> RUN/<stem>-cli.log
+```
 
 ## copilot
 

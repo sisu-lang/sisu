@@ -27,6 +27,7 @@ from typing import Any, overload
 REPO = "repos/sisu-lang/sisu"
 POLL = float(os.environ.get("WATCH_PR_POLL", "60"))
 LIMIT = float(os.environ.get("WATCH_PR_LIMIT", str(2 * 60 * 60)))
+LOG_TIMEOUT = float(os.environ.get("WATCH_PR_LOG_TIMEOUT", "60"))
 IN_PROGRESS = "<!-- This is an auto-generated comment: review in progress"
 PASSED = {"success", "skipped", "neutral"}
 # The shown text of a bot comment that asks for no action.
@@ -35,6 +36,12 @@ QUIET = re.compile(
     r"No actionable comments were generated"
     r"|Coverage: .*changed lines(?: 100\.0% \((\d+) of \1\)|: none)"
 )
+JOB_ID = re.compile(r"/job/(\d+)(?:$|[/?#])")
+ANSI = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+TIMESTAMP = re.compile(r"^\ufeff?\d{4}-\d{2}-\d{2}T\S+(?:\s+|$)")
+GENERIC_EXIT = re.compile(r"^##\[error\]Process completed with exit code \d+\.$")
+ERROR_LINE = re.compile(r"##\[error\]|^E:\s|\berror\[|\berror:|\bERROR\b|\bFAIL\b|\bFAILED\b")
+ERROR_TAIL_LINES = 3
 
 
 @overload
@@ -73,7 +80,42 @@ def digest(body: str | None) -> str:
     return hashlib.sha256(" ".join(shown.split()).encode()).hexdigest()[:12]
 
 
-def events(pr: str, me: str) -> list[tuple[str, str]]:
+def job_error(html_url: str | None) -> str:
+    """Return the last error lines of a failed GitHub Actions job, or '' when unavailable."""
+    match = JOB_ID.search(html_url or "")
+    if not match:
+        return ""
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "api",
+                "--allow-escape-sequences",
+                f"{REPO}/actions/jobs/{match.group(1)}/logs",
+            ],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=LOG_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return ""
+    if result.returncode != 0:
+        return ""
+    cleaned: list[str] = []
+    for raw in ANSI.sub("", result.stdout).splitlines():
+        line = TIMESTAMP.sub("", raw).strip()
+        if line == "Post job cleanup.":
+            break
+        if line:
+            cleaned.append(line)
+    picked = [line for line in cleaned if ERROR_LINE.search(line) and not GENERIC_EXIT.match(line)]
+    tail = (picked or cleaned)[-ERROR_TAIL_LINES:]
+    return " | ".join(tail)[:300]
+
+
+def events(pr: str, me: str, seen: set[str] | None = None) -> list[tuple[str, str]]:
     """Return each event now on the pull request, as (key, line)."""
     found: list[tuple[str, str]] = [
         (
@@ -112,15 +154,23 @@ def events(pr: str, me: str) -> list[tuple[str, str]]:
     runs = gh(f"{REPO}/commits/{sha}/check-runs?per_page=100", "check_runs")
     failed = [r for r in runs if r["status"] == "completed" and r["conclusion"] not in PASSED]
     if failed:
-        found.append(
-            (
-                f"ci-fail {sha}",
-                "checks failed at "
-                + sha[:8]
-                + ": "
-                + "; ".join(f"{r['name']} {r['html_url']}" for r in failed),
-            )
+        key = f"ci-fail {sha}"
+        summary = (
+            "checks failed at "
+            + sha[:8]
+            + ": "
+            + "; ".join(f"{r['name']} {r['html_url']}" for r in failed)
         )
+        details = (
+            []
+            if seen is not None and key in seen
+            else [
+                f"  {r['name']}: {detail}"
+                for r in failed
+                if (detail := job_error(r.get("html_url")))
+            ]
+        )
+        found.append((key, "\n".join([summary, *details])))
     # A workflow that has not started yet has a suite but no check runs. Other apps keep a queued
     # suite with no runs (Greptile until someone asks it), so only GitHub Actions suites count.
     elif (
@@ -152,7 +202,7 @@ def main() -> int:
     while True:
         try:
             me = me or gh("user")["login"]
-            new = [(k, line) for k, line in events(pr, me) if k not in seen]
+            new = [(k, line) for k, line in events(pr, me, seen) if k not in seen]
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             # A network fault, a rate limit or a hung request: try again at the next poll.
             print(
