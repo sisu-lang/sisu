@@ -20,6 +20,13 @@ use super::{Codegen, POSITIONED};
 use crate::source::Span;
 use crate::tir::{Class, ClassId, EnumId, Inline, Program, Type, TypeKind};
 
+#[cfg(test)]
+thread_local! {
+    /// How many calls of `Codegen::niche` and of the `Optional` arm of `Codegen::llvm_type`
+    /// happen on this thread. It counts each call, also one that a cache answers.
+    pub(super) static LAYOUT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// The tag of a TBAA type `name` under `root`. Every type sits directly under the root, so LLVM
 /// assumes that an access tagged with one never touches memory that an access tagged with
 /// another does; codegen must keep that true.
@@ -316,7 +323,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             // whether it holds a value, then the value.
             TypeKind::Optional(payload) => {
                 #[cfg(test)]
-                crate::tir::LAYOUT_STEPS.set(crate::tir::LAYOUT_STEPS.get() + 1);
+                LAYOUT_STEPS.set(LAYOUT_STEPS.get() + 1);
                 // Each borrow ends before the recursive call, which borrows the cache again.
                 let known = self.optional_types.borrow().get(&ty).copied();
                 if known.is_some() {
@@ -342,7 +349,7 @@ impl<'ctx> Codegen<'ctx, '_> {
     /// layer below it, so a walk with no memory reads the layers quadratically.
     pub(super) fn niche(&self, payload: Type) -> Option<Niche> {
         #[cfg(test)]
-        crate::tir::LAYOUT_STEPS.set(crate::tir::LAYOUT_STEPS.get() + 1);
+        LAYOUT_STEPS.set(LAYOUT_STEPS.get() + 1);
         // Each borrow ends before the recursive call, which borrows the cache again.
         let known = self.niches.borrow().get(&payload).copied();
         if let Some(niche) = known {

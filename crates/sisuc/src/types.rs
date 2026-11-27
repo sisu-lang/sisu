@@ -323,7 +323,8 @@ thread_local! {
     static SUBSTITUTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The kinds `TypeKind::names` has looked at on this thread, one for each type interned.
     static NAMED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// The entries `Type::entry` has read on this thread: each read of a kind or a flag.
+    /// The entries `Type::entry` reads on this thread: each read of a kind, a flag, or
+    /// `without_optionals`.
     pub(crate) static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The most steps `write_steps` has held at once on this thread.
     static HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
@@ -672,12 +673,23 @@ const _: () = assert!(
     "the segments should hold a kind for every u32 handle"
 );
 
-/// A type's kind, and what it names.
-type Entry = (TypeKind, Names);
+/// A type's kind, what it names, and the type with each `?` removed.
+#[derive(Clone, Copy, Debug)]
+struct Entry {
+    kind: TypeKind,
+    names: Names,
+    without_optionals: Type,
+}
 
-/// The kind of each interned handle past `SEEDS`, at its index, with what it names. `intern` sets
-/// a slot under the lock before it hands out the handle, and segments never move, so `kind` reads
-/// without the lock: `Type::kind` is the hottest read of the checker and codegen.
+const _: () = assert!(
+    size_of::<Entry>() == size_of::<(TypeKind, Names)>(),
+    "storing without_optionals should fit in Entry's padding"
+);
+
+/// The entry of each interned handle past `SEEDS`: its kind, what it names, and
+/// `without_optionals`. `intern` sets a slot under the lock before it returns the handle, and
+/// segments never move, so `entry` reads without the lock. `Type::kind` is the hottest read of
+/// the checker and codegen.
 static KINDS: [OnceLock<Box<[OnceLock<Entry>]>>; SEGMENTS] = [const { OnceLock::new() }; SEGMENTS];
 
 /// The segment of `KINDS` that holds handle index `i`, and `i`'s slot in it.
@@ -706,8 +718,16 @@ impl Type {
         let (segment, at) = slot(types.len);
         let slots =
             KINDS[segment].get_or_init(|| (0..FIRST << segment).map(|_| OnceLock::new()).collect());
+        let without_optionals = match kind {
+            TypeKind::Optional(payload) => payload.without_optionals(),
+            _ => ty,
+        };
         slots[at]
-            .set((kind, kind.names()))
+            .set(Entry {
+                kind,
+                names: kind.names(),
+                without_optionals,
+            })
             .expect("only `intern` should set a slot, under the lock, at the next index");
         types.len += 1;
         types.ids.insert(kind, ty);
@@ -716,7 +736,12 @@ impl Type {
 
     /// The structure, read without the lock.
     pub(crate) fn kind(self) -> TypeKind {
-        self.entry().0
+        self.entry().kind
+    }
+
+    /// This type with each `?` removed: `T` for `T`, `T?` and `T??`. A read of one entry.
+    pub(crate) fn without_optionals(self) -> Type {
+        self.entry().without_optionals
     }
 
     /// Whether the type names a type parameter, anywhere inside it.
@@ -767,12 +792,17 @@ impl Type {
         }
         let (mut found, mut seen, mut stack) = (Vec::new(), FxHashSet::default(), vec![self]);
         while let Some(ty) = stack.pop() {
-            let (kind, names) = ty.entry();
+            let Entry {
+                kind,
+                names,
+                without_optionals,
+            } = ty.entry();
             if !names.any || !seen.insert(ty) {
                 continue;
             }
             match kind {
-                TypeKind::Array(inner) | TypeKind::Optional(inner) => stack.push(inner),
+                TypeKind::Array(inner) => stack.push(inner),
+                TypeKind::Optional(_) => stack.push(without_optionals),
                 TypeKind::Assoc(base, _, args, _) => {
                     stack.push(base);
                     stack.extend(args.get());
@@ -802,7 +832,7 @@ impl Type {
     }
 
     fn names(self) -> Names {
-        self.entry().1
+        self.entry().names
     }
 
     fn entry(self) -> Entry {
@@ -811,7 +841,11 @@ impl Type {
         let i = self.0 as usize;
         // A constant is read before anything is interned, so its kind is not in `KINDS`.
         if let Some(&kind) = SEEDS.get(i) {
-            return (kind, Names::default());
+            return Entry {
+                kind,
+                names: Names::default(),
+                without_optionals: self,
+            };
         }
         let (segment, at) = slot(i);
         *KINDS[segment]
@@ -1646,5 +1680,67 @@ mod tests {
         assert!(cut_with);
         assert_eq!((cut_with, over), (cut_plain, plain));
         assert!(over_steps > 2 * (k + 1) + 3, "{over_steps} steps");
+    }
+
+    #[test]
+    fn without_optionals_should_read_one_entry_at_any_depth() {
+        let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        let bases = [
+            ("i64", Type::I64),
+            ("u8", Type::U8),
+            ("f64", Type::F64),
+            ("bool", Type::BOOL),
+            ("char", Type::CHAR),
+            ("string", Type::STRING),
+            ("unit", Type::UNIT),
+            ("never", Type::NEVER),
+            (
+                "class",
+                Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE)),
+            ),
+            (
+                "struct",
+                Type::intern(TypeKind::Struct(StructId(0), TypeArgs::NONE)),
+            ),
+            (
+                "enum",
+                Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE)),
+            ),
+            ("param", param),
+            ("array", Type::array(Type::I64)),
+            (
+                "assoc",
+                Type::intern(TypeKind::Assoc(param, InterfaceId(0), TypeArgs::NONE, 0)),
+            ),
+            (
+                "any",
+                Type::intern(TypeKind::Any(InterfaceId(0), TypeArgs::NONE)),
+            ),
+        ];
+        for (name, base) in bases {
+            for depth in [0, 1, 2, 1_000] {
+                let ty = (0..depth).fold(base, |t, _| Type::optional(t));
+                READS.set(0);
+                assert_eq!(
+                    (ty.without_optionals(), READS.get()),
+                    (base, 1),
+                    "{name} depth {depth}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn anys_should_skip_optional_layers_in_constant_reads() {
+        let any = Type::intern(TypeKind::Any(InterfaceId(3), TypeArgs::NONE));
+        let deep = (0..1_000).fold(any, |t, _| Type::optional(t));
+        READS.set(0);
+        assert_eq!(deep.anys(), [InterfaceId(3)]);
+        assert_eq!(READS.get(), 3, "(any I)?^1000");
+
+        let wrapped = Type::array(deep);
+        READS.set(0);
+        assert_eq!(wrapped.anys(), [InterfaceId(3)]);
+        assert_eq!(READS.get(), 4, "[(any I)?^1000]");
     }
 }

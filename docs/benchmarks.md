@@ -569,7 +569,7 @@ prints each known case on stdout. It exits with code 1 when:
 
 The pull request that fixes a known case removes its row. The gaps between
 the numbers keep a row from changing between known and fixed when a change
-moves a ratio a little. `KNOWN` has 18 rows. Seven are for the shapes mut
+moves a ratio a little. `KNOWN` has 16 rows. Seven are for the shapes mut
 exits and owned exits (#502), in `mir`, `codegen` and the LLVM stages. Each
 `return` writes its own cleanup, so n exits and n values give n² statements.
 Real programs have few of these: no exit in the benchmark programs or the
@@ -598,10 +598,9 @@ One row is for body inference: open pair nest (#686) nests generic `Pair`
 structs, so its `codegen` grows for the same `StructType::checkBody` reason as
 struct paths while `check` stays linear.
 
-Two rows are for the optional wrap chain (#835). It chains
-`wrap<T>(t: T) -> T?` calls to check that `mono` stays linear (#825). Its
-`check` and `mir` stages grow because `Type::is_counted` walks each optional
-layer uncached, and `check::infer_call` walks the nested optionals.
+Each interned `Type` entry stores its innermost non-optional type. So optional
+wrap chain (#835) is linear in `check` and `mir`, and `mono` stays linear
+(#825).
 
 Each `tir::Expr` holds its exit flag. The checker sets it once, when it makes
 the expression. So array literal depth (#344), type depth, method chain,
