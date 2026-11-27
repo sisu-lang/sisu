@@ -1385,16 +1385,18 @@ mod tests {
         assert_eq!(failure.property, Property::Clean);
     }
 
+    /// Uses `TERM` (15) instead of a core-dumping signal like `SEGV`. Host crash handlers such as
+    /// `apport` then do not stall the test under heavy instrumented runs.
     #[test]
-    fn a_signal_is_its_number() {
+    fn run_should_report_the_signal_number_of_a_terminated_child() {
         let scratch = Scratch::new();
-        let exe = scratch.0.join("segfault.sh");
-        fs::write(&exe, "#!/bin/sh\nkill -SEGV $$\n").expect("the test should write the script");
+        let exe = scratch.0.join("term.sh");
+        fs::write(&exe, "#!/bin/sh\nkill -TERM $$\n").expect("the test should write the script");
         fs::set_permissions(&exe, fs::Permissions::from_mode(0o700))
             .expect("the test should make the script executable");
         let stdin = scratch.0.join("stdin.txt");
         fs::write(&stdin, "").expect("the test should write the stdin");
-        assert_eq!(run(&exe, &stdin, &scratch.0, LIMIT).exit, Exit::Signal(11));
+        assert_eq!(run(&exe, &stdin, &scratch.0, LIMIT).exit, Exit::Signal(15));
     }
 
     /// A run that exits with `code` and prints `stdout` and `stderr`.
