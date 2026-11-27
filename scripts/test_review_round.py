@@ -306,14 +306,15 @@ class ReviewRound(unittest.TestCase):
             check=False,
             env=ENV,
         )
-        # Fake brief outputs two skill paths (one repeated) and fake build creates two SHA bins
-        # plus one non-SHA directory that agy-settings must ignore.
+        # Fake brief outputs two skill paths (one repeated) and fake build creates SHA-1 and
+        # SHA-256 bins plus one 41-hex directory that agy-settings must ignore.
         sha_a = "a" * 40
-        sha_b = "b" * 40
+        sha_b = "b" * 64
+        bad_sha = "a" * 41
         scripts = self.repo / ".agents/skills/review-sisu/scripts"
         (scripts / "build_sisu.sh").write_text(
-            f'mkdir -p "$2/bin/{sha_b}" "$2/bin/{sha_a}" "$2/bin/tmp"\n'
-            f'touch "$2/bin/{sha_b}/sisu" "$2/bin/{sha_a}/sisu" "$2/bin/tmp/sisu"\n'
+            f'mkdir -p "$2/bin/{sha_b}" "$2/bin/{sha_a}" "$2/bin/{bad_sha}"\n'
+            f'touch "$2/bin/{sha_b}/sisu" "$2/bin/{sha_a}/sisu" "$2/bin/{bad_sha}/sisu"\n'
         )
         (scripts / "diff_brief.py").write_text(
             "import sys\nfrom pathlib import Path\n"
@@ -370,8 +371,18 @@ class ReviewRound(unittest.TestCase):
         allow_r2 = json.loads((self.run_dir / "agy-settings.json").read_text(encoding="utf-8"))[
             "permissions"
         ]["allow"]
-        self.assertIn("read_file(/opt/s1)", allow_r2)
-        self.assertIn("read_file(/opt/s2)", allow_r2)
+        self.assertEqual(
+            [entry for entry in allow_r2 if entry.startswith("read_file(/opt/")],
+            ["read_file(/opt/s1)", "read_file(/opt/s2)"],
+        )
+        # Running prepare on the main checkout itself must not duplicate main_abs.
+        result = self.script("prepare", "main..main", "--round", "2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        main_settings = json.loads(
+            (self.run_dir / "agy-settings.json").read_text(encoding="utf-8")
+        )["permissions"]
+        self.assertEqual(main_settings["allow"].count(f"read_file({main_abs})"), 1)
+        self.assertEqual(main_settings["deny"], [f"write_file({main_abs})"])
 
     def test_verify_should_strip_the_current_round_suffix_from_a_report_stem(self) -> None:
         self.script("prepare", "main..main")
@@ -574,7 +585,9 @@ class Stats(unittest.TestCase):
 
     def test_stats_should_count_rounds_and_rulings_by_round_and_severity(self) -> None:
         self.two_rounds({"rulings-final.md": "sol 1: Reject: not a round.\n"})
-        self.run_dir("one-round", {"brief.md": ""})
+        one = self.run_dir("one-round", {"brief.md": ""})
+        (one / "scratch").mkdir()
+        (one / "scratch/brief.md").write_text("")
         self.run_dir("not-a-review", {"notes.md": ""})
         result = self.stats()
         self.assertEqual(result.returncode, 0, result.stderr)

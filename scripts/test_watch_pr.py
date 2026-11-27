@@ -27,6 +27,7 @@ if key not in table or table[key] is None:
 answer = table[key]
 if isinstance(answer, dict) and '__sleep__' in answer:
     time.sleep(answer['__sleep__'])
+    print('2026-11-26T20:17:31Z E: late error')
     sys.exit(0)
 if isinstance(answer, dict) and '__b64__' in answer and '--allow-escape-sequences' in sys.argv:
     sys.stdout.buffer.write(base64.b64decode(answer['__b64__']))
@@ -207,16 +208,28 @@ class WatchPr(unittest.TestCase):
 
     def test_watch_should_report_a_failed_check_and_then_the_end_of_checks_once(self) -> None:
         runs = f"{P}/commits/abcdef0123/check-runs"
+        non_actions = "https://ci.example/job/42abc"
+        self.table[f"{P}/actions/jobs/42/logs"] = "2026-11-26T20:17:31Z E: wrong job\n"
         self.table[runs] = {
             "check_runs": [
-                {"status": "completed", "conclusion": "failure", "name": "test", "html_url": "u"},
+                {
+                    "status": "completed",
+                    "conclusion": "failure",
+                    "name": "test",
+                    "html_url": non_actions,
+                },
                 {"status": "in_progress"},
             ]
         }
-        self.assertEqual(self.watch().stdout, "checks failed at abcdef01: test u\n")
+        self.assertEqual(self.watch().stdout, f"checks failed at abcdef01: test {non_actions}\n")
         self.table[runs] = {
             "check_runs": [
-                {"status": "completed", "conclusion": "success", "name": "test", "html_url": "u"}
+                {
+                    "status": "completed",
+                    "conclusion": "success",
+                    "name": "test",
+                    "html_url": non_actions,
+                }
             ]
         }
         self.assertEqual(self.watch().stdout, "checks passed at abcdef01: 1 checks\n")
@@ -224,20 +237,22 @@ class WatchPr(unittest.TestCase):
 
     def test_watch_should_print_stripped_error_lines_of_a_failed_actions_job(self) -> None:
         runs = f"{P}/commits/abcdef0123/check-runs"
-        url = "https://github.com/sisu-lang/sisu/actions/runs/99/job/42"
+        url = "https://github.com/sisu-lang/sisu/actions/runs/99/job/42?pr=7"
         self.table[runs] = {
             "check_runs": [
                 {"status": "completed", "conclusion": "failure", "name": "Lint", "html_url": url}
             ]
         }
-        long_err = "error[E0308]: " + ("x" * 160)
+        long_err = "error[E0308]: " + ("x" * 280)
+        capped = f"ERROR second | FAIL third | {long_err}"[:300]
+        self.assertEqual(len(capped), 300)
         cases: list[tuple[str, Any, str]] = [
             (
                 "bom, ansi, generic exit ignored, cleanup dropped",
                 (
                     "\ufeff2026-11-26T20:17:24Z \x1b[31mE: Failed to fetch mirror 403 Forbidden\x1b[0m\n"
                     "2026-11-26T20:17:32Z ##[error]Process completed with exit code 100.\n"
-                    "2026-11-26T20:17:32Z Post job cleanup.\n"
+                    "2026-11-26T20:17:32Z Post job cleanup.   \n"
                     "2026-11-26T20:17:32Z ##[error]cleanup noise\n"
                 ),
                 "E: Failed to fetch mirror 403 Forbidden",
@@ -252,16 +267,17 @@ class WatchPr(unittest.TestCase):
                     "2026-11-26T20:17:24Z FAIL third\n"
                     f"2026-11-26T20:17:25Z {long_err}\n"
                 ),
-                f"ERROR second | FAIL third | {long_err}"[:300],
+                capped,
             ),
             (
-                "clippy error: matches even before generic exit footer",
+                "workflow annotation and clippy error: match before generic exit footer",
                 (
+                    "2026-11-26T20:17:23Z ##[error]line coverage 98.1% is below 98.5%\n"
                     "2026-11-26T20:17:24Z error: item foo is never used\n"
                     "2026-11-26T20:17:25Z   --> crates/sisuc/src/lib.rs:4:4\n"
                     "2026-11-26T20:17:26Z ##[error]Process completed with exit code 101.\n"
                 ),
-                "error: item foo is never used",
+                "##[error]line coverage 98.1% is below 98.5% | error: item foo is never used",
             ),
             (
                 "fallback to cleaned tail when only generic exit matches",
@@ -275,10 +291,11 @@ class WatchPr(unittest.TestCase):
                 "plain step one | plain step two | ##[error]Process completed with exit code 1.",
             ),
             (
-                "non-utf8 bytes replaced instead of crashing",
+                "non-utf8 bytes replaced, FAILED matched over plain lines, trailing spaces stripped",
                 {
                     "__b64__": base64.b64encode(
-                        b"2026-11-26T20:17:31Z FAILED bad byte \xff here\n"
+                        b"2026-11-26T20:17:30Z running 1 test\n"
+                        b"2026-11-26T20:17:31Z FAILED bad byte \xff here   \n"
                     ).decode("ascii")
                 },
                 "FAILED bad byte \ufffd here",

@@ -441,7 +441,7 @@ def briefed(runs: list[Path]) -> list[tuple[Path, int]]:
         if briefs:
             found.append((run, max(n for _, n in briefs)))
             continue
-        for child in sorted(p for p in run.iterdir() if p.is_dir()):
+        for child in sorted(run.iterdir()):
             child_briefs = by_round(child, "brief")
             if child_briefs:
                 found.append((child, max(n for _, n in child_briefs)))
