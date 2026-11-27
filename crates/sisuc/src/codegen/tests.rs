@@ -7796,3 +7796,139 @@ fn boxed_write_path_should_emit_linear_ir() {
         "IR lines grew superlinearly: 16 -> {lines_16}, 32 -> {lines_32}"
     );
 }
+
+#[test]
+fn zero_and_one_case_switches_should_emit_branches_instead_of_llvm_switches() {
+    let context = Context::create();
+    // Covers 0- and 1-case dispatches in pattern matching, equality, release and show helpers.
+    let src = "\
+enum Light {
+    Red
+    Yellow
+    Green
+}
+
+enum One {
+    Only(i64)
+}
+
+enum Two {
+    Empty
+    Hold(string)
+}
+
+enum Tree {
+    Leaf
+    Node(Tree, Tree)
+}
+
+fn wait(l: Light) -> bool {
+    match l {
+        Light.Red => true
+        _ => false
+    }
+}
+
+fn digit(n: i64) -> i64 {
+    match n {
+        0 => 10
+        1 => 20
+        _ => 30
+    }
+}
+
+fn main() {
+    print(wait(Light.Red))
+    print(digit(0))
+    print(Light.Red == Light.Green)
+    print(One.Only(1))
+    print(Two.Empty)
+    print(Two.Empty == Two.Hold(\"a\"))
+    let mut two = Two.Hold(\"a\")
+    two = Two.Empty
+    print(two)
+    print(Tree.Node(Tree.Leaf, Tree.Leaf))
+    print(Tree.Leaf == Tree.Node(Tree.Leaf, Tree.Leaf))
+}";
+    let module = compiled(&context, src);
+    let ir = module.print_to_string().to_string();
+
+    let count = |name: &str, opcode: InstructionOpcode| -> usize {
+        let function = module
+            .get_function(name)
+            .unwrap_or_else(|| panic!("the module should define `{name}` in\n{ir}"));
+        instructions(function)
+            .into_iter()
+            .filter(|inst| inst.get_opcode() == opcode)
+            .count()
+    };
+
+    let mut failures = Vec::new();
+    for (name, min_icmp, min_cond_br, min_uncond_br) in [
+        ("sisu.wait", 1, 1, 0),
+        ("sisu.digit", 2, 2, 0),
+        ("sisu_rc.eq.Light", 0, 0, 1),
+        ("sisu_show.One", 0, 0, 1),
+        ("sisu_show.Two", 1, 1, 0),
+        ("sisu_rc.eq.Two", 1, 1, 0),
+        ("sisu_rc.release.Two", 1, 1, 0),
+        ("sisu_show_component.Tree", 1, 1, 2),
+        ("sisu_rc.eq_component.Tree", 1, 1, 2),
+    ] {
+        let switches = count(name, InstructionOpcode::Switch);
+        let icmps = count(name, InstructionOpcode::ICmp);
+        let cond_brs = count(name, InstructionOpcode::CondBr);
+        let uncond_brs = count(name, InstructionOpcode::UncondBr);
+        if switches != 0 || icmps < min_icmp || cond_brs < min_cond_br || uncond_brs < min_uncond_br
+        {
+            failures.push(format!(
+                "{name}: switches={switches}, icmp={icmps}, cond_br={cond_brs}, uncond_br={uncond_brs}"
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "0- and 1-case switches should emit branches, got:\n{}\n\n{ir}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn multi_case_switch_should_keep_an_llvm_switch_terminator() {
+    let context = Context::create();
+    // An `|` pattern and a three-variant enum `show` helper each need at least two switch cases.
+    let src = "\
+enum Light {
+    Red
+    Yellow
+    Green
+}
+
+fn or_match(n: i64) -> i64 {
+    match n {
+        0 | 1 => 10
+        _ => 20
+    }
+}
+
+fn main() {
+    print(or_match(0))
+    print(Light.Red)
+}";
+    let module = compiled(&context, src);
+    let ir = module.print_to_string().to_string();
+
+    for name in ["sisu.or_match", "sisu_show.Light"] {
+        let function = module
+            .get_function(name)
+            .unwrap_or_else(|| panic!("the module should define `{name}` in\n{ir}"));
+        let switches = instructions(function)
+            .into_iter()
+            .filter(|inst| inst.get_opcode() == InstructionOpcode::Switch)
+            .count();
+        assert!(
+            switches >= 1,
+            "{name} should keep an LLVM switch terminator in\n{ir}"
+        );
+    }
+}
