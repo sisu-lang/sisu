@@ -673,7 +673,7 @@ const _: () = assert!(
     "the segments should hold a kind for every u32 handle"
 );
 
-/// A type's kind, what it names, and the type with each `?` removed.
+/// A type's kind, what it names, and the type with leading `?` removed.
 #[derive(Clone, Copy, Debug)]
 struct Entry {
     kind: TypeKind,
@@ -739,7 +739,8 @@ impl Type {
         self.entry().kind
     }
 
-    /// This type with each `?` removed: `T` for `T`, `T?` and `T??`. A read of one entry.
+    /// This type with leading `?` removed: `T` for `T`, `T?` and `T??`, and `[i64?]` for
+    /// `[i64?]?`. A read of one entry.
     pub(crate) fn without_optionals(self) -> Type {
         self.entry().without_optionals
     }

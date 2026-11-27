@@ -35,8 +35,10 @@ STARTS_BLOCK = re.compile(
     r"([-*+] |\d+[.)] |GIVEN\b|WHEN\b|THEN\b|AND\b|BUT\b|Examples\b|Scenario\b)"
 )
 FENCE = re.compile(r"\s*(```|~~~)")
-# A semicolon or a colon also ends a count, so that a false alarm stays rare.
-ENDS_SENTENCE = re.compile(r"[.!?;:][)\]\"'*_]*$")
+# A full stop, question mark or exclamation mark always ends a count. A semicolon or colon ends a
+# count only outside parentheses, so a long parenthetical list still trips the limit.
+ENDS_SENTENCE = re.compile(r"[.!?][)\]\"'*_]*$")
+ENDS_CLAUSE = re.compile(r"[;:][)\]\"'*_]*$")
 # A heading, an HTML comment or a table row, in Markdown or in a comment.
 NOT_PROSE = ("#", "<!--", "|")
 HUNK = re.compile(r"@@ -\S+ \+(\d+)(?:,(\d+))? @@")
@@ -119,14 +121,16 @@ def long_sentences(numbered: list[tuple[int, str]], changed: set[int]) -> list[t
     words = 0
     first = 0
     touched = False
+    parens = 0
     last = None
 
     def end() -> None:
-        nonlocal words, touched
+        nonlocal words, touched, parens
         if words > SENTENCE and touched:
             found.append((first, words))
         words = 0
         touched = False
+        parens = 0
 
     for n, text in numbered:
         if text.lstrip().startswith(NOT_PROSE):
@@ -136,13 +140,16 @@ def long_sentences(numbered: list[tuple[int, str]], changed: set[int]) -> list[t
         last = n
         plain = LINK.sub(r"\1", CODE_SPAN.sub("code", text))
         for word in plain.split():
+            prefix = word.rstrip(")]\"'*_")
+            parens_at_punct = max(0, parens + prefix.count("(") - prefix.count(")"))
+            parens = max(0, parens + word.count("(") - word.count(")"))
             if not any(c.isalnum() for c in word):
                 continue
             if words == 0:
                 first = n
             words += 1
             touched = touched or n in changed
-            if ENDS_SENTENCE.search(word):
+            if ENDS_SENTENCE.search(word) or (parens_at_punct == 0 and ENDS_CLAUSE.search(word)):
                 end()
     end()
     return found

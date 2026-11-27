@@ -28,11 +28,13 @@ Run it from `RUN` with `set -euo pipefail` so a failed step stops the launch:
 
 ```
 set -euo pipefail
-cd RUN && PAGER=cat agy -p "Read RUN/brief.md and follow it. Your scratch directory is RUN/outside-scratch. Run only the commands that RUN/agy-settings.json allows, each in its own call, as git -C <repository root> ... for git. Use no pipe, no redirection and no \$(...). A command that the settings do not allow ends your run with no report. Name each check that you could not run under Unverified. Use rg and rg --files, not grep or find. To export a commit, run git -C <repository root> archive -o RUN/outside-scratch/<sha>.tar <sha>, then python3 -m tarfile -e RUN/outside-scratch/<sha>.tar <dir>. Do not run cargo or make, also not through python3. Your final reply is the whole report." --settings RUN/agy-settings.json --sandbox --model <model> > RUN/<stem>.md 2> RUN/<stem>-cli.log
+cd RUN && PAGER=cat agy -p "Read RUN/brief.md and follow it. Your scratch directory is RUN/outside-scratch. Run only the commands that RUN/agy-settings.json allows, each in its own call, as git -C <repository root> ... for git. Use no pipe, no redirection and no \$(...). A command that the settings do not allow ends your run with no report. Name each check that you could not run under Unverified. Use rg and rg --files, not grep or find. To export a commit, run git -C <repository root> archive -o RUN/outside-scratch/<sha>.tar <sha>, then python3 -m tarfile -e RUN/outside-scratch/<sha>.tar <dir>. Do not run cargo or make, also not through python3. Your final reply is the whole report." --settings RUN/agy-settings.json --sandbox --model <model> < /dev/null > RUN/<stem>.md 2> RUN/<stem>-cli.log
 ```
 
-`PAGER=cat` stops `git` from waiting for a pager in the sandbox. `agy -p` can
-print status lines before `Model:`. Strip them before `review_round.py verify`
+`PAGER=cat` stops `git` from waiting for a pager in the sandbox. `agy -p` buffers
+stdout until exit, so an empty report file during a run is normal. Check the latest
+transcript under `~/.gemini/antigravity-cli/brain/` before you stop a quiet run.
+`agy -p` can print status lines before `Model:`. Strip them before `review_round.py verify`
 with `sed -i '/^Model:/,$!d' RUN/<stem>.md`.
 
 A rule matches the first words of a command, not a glob, so a rule for a
