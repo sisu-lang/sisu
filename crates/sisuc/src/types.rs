@@ -1647,4 +1647,66 @@ mod tests {
         assert_eq!((cut_with, over), (cut_plain, plain));
         assert!(over_steps > 2 * (k + 1) + 3, "{over_steps} steps");
     }
+
+    #[test]
+    fn without_optionals_should_read_one_entry_at_any_depth() {
+        let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        let bases = [
+            ("i64", Type::I64),
+            ("u8", Type::U8),
+            ("f64", Type::F64),
+            ("bool", Type::BOOL),
+            ("char", Type::CHAR),
+            ("string", Type::STRING),
+            ("unit", Type::UNIT),
+            ("never", Type::NEVER),
+            (
+                "class",
+                Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE)),
+            ),
+            (
+                "struct",
+                Type::intern(TypeKind::Struct(StructId(0), TypeArgs::NONE)),
+            ),
+            (
+                "enum",
+                Type::intern(TypeKind::Enum(EnumId(0), TypeArgs::NONE)),
+            ),
+            ("param", param),
+            ("array", Type::array(Type::I64)),
+            (
+                "assoc",
+                Type::intern(TypeKind::Assoc(param, InterfaceId(0), TypeArgs::NONE, 0)),
+            ),
+            (
+                "any",
+                Type::intern(TypeKind::Any(InterfaceId(0), TypeArgs::NONE)),
+            ),
+        ];
+        for (name, base) in bases {
+            for depth in [0, 1, 2, 1_000] {
+                let ty = (0..depth).fold(base, |t, _| Type::optional(t));
+                READS.set(0);
+                assert_eq!(
+                    (ty.without_optionals(), READS.get()),
+                    (base, 1),
+                    "{name} depth {depth}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn anys_should_skip_optional_layers_in_constant_reads() {
+        let any = Type::intern(TypeKind::Any(InterfaceId(3), TypeArgs::NONE));
+        let deep = (0..1_000).fold(any, |t, _| Type::optional(t));
+        READS.set(0);
+        assert_eq!(deep.anys(), [InterfaceId(3)]);
+        assert_eq!(READS.get(), 3, "(any I)?^1000");
+
+        let wrapped = Type::array(deep);
+        READS.set(0);
+        assert_eq!(wrapped.anys(), [InterfaceId(3)]);
+        assert_eq!(READS.get(), 4, "[(any I)?^1000]");
+    }
 }

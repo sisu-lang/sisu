@@ -2033,3 +2033,20 @@ fn non_empty_else_and_else_if_let_should_stay_unflattened() {
     );
     has(&printed, "g", &["branch c#0", "if_present ", "end _"]);
 }
+
+#[test]
+fn optional_wrap_chain_should_read_type_entries_linearly_in_mir() {
+    let reads = |n: usize| {
+        let mut src =
+            String::from("fn wrap<T>(t: T) -> T? {\n    t\n}\n\nfn main() {\n    let a0 = 'a'\n");
+        for i in 1..=n {
+            let _ = writeln!(src, "    let a{i} = wrap(a{})", i - 1);
+        }
+        let _ = writeln!(src, "    print(a{n} == None)\n}}");
+        let program = checked(&src);
+        crate::types::READS.set(0);
+        build(&program);
+        crate::types::READS.get()
+    };
+    assert_near_linear(reads(40), reads(80), reads(120));
+}

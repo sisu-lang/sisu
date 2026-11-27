@@ -4148,4 +4148,87 @@ mod tests {
             "[T.assoc#3?]"
         );
     }
+
+    #[test]
+    fn optional_queries_should_read_constant_entries_at_any_depth() {
+        use crate::types::READS;
+        let make_enum = |name: &str, counted| Enum {
+            name: name.into(),
+            span: Span::new(0, 0),
+            instance: false,
+            type_params: Vec::new(),
+            variants: Vec::new(),
+            counted,
+            cycle: None,
+            reaches: false,
+        };
+        let make_struct = |name: &str, counted| Struct {
+            name: name.into(),
+            span: Span::new(0, 0),
+            instance: false,
+            type_params: Vec::new(),
+            fields: Vec::new(),
+            counted,
+            cycle: None,
+            reaches: false,
+        };
+        let enums = [make_enum("Plain", false), make_enum("Counted", true)];
+        let structs = [make_struct("PlainS", false), make_struct("CountedS", true)];
+        let param = Type::intern(TypeKind::Param(Symbol::intern("T"), 0));
+        let class = Type::intern(TypeKind::Class(ClassId(0), TypeArgs::NONE));
+        let any = Type::intern(TypeKind::Any(InterfaceId(0), TypeArgs::NONE));
+        let assoc = Type::intern(TypeKind::Assoc(param, InterfaceId(0), TypeArgs::NONE, 0));
+        let enum_ty = |id| Type::intern(TypeKind::Enum(EnumId(id), TypeArgs::NONE));
+        let struct_ty = |id| Type::intern(TypeKind::Struct(StructId(id), TypeArgs::NONE));
+        let inline_e = |id| Some(Inline::Enum(EnumId(id)));
+        let inline_s = |id| Some(Inline::Struct(StructId(id)));
+        let cases = [
+            ("i64", Type::I64, false, false, None),
+            ("u8", Type::U8, false, false, None),
+            ("f64", Type::F64, false, false, None),
+            ("bool", Type::BOOL, false, false, None),
+            ("char", Type::CHAR, false, false, None),
+            ("unit", Type::UNIT, false, false, None),
+            ("never", Type::NEVER, false, false, None),
+            ("string", Type::STRING, true, true, None),
+            ("array", Type::array(Type::I64), true, true, None),
+            ("class", class, true, false, None),
+            ("any", any, true, false, None),
+            ("param", param, false, false, None),
+            ("assoc", assoc, false, false, None),
+            ("uncounted enum", enum_ty(0), false, false, inline_e(0)),
+            ("counted enum", enum_ty(1), true, false, inline_e(1)),
+            ("uncounted struct", struct_ty(0), false, false, inline_s(0)),
+            ("counted struct", struct_ty(1), true, false, inline_s(1)),
+        ];
+        for (name, base, counted, trimmable, inline) in cases {
+            for depth in [0, 1, 1_000] {
+                let ty = (0..depth).fold(base, |t, _| Type::optional(t));
+
+                READS.set(0);
+                assert_eq!(ty.is_counted(&enums, &structs), counted, "{name} {depth}");
+                assert!(
+                    READS.get() <= 3,
+                    "{name} depth {depth}: is_counted read {} entries",
+                    READS.get()
+                );
+
+                READS.set(0);
+                assert_eq!(ty.is_trimmable(), trimmable, "{name} {depth}");
+                assert!(
+                    READS.get() <= 2,
+                    "{name} depth {depth}: is_trimmable read {} entries",
+                    READS.get()
+                );
+
+                READS.set(0);
+                assert_eq!(ty.inline_type(), inline, "{name} {depth}");
+                assert!(
+                    READS.get() <= 2,
+                    "{name} depth {depth}: inline_type read {} entries",
+                    READS.get()
+                );
+            }
+        }
+    }
 }
