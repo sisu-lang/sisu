@@ -35,6 +35,11 @@ QUIET = re.compile(
     r"No actionable comments were generated"
     r"|Coverage: .*changed lines(?: 100\.0% \((\d+) of \1\)|: none)"
 )
+JOB_ID = re.compile(r"/job/(\d+)(?:$|[/?#])")
+ANSI = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\S+\s+")
+ERROR_LINE = re.compile(r"##\[error\]|^E:\s|\berror\[|\bFAIL\b|\bFAILED\b")
+ERROR_TAIL_LINES = 3
 
 
 @overload
@@ -71,6 +76,40 @@ def digest(body: str | None) -> str:
     """Return a short hash of the body outside its HTML comments, where bots keep hidden state."""
     shown = re.sub(r"<!--.*?-->", " ", body or "", flags=re.DOTALL)
     return hashlib.sha256(" ".join(shown.split()).encode()).hexdigest()[:12]
+
+
+def job_error(html_url: str | None) -> str:
+    """Return the last error lines of a failed GitHub Actions job, or '' when unavailable."""
+    match = JOB_ID.search(html_url or "")
+    if not match:
+        return ""
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "api",
+                "--allow-escape-sequences",
+                f"{REPO}/actions/jobs/{match.group(1)}/logs",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return ""
+    if result.returncode != 0 or not result.stdout:
+        return ""
+    cleaned: list[str] = []
+    for raw in ANSI.sub("", result.stdout).splitlines():
+        line = TIMESTAMP.sub("", raw).strip()
+        if line == "Post job cleanup.":
+            break
+        if line:
+            cleaned.append(line)
+    picked = [line for line in cleaned if ERROR_LINE.search(line)]
+    tail = (picked or cleaned)[-ERROR_TAIL_LINES:]
+    return " | ".join(tail)[:300]
 
 
 def events(pr: str, me: str) -> list[tuple[str, str]]:
@@ -112,15 +151,17 @@ def events(pr: str, me: str) -> list[tuple[str, str]]:
     runs = gh(f"{REPO}/commits/{sha}/check-runs?per_page=100", "check_runs")
     failed = [r for r in runs if r["status"] == "completed" and r["conclusion"] not in PASSED]
     if failed:
-        found.append(
-            (
-                f"ci-fail {sha}",
-                "checks failed at "
-                + sha[:8]
-                + ": "
-                + "; ".join(f"{r['name']} {r['html_url']}" for r in failed),
-            )
+        summary = (
+            "checks failed at "
+            + sha[:8]
+            + ": "
+            + "; ".join(f"{r['name']} {r['html_url']}" for r in failed)
         )
+        details = [
+            f"  {r['name']}: {detail}" for r in failed if (detail := job_error(r.get("html_url")))
+        ]
+        line = "\n".join([summary, *details])
+        found.append((f"ci-fail {sha}", line))
     # A workflow that has not started yet has a suite but no check runs. Other apps keep a queued
     # suite with no runs (Greptile until someone asks it), so only GitHub Actions suites count.
     elif (

@@ -297,6 +297,55 @@ class ReviewRound(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("--report", result.stderr)
 
+    def test_prepare_should_write_agy_settings_for_worktree_skills_and_builds(self) -> None:
+        worktree = self.root / "wt"
+        self.git("worktree", "add", "-q", "-b", "wt-branch", str(worktree), "main")
+        self.addCleanup(
+            subprocess.run,
+            ["git", "-C", self.repo, "worktree", "remove", "--force", str(worktree)],
+            check=False,
+            env=ENV,
+        )
+        # Fake brief outputs two skill paths (one repeated) and fake build creates one binary.
+        scripts = self.repo / ".agents/skills/review-sisu/scripts"
+        (scripts / "build_sisu.sh").write_text(
+            'mkdir -p "$2/bin/deadbeef" && touch "$2/bin/deadbeef/sisu"\n'
+        )
+        (scripts / "diff_brief.py").write_text(
+            "import sys\nfrom pathlib import Path\n"
+            "Path(sys.argv[3]).write_text("
+            '"Read `/opt/s1/SKILL.md`, `/opt/s2/SKILL.md`, and `/opt/s1/SKILL.md`.")\n'
+        )
+        self.git("add", ".")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "skills")
+        result = subprocess.run(
+            ["python3", SCRIPT, "prepare", worktree, self.run_dir, "main..main"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        settings = json.loads((self.run_dir / "agy-settings.json").read_text(encoding="utf-8"))
+        allow = settings["permissions"]["allow"]
+        main_abs = self.repo.resolve()
+        run_abs = self.run_dir.resolve()
+        self.assertEqual(settings["permissions"]["deny"], [f"write_file({main_abs})"])
+        self.assertIn(f"read_file({main_abs})", allow)
+        self.assertIn("read_file(/opt/s1)", allow)
+        self.assertIn("read_file(/opt/s2)", allow)
+        self.assertEqual(allow.count("read_file(/opt/s1)"), 1)
+        self.assertIn(f"write_file({run_abs})", allow)
+        self.assertIn(f"command({run_abs / 'bin/deadbeef/sisu'})", allow)
+
+    def test_verify_should_strip_the_current_round_suffix_from_a_report_stem(self) -> None:
+        for name in ("rulings-1.md", "neon.md"):
+            (self.run_dir / name).write_text(name)
+        self.script("prepare", "main..main", "--round", "2")
+        (self.run_dir / "neon-2.md").write_text(REPORT)
+        result = self.script("verify", "--round", "2", "--report", "neon-2")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 class Rulings(unittest.TestCase):
     @override
@@ -435,15 +484,26 @@ class Rulings(unittest.TestCase):
     def test_rulings_should_take_the_file_stem_of_the_round_as_the_stem(self) -> None:
         (self.run_dir / "opus-3.md").write_text(REPORT + "### 1. A\n### 2. B\n")
         (self.run_dir / "rulings-3.md").write_text("opus-3 1: Accept: x.\nopus 2: Reject: y.\n")
-        result = subprocess.run(
-            ["python3", SCRIPT, "rulings", self.run_dir, "--report", "opus", "--round", "3"],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=ENV,
-        )
-        self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("opus: 2 findings: 1 Accept, 1 Reject", result.stdout)
+        for report_arg in ("opus", "opus-3"):
+            with self.subTest(report=report_arg):
+                result = subprocess.run(
+                    [
+                        "python3",
+                        SCRIPT,
+                        "rulings",
+                        self.run_dir,
+                        "--report",
+                        report_arg,
+                        "--round",
+                        "3",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=ENV,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("opus: 2 findings: 1 Accept, 1 Reject", result.stdout)
 
 
 class Stats(unittest.TestCase):
@@ -527,6 +587,20 @@ class Stats(unittest.TestCase):
         result = self.stats()
         self.assertEqual(result.returncode, 1)
         self.assertIn("no RUN has a brief", result.stderr)
+
+    def test_stats_should_expand_a_parent_directory_of_kept_runs(self) -> None:
+        self.two_rounds({})
+        self.run_dir("one-round", {"brief.md": ""})
+        self.run_dir("not-a-review", {"notes.md": ""})
+        result = subprocess.run(
+            ["python3", SCRIPT, "stats", self.root],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("runs: 2; last brief: 1: 1, 2: 1", result.stdout.splitlines())
 
 
 class SaveReport(unittest.TestCase):

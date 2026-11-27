@@ -18,7 +18,13 @@ SCRIPT = Path(__file__).resolve().parent / "watch_pr.py"
 FAKE_GH = f"""#!{sys.executable}
 import json, os, sys
 table = json.load(open(os.environ['GH_TABLE']))
-answer = table[sys.argv[-1].split('?')[0]]
+key = sys.argv[-1].split('?')[0]
+if key not in table or table[key] is None:
+    sys.exit(1)
+answer = table[key]
+if isinstance(answer, str) and '--allow-escape-sequences' in sys.argv:
+    sys.stdout.write(answer)
+    sys.exit(0)
 # --paginate --slurp: a list of pages. A list over 2 items comes as two pages.
 if '--slurp' in sys.argv:
     answer = [answer[:2], answer[2:]] if isinstance(answer, list) and len(answer) > 2 else [answer]
@@ -205,6 +211,42 @@ class WatchPr(unittest.TestCase):
         }
         self.assertEqual(self.watch().stdout, "checks passed at abcdef01: 1 checks\n")
         self.assertEqual(self.watch().returncode, 1)
+
+    def test_watch_should_print_stripped_error_lines_of_a_failed_actions_job(self) -> None:
+        runs = f"{P}/commits/abcdef0123/check-runs"
+        url = "https://github.com/sisu-lang/sisu/actions/runs/99/job/42"
+        self.table[runs] = {
+            "check_runs": [
+                {"status": "completed", "conclusion": "failure", "name": "Lint", "html_url": url}
+            ]
+        }
+        self.table[f"{P}/actions/jobs/42/logs"] = (
+            "2026-11-26T20:17:24Z \x1b[31mE: Failed to fetch mirror 403 Forbidden\x1b[0m\n"
+            "2026-11-26T20:17:32Z ##[error]Process completed with exit code 100.\n"
+            "2026-11-26T20:17:32Z Post job cleanup.\n"
+            "2026-11-26T20:17:32Z ##[error]cleanup noise\n"
+        )
+        out = self.watch()
+        self.assertEqual(out.returncode, 0)
+        self.assertEqual(
+            out.stdout,
+            f"checks failed at abcdef01: Lint {url}\n"
+            "  Lint: E: Failed to fetch mirror 403 Forbidden"
+            " | ##[error]Process completed with exit code 100.\n",
+        )
+
+    def test_watch_should_still_report_a_failed_job_when_log_fetch_fails(self) -> None:
+        runs = f"{P}/commits/abcdef0123/check-runs"
+        url = "https://github.com/sisu-lang/sisu/actions/runs/99/job/43"
+        self.table[runs] = {
+            "check_runs": [
+                {"status": "completed", "conclusion": "failure", "name": "Lint", "html_url": url}
+            ]
+        }
+        self.table[f"{P}/actions/jobs/43/logs"] = None
+        out = self.watch()
+        self.assertEqual(out.returncode, 0)
+        self.assertEqual(out.stdout, f"checks failed at abcdef01: Lint {url}\n")
 
 
 if __name__ == "__main__":

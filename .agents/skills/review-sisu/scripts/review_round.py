@@ -1,8 +1,9 @@
 """Do the fixed steps of one review round, so that a caller does not type them by hand.
 
-prepare fetches origin, builds sisu at both ends of a diff, writes the brief and records the
-checkout. verify records the checkout again, compares the records and checks that each report
-exists. A reviewer that wrote in the repository, or a report that is not there, makes verify fail.
+prepare fetches origin, builds sisu at both ends of a diff, writes the brief, writes
+agy-settings.json and records the checkout. verify records the checkout again, compares the
+records and checks that each report exists. A reviewer that wrote in the repository, or a report
+that is not there, makes verify fail.
 save-report copies the final reply of a subagent reviewer from its transcript to its report file,
 word for word. rulings checks that each finding of each report has a ruling, and counts them.
 record only records the checkout, for a review that has no target to prepare, such as a
@@ -138,11 +139,12 @@ def unnumbered(name: str) -> str:
 def stem_of(value: str, run: Path, round_number: int) -> str:
     """Return the STEM of `value`: a stem as it is, or the stem of a path such as RUN/sol.md.
 
-    A path must name the report of RUN for this round, or the script stops. A stem must not end
-    in -<digits>, because that is the round number of a report path.
+    A path must name the report of RUN for this round, or the script stops. For a later round, a
+    stem that ends in -<round> drops that suffix, matching read_rulings.
     """
     if not value.endswith(".md"):
-        return value
+        suffix = f"-{round_number}" if round_number > 1 else ""
+        return value.removesuffix(suffix) if suffix else value
     path = Path(value)
     stem = unnumbered(path.stem)
     if path.name != numbered(stem, round_number) or (
@@ -249,8 +251,49 @@ def check_body(repo: Path, body: Path | None) -> list[str]:
     return ["--doc", str(body)]
 
 
+def write_agy_settings(repo: Path, run: Path, brief: Path) -> Path:
+    """Write RUN/agy-settings.json for sandboxed agy runs using the brief and built binaries."""
+    common = Path(
+        git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip()
+    )
+    main_checkout = common.parent
+    run_abs = run.resolve()
+    brief_text = brief.read_text(encoding="utf-8")
+    skill_dirs: list[str] = []
+    for match in re.findall(r"`(/[^`\n]+/SKILL\.md)`", brief_text):
+        directory = str(Path(match).parent)
+        if directory not in skill_dirs:
+            skill_dirs.append(directory)
+    bin_dir = run_abs / "bin"
+    bins = sorted(bin_dir.glob("*/sisu")) if bin_dir.is_dir() else []
+    settings = {
+        "agentMode": "",
+        "toolPermission": "request-review",
+        "permissions": {
+            "allow": [
+                f"read_file({main_checkout})",
+                *(f"read_file({directory})" for directory in skill_dirs),
+                f"write_file({run_abs})",
+                "command(git -C)",
+                "command(rg)",
+                "command(ls)",
+                "command(cat)",
+                "command(head)",
+                "command(sed -n)",
+                "command(python3)",
+                *(f"command({exe.resolve()})" for exe in bins),
+                "mcp(GitHits/*)",
+            ],
+            "deny": [f"write_file({main_checkout})"],
+        },
+    }
+    path = run_abs / "agy-settings.json"
+    path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
 def prepare(repo: Path, run: Path, target: str, round_number: int, extra: list[str]) -> None:
-    """Build both ends of a diff, write the brief and record the checkout."""
+    """Build both ends of a diff, write the brief and agy settings, and record the checkout."""
     if ends := diff_ends(target):
         base, head = ends
         subprocess.run(
@@ -264,6 +307,7 @@ def prepare(repo: Path, run: Path, target: str, round_number: int, extra: list[s
         input=script(repo, "diff_brief.py"),
         check=True,
     )
+    write_agy_settings(repo, run, brief)
     record(repo, run / f"tree-{round_number}.txt")
     print(brief)
 
@@ -375,7 +419,8 @@ def retro_classes(run: Path) -> list[str]:
 def briefed(runs: list[Path]) -> list[tuple[Path, int]]:
     """Return each run of RUNS that has a brief, with the round of its last brief.
 
-    Stop on a RUN that is not a directory, and when no RUN has a brief.
+    A directory without its own brief expands to its immediate briefed child directories. Stop on a
+    RUN that is not a directory, and when no RUN has a brief.
     """
     found: list[tuple[Path, int]] = []
     for run in runs:
@@ -384,6 +429,11 @@ def briefed(runs: list[Path]) -> list[tuple[Path, int]]:
         briefs = by_round(run, "brief")
         if briefs:
             found.append((run, max(n for _, n in briefs)))
+            continue
+        for child in sorted(p for p in run.iterdir() if p.is_dir()):
+            child_briefs = by_round(child, "brief")
+            if child_briefs:
+                found.append((child, max(n for _, n in child_briefs)))
     if not found:
         raise SystemExit("review_round: no RUN has a brief")
     return found
