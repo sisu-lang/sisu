@@ -56,9 +56,10 @@ cd RUN && PAGER=cat agy -p "Read RUN/brief.md and follow it. Your scratch direct
 buffers stdout until exit, so `RUN/<stem>.md` stays empty while it runs.
 `--log-file RUN/<stem>-agy.log` logs the conversation ID and live tool checks
 during the run. Keep it separate from `2> RUN/<stem>-cli.log` so stderr and the
-log file do not overwrite each other. `agy -p` can print status lines before
-`Model:`. Strip them before `review_round.py verify` with
-`sed -i '/^Model:/,$!d' RUN/<stem>.md`.
+log file do not overwrite each other. Check the log or the latest transcript
+under `~/.gemini/antigravity-cli/brain/` before you stop a quiet run. `agy -p`
+can print status lines before `Model:`. Strip them before
+`review_round.py verify` with `sed -i '/^Model:/,$!d' RUN/<stem>.md`.
 
 A rule matches the first words of a command, not a glob, so a rule for a
 directory does not match a binary in it. An `mcp` rule names

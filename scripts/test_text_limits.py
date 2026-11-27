@@ -145,6 +145,30 @@ class SentenceTests(unittest.TestCase):
         text = "Ok.\n\n" + r"Write `expected a \`Box\`` here." + "\n"
         self.assertEqual(found("a.md", text, changed={1}), [])
 
+    def test_a_semicolon_or_colon_inside_parentheses_should_not_end_a_sentence(self) -> None:
+        chunk = " ".join(["word"] * 8)
+        for sep in (";", ":"):
+            with self.subTest(sep=sep):
+                line = f"Start ({chunk}{sep} {chunk}{sep} {chunk} end).\n"
+                self.assertEqual(len(found("a.md", line)), 1)
+                closing = f"Start ({chunk}{sep}) {chunk} {chunk} end.\n"
+                self.assertEqual(len(found("a.md", closing)), 1)
+
+    def test_a_semicolon_or_colon_outside_parentheses_should_end_a_sentence(self) -> None:
+        half = " ".join(["word"] * 15)
+        for sep in (";", ":"):
+            with self.subTest(sep=sep):
+                self.assertEqual(found("a.md", f"{half}{sep} {half}.\n"), [])
+                self.assertEqual(found("a.md", f"({half}){sep} {half}.\n"), [])
+
+    def test_a_parenthesis_inside_a_code_span_should_not_change_sentence_counts(self) -> None:
+        half = " ".join(["word"] * 14)
+        self.assertEqual(found("a.md", f"Call `f(` {half}; {half}.\n"), [])
+
+    def test_an_unclosed_parenthesis_should_reset_at_the_next_sentence(self) -> None:
+        half = " ".join(["word"] * 15)
+        self.assertEqual(found("a.md", f"Note (open.\n{half}; {half}.\n"), [])
+
 
 class WidthTests(unittest.TestCase):
     WIDE = "# " + "w" * 99

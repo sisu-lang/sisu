@@ -577,12 +577,9 @@ pub(super) fn pair(operands: Vec<tir::Expr>) -> (Box<tir::Expr>, Box<tir::Expr>)
     (Box::new(a), Box::new(b))
 }
 
-/// `ty` with every layer of optional taken off.
-pub(super) fn innermost(mut ty: Type) -> Type {
-    while let TypeKind::Optional(inner) = ty.kind() {
-        ty = inner;
-    }
-    ty
+/// `ty` with every leading optional layer taken off.
+pub(super) fn innermost(ty: Type) -> Type {
+    ty.without_optionals()
 }
 
 /// The leaf type inside nested array and optional layers of `ty`.
