@@ -38,7 +38,7 @@ use inkwell::passes::PassBuilderOptions;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetData, TargetMachine,
 };
-use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
+use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, IntType};
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValue, BasicValueEnum, FunctionValue, GlobalValue,
     InstructionOpcode, IntValue, MetadataValue, PointerValue,
@@ -61,6 +61,12 @@ use crate::tir::{
     ClassId, EnumId, FuncId, Inline, InterfaceId, LocalId, Program, Stream, StructId, Type,
     TypeArgs, TypeKind, UnaryOp,
 };
+
+/// An unsigned integer constant of `ty` for `index`.
+fn int_const(ty: IntType<'_>, index: usize) -> IntValue<'_> {
+    let index = u64::try_from(index).expect("an index should fit in a `u64`");
+    ty.const_int(index, false)
+}
 
 /// The `expect` message for a builder call: codegen positions the builder before it emits code.
 const POSITIONED: &str =
@@ -1854,6 +1860,33 @@ impl<'ctx> Codegen<'ctx, '_> {
         self.builder
             .build_conditional_branch(condition, then, other)
             .expect(POSITIONED);
+    }
+
+    /// Branches on `value`: straight to `default` when `cases` is empty, by `icmp` for one case,
+    /// and by `switch` for more. At `-O0` on x86-64, `FastISel` selects `br` and `icmp`, while
+    /// `switch` falls back to `SelectionDAG`.
+    fn switch(
+        &self,
+        value: IntValue<'ctx>,
+        default: BasicBlock<'ctx>,
+        mut cases: impl ExactSizeIterator<Item = (IntValue<'ctx>, BasicBlock<'ctx>)>,
+    ) {
+        match cases.len() {
+            0 => self.branch_to(default),
+            1 => {
+                let (case, target) = cases
+                    .next()
+                    .expect("a one-item iterator should yield an item");
+                let matched = self.int_compare(IntPredicate::EQ, value, case);
+                self.branch_on(matched, target, default);
+            }
+            _ => {
+                let cases: Vec<_> = cases.collect();
+                self.builder
+                    .build_switch(value, default, &cases)
+                    .expect(POSITIONED);
+            }
+        }
     }
 
     fn phi<V: BasicValue<'ctx>>(

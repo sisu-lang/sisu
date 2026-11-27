@@ -6,7 +6,7 @@
 use inkwell::basic_block::BasicBlock;
 use inkwell::intrinsics::Intrinsic;
 
-use super::{Codegen, POSITIONED, enum_of};
+use super::{Codegen, POSITIONED, enum_of, int_const};
 use crate::mir::{BlockId, Const, Operand, Place};
 use crate::tir::Type;
 
@@ -23,17 +23,10 @@ impl<'ctx> Codegen<'ctx, '_> {
         let id = enum_of(ty);
         let tag = self.load_tag(id, address);
         let tag_type = self.enum_layout(id).tag;
-        let cases: Vec<_> = arms
+        let cases = arms
             .iter()
-            .map(|&(variant, to)| {
-                let variant =
-                    u64::try_from(variant).expect("a variant index should fit in a `u64`");
-                (tag_type.const_int(variant, false), self.block(to))
-            })
-            .collect();
-        self.builder
-            .build_switch(tag, self.otherwise(otherwise), &cases)
-            .expect(POSITIONED);
+            .map(|&(variant, to)| (int_const(tag_type, variant), self.block(to)));
+        self.switch(tag, self.otherwise(otherwise), cases);
     }
 
     /// A switch on the value of `operand`: to each arm's block for its literal, and to
@@ -58,13 +51,10 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.branch_to(otherwise);
             return;
         }
-        let cases: Vec<_> = arms
+        let cases = arms
             .iter()
-            .map(|(literal, to)| (self.constant(literal).0.into_int_value(), self.block(*to)))
-            .collect();
-        self.builder
-            .build_switch(value.into_int_value(), otherwise, &cases)
-            .expect(POSITIONED);
+            .map(|(literal, to)| (self.constant(literal).0.into_int_value(), self.block(*to)));
+        self.switch(value.into_int_value(), otherwise, cases);
     }
 
     /// The block a switch goes to when no arm's value matches.

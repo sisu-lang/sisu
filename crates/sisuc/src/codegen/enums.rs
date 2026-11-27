@@ -1749,17 +1749,14 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
         }
         self.builder.position_at_end(top);
         let starts: Vec<_> = members.iter().map(|&m| block(self.name_of(m))).collect();
-        let cases: Vec<_> = starts
+        let cases = starts
             .iter()
             .enumerate()
             .skip(1)
-            .map(|(index, &start)| (self.kind(index), start))
-            .collect();
+            .map(|(index, &start)| (self.kind(index), start));
         // `kind` is always a member's index, so the first member can be the default.
         let kind = current[0].as_basic_value().into_int_value();
-        self.builder
-            .build_switch(kind, starts[0], &cases)
-            .expect(POSITIONED);
+        self.switch(kind, starts[0], cases);
         let eq = EqLoop {
             members,
             top,
@@ -1799,14 +1796,12 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
             self.builder.build_unreachable().expect(POSITIONED);
             return;
         };
-        let cases: Vec<_> = (1..)
-            .zip(rest)
-            .map(|(index, &at)| (self.context.i32_type().const_int(index, false), at))
-            .collect();
+        let cases = rest
+            .iter()
+            .enumerate()
+            .map(|(index, &at)| (super::int_const(self.context.i32_type(), index + 1), at));
         let resume = popped[0].as_basic_value().into_int_value();
-        self.builder
-            .build_switch(resume, default, &cases)
-            .expect(POSITIONED);
+        self.switch(resume, default, cases);
     }
 
     /// Whether payload field `payload` of the enum or struct `id` is a link: a box, or an inline
@@ -2227,13 +2222,8 @@ impl<'ctx, 'src> Codegen<'ctx, 'src> {
                 (index, tag_type.const_int(value, false), block)
             })
             .collect();
-        let cases: Vec<_> = arms
-            .iter()
-            .map(|&(_, value, block)| (value, block))
-            .collect();
-        self.builder
-            .build_switch(tag, done, &cases)
-            .expect(POSITIONED);
+        let cases = arms.iter().map(|&(_, value, block)| (value, block));
+        self.switch(tag, done, cases);
         arms.into_iter()
             .map(|(variant, _, block)| (variant, block))
             .collect()

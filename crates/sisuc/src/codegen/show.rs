@@ -27,7 +27,7 @@
 use inkwell::AddressSpace;
 use inkwell::IntPredicate;
 use inkwell::basic_block::BasicBlock;
-use inkwell::types::BasicTypeEnum;
+use inkwell::types::{BasicTypeEnum, IntType};
 use inkwell::values::{
     BasicMetadataValueEnum, BasicValueEnum, CallSiteValue, FunctionValue, IntValue, PhiValue,
     PointerValue,
@@ -678,15 +678,7 @@ impl<'ctx> Codegen<'ctx, '_> {
             .iter()
             .map(|variant| self.context.append_basic_block(function, &variant.name))
             .collect();
-        let cases: Vec<_> = (0_u64..)
-            .zip(&blocks)
-            .skip(1)
-            .map(|(index, &block)| (self.enum_layout(id).tag.const_int(index, false), block))
-            .collect();
-        // The tag is always a variant's index, so the first variant can be the default.
-        self.builder
-            .build_switch(tag, blocks[0], &cases)
-            .expect(POSITIONED);
+        self.switch_variant_blocks(tag, self.enum_layout(id).tag, &blocks);
         for (variant, (&block, v)) in blocks.iter().zip(variants).enumerate() {
             self.builder.position_at_end(block);
             if v.fields.is_empty() {
@@ -790,19 +782,17 @@ impl<'ctx> Codegen<'ctx, '_> {
         let pop_owed = self.builder.build_phi(i64_type, "owed").expect(POSITIONED);
         self.builder.position_at_end(top);
         let starts: Vec<_> = members.iter().map(|&m| block(self.name_of(m))).collect();
-        let cases: Vec<_> = (0_u64..)
-            .zip(&starts)
+        let cases = starts
+            .iter()
+            .enumerate()
             .skip(1)
-            .map(|(index, &start)| (self.context.i32_type().const_int(index, false), start))
-            .collect();
+            .map(|(index, &start)| (self.kind(index), start));
         // `kind` is always a member's index, so the first member can be the default.
-        self.builder
-            .build_switch(
-                current[0].as_basic_value().into_int_value(),
-                starts[0],
-                &cases,
-            )
-            .expect(POSITIONED);
+        self.switch(
+            current[0].as_basic_value().into_int_value(),
+            starts[0],
+            cases,
+        );
         let kinds = (0_u64..)
             .zip(members.iter())
             .map(|(kind, &m)| (m, kind))
@@ -832,13 +822,11 @@ impl<'ctx> Codegen<'ctx, '_> {
             self.builder.build_unreachable().expect(POSITIONED);
             return;
         };
-        let cases: Vec<_> = (1..)
-            .zip(rest)
-            .map(|(index, &at)| (self.context.i32_type().const_int(index, false), at))
-            .collect();
-        self.builder
-            .build_switch(popped[0].as_basic_value().into_int_value(), default, &cases)
-            .expect(POSITIONED);
+        let cases = rest
+            .iter()
+            .enumerate()
+            .map(|(index, &at)| (super::int_const(self.context.i32_type(), index + 1), at));
+        self.switch(popped[0].as_basic_value().into_int_value(), default, cases);
     }
 
     /// At `pop`: writes the `)` that the value owes, one for each count in `owed`, then goes on
@@ -911,20 +899,28 @@ impl<'ctx> Codegen<'ctx, '_> {
             .iter()
             .map(|variant| self.context.append_basic_block(function, &variant.name))
             .collect();
-        let tag_type = self.enum_layout(enum_id).tag;
-        let cases: Vec<_> = (0_u64..)
-            .zip(&blocks)
-            .skip(1)
-            .map(|(index, &block)| (tag_type.const_int(index, false), block))
-            .collect();
         let tag = self.load_tag(enum_id, address);
-        self.builder
-            .build_switch(tag, blocks[0], &cases)
-            .expect(POSITIONED);
+        self.switch_variant_blocks(tag, self.enum_layout(enum_id).tag, &blocks);
         for (variant, &block) in blocks.iter().enumerate() {
             self.builder.position_at_end(block);
             self.show_variant(show, pending, resumes, (id, variant));
         }
+    }
+
+    /// Switches on `tag` across `blocks` by variant index; the first variant is the default because
+    /// `tag` is always a variant's index.
+    fn switch_variant_blocks(
+        &self,
+        tag: IntValue<'ctx>,
+        tag_type: IntType<'ctx>,
+        blocks: &[BasicBlock<'ctx>],
+    ) {
+        let cases = blocks
+            .iter()
+            .enumerate()
+            .skip(1)
+            .map(|(index, &block)| (super::int_const(tag_type, index), block));
+        self.switch(tag, blocks[0], cases);
     }
 
     /// Writes variant `variant` of the enum `id` in the loop `show`, from the builder's block: a
