@@ -95,6 +95,8 @@ NOT_REPORTS = {
 }
 # A finding of a report: its number, then its text up to the next finding.
 FINDING = re.compile(r"^### (\d+)\.(.*?)(?=^### |\Z)", re.MULTILINE | re.DOTALL)
+# A full SHA-1 or SHA-256 commit directory name under RUN/bin/.
+FULL_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
 def git(repo: Path, *args: str) -> bytes:
@@ -144,7 +146,7 @@ def stem_of(value: str, run: Path, round_number: int) -> str:
     """
     if not value.endswith(".md"):
         suffix = f"-{round_number}" if round_number > 1 else ""
-        return value.removesuffix(suffix) if suffix else value
+        return value.removesuffix(suffix)
     path = Path(value)
     stem = unnumbered(path.stem)
     if path.name != numbered(stem, round_number) or (
@@ -251,27 +253,33 @@ def check_body(repo: Path, body: Path | None) -> list[str]:
     return ["--doc", str(body)]
 
 
-def write_agy_settings(repo: Path, run: Path, brief: Path) -> Path:
-    """Write RUN/agy-settings.json for sandboxed agy runs using the brief and built binaries."""
+def write_agy_settings(repo: Path, run: Path) -> None:
+    """Write RUN/agy-settings.json for sandboxed agy runs using the briefs and built binaries."""
     common = Path(
         git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").decode().strip()
     )
-    main_checkout = common.parent
+    main_checkout = common.parent.resolve()
+    repo_abs = repo.resolve()
+    extra_roots: list[Path] = [] if repo_abs.is_relative_to(main_checkout) else [repo_abs]
     run_abs = run.resolve()
-    brief_text = brief.read_text(encoding="utf-8")
     skill_dirs: list[str] = []
-    for match in re.findall(r"`(/[^`\n]+/SKILL\.md)`", brief_text):
-        directory = str(Path(match).parent)
-        if directory not in skill_dirs:
-            skill_dirs.append(directory)
-    bin_dir = run_abs / "bin"
-    bins = sorted(bin_dir.glob("*/sisu")) if bin_dir.is_dir() else []
+    for path, _ in sorted(by_round(run_abs, "brief"), key=lambda item: item[1]):
+        for match in re.findall(r"`(/[^`\n]+/SKILL\.md)`", path.read_text(encoding="utf-8")):
+            directory = str(Path(match).parent)
+            if directory not in skill_dirs:
+                skill_dirs.append(directory)
+    bins = sorted(
+        exe.resolve()
+        for exe in (run_abs / "bin").glob("*/sisu")
+        if FULL_SHA.fullmatch(exe.parent.name)
+    )
     settings = {
         "agentMode": "",
         "toolPermission": "request-review",
         "permissions": {
             "allow": [
                 f"read_file({main_checkout})",
+                *(f"read_file({root})" for root in extra_roots),
                 *(f"read_file({directory})" for directory in skill_dirs),
                 f"write_file({run_abs})",
                 "command(git -C)",
@@ -281,15 +289,18 @@ def write_agy_settings(repo: Path, run: Path, brief: Path) -> Path:
                 "command(head)",
                 "command(sed -n)",
                 "command(python3)",
-                *(f"command({exe.resolve()})" for exe in bins),
+                *(f"command({exe})" for exe in bins),
                 "mcp(GitHits/*)",
             ],
-            "deny": [f"write_file({main_checkout})"],
+            "deny": [
+                f"write_file({main_checkout})",
+                *(f"write_file({root})" for root in extra_roots),
+            ],
         },
     }
-    path = run_abs / "agy-settings.json"
-    path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-    return path
+    (run_abs / "agy-settings.json").write_text(
+        json.dumps(settings, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def prepare(repo: Path, run: Path, target: str, round_number: int, extra: list[str]) -> None:
@@ -307,7 +318,7 @@ def prepare(repo: Path, run: Path, target: str, round_number: int, extra: list[s
         input=script(repo, "diff_brief.py"),
         check=True,
     )
-    write_agy_settings(repo, run, brief)
+    write_agy_settings(repo, run)
     record(repo, run / f"tree-{round_number}.txt")
     print(brief)
 

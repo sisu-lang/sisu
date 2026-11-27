@@ -306,10 +306,14 @@ class ReviewRound(unittest.TestCase):
             check=False,
             env=ENV,
         )
-        # Fake brief outputs two skill paths (one repeated) and fake build creates one binary.
+        # Fake brief outputs two skill paths (one repeated) and fake build creates two SHA bins
+        # plus one non-SHA directory that agy-settings must ignore.
+        sha_a = "a" * 40
+        sha_b = "b" * 40
         scripts = self.repo / ".agents/skills/review-sisu/scripts"
         (scripts / "build_sisu.sh").write_text(
-            'mkdir -p "$2/bin/deadbeef" && touch "$2/bin/deadbeef/sisu"\n'
+            f'mkdir -p "$2/bin/{sha_b}" "$2/bin/{sha_a}" "$2/bin/tmp"\n'
+            f'touch "$2/bin/{sha_b}/sisu" "$2/bin/{sha_a}/sisu" "$2/bin/tmp/sisu"\n'
         )
         (scripts / "diff_brief.py").write_text(
             "import sys\nfrom pathlib import Path\n"
@@ -329,18 +333,51 @@ class ReviewRound(unittest.TestCase):
         settings = json.loads((self.run_dir / "agy-settings.json").read_text(encoding="utf-8"))
         allow = settings["permissions"]["allow"]
         main_abs = self.repo.resolve()
+        wt_abs = worktree.resolve()
         run_abs = self.run_dir.resolve()
-        self.assertEqual(settings["permissions"]["deny"], [f"write_file({main_abs})"])
+        self.assertEqual(
+            settings["permissions"]["deny"], [f"write_file({main_abs})", f"write_file({wt_abs})"]
+        )
         self.assertIn(f"read_file({main_abs})", allow)
+        self.assertIn(f"read_file({wt_abs})", allow)
         self.assertIn("read_file(/opt/s1)", allow)
         self.assertIn("read_file(/opt/s2)", allow)
         self.assertEqual(allow.count("read_file(/opt/s1)"), 1)
         self.assertIn(f"write_file({run_abs})", allow)
-        self.assertIn(f"command({run_abs / 'bin/deadbeef/sisu'})", allow)
+        bin_rules = [entry for entry in allow if entry.startswith(f"command({run_abs / 'bin'}")]
+        self.assertEqual(
+            bin_rules,
+            [
+                f"command({run_abs / 'bin' / sha_a / 'sisu'})",
+                f"command({run_abs / 'bin' / sha_b / 'sisu'})",
+            ],
+        )
+        # Round 2 still allows skill directories named only in round 1's brief.
+        (self.run_dir / "rulings-1.md").write_text("")
+        (scripts / "diff_brief.py").write_text(
+            'import sys\nfrom pathlib import Path\nPath(sys.argv[3]).write_text("`/opt/s2/SKILL.md`")\n'
+        )
+        self.git("add", ".")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "round2")
+        result = subprocess.run(
+            ["python3", SCRIPT, "prepare", worktree, self.run_dir, "main..main", "--round", "2"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        allow_r2 = json.loads((self.run_dir / "agy-settings.json").read_text(encoding="utf-8"))[
+            "permissions"
+        ]["allow"]
+        self.assertIn("read_file(/opt/s1)", allow_r2)
+        self.assertIn("read_file(/opt/s2)", allow_r2)
 
     def test_verify_should_strip_the_current_round_suffix_from_a_report_stem(self) -> None:
-        for name in ("rulings-1.md", "neon.md"):
-            (self.run_dir / name).write_text(name)
+        self.script("prepare", "main..main")
+        (self.run_dir / "neon.md").write_text(REPORT)
+        self.assertEqual(self.script("verify", "--report", "neon-1").returncode, 1)
+        (self.run_dir / "rulings-1.md").write_text("rulings")
         self.script("prepare", "main..main", "--round", "2")
         (self.run_dir / "neon-2.md").write_text(REPORT)
         result = self.script("verify", "--round", "2", "--report", "neon-2")
