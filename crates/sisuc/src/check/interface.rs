@@ -2321,7 +2321,8 @@ impl Checker<'_> {
             limit: BOUND_CLOSURE_LIMIT,
             at,
         });
-        let holder = holder_of(ty).expect("a conformance's target should be a class or an enum");
+        let holder =
+            holder_of(ty).expect("a conformance's target should be a class, a struct or an enum");
         self.broken_extensions
             .insert(self.holder_name(holder), reported);
     }
