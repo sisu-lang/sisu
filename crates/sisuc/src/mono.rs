@@ -47,11 +47,11 @@ thread_local! {
 /// An object type, an interface and its arguments: the key of a list of table entries.
 type EntryKey = (Type, InterfaceId, TypeArgs);
 
-/// `program` with each generic function, class and enum replaced by the instantiations it
-/// reaches, and its enums laid out again.
-/// The non-generic declarations come first, in their order; the instantiations follow, in the
-/// order a worklist first reaches them: the non-generic classes' fields and enums' payloads, then
-/// the user's non-generic functions' bodies, then each instantiation's in turn. A method is
+/// `program` with each generic function, class, struct and enum replaced by the instantiations it
+/// reaches, and its structs and enums laid out again.
+/// Non-generic declarations come first in order, followed by instantiations in worklist order.
+/// The worklist visits non-generic class fields, struct fields, enum payloads, user functions,
+/// and each instantiation. A method is
 /// reached only by a call, never with its class. A function of the prelude is reached the same
 /// way, by a call from a body that is in the program, so a program holds only the prelude
 /// functions it uses.
@@ -71,6 +71,7 @@ pub(crate) fn instantiate(mut program: Program) -> Result<Program, Vec<Diagnosti
         .iter()
         .any(|f| !f.type_params.is_empty())
         || (program.classes[..prelude.classes].iter()).any(|c| !c.type_params.is_empty())
+        || (program.structs.iter()).any(|s| !s.type_params.is_empty())
         || (program.enums[..prelude.enums].iter()).any(|e| !e.type_params.is_empty());
     if !generic && !program.instantiates && !prelude_method_of_outside_type(&program) {
         #[cfg(test)]
@@ -95,6 +96,9 @@ pub(crate) fn instantiate(mut program: Program) -> Result<Program, Vec<Diagnosti
                 f.name = name;
                 f.method = None;
             }
+        }
+        if cfg!(debug_assertions) {
+            assert_concrete(&program);
         }
         return Ok(program);
     }
@@ -1694,12 +1698,13 @@ fn hole(expr: &mut Expr) -> Expr {
 /// Asserts that no type in `program` names a type parameter or holds type arguments: `mir` and
 /// codegen read neither, so one left behind would be miscounted or mislaid silently.
 fn assert_concrete(program: &Program) {
-    let fields = program.classes.iter().flat_map(|c| &c.fields).map(|f| f.ty);
+    let class_fields = program.classes.iter().flat_map(|c| &c.fields).map(|f| f.ty);
+    let struct_fields = program.structs.iter().flat_map(|s| &s.fields).map(|p| p.ty);
     let payloads = (program.enums.iter())
         .flat_map(|e| &e.variants)
         .flat_map(|v| &v.fields)
         .map(|p| p.ty);
-    for ty in fields.chain(payloads) {
+    for ty in class_fields.chain(struct_fields).chain(payloads) {
         assert!(
             concrete(ty),
             "mono should leave no generic field type: {ty:?}"
@@ -1758,6 +1763,34 @@ fn assert_concrete(program: &Program) {
                 f.name
             );
         }
+    }
+    for c in &program.classes {
+        assert!(
+            c.type_params.is_empty(),
+            "mono should leave no generic class: {}",
+            c.name
+        );
+    }
+    for s in &program.structs {
+        assert!(
+            s.type_params.is_empty(),
+            "mono should leave no generic struct: {}",
+            s.name
+        );
+    }
+    for e in &program.enums {
+        assert!(
+            e.type_params.is_empty(),
+            "mono should leave no generic enum: {}",
+            e.name
+        );
+    }
+    for f in &program.functions {
+        assert!(
+            f.type_params.is_empty(),
+            "mono should leave no generic function: {}",
+            f.name
+        );
     }
 }
 
@@ -3691,5 +3724,122 @@ mod tests {
             assert!(delimiters_balanced(name), "unbalanced `{name}`");
             assert_eq!(name.contains('#'), name.contains("..."), "{name}");
         }
+    }
+
+    #[test]
+    fn an_uninstantiated_generic_struct_should_leave_the_fast_path_and_be_dropped() {
+        // Must-pass check that holds before and after the fix.
+        let before = FAST_PATHS.get();
+        let program = instantiated("struct P { x: i64 }\nfn main() {\n    print(1)\n}");
+        assert_eq!(
+            FAST_PATHS.get() - before,
+            1,
+            "non-generic struct alone, unchanged"
+        );
+        let names: Vec<&str> = program.structs.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["P"], "non-generic struct alone, unchanged");
+
+        // Every row in this table fails before `instantiate` checks `program.structs`.
+        let mut red = Vec::new();
+        for (row, src, want_structs) in [
+            (
+                "generic struct with field",
+                "struct _Box<T> { v: T }\nfn main() {\n    print(1)\n}",
+                vec![],
+            ),
+            (
+                "generic struct with Eq",
+                "struct _Box<T>: Eq { v: T }\nfn main() {\n    print(1)\n}",
+                vec![],
+            ),
+            (
+                "generic struct with optional field",
+                "struct _Opt<T> { v: T? }\nfn main() {\n    print(1)\n}",
+                vec![],
+            ),
+            (
+                "fieldless generic struct",
+                "struct _Tag<T> {}\nfn main() {\n    print(1)\n}",
+                vec![],
+            ),
+            (
+                "generic struct with array field",
+                "struct _Wrap<T> { xs: [T] }\nfn main() {\n    print(1)\n}",
+                vec![],
+            ),
+            (
+                "non-generic struct beside generic struct",
+                "struct P { x: i64 }\nstruct _Box<T> { v: T }\nfn main() {\n    print(1)\n}",
+                vec!["P"],
+            ),
+        ] {
+            let before = FAST_PATHS.get();
+            let program = instantiated(src);
+            let fast = FAST_PATHS.get() - before;
+            let names: Vec<&str> = program.structs.iter().map(|s| s.name.as_str()).collect();
+            if fast != 0 || names != want_structs {
+                red.push(format!(
+                    "row `{row}`: fast={fast}, structs={names:?}, wanted structs={want_structs:?}"
+                ));
+            }
+        }
+        assert!(
+            red.is_empty(),
+            "{} red rows:\n{}",
+            red.len(),
+            red.join("\n")
+        );
+    }
+
+    #[test]
+    fn assert_concrete_should_reject_generic_struct_fields_and_type_params() {
+        let param = Type::intern(TypeKind::Param(crate::symbol::Symbol::intern("T"), 0));
+        let assoc = Type::intern(TypeKind::Assoc(
+            Type::I64,
+            InterfaceId(0),
+            TypeArgs::NONE,
+            0,
+        ));
+
+        let mut struct_param = instantiated("struct S { x: i64 }\nfn main() {}");
+        struct_param.structs[0].fields[0].ty = param;
+
+        let mut struct_assoc = instantiated("struct S { x: i64 }\nfn main() {}");
+        struct_assoc.structs[0].fields[0].ty = assoc;
+
+        let mut fieldless_struct = instantiated("struct S {}\nfn main() {}");
+        fieldless_struct.structs[0]
+            .type_params
+            .push("T".to_string());
+
+        let mut fieldless_class = instantiated("class C {}\nfn main() {}");
+        fieldless_class.classes[0].type_params.push("T".to_string());
+
+        let mut fieldless_enum = instantiated("enum E { A }\nfn main() {}");
+        fieldless_enum.enums[0].type_params.push("T".to_string());
+
+        let mut empty_fn = instantiated("fn f() {}\nfn main() {}");
+        empty_fn.functions[0].type_params.push("T".to_string());
+
+        let mut red = Vec::new();
+        for (row, program) in [
+            ("struct field with Param", struct_param),
+            ("struct field with Assoc", struct_assoc),
+            ("fieldless struct with type_params", fieldless_struct),
+            ("fieldless class with type_params", fieldless_class),
+            ("fieldless enum with type_params", fieldless_enum),
+            ("empty fn with type_params", empty_fn),
+        ] {
+            let caught = std::panic::catch_unwind(|| assert_concrete(&program));
+            if caught.is_ok() {
+                red.push(format!("row `{row}`: assert_concrete did not panic"));
+            }
+        }
+        assert!(
+            red.is_empty(),
+            "{} red rows:\n{}",
+            red.len(),
+            red.join("\n")
+        );
     }
 }

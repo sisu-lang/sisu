@@ -1601,3 +1601,139 @@ fn a_limit_report_that_the_rollback_does_not_cut_should_stay_once_holds_before_a
     ]);
     error_rows(&rows);
 }
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "table test keeps failing-at-base and must-pass rows together"
+)]
+fn an_associated_type_alias_in_a_struct_field_should_normalize_after_conformances() {
+    const SEQ_INTS: &str = "interface Seq {\n    type Item\n    fn head(self) -> Self.Item\n}\nstruct Ints: Seq {\n    type Item = i64\n    v: i64\n    fn head(self) -> i64 { self.v }\n}\ntype Elem<T> = T.Item\n";
+
+    // Must-pass rows that hold before and after the fix.
+    for (row, src, expected) in [
+        (
+            "real type mismatch on struct field alias, unchanged",
+            format!(
+                "{SEQ_INTS}struct Holder {{\n    x: Elem<Ints>\n}}\nfn main() {{\n    let _h = Holder(x: \"bad\")\n}}"
+            ),
+            vec![(Code::Mismatch, (15, 24))],
+        ),
+        (
+            "cyclic associated type in struct field alias, unchanged",
+            "interface Seq {\n    type Item\n}\nstruct Loop: Seq {\n    type Item = Elem<Loop>\n}\ntype Elem<T> = T.Item\nstruct Holder {\n    x: Elem<Loop>\n}\nfn main() {}"
+                .to_string(),
+            vec![(Code::UnknownType, (5, 17))],
+        ),
+        (
+            "non-conforming argument in struct field alias, unchanged",
+            format!("{SEQ_INTS}struct Holder {{\n    x: Elem<string>\n}}\nfn main() {{}}"),
+            vec![(Code::NotConform, (12, 8))],
+        ),
+        (
+            "generic struct with associated type alias fields, unchanged",
+            format!(
+                "{SEQ_INTS}struct Pair<T: Seq> {{\n    a: Elem<T>\n    b: Elem<Ints>\n}}\nfn main() {{}}"
+            ),
+            vec![],
+        ),
+    ] {
+        codes_row(row, &src, &expected);
+    }
+
+    // Every row below fails before `normalize_declarations` walks `self.structs`.
+    let mut red = Vec::new();
+    for (row, src, expected) in [
+        (
+            "constructed and read",
+            format!(
+                "{SEQ_INTS}struct Holder {{\n    x: Elem<Ints>\n}}\nfn main() {{\n    let h = Holder(x: 42)\n    print(h.x + 1)\n}}"
+            ),
+            vec![],
+        ),
+        (
+            "field written",
+            format!(
+                "{SEQ_INTS}struct Holder {{\n    x: Elem<Ints>\n}}\nfn main() {{\n    let mut h = Holder(x: 1)\n    h.x = 42\n    print(h.x)\n}}"
+            ),
+            vec![],
+        ),
+        (
+            "nested fields",
+            format!(
+                "{SEQ_INTS}struct Nested {{\n    xs: [Elem<Ints>]\n    opt: Elem<Ints>?\n}}\nfn main() {{\n    let n = Nested(xs: [1, 2], opt: 3)\n    print(n.xs[0] + (n.opt ?? 0))\n}}"
+            ),
+            vec![],
+        ),
+        (
+            "generated Eq and Display",
+            format!(
+                "{SEQ_INTS}struct Holder: Eq {{\n    x: Elem<Ints>\n}}\nfn main() {{\n    let a = Holder(x: 42)\n    let b = Holder(x: 42)\n    print(a == b)\n    print(a)\n}}"
+            ),
+            vec![],
+        ),
+        (
+            "extend reader, writer, Eq and Ord",
+            format!(
+                "{SEQ_INTS}struct Holder {{\n    x: Elem<Ints>\n}}\nextend Holder {{\n    fn read(self) -> i64 {{ self.x }}\n    fn set(mut self, n: i64) {{ self.x = n }}\n}}\nextend Holder: Eq {{\n    fn eq(self, other: Self) -> bool {{ self.x == other.x }}\n}}\nextend Holder: Ord {{\n    fn less(self, other: Self) -> bool {{ self.x < other.x }}\n}}\nfn main() {{\n    let mut h = Holder(x: 1)\n    h.set(2)\n    let other = Holder(x: 3)\n    print(h.read())\n    print(h == other)\n    print(h < other)\n}}"
+            ),
+            vec![],
+        ),
+        (
+            "chained alias and nested struct",
+            format!(
+                "{SEQ_INTS}type Elem2<T> = Elem<T>\nstruct Inner {{\n    x: Elem2<Ints>\n}}\nstruct Outer {{\n    inner: Inner\n}}\nfn main() {{\n    let o = Outer(inner: Inner(x: 42))\n    print(o.inner.x + 1)\n}}"
+            ),
+            vec![],
+        ),
+        (
+            "struct method returning Leaf through alias",
+            "interface Seq {\n    type Item\n}\nstruct Leaf {\n    n: i64\n}\nstruct Boxed: Seq {\n    type Item = Leaf\n}\ntype Elem<T> = T.Item\nstruct Holder {\n    x: Elem<Boxed>\n    fn get(self) -> Leaf { self.x }\n}\nfn main() {\n    let h = Holder(x: Leaf(n: 7))\n    print(h.get().n)\n}"
+                .to_string(),
+            vec![],
+        ),
+        (
+            "generated Eq with non-Eq Item",
+            "interface Seq {\n    type Item\n}\nclass Plain {}\nstruct Ints: Seq {\n    type Item = Plain\n}\ntype Elem<T> = T.Item\nstruct Holder: Eq {\n    x: Elem<Ints>\n}\nfn main() {\n    let a = Holder(x: Plain())\n    let b = Holder(x: Plain())\n    print(a == b)\n}"
+                .to_string(),
+            vec![(Code::ConformanceBody, (9, 16)), (Code::NoOperator, (15, 11))],
+        ),
+    ] {
+        let (program, ds) = checked(&src);
+        let found: Vec<_> = ds.iter().map(|d| (d.code(), at(&src, d.span()))).collect();
+        let failed = expected
+            .iter()
+            .any(|(c, _)| c.severity() == Severity::Error);
+        if found != expected || program.is_none() != failed {
+            red.push(format!("row `{row}`: found {found:?}, wanted {expected:?}"));
+        }
+    }
+
+    // Unused struct still normalizes its field type in TIR.
+    let unused_src = "interface Seq {\n    type Item\n    fn head(self) -> Self.Item\n}\nstruct _Ints: Seq {\n    type Item = i64\n    v: i64\n    fn head(self) -> i64 { self.v }\n}\ntype Elem<T> = T.Item\nstruct _Holder {\n    x: Elem<_Ints>\n}\nfn main() {\n    print(1)\n}";
+    let (program, ds) = checked(unused_src);
+    if !ds.is_empty() {
+        red.push(format!("row `unused struct`: unexpected {ds:?}"));
+    } else if let Some(program) = program {
+        let holder = program
+            .structs
+            .iter()
+            .find(|s| s.name == "_Holder")
+            .expect("TIR should keep `_Holder`");
+        if holder.fields[0].ty != Type::I64 || holder.fields[0].ty.has_assoc() {
+            red.push(format!(
+                "row `unused struct`: field type {:?}",
+                holder.fields[0].ty
+            ));
+        }
+    } else {
+        red.push("row `unused struct`: missing TIR".to_string());
+    }
+
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
+    );
+}

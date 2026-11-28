@@ -1,0 +1,29 @@
+// GIVEN uninstantiated generic structs beside a non-generic struct
+// WHEN the program builds and runs
+// THEN monomorphization drops the unused generic structs and runs `main`
+
+struct _Box<T> {
+    v: T
+}
+
+struct _BoxEq<T>: Eq {
+    v: T
+}
+
+struct _Opt<T> {
+    v: T?
+}
+
+struct _Tag<T> {}
+
+struct _Wrap<T> {
+    xs: [T]
+}
+
+struct Point {
+    x: i64
+}
+
+fn main() {
+    print(Point(x: 1).x) // 1
+}

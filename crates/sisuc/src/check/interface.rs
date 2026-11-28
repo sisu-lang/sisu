@@ -3599,6 +3599,13 @@ impl Checker<'_> {
                 self.read_bounds(&params, bounds, 0);
             }
         }
+        for s in 0..self.structs.len() {
+            let info = &self.structs[s];
+            if info.bounded {
+                let (params, bounds) = (info.type_params.clone(), info.bounds.clone());
+                self.read_bounds(&params, bounds, 0);
+            }
+        }
         for e in 0..self.enums.len() {
             let info = &self.enums[e];
             if info.bounded {

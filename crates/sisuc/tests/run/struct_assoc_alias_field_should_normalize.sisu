@@ -1,0 +1,57 @@
+// GIVEN struct fields typed through an associated-type alias of a conforming struct
+// WHEN the program builds and runs
+// THEN each field normalizes to its concrete type and runs cleanly
+
+interface Seq {
+    type Item
+    fn head(self) -> Self.Item
+}
+
+struct Ints: Seq {
+    type Item = i64
+    v: i64
+    fn head(self) -> i64 { self.v }
+}
+
+struct _Ints: Seq {
+    type Item = i64
+    _v: i64
+    fn head(self) -> i64 { self._v }
+}
+
+type Elem<T> = T.Item
+
+struct Holder: Eq {
+    x: Elem<Ints>
+}
+
+extend Holder {
+    fn get(self) -> i64 { self.x }
+    fn set(mut self, n: i64) { self.x = n }
+}
+
+struct Nested {
+    xs: [Elem<Ints>]
+    opt: Elem<Ints>?
+}
+
+struct _Unused {
+    x: Elem<_Ints>
+}
+
+struct _Pair<T: Seq> {
+    a: Elem<T>
+    b: Elem<_Ints>
+}
+
+fn main() {
+    let seed = Ints(v: 42)
+    let mut h = Holder(x: seed.head())
+    print(h) // Holder(x: 42)
+    print(h.x + 1) // 43
+    h.set(10)
+    print(h.get()) // 10
+    print(h == Holder(x: 10)) // true
+    let n = Nested(xs: [1, 2], opt: 3)
+    print(n.xs[0] + (n.opt ?? 0)) // 4
+}
