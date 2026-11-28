@@ -3692,4 +3692,121 @@ mod tests {
             assert_eq!(name.contains('#'), name.contains("..."), "{name}");
         }
     }
+
+    #[test]
+    fn an_uninstantiated_generic_struct_should_leave_the_fast_path_and_be_dropped() {
+        // Must-pass check that holds before and after the fix.
+        let before = FAST_PATHS.get();
+        let program = instantiated("struct P { x: i64 }\nfn main() {\n    print(1)\n}");
+        assert_eq!(
+            FAST_PATHS.get() - before,
+            1,
+            "non-generic struct alone, unchanged"
+        );
+        let names: Vec<&str> = program.structs.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["P"], "non-generic struct alone, unchanged");
+
+        // Every row in this table fails before `instantiate` checks `program.structs`.
+        let mut red = Vec::new();
+        for (row, src, want_structs) in [
+            (
+                "generic struct with field",
+                "struct _Box<T> { v: T }\nfn main() {\n    print(1)\n}",
+                vec![],
+            ),
+            (
+                "generic struct with Eq",
+                "struct _Box<T>: Eq { v: T }\nfn main() {\n    print(1)\n}",
+                vec![],
+            ),
+            (
+                "generic struct with optional field",
+                "struct _Opt<T> { v: T? }\nfn main() {\n    print(1)\n}",
+                vec![],
+            ),
+            (
+                "fieldless generic struct",
+                "struct _Tag<T> {}\nfn main() {\n    print(1)\n}",
+                vec![],
+            ),
+            (
+                "generic struct with array field",
+                "struct _Wrap<T> { xs: [T] }\nfn main() {\n    print(1)\n}",
+                vec![],
+            ),
+            (
+                "non-generic struct beside generic struct",
+                "struct P { x: i64 }\nstruct _Box<T> { v: T }\nfn main() {\n    print(1)\n}",
+                vec!["P"],
+            ),
+        ] {
+            let before = FAST_PATHS.get();
+            let program = instantiated(src);
+            let fast = FAST_PATHS.get() - before;
+            let names: Vec<&str> = program.structs.iter().map(|s| s.name.as_str()).collect();
+            if fast != 0 || names != want_structs {
+                red.push(format!(
+                    "row `{row}`: fast={fast}, structs={names:?}, wanted structs={want_structs:?}"
+                ));
+            }
+        }
+        assert!(
+            red.is_empty(),
+            "{} red rows:\n{}",
+            red.len(),
+            red.join("\n")
+        );
+    }
+
+    #[test]
+    fn assert_concrete_should_reject_generic_struct_fields_and_type_params() {
+        let param = Type::intern(TypeKind::Param(crate::symbol::Symbol::intern("T"), 0));
+        let assoc = Type::intern(TypeKind::Assoc(
+            Type::I64,
+            InterfaceId(0),
+            TypeArgs::NONE,
+            0,
+        ));
+
+        let mut struct_param = instantiated("struct S { x: i64 }\nfn main() {}");
+        struct_param.structs[0].fields[0].ty = param;
+
+        let mut struct_assoc = instantiated("struct S { x: i64 }\nfn main() {}");
+        struct_assoc.structs[0].fields[0].ty = assoc;
+
+        let mut fieldless_struct = instantiated("struct S {}\nfn main() {}");
+        fieldless_struct.structs[0]
+            .type_params
+            .push("T".to_string());
+
+        let mut fieldless_class = instantiated("class C {}\nfn main() {}");
+        fieldless_class.classes[0].type_params.push("T".to_string());
+
+        let mut fieldless_enum = instantiated("enum E { A }\nfn main() {}");
+        fieldless_enum.enums[0].type_params.push("T".to_string());
+
+        let mut empty_fn = instantiated("fn f() {}\nfn main() {}");
+        empty_fn.functions[0].type_params.push("T".to_string());
+
+        let mut red = Vec::new();
+        for (row, program) in [
+            ("struct field with Param", struct_param),
+            ("struct field with Assoc", struct_assoc),
+            ("fieldless struct with type_params", fieldless_struct),
+            ("fieldless class with type_params", fieldless_class),
+            ("fieldless enum with type_params", fieldless_enum),
+            ("empty fn with type_params", empty_fn),
+        ] {
+            let caught = std::panic::catch_unwind(|| assert_concrete(&program));
+            if caught.is_ok() {
+                red.push(format!("row `{row}`: assert_concrete did not panic"));
+            }
+        }
+        assert!(
+            red.is_empty(),
+            "{} red rows:\n{}",
+            red.len(),
+            red.join("\n")
+        );
+    }
 }

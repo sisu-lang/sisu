@@ -2617,6 +2617,14 @@ fn a_method_of_a_bound_that_is_too_wide_should_add_no_report() {
 /// of five arguments replaced by `i64` or `f64`, one at a time, besides the unchanged one: the
 /// closure of a bound at the last doubles at each level, until it passes the limit.
 fn doubling(levels: usize) -> String {
+    doubling_interfaces(levels)
+        + &format!(
+            "fn _use<T: L{levels}<string, string, string, string, string>>(x: T) {{\n    need(x)\n}}\nfn need<T: L0<string, string, string, string, string>>(_y: T) {{}}\nfn main() {{}}"
+        )
+}
+
+/// The `L0`..`L<levels>` interface declarations that double their inherited closure at each level.
+fn doubling_interfaces(levels: usize) -> String {
     let params = ["A", "B", "C", "D", "E"];
     let mut src = String::from("interface L0<A, B, C, D, E> {}\n");
     for k in 1..=levels {
@@ -2635,9 +2643,7 @@ fn doubling(levels: usize) -> String {
         )
         .expect("writing to a `String` should succeed");
     }
-    src + &format!(
-        "fn _use<T: L{levels}<string, string, string, string, string>>(x: T) {{\n    need(x)\n}}\nfn need<T: L0<string, string, string, string, string>>(_y: T) {{}}\nfn main() {{}}"
-    )
+    src
 }
 
 /// A closure that would grow without end stops at the limit: the steps that walk it stay a small
@@ -2795,6 +2801,101 @@ fn a_bound_that_passes_the_limit_should_be_reported_where_it_is_declared() {
     codes(
         &format!("fn _f<T: C257>(x: T) {{\n    need(x)\n}}\nfn need<T: C1>(_y: T) {{}}\n{wide}"),
         &[(Code::BoundTooWide, (1, 10))],
+    );
+}
+
+#[test]
+fn struct_type_parameter_bounds_should_report_when_past_the_limit() {
+    let wide = ladder("C", 257) + "fn main() {}";
+    let l4 = doubling_interfaces(4);
+
+    // Must-pass rows that hold before and after the fix.
+    let c256 = ladder("C", 256);
+    let (c200, d200) = (ladder("C", 200), ladder("D", 200));
+    for (row, src, expected) in [
+        (
+            "struct bound at limit, unchanged",
+            format!("struct _S<T: C256> {{}}\n{c256}fn main() {{}}"),
+            vec![],
+        ),
+        (
+            "two struct bounds whose union passes limit, unchanged",
+            format!("struct _S<T: C200 & D200> {{}}\n{c200}{d200}fn main() {{}}"),
+            vec![],
+        ),
+        (
+            "wide struct bound read by two methods, unchanged",
+            format!(
+                "struct S<T: C257> {{ v: T; fn a(self) {{ need(self.v) }}; fn b(self) {{ need(self.v) }} }}\nfn need<T: C1>(_y: T) {{}}\n{wide}"
+            ),
+            vec![(Code::BoundTooWide, (1, 13))],
+        ),
+        (
+            "wide struct bound method call adds no error, unchanged",
+            format!("struct S<T: C257> {{ v: T; fn a(self) {{ print(self.v.deep(1)) }} }}\n{wide}"),
+            vec![(Code::BoundTooWide, (1, 13))],
+        ),
+        (
+            "wide conformance on struct, unchanged",
+            format!("struct _S: C257 {{}}\n{wide}"),
+            vec![(Code::BoundTooWide, (1, 12))],
+        ),
+        (
+            "wide bound on struct extension, unchanged",
+            format!("struct _Box<T> {{ v: T }}\nextend<T: C257> _Box<T> {{}}\n{wide}"),
+            vec![(Code::BoundTooWide, (2, 11))],
+        ),
+        (
+            "wide bound on struct method, unchanged",
+            format!("struct S {{\n    fn m<T: C257>(self, _x: T) {{}}\n}}\n{wide}"),
+            vec![(Code::BoundTooWide, (2, 13))],
+        ),
+    ] {
+        codes_row(row, &src, &expected);
+    }
+
+    // Every row in this table fails before `read_declared_bounds` walks `self.structs`.
+    let mut red = Vec::new();
+    for (row, src, expected) in [
+        (
+            "single wide bound on struct",
+            format!("struct _S<T: C257> {{}}\n{wide}"),
+            vec![(Code::BoundTooWide, (1, 14))],
+        ),
+        (
+            "wide bound on second struct parameter",
+            format!("struct _S<A, T: C257> {{ a: A; t: T }}\n{wide}"),
+            vec![(Code::BoundTooWide, (1, 17))],
+        ),
+        (
+            "wide second bound on struct parameter",
+            format!("struct _S<T: D1 & C257> {{}}\ninterface D1 {{}}\n{wide}"),
+            vec![(Code::BoundTooWide, (1, 19))],
+        ),
+        (
+            "two wide parameters on struct",
+            format!("struct _S<A: C257, B: C257> {{ a: A; b: B }}\n{wide}"),
+            vec![(Code::BoundTooWide, (1, 14)), (Code::BoundTooWide, (1, 23))],
+        ),
+        (
+            "doubling hierarchy bound on struct",
+            format!(
+                "struct _S<T: L4<string, string, string, string, string>> {{}}\n{l4}fn main() {{}}"
+            ),
+            vec![(Code::BoundTooWide, (1, 14))],
+        ),
+    ] {
+        let (program, ds) = checked(&src);
+        let found: Vec<_> = ds.iter().map(|d| (d.code(), at(&src, d.span()))).collect();
+        if found != expected || program.is_some() {
+            red.push(format!("row `{row}`: found {found:?}, wanted {expected:?}"));
+        }
+    }
+    assert!(
+        red.is_empty(),
+        "{} red rows:\n{}",
+        red.len(),
+        red.join("\n")
     );
 }
 
