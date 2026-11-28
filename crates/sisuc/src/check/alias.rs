@@ -1115,11 +1115,9 @@ impl Checker<'_> {
         }
     }
 
-    /// Replaces the associated types of known types in the types that the declarations keep, as
-    /// `normalize` does where a body uses a type. A use of an alias such as `type X<T> = T.Item`
-    /// puts a class under an associated type when a signature or a field names `X<Ints>`, before
-    /// any conformance is known to say which type that is. Without an alias, no declaration holds
-    /// one, so the pass does nothing.
+    /// Replaces known associated types kept in signatures, classes, structs and enums. An alias
+    /// such as `type X<T> = T.Item` leaves an associated type before conformances resolve. Without
+    /// an alias, no declaration holds one, so the pass does nothing.
     pub(super) fn normalize_declarations(&mut self) {
         if self.aliases.infos.is_empty() {
             return;
@@ -1135,6 +1133,11 @@ impl Checker<'_> {
         for i in 0..self.classes.len() {
             for k in 0..self.classes[i].fields.len() {
                 self.classes[i].fields[k].ty = known(self, self.classes[i].fields[k].ty);
+            }
+        }
+        for i in 0..self.structs.len() {
+            for k in 0..self.structs[i].fields.len() {
+                self.structs[i].fields[k].ty = known(self, self.structs[i].fields[k].ty);
             }
         }
         for i in 0..self.enums.len() {

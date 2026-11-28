@@ -47,11 +47,11 @@ thread_local! {
 /// An object type, an interface and its arguments: the key of a list of table entries.
 type EntryKey = (Type, InterfaceId, TypeArgs);
 
-/// `program` with each generic function, class and enum replaced by the instantiations it
-/// reaches, and its enums laid out again.
-/// The non-generic declarations come first, in their order; the instantiations follow, in the
-/// order a worklist first reaches them: the non-generic classes' fields and enums' payloads, then
-/// the user's non-generic functions' bodies, then each instantiation's in turn. A method is
+/// `program` with each generic function, class, struct and enum replaced by the instantiations it
+/// reaches, and its structs and enums laid out again.
+/// Non-generic declarations come first in order, followed by instantiations in worklist order.
+/// The worklist visits non-generic class fields, struct fields, enum payloads, user functions,
+/// and each instantiation. A method is
 /// reached only by a call, never with its class. A function of the prelude is reached the same
 /// way, by a call from a body that is in the program, so a program holds only the prelude
 /// functions it uses.
@@ -71,6 +71,7 @@ pub(crate) fn instantiate(mut program: Program) -> Result<Program, Vec<Diagnosti
         .iter()
         .any(|f| !f.type_params.is_empty())
         || (program.classes[..prelude.classes].iter()).any(|c| !c.type_params.is_empty())
+        || (program.structs.iter()).any(|s| !s.type_params.is_empty())
         || (program.enums[..prelude.enums].iter()).any(|e| !e.type_params.is_empty());
     if !generic && !program.instantiates && !prelude_method_of_outside_type(&program) {
         #[cfg(test)]
@@ -95,6 +96,9 @@ pub(crate) fn instantiate(mut program: Program) -> Result<Program, Vec<Diagnosti
                 f.name = name;
                 f.method = None;
             }
+        }
+        if cfg!(debug_assertions) {
+            assert_concrete(&program);
         }
         return Ok(program);
     }
@@ -1694,12 +1698,13 @@ fn hole(expr: &mut Expr) -> Expr {
 /// Asserts that no type in `program` names a type parameter or holds type arguments: `mir` and
 /// codegen read neither, so one left behind would be miscounted or mislaid silently.
 fn assert_concrete(program: &Program) {
-    let fields = program.classes.iter().flat_map(|c| &c.fields).map(|f| f.ty);
+    let class_fields = program.classes.iter().flat_map(|c| &c.fields).map(|f| f.ty);
+    let struct_fields = program.structs.iter().flat_map(|s| &s.fields).map(|p| p.ty);
     let payloads = (program.enums.iter())
         .flat_map(|e| &e.variants)
         .flat_map(|v| &v.fields)
         .map(|p| p.ty);
-    for ty in fields.chain(payloads) {
+    for ty in class_fields.chain(struct_fields).chain(payloads) {
         assert!(
             concrete(ty),
             "mono should leave no generic field type: {ty:?}"
@@ -1758,6 +1763,34 @@ fn assert_concrete(program: &Program) {
                 f.name
             );
         }
+    }
+    for c in &program.classes {
+        assert!(
+            c.type_params.is_empty(),
+            "mono should leave no generic class: {}",
+            c.name
+        );
+    }
+    for s in &program.structs {
+        assert!(
+            s.type_params.is_empty(),
+            "mono should leave no generic struct: {}",
+            s.name
+        );
+    }
+    for e in &program.enums {
+        assert!(
+            e.type_params.is_empty(),
+            "mono should leave no generic enum: {}",
+            e.name
+        );
+    }
+    for f in &program.functions {
+        assert!(
+            f.type_params.is_empty(),
+            "mono should leave no generic function: {}",
+            f.name
+        );
     }
 }
 
